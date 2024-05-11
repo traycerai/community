@@ -1,6 +1,6 @@
 # Traycer: AI-Powered Code Analysis in Real Time
 
-![Basic Usage](./readme-assets/basic-usage.gif)
+![Basic Usage](https://github.com/traycerai/community/blob/main/readme-assets/basic-usage.gif?raw=true)
 
 ## What's Traycer?
 Traycer is an advanced code analysis tool that integrates directly into your Visual Studio Code environment.
@@ -42,4 +42,4 @@ We value your input and encourage you to share your experiences and suggestions 
 
 - Analysis can be triggered manually as below:
 
-  ![Basic Usage](./readme-assets/manual-trigger.gif)
+  ![Basic Usage](https://github.com/traycerai/community/blob/main/readme-assets/manual-trigger.gif?raw=true)
