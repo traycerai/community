@@ -250,6 +250,7 @@ Currently, Traycer supports the following programming languages:
 - TypeScript React
 - JavaScript React
 - Rust
+- PHP
 
 # Feedback Forum
 
