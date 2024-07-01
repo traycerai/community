@@ -17,6 +17,7 @@ Traycer is an advanced code analysis tool for Visual Studio Code, enhancing soft
     - [Show Difference](#show-difference)
     - [Collapse and Expand](#collapse-and-expand-comments)
     - [Delete Comments](#delete-comments)
+  - [Reply to Thread](#reply-to-thread)
   - [Comments Highlighting](#comments-highlighting)
 - [Supported Languages](#supported-languages)
 - [Feedback Forum](#feedback-forum)
@@ -205,6 +206,18 @@ Unable to load video.
     <video src="https://github.com/traycerai/community/assets/76090263/a7755eea-1b51-4d1a-a5b1-1156933b6eef" controls autoplay loop muted style="max-width: 100%; border: 1px solid black;">
     Unable to load video.
     </video>
+
+## Reply to thread
+
+Use the 'Reply to Thread' feature in Traycer AI to respond to code insights and suggestions directly within the Visual Studio Code environment.
+
+#### Steps for conversation:
+
+- Go to the comment thread.
+- Type your message.
+- Hit the reply button to have a conversation.
+
+https://github.com/traycerai/community/assets/76090263/f1c255bc-ed2b-4544-975d-b317304edc8a
 
 ## Comments Highlighting
 
