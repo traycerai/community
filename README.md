@@ -29,12 +29,12 @@ Traycer is an advanced code analysis tool for Visual Studio Code, enhancing soft
 Traycer provides flexibility in how you trigger code analysis:
 
 1. **Automatic Analysis**
-    - **Real-Time Monitoring:** Traycer automatically tracks your changes and performs analysis in real-time as you write and modify your code.
-    - **Event-Based Analysis:** Analysis can be triggered by specific events, such as saving a file. You can turn this feature on or off in the settings.
+   - **Real-Time Monitoring:** Traycer automatically tracks your changes and performs analysis in real-time as you write and modify your code.
+   - **Event-Based Analysis:** Analysis can be triggered by specific events, such as saving a file. You can turn this feature on or off in the settings.
 2. **Manually Triggered Analysis**
-    - **Initiating Analysis:** Users can manually start the analysis by right-clicking and selecting "Analyze File" or "Analyze Changes."
-    - **Analyze File:** This option comprehensively reviews the entire file, regardless of recent changes. It checks the code for consistency, errors, and adherence to coding standards.
-    - **Analyze Changes:** This option focuses solely on recently modified functions. It's ideal for quickly verifying modifications without analyzing unchanged parts of the file.
+   - **Initiating Analysis:** Users can manually start the analysis by right-clicking and selecting "Analyze File" or "Analyze Changes."
+   - **Analyze File:** This option comprehensively reviews the entire file, regardless of recent changes. It checks the code for consistency, errors, and adherence to coding standards.
+   - **Analyze Changes:** This option focuses solely on recently modified functions. It's ideal for quickly verifying modifications without analyzing unchanged parts of the file.
 
 ### Switching Between Manual and Automated Analysis
 
@@ -43,29 +43,32 @@ Configure your preferences to switch between manual and automated analysis modes
 #### Different ways to switch between Manual and Automated Analysis
 
 1. **Using Command Palette: -**
-    - Open the Command Palette in VS Code (`Ctrl+Shift+P` OR `Cmd+Shift+P` on Mac).
-    - Type and select `Traycer: Enable Auto Analysis` OR `Traycer: Disable Auto Analysis`.
+
+   - Open the Command Palette in VS Code (`Ctrl+Shift+P` OR `Cmd+Shift+P` on Mac).
+   - Type and select `Traycer: Enable Auto Analysis` OR `Traycer: Disable Auto Analysis`.
 
 2. **Extension Settings Page:**
-    - Go to the Traycer extension settings page in VS Code.
-    - Change the "Traycer: Execution Mode" setting to "Manual" or "Auto".
-    <br/><br/>
-    <video src="https://github.com/traycerai/community/assets/76090263/262b6321-50d7-4f3c-8348-dbaa262bd816" controls autoplay loop muted style="max-width: 100%; border: 1px solid black;">
-      Unable to load video.
-    </video>
+
+   - Go to the Traycer extension settings page in VS Code.
+   - Change the "Traycer: Execution Mode" setting to "Manual" or "Auto".
+     <br/><br/>
+     <video src="https://github.com/traycerai/community/assets/76090263/262b6321-50d7-4f3c-8348-dbaa262bd816" controls autoplay loop muted style="max-width: 100%; border: 1px solid black;">
+     Unable to load video.
+     </video>
 
 3. **Change the Settings of VS Code Workspace (.vscode/settings.json):**
-    - Add the following line to your workspace settings file:
 
-      ```json
-      "traycer.executionMode": "Manual"
-      ```
+   - Add the following line to your workspace settings file:
 
-      OR
+     ```json
+     "traycer.executionMode": "Manual"
+     ```
 
-      ```json
-      "traycer.executionMode": "Auto"
-      ```
+     OR
+
+     ```json
+     "traycer.executionMode": "Auto"
+     ```
 
 #### Manually Triggered Analysis
 
@@ -123,19 +126,20 @@ Using the Traycer extension, you can manage suggestions efficiently. Select the 
 Follow these steps to accept or decline suggestions:
 
 - **Accept Suggestion**
+
   - After applying the suggestion, review the change.
   - Select the **Accept** button to confirm and finalize the change.
-  <br></br>
-  <video src="https://github.com/traycerai/community/assets/76090263/c0f4f735-df90-46c4-ab1b-f577d04875cb" controls autoplay loop muted style="max-width: 100%; border: 1px solid black;">
-  Unable to load video.
-  </video>
+    <br></br>
+    <video src="https://github.com/traycerai/community/assets/76090263/c0f4f735-df90-46c4-ab1b-f577d04875cb" controls autoplay loop muted style="max-width: 100%; border: 1px solid black;">
+    Unable to load video.
+    </video>
 
 - **Decline Suggestion**:
   - After applying the suggestion, if you decide not to keep the change, select the **Decline** button to revert to the original code.
-  <br></br>
-  <video src="https://github.com/traycerai/community/assets/76090263/6a5d0582-0ca4-4890-be9d-6fb086557d47" controls autoplay loop muted style="max-width: 100%; border: 1px solid black;">
-  Unable to load video.
-  </video>
+    <br></br>
+    <video src="https://github.com/traycerai/community/assets/76090263/6a5d0582-0ca4-4890-be9d-6fb086557d47" controls autoplay loop muted style="max-width: 100%; border: 1px solid black;">
+    Unable to load video.
+    </video>
 
 ### Show Difference
 
@@ -143,7 +147,7 @@ Using the Traycer extension, you can easily compare changes made to your code. F
 
 - Select the **Show Diff** button provided by the Traycer extension to open a comparison view.
 
-- This view will display the differences between the *original code* and the *suggested* changes side-by-side.
+- This view will display the differences between the _original code_ and the _suggested_ changes side-by-side.
 
 <video src="https://github.com/traycerai/community/assets/76090263/1c686391-a7a0-4093-b9c5-6f3f4b047ebe" controls autoplay loop muted style="max-width: 100%; border: 1px solid black;">
   Unable to load video.
@@ -155,9 +159,9 @@ You can collapse or expand comments to manage your workspace efficiently.
 
 #### Follow these steps for collapsing **individual** comment
 
-- **Expand Comment:** Use the *comment* icon (<img src="https://github.com/traycerai/community/assets/76090263/9e7a0bc1-df2e-4cb6-8ab4-80c5b6ebb55e" alt="comment icon" width="20" height="16">) on the left of the code line to expand the comment.
+- **Expand Comment:** Use the _comment_ icon (<img src="https://github.com/traycerai/community/assets/76090263/9e7a0bc1-df2e-4cb6-8ab4-80c5b6ebb55e" alt="comment icon" width="20" height="16">) on the left of the code line to expand the comment.
 
-- **Collapse Comment:** Use the *chevron up* icon (<img src="https://github.com/traycerai/community/assets/76090263/17a12214-de96-443b-b3e6-aaf62183499d" alt="chevron up icon" width="16" height="16">) on the top right of the comment box to collapse the comment.
+- **Collapse Comment:** Use the _chevron up_ icon (<img src="https://github.com/traycerai/community/assets/76090263/17a12214-de96-443b-b3e6-aaf62183499d" alt="chevron up icon" width="16" height="16">) on the top right of the comment box to collapse the comment.
 
 <video src="https://github.com/traycerai/community/assets/76090263/74e4adc7-4e04-498b-9d01-07234e4e3d8e" controls autoplay loop muted style="max-width: 100%; border: 1px solid black;">
 Unable to load video.
@@ -166,17 +170,18 @@ Unable to load video.
 #### To minimize all comments at once
 
 1. **Using Command Palette: -**
-    - Open the Command Palette in VS Code (Ctrl+Shift+P or Cmd+Shift+P on Mac).
-    - Type and select `Traycer: Collapse All File Comments`
+
+   - Open the Command Palette in VS Code (Ctrl+Shift+P or Cmd+Shift+P on Mac).
+   - Type and select `Traycer: Collapse All File Comments`
 
 2. **Using right-click menu**
-    - Right-click in the code editor.
-    - Select `Traycer` from the context menu.
-    - Choose `Collapse All File Comments`.
-    <br></br>
-    <video src="https://github.com/traycerai/community/assets/76090263/a35839bb-32f2-4929-9743-19b9341f2653" controls autoplay loop muted style="max-width: 100%; border: 1px solid black;">
-    Unable to load video.
-    </video>
+   - Right-click in the code editor.
+   - Select `Traycer` from the context menu.
+   - Choose `Collapse All File Comments`.
+     <br></br>
+     <video src="https://github.com/traycerai/community/assets/76090263/a35839bb-32f2-4929-9743-19b9341f2653" controls autoplay loop muted style="max-width: 100%; border: 1px solid black;">
+     Unable to load video.
+     </video>
 
 ### Delete Comments
 
@@ -184,7 +189,7 @@ Easily remove comments to maintain a clear and efficient workspace, ensuring tha
 
 #### To delete **individual** comment
 
-- Use the *trash* icon (<img src="https://github.com/traycerai/community/assets/76090263/39b5b85e-1a38-4d7e-b6fa-fe4288193aa9" alt="trash icon" width="22" height="18">) on the top right of the comment box to delete the comment.
+- Use the _trash_ icon (<img src="https://github.com/traycerai/community/assets/76090263/39b5b85e-1a38-4d7e-b6fa-fe4288193aa9" alt="trash icon" width="22" height="18">) on the top right of the comment box to delete the comment.
 
 <video src="https://github.com/traycerai/community/assets/76090263/46fbe6f5-9a9a-4412-8919-4e1db4536d32" controls autoplay loop muted style="max-width: 100%; border: 1px solid black;">
 Unable to load video.
@@ -193,19 +198,20 @@ Unable to load video.
 #### To delete all comments at once
 
 1. **Using Command Palette: -**
-    - Open the Command Palette in VS Code (Ctrl+Shift+P or Cmd+Shift+P on Mac).
-    - Type and select `Traycer: Delete Comments from All Files` - to delete comments from all files.
-    - Type and select `Traycer: Delete Comments from Current File` - to delete comments from the **active** file.
+
+   - Open the Command Palette in VS Code (Ctrl+Shift+P or Cmd+Shift+P on Mac).
+   - Type and select `Traycer: Delete Comments from All Files` - to delete comments from all files.
+   - Type and select `Traycer: Delete Comments from Current File` - to delete comments from the **active** file.
 
 2. **Using right-click menu**
-    - Open your code file in Visual Studio Code.
-    - Right-click in the code editor.
-    - Select `Traycer` from the context menu.
-    - Choose `Delete All File Comments`.
-    <br></br>
-    <video src="https://github.com/traycerai/community/assets/76090263/a7755eea-1b51-4d1a-a5b1-1156933b6eef" controls autoplay loop muted style="max-width: 100%; border: 1px solid black;">
-    Unable to load video.
-    </video>
+   - Open your code file in Visual Studio Code.
+   - Right-click in the code editor.
+   - Select `Traycer` from the context menu.
+   - Choose `Delete All File Comments`.
+     <br></br>
+     <video src="https://github.com/traycerai/community/assets/76090263/a7755eea-1b51-4d1a-a5b1-1156933b6eef" controls autoplay loop muted style="max-width: 100%; border: 1px solid black;">
+     Unable to load video.
+     </video>
 
 ## Reply to thread
 
@@ -226,31 +232,33 @@ The "Comments Highlighting" feature in Traycer allows users to easily identify a
 #### Different Ways to Enable/Disable Comments Highlighting
 
 1. **Using Command Palette: -**
-    - Open the Command Palette in VS Code (Ctrl+Shift+P or Cmd+Shift+P on Mac).
-    - Type and select `Traycer: Enable Comments Highlighting` or `Traycer: Disable Comments Highlighting`.
+
+   - Open the Command Palette in VS Code (Ctrl+Shift+P or Cmd+Shift+P on Mac).
+   - Type and select `Traycer: Enable Comments Highlighting` or `Traycer: Disable Comments Highlighting`.
 
 2. **Extension Settings Page:**
 
-    - Go to the Traycer extension settings page in VS Code.
-    - Locate the "Traycer: Enable Comments Highlighting" checkbox in the Traycer settings.
-    - Check the box to enable this feature.
-    <br></br>
-    <video src="https://github.com/traycerai/community/assets/76090263/65454231-0c5d-403e-a3ed-0deb59e59c99" controls autoplay loop muted style="max-width: 100%; border: 1px solid black;">
-    Unable to load video.
-    </video>
+   - Go to the Traycer extension settings page in VS Code.
+   - Locate the "Traycer: Enable Comments Highlighting" checkbox in the Traycer settings.
+   - Check the box to enable this feature.
+     <br></br>
+     <video src="https://github.com/traycerai/community/assets/76090263/65454231-0c5d-403e-a3ed-0deb59e59c99" controls autoplay loop muted style="max-width: 100%; border: 1px solid black;">
+     Unable to load video.
+     </video>
 
 3. **Change the Settings of VS Code Workspace (.vscode/settings.json):**
-    - Add the following line to your workspace settings file:
 
-      ```json
-      "traycer.enableCommentsHighlighting": true
-      ```
+   - Add the following line to your workspace settings file:
 
-      OR
+     ```json
+     "traycer.enableCommentsHighlighting": true
+     ```
 
-      ```json
-      "traycer.enableCommentsHighlighting": false
-      ```
+     OR
+
+     ```json
+     "traycer.enableCommentsHighlighting": false
+     ```
 
 # Supported Languages
 
