@@ -1,6 +1,8 @@
 # Traycer: AI-Powered Code Analysis in Real Time
 
-![Basic Usage](https://github.com/traycerai/community/blob/main/readme-assets/basic-usage.gif?raw=true)
+<video src="https://github.com/user-attachments/assets/79811371-9ec0-49ca-8d5a-b2edeb09c65e" controls autoplay loop muted style="max-width: 100%; border: 1px solid black;">
+  Unable to load video.
+</video>
 
 # What's Traycer?
 
@@ -11,14 +13,20 @@ Traycer is an advanced code analysis tool for Visual Studio Code, enhancing soft
 - [Features](#features)
   - [Triggering Analysis](#triggering-analysis-manual-vs-automated)
     - [Switching Between Manual and Automated Analysis](#switching-between-manual-and-automated-analysis)
+    - [Manually Triggered Analysis](#manually-triggered-analysis)
     - [Checking Analysis Status](#checking-analysis-status)
-  - [Comments](#comments)
-    - [Apply Suggestions](#apply-suggestions)
-    - [Show Difference](#show-difference)
-    - [Collapse and Expand](#collapse-and-expand-comments)
-    - [Delete Comments](#delete-comments)
-  - [Reply to Thread](#reply-to-thread)
+  - [Comments & Replies](#comments--replies)
+    - [(A) Navigator](#a-navigator)
+    - [(B) Traycer Comment](#b-traycer-comment)
+- [Preferences](#preferences)
+  - [Modifying Settings](#modifying-settings)
+    - [Via Extension Settings Page](#via-extension-settings-page)
+    - [Via Command Palette](#via-command-palette)
+    - [Via Side Panel Preferences](#via-side-panel-preferences)
+  - [Execution Mode](#execution-mode)
+  - [Comment Indicator](#comment-indicator)
   - [Comments Highlighting](#comments-highlighting)
+  - [Output Level](#output-level)
 - [Supported Languages](#supported-languages)
 - [Feedback Forum](#feedback-forum)
 
@@ -28,11 +36,10 @@ Traycer is an advanced code analysis tool for Visual Studio Code, enhancing soft
 
 Traycer provides flexibility in how you trigger code analysis:
 
-1. **Automatic Analysis**
-   - **Real-Time Monitoring:** Traycer automatically tracks your changes and performs analysis in real-time as you write and modify your code.
-   - **Event-Based Analysis:** Analysis can be triggered by specific events, such as saving a file. You can turn this feature on or off in the settings.
+1. **Automatic Analysis** (default)
+   Traycer continuously tracks your activities and performs analysis in real-time. Analysis is triggered automatically by events such as saving your work.
 2. **Manually Triggered Analysis**
-   - **Initiating Analysis:** Users can manually start the analysis by right-clicking and selecting "Analyze File" or "Analyze Changes."
+   This allows users to initiate the analysis at their convenience through various methods, providing flexibility and control.
    - **Analyze File:** This option comprehensively reviews the entire file, regardless of recent changes. It checks the code for consistency, errors, and adherence to coding standards.
    - **Analyze Changes:** This option focuses solely on recently modified functions. It's ideal for quickly verifying modifications without analyzing unchanged parts of the file.
 
@@ -52,41 +59,26 @@ Configure your preferences to switch between manual and automated analysis modes
    - Go to the Traycer extension settings page in VS Code.
    - Change the "Traycer: Execution Mode" setting to "Manual" or "Auto".
      <br/><br/>
+
      <video src="https://github.com/traycerai/community/assets/76090263/262b6321-50d7-4f3c-8348-dbaa262bd816" controls autoplay loop muted style="max-width: 100%; border: 1px solid black;">
-     Unable to load video.
+      Unable to load video.
      </video>
 
-3. **Change the Settings of VS Code Workspace (.vscode/settings.json):**
+### Manually Triggered Analysis
 
-   - Add the following line to your workspace settings file:
+This allows users to have full control over when the analysis runs. Users can trigger the analysis process manually, making it useful for reviewing and refining code at specific points in the development workflow.
 
-     ```json
-     "traycer.executionMode": "Manual"
-     ```
+#### Different ways to trigger Analysis manually
 
-     OR
+1. **Editor Toolbar**: Click the Traycer icon on the top editor toolbar to trigger analysis on the current file.
 
-     ```json
-     "traycer.executionMode": "Auto"
-     ```
+![Editor Toolbar](https://github.com/user-attachments/assets/6ed8f703-1a36-4d8d-8153-96c8e6f1c93a)
 
-#### Manually Triggered Analysis
+2. **Right-click Menu**: Right-click anywhere in the code file and select Traycer > `Analyze File` or `Analyze Changes`.
+3. **Command Palette**: Run `Traycer: Analyze File` or `Traycer: Analyze Changes` from the command palette by using `Ctrl + Shift + P` or `Cmd + Shift + P`.
 
-This allows users to have full control over when the analysis runs. Users can trigger the analysis process manually by clicking the "Analyze" button in the Traycer right-click menu. This method is useful when you want to review and refine code at specific points in your development workflow.
+_**Note**: Only available for [supported languages](#supported-languages)._
 
-**Steps to Trigger Manual Analysis**
-
-1. Open your code file in Visual Studio Code.
-
-2. Right-click in the code editor.
-
-3. Select `Traycer` from the context menu.
-
-4. Choose `Analyze File` OR `Analyze Changes` from the sub-menu.
-
-<video src="https://github.com/traycerai/community/assets/76090263/a479e3de-0b95-4763-bfab-de351b1a8449" controls autoplay loop muted style="max-width: 100%; border: 1px solid black;">
-  Unable to load video.
-</video>
 
 ### Checking Analysis Status
 
@@ -96,169 +88,91 @@ To check the status of your analysis, **hover** over the Traycer icon. It will d
   Unable to load video.
 </video>
 
-## Comments
+## Comments & Replies
 
-Traycer adds comments to your code, suggesting improvements and highlighting potential issues. These comments provide actionable insights to help you refine your code, maintain high standards, and address problems early in the development process.
+Traycer adds comments to your code, suggesting improvements and highlighting potential issues such as bugs, performance, security, and clarity. These comments provide actionable insights to help you refine your code, maintain high standards, and address problems early in the development process. Additionally, you can reply to comments to engage in a conversation with Traycer, allowing you to discuss and resolve issues directly within the context of each comment.
 
-#### Navigating the Comment
+![Comments & Replies](https://github.com/user-attachments/assets/b27f2de5-14f2-4561-9724-08c1ab5b772f)
 
-To navigate and manage comments in VS Code, follow these steps:
 
-1. Press `Cmd + J` OR `Ctrl + J` to open the VS Code panel for comments. This panel displays all the comments in the current context.
+### (A) Navigator
 
-2. In the comments panel, you can select any comment to interact with.
+To navigate and manage comments in Traycer, follow these steps:
 
-3. Use the following tools to manage comments:
-   - **Apply Suggestion**: Implement the suggested changes directly.
-   - **Show Diff**: View the differences between the current and previous versions of the code.
-   - **Like**: Indicate approval or agreement with the comment.
-   - **Dislike**: Indicate disapproval or disagreement with the comment.
-   - **Delete**: Remove the comment from the panel.
-   - **Collapse**: Minimize the comment for better focus on other parts of the code.
+1. Open the side panel by clicking on the Traycer icon in the activity bar.
+2. Browse through the list of comments categorized by labels such as `bugs`, `performance`, `security`, and `clarity`.
+3. Use the **Wand icon** (🪄) next to a comment to directly apply the suggested fix, if the icon is present. Some comments may not have a suggestion.
+4. Use the search box to find comments by text, filename, or file path.
 
-<video src="https://github.com/traycerai/community/assets/76090263/71eaaf7b-f80b-4e3f-ad8d-1c82df395569" controls autoplay loop muted style="max-width: 100%; border: 1px solid black;">
-  Unable to load video.
-</video>
+### (B) Traycer Comment
 
-### Apply Suggestions
+The Comment Detailed View in Traycer provides an in-depth look at each comment, offering context and actionable insights to help improve your code. Here are some key features:
 
-Using the Traycer extension, you can manage suggestions efficiently. Select the **Apply Suggestion** button provided by the Traycer extension to implement the suggested change directly into your code.
-Follow these steps to accept or decline suggestions:
+1. **Code Snippet Display with Diff:** The comment includes a relevant code snippet showing the differences between your current code and the suggested changes from Traycer AI. This helps you understand the exact context of the comment and the proposed improvements.
 
-- **Accept Suggestion**
+2. **Reply and Discuss:** You can engage in a conversation with Traycer by replying to comments. This allows you to discuss the issues directly within the context of each comment, making it easier to resolve problems and refine your code.
 
-  - After applying the suggestion, review the change.
-  - Select the **Accept** button to confirm and finalize the change.
-    <br></br>
-    <video src="https://github.com/traycerai/community/assets/76090263/c0f4f735-df90-46c4-ab1b-f577d04875cb" controls autoplay loop muted style="max-width: 100%; border: 1px solid black;">
-    Unable to load video.
-    </video>
+3. **Quick Fix:** The Wand icon allows you to directly apply the suggested fix, streamlining the process of addressing issues. If a comment does not have a suggested fix, the Wand icon will not be present.
 
-- **Decline Suggestion**:
-  - After applying the suggestion, if you decide not to keep the change, select the **Decline** button to revert to the original code.
-    <br></br>
-    <video src="https://github.com/traycerai/community/assets/76090263/6a5d0582-0ca4-4890-be9d-6fb086557d47" controls autoplay loop muted style="max-width: 100%; border: 1px solid black;">
-    Unable to load video.
-    </video>
+4. **Comment Deletion:** The Bin icon allows you to delete the entire comment along with its conversation.
 
-### Show Difference
+5. **Feedback Options:** You can give a thumbs up or thumbs down to provide feedback on the comment. This helps improve the accuracy and usefulness of future comments.
 
-Using the Traycer extension, you can easily compare changes made to your code. Follow these steps to view the differences:
+5. **Actionable Insights:** Each comment suggests improvements or highlights potential issues such as bugs, performance, security, and clarity. The detailed view provides a clear explanation of the issue and how to address it.
 
-- Select the **Show Diff** button provided by the Traycer extension to open a comparison view.
 
-- This view will display the differences between the _original code_ and the _suggested_ changes side-by-side.
+# Preferences
 
-<video src="https://github.com/traycerai/community/assets/76090263/1c686391-a7a0-4093-b9c5-6f3f4b047ebe" controls autoplay loop muted style="max-width: 100%; border: 1px solid black;">
-  Unable to load video.
-</video>
+Customize your Traycer settings to fit your development workflow and preferences.
 
-### Collapse and Expand Comments
+## Modifying Settings
 
-You can collapse or expand comments to manage your workspace efficiently.
+To modify any setting, follow these steps:
 
-#### Follow these steps for collapsing **individual** comment
+### Via Extension Settings Page
 
-- **Expand Comment:** Use the _comment_ icon (<img src="https://github.com/traycerai/community/assets/76090263/9e7a0bc1-df2e-4cb6-8ab4-80c5b6ebb55e" alt="comment icon" width="20" height="16">) on the left of the code line to expand the comment.
+1. Click on the gear icon in the lower-left corner and select "Settings," or use the shortcut `Ctrl + ,` (`Cmd + ,` on Mac).
+2. In the settings search bar, type "Traycer" to filter and find all related settings.
+3. Modify any of the Traycer settings as needed.
 
-- **Collapse Comment:** Use the _chevron up_ icon (<img src="https://github.com/traycerai/community/assets/76090263/17a12214-de96-443b-b3e6-aaf62183499d" alt="chevron up icon" width="16" height="16">) on the top right of the comment box to collapse the comment.
+### Via Command Palette
 
-<video src="https://github.com/traycerai/community/assets/76090263/74e4adc7-4e04-498b-9d01-07234e4e3d8e" controls autoplay loop muted style="max-width: 100%; border: 1px solid black;">
-Unable to load video.
-</video>
+1. Open the command palette by pressing `Ctrl + Shift + P` (`Cmd + Shift + P` on Mac).
+2. Type "Traycer" to view and select various commands related to Traycer settings.
+3. Execute the desired command to modify the settings.
 
-#### To minimize all comments at once
+### Via Side Panel Preferences
 
-1. **Using Command Palette: -**
+1. Open the Traycer side panel by clicking on the icon in the activity bar.
+2. Click on the gear icon at the top.
+3. Modify the settings as needed.
 
-   - Open the Command Palette in VS Code (Ctrl+Shift+P or Cmd+Shift+P on Mac).
-   - Type and select `Traycer: Collapse All File Comments`
+## Execution Mode
 
-2. **Using right-click menu**
-   - Right-click in the code editor.
-   - Select `Traycer` from the context menu.
-   - Choose `Collapse All File Comments`.
-     <br></br>
-     <video src="https://github.com/traycerai/community/assets/76090263/a35839bb-32f2-4929-9743-19b9341f2653" controls autoplay loop muted style="max-width: 100%; border: 1px solid black;">
-     Unable to load video.
-     </video>
+Specifies how Traycer triggers analysis of files.
 
-### Delete Comments
+1. **Auto:** (Default) Traycer continuously tracks your activities and performs analysis in real-time as you write and modify your code. Analysis is triggered automatically by events such as saving your work.
 
-Easily remove comments to maintain a clear and efficient workspace, ensuring that your coding environment remains organized and free of unnecessary clutter.
+2. **Manual:** Users have full control over when the analysis runs. You can trigger the analysis process manually at specific points in your development workflow, either for the entire file or only for recent changes.
 
-#### To delete **individual** comment
+## Comment Indicator
 
-- Use the _trash_ icon (<img src="https://github.com/traycerai/community/assets/76090263/39b5b85e-1a38-4d7e-b6fa-fe4288193aa9" alt="trash icon" width="22" height="18">) on the top right of the comment box to delete the comment.
+Specifies how comments are displayed in the editor. You can choose from the following options:
 
-<video src="https://github.com/traycerai/community/assets/76090263/46fbe6f5-9a9a-4412-8919-4e1db4536d32" controls autoplay loop muted style="max-width: 100%; border: 1px solid black;">
-Unable to load video.
-</video>
+![Comment Indicator](https://github.com/user-attachments/assets/5d2cec44-3516-4ad5-9f5f-f765c0cd9b07)
 
-#### To delete all comments at once
+1. **CodeLens:** Displays comments above the relevant lines of code, providing inline context.
+2. **Hover Tooltips:** Shows comments when you hover over the relevant lines of code.
+3. **Both:**(default) Combines CodeLens and hover tooltips, ensuring comments are always visible while also providing additional context on hover.
 
-1. **Using Command Palette: -**
-
-   - Open the Command Palette in VS Code (Ctrl+Shift+P or Cmd+Shift+P on Mac).
-   - Type and select `Traycer: Delete Comments from All Files` - to delete comments from all files.
-   - Type and select `Traycer: Delete Comments from Current File` - to delete comments from the **active** file.
-
-2. **Using right-click menu**
-   - Open your code file in Visual Studio Code.
-   - Right-click in the code editor.
-   - Select `Traycer` from the context menu.
-   - Choose `Delete All File Comments`.
-     <br></br>
-     <video src="https://github.com/traycerai/community/assets/76090263/a7755eea-1b51-4d1a-a5b1-1156933b6eef" controls autoplay loop muted style="max-width: 100%; border: 1px solid black;">
-     Unable to load video.
-     </video>
-
-## Reply to thread
-
-Use the 'Reply to Thread' feature in Traycer AI to respond to code insights and suggestions directly within the Visual Studio Code environment.
-
-#### Steps for conversation:
-
-- Go to the comment thread.
-- Type your message.
-- Hit the reply button to have a conversation.
-
-https://github.com/traycerai/community/assets/76090263/f1c255bc-ed2b-4544-975d-b317304edc8a
 
 ## Comments Highlighting
 
-The "Comments Highlighting" feature in Traycer allows users to easily identify and distinguish comments within their code, enhancing readability and code review processes.
+Specifies how comments are highlighted in the editor. Highlighting is useful for quickly identifying code lines with comments. You can enable or disable highlighting and customize the color to fit your preferences. The default setting is disabled.
 
-#### Different Ways to Enable/Disable Comments Highlighting
+## Output Level
 
-1. **Using Command Palette: -**
-
-   - Open the Command Palette in VS Code (Ctrl+Shift+P or Cmd+Shift+P on Mac).
-   - Type and select `Traycer: Enable Comments Highlighting` or `Traycer: Disable Comments Highlighting`.
-
-2. **Extension Settings Page:**
-
-   - Go to the Traycer extension settings page in VS Code.
-   - Locate the "Traycer: Enable Comments Highlighting" checkbox in the Traycer settings.
-   - Check the box to enable this feature.
-     <br></br>
-     <video src="https://github.com/traycerai/community/assets/76090263/65454231-0c5d-403e-a3ed-0deb59e59c99" controls autoplay loop muted style="max-width: 100%; border: 1px solid black;">
-     Unable to load video.
-     </video>
-
-3. **Change the Settings of VS Code Workspace (.vscode/settings.json):**
-
-   - Add the following line to your workspace settings file:
-
-     ```json
-     "traycer.enableCommentsHighlighting": true
-     ```
-
-     OR
-
-     ```json
-     "traycer.enableCommentsHighlighting": false
-     ```
+Specifies how much (if any) output will be sent to the Traycer output channel. You can configure the level of detail for the output, ranging from minimal to detailed logs. The default level is set to "info".
 
 # Supported Languages
 
