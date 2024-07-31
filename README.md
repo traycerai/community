@@ -18,6 +18,7 @@ Traycer is an advanced code analysis tool for Visual Studio Code, enhancing soft
   - [Comments & Replies](#comments--replies)
     - [(A) Navigator](#a-navigator)
     - [(B) Traycer Comment](#b-traycer-comment)
+  - [Analysis History](#analysis-history)
 - [Preferences](#preferences)
   - [Modifying Settings](#modifying-settings)
     - [Via Extension Settings Page](#via-extension-settings-page)
@@ -119,6 +120,16 @@ The Comment Detailed View in Traycer provides an in-depth look at each comment, 
 5. **Feedback Options:** You can give a thumbs up or thumbs down to provide feedback on the comment. This helps improve the accuracy and usefulness of future comments.
 
 5. **Actionable Insights:** Each comment suggests improvements or highlights potential issues such as bugs, performance, security, and clarity. The detailed view provides a clear explanation of the issue and how to address it.
+
+## Analysis History
+Keeps a record of all past analyses performed, allowing you to review and track changes over time. Each entry includes key details such as the trigger type, state of completion, duration, and statistical breakdowns of the analysis. You can monitor the number of successfully analyzed code blocks, failed analyses, skipped sections, and other relevant metrics, helping you understand the effectiveness and progress of your code improvements.
+
+To access the analysis history, follow these steps:
+1. Open the Traycer side panel by clicking on the icon in the activity bar.
+2. Click on the history icon at the top.
+3. View the history for each analysis.
+
+![Analysis History](https://github.com/user-attachments/assets/3e4b7952-0a2d-40dd-bcca-e7ae117874a3)
 
 
 # Preferences
