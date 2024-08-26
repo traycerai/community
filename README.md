@@ -4,11 +4,11 @@
   Unable to load video.
 </video>
 
-# What's Traycer?
+## What's Traycer?
 
 Traycer is an advanced code analysis tool for Visual Studio Code, enhancing software quality and developer productivity with live, context-aware insights. Acting like a vigilant senior developer, it analyzes changes in real-time, identifying issues and offering corrections without disrupting your workflow. Traycer ensures comprehensive coverage by examining changes and their implications on related code, addressing potential bugs, and enhancing application robustness. It provides clear, actionable suggestions that can be integrated into your code with a single click.
 
-# Table of Content
+## Table of Content
 
 - [Features](#features)
   - [Triggering Analysis](#triggering-analysis-manual-vs-automated)
@@ -30,8 +30,9 @@ Traycer is an advanced code analysis tool for Visual Studio Code, enhancing soft
   - [Output Level](#output-level)
 - [Supported Languages](#supported-languages)
 - [Feedback Forum](#feedback-forum)
+- [Terms of Service and Privacy Policy](#terms-of-service-and-privacy-policy)
 
-# Features
+## Features
 
 ## Triggering Analysis: Manual vs. Automated
 
@@ -42,6 +43,7 @@ Traycer provides flexibility in how you trigger code analysis:
 2. **Manually Triggered Analysis**
    This allows users to initiate the analysis at their convenience through various methods, providing flexibility and control.
    - **Analyze File:** This option comprehensively reviews the entire file, regardless of recent changes. It checks the code for consistency, errors, and adherence to coding standards.
+   - **Re-Analyze File:** This option behaves similarly to `Analyze File` but is useful for re-evaluating the entire file without evaluating what has already been analyzed in a previous analysis.
    - **Analyze Changes:** This option focuses solely on recently modified functions. It's ideal for quickly verifying modifications without analyzing unchanged parts of the file.
 
 ### Switching Between Manual and Automated Analysis
@@ -74,12 +76,10 @@ This allows users to have full control over when the analysis runs. Users can tr
 1. **Editor Toolbar**: Click the Traycer icon on the top editor toolbar to trigger analysis on the current file.
 
 ![Editor Toolbar](https://github.com/user-attachments/assets/6ed8f703-1a36-4d8d-8153-96c8e6f1c93a)
-
-2. **Right-click Menu**: Right-click anywhere in the code file and select Traycer > `Analyze File` or `Analyze Changes`.
-3. **Command Palette**: Run `Traycer: Analyze File` or `Traycer: Analyze Changes` from the command palette by using `Ctrl + Shift + P` or `Cmd + Shift + P`.
+2. **Right-click Menu**: Right-click anywhere in the code file and select Traycer > `Analyze File`, `Re-Analyze File`, or `Analyze Changes`.
+3. **Command Palette**: Run `Traycer: Analyze File`, `Traycer: Re-Analyze File`, or `Traycer: Analyze Changes` from the command palette by using `Ctrl + Shift + P` or `Cmd + Shift + P`.
 
 _**Note**: Only available for [supported languages](#supported-languages)._
-
 
 ### Checking Analysis Status
 
@@ -94,7 +94,6 @@ To check the status of your analysis, **hover** over the Traycer icon. It will d
 Traycer adds comments to your code, suggesting improvements and highlighting potential issues such as bugs, performance, security, and clarity. These comments provide actionable insights to help you refine your code, maintain high standards, and address problems early in the development process. Additionally, you can reply to comments to engage in a conversation with Traycer, allowing you to discuss and resolve issues directly within the context of each comment.
 
 ![Comments & Replies](https://github.com/user-attachments/assets/b27f2de5-14f2-4561-9724-08c1ab5b772f)
-
 
 ### (A) Navigator
 
@@ -119,46 +118,47 @@ The Comment Detailed View in Traycer provides an in-depth look at each comment, 
 
 5. **Feedback Options:** You can give a thumbs up or thumbs down to provide feedback on the comment. This helps improve the accuracy and usefulness of future comments.
 
-5. **Actionable Insights:** Each comment suggests improvements or highlights potential issues such as bugs, performance, security, and clarity. The detailed view provides a clear explanation of the issue and how to address it.
+6. **Actionable Insights:** Each comment suggests improvements or highlights potential issues such as bugs, performance, security, and clarity. The detailed view provides a clear explanation of the issue and how to address it.
 
 ## Analysis History
+
 Keeps a record of all past analyses performed, allowing you to review and track changes over time. Each entry includes key details such as the trigger type, state of completion, duration, and statistical breakdowns of the analysis. You can monitor the number of successfully analyzed code blocks, failed analyses, skipped sections, and other relevant metrics, helping you understand the effectiveness and progress of your code improvements.
 
 To access the analysis history, follow these steps:
+
 1. Open the Traycer side panel by clicking on the icon in the activity bar.
 2. Click on the history icon at the top.
 3. View the history for each analysis.
 
 ![Analysis History](https://github.com/user-attachments/assets/3e4b7952-0a2d-40dd-bcca-e7ae117874a3)
 
-
-# Preferences
+## Preferences
 
 Customize your Traycer settings to fit your development workflow and preferences.
 
-## Modifying Settings
+### Modifying Settings
 
 To modify any setting, follow these steps:
 
-### Via Extension Settings Page
+#### Via Extension Settings Page
 
 1. Click on the gear icon in the lower-left corner and select "Settings," or use the shortcut `Ctrl + ,` (`Cmd + ,` on Mac).
 2. In the settings search bar, type "Traycer" to filter and find all related settings.
 3. Modify any of the Traycer settings as needed.
 
-### Via Command Palette
+#### Via Command Palette
 
 1. Open the command palette by pressing `Ctrl + Shift + P` (`Cmd + Shift + P` on Mac).
 2. Type "Traycer" to view and select various commands related to Traycer settings.
 3. Execute the desired command to modify the settings.
 
-### Via Side Panel Preferences
+#### Via Side Panel Preferences
 
 1. Open the Traycer side panel by clicking on the icon in the activity bar.
 2. Click on the gear icon at the top.
 3. Modify the settings as needed.
 
-## Execution Mode
+### Execution Mode
 
 Specifies how Traycer triggers analysis of files.
 
@@ -166,7 +166,7 @@ Specifies how Traycer triggers analysis of files.
 
 2. **Manual:** Users have full control over when the analysis runs. You can trigger the analysis process manually at specific points in your development workflow, either for the entire file or only for recent changes.
 
-## Comment Indicator
+### Comment Indicator
 
 Specifies how comments are displayed in the editor. You can choose from the following options:
 
@@ -176,16 +176,15 @@ Specifies how comments are displayed in the editor. You can choose from the foll
 2. **Hover Tooltips:** Shows comments when you hover over the relevant lines of code.
 3. **Both:**(default) Combines CodeLens and hover tooltips, ensuring comments are always visible while also providing additional context on hover.
 
-
-## Comments Highlighting
+### Comments Highlighting
 
 Specifies how comments are highlighted in the editor. Highlighting is useful for quickly identifying code lines with comments. You can enable or disable highlighting and customize the color to fit your preferences. The default setting is disabled.
 
-## Output Level
+### Output Level
 
 Specifies how much (if any) output will be sent to the Traycer output channel. You can configure the level of detail for the output, ranging from minimal to detailed logs. The default level is set to "info".
 
-# Supported Languages
+## Supported Languages
 
 Currently, Traycer supports the following programming languages:
 
@@ -198,7 +197,7 @@ Currently, Traycer supports the following programming languages:
 - Rust
 - PHP
 
-# Feedback Forum
+## Feedback Forum
 
 We value your input and encourage you to share your experiences and suggestions with us. Connect with us and the community in the following ways:
 
@@ -207,3 +206,7 @@ We value your input and encourage you to share your experiences and suggestions 
 - **X (Twitter)**: Follow us [@TraycerAI](https://twitter.com/TraycerAI)
 
 - **GitHub**: Encounter a bug or have a feature request? File an issue on our [community repository](https://github.com/traycerai/community/issues).
+
+## Terms of Service and Privacy Policy
+
+By using Traycer, you agree to our [Terms of Service](https://traycer.ai/terms-of-service) and [Privacy Policy](https://traycer.ai/privacy-policy).
