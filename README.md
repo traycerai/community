@@ -10,6 +10,7 @@ Traycer is an advanced code analysis tool for Visual Studio Code, enhancing soft
 
 ## Table of Content
 
+- [Important Links](#important-links)
 - [Features](#features)
   - [Triggering Analysis](#triggering-analysis-manual-vs-automated)
     - [Switching Between Manual and Automated Analysis](#switching-between-manual-and-automated-analysis)
@@ -31,6 +32,12 @@ Traycer is an advanced code analysis tool for Visual Studio Code, enhancing soft
 - [Supported Languages](#supported-languages)
 - [Feedback Forum](#feedback-forum)
 - [Terms of Service and Privacy Policy](#terms-of-service-and-privacy-policy)
+
+## Important Links
+
+- **[Free 14-day trial](https://platform.traycer.ai)**: Get started with Traycer by signing up for a free 14-day trial. No credit card required.
+- **[Plans & Pricing](https://traycer.ai/#pricing)**: Explore our subscription plans and pricing options to choose the best fit for your needs.
+- **[FAQs](https://traycer.ai/#faq)**: Find answers to common questions about Traycer, its features, and usage.
 
 ## Features
 
@@ -75,8 +82,10 @@ This allows users to have full control over when the analysis runs. Users can tr
 
 1. **Editor Toolbar**: Click the Traycer icon on the top editor toolbar to trigger analysis on the current file.
 
-![Editor Toolbar](https://github.com/user-attachments/assets/6ed8f703-1a36-4d8d-8153-96c8e6f1c93a)
+   ![Editor Toolbar](https://github.com/user-attachments/assets/6ed8f703-1a36-4d8d-8153-96c8e6f1c93a)
+
 2. **Right-click Menu**: Right-click anywhere in the code file and select Traycer > `Analyze File`, `Re-Analyze File`, or `Analyze Changes`.
+
 3. **Command Palette**: Run `Traycer: Analyze File`, `Traycer: Re-Analyze File`, or `Traycer: Analyze Changes` from the command palette by using `Ctrl + Shift + P` or `Cmd + Shift + P`.
 
 _**Note**: Only available for [supported languages](#supported-languages)._
@@ -174,7 +183,7 @@ Specifies how comments are displayed in the editor. You can choose from the foll
 
 1. **CodeLens:** Displays comments above the relevant lines of code, providing inline context.
 2. **Hover Tooltips:** Shows comments when you hover over the relevant lines of code.
-3. **Both:**(default) Combines CodeLens and hover tooltips, ensuring comments are always visible while also providing additional context on hover.
+3. **Both (default):** Combines CodeLens and hover tooltips, ensuring comments are always visible while also providing additional context on hover.
 
 ### Comments Highlighting
 
