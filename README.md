@@ -19,6 +19,9 @@ Traycer is an advanced code analysis tool for Visual Studio Code, enhancing soft
   - [Comments & Replies](#comments--replies)
     - [(A) Navigator](#a-navigator)
     - [(B) Traycer Comment](#b-traycer-comment)
+  - [Learnings](#learnings)
+    - [How It Works](#how-it-works)
+    - [Managing Learnings](#managing-learnings)
   - [Analysis History](#analysis-history)
 - [Preferences](#preferences)
   - [Modifying Settings](#modifying-settings)
@@ -128,6 +131,30 @@ The Comment Detailed View in Traycer provides an in-depth look at each comment, 
 5. **Feedback Options:** You can give a thumbs up or thumbs down to provide feedback on the comment. This helps improve the accuracy and usefulness of future comments.
 
 6. **Actionable Insights:** Each comment suggests improvements or highlights potential issues such as bugs, performance, security, and clarity. The detailed view provides a clear explanation of the issue and how to address it.
+
+## Learnings
+
+Learnings enable Traycer to capture user preferences and code-relevant insights from your interactions. When you reply to comments, Traycer analyzes your responses to identify preferences or learnings, saving them to improve future analyses and recommendations.
+
+### How It Works
+
+- **Automatic Detection**: Traycer scans your replies for indications of coding style preferences, tool configurations, or best practices you follow.
+- **Personalized Experience**: The saved learnings enable Traycer to tailor its feedback and suggestions to align with your specific needs and preferences.
+- **Continuous Improvement**: Ongoing interactions help Traycer better understand your coding habits and requirements.
+
+### Managing Learnings
+
+- **Accessing Learnings**: Click on the Learnings icon in the menu to view your saved learnings.
+
+  ![Access Learnings](https://github.com/user-attachments/assets/7912f3e5-a4f6-4bfb-9ad5-b3fd5916367f)
+
+  See the list of all the learnings you've accumulated:
+
+  ![Learnings List](https://github.com/user-attachments/assets/465159dc-8b42-4186-91cf-17a9d9296835)
+
+- **Deleting Learnings**: Click the Bin icon next to the learning you wish to delete.
+- **Adding Learnings Manually**: You can manually add new learnings by clicking the Plus icon. Specify preferences or insights directly without waiting for Traycer to capture them in your replies.
+- **Privacy Control**: Your privacy is important. Traycer provides a setting in the [Platform](https://platform.traycer.ai/settings) where you can opt out of the Learnings feature anytime. Opting out will delete all existing learnings. Note that the learning feature is on by default.
 
 ## Analysis History
 
