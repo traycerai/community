@@ -32,7 +32,6 @@ Traycer is an advanced code analysis tool for Visual Studio Code, enhancing soft
   - [Comment Indicator](#comment-indicator)
   - [Comments Highlighting](#comments-highlighting)
   - [Output Level](#output-level)
-- [Supported Languages](#supported-languages)
 - [Feedback Forum](#feedback-forum)
 - [Terms of Service and Privacy Policy](#terms-of-service-and-privacy-policy)
 
@@ -54,7 +53,8 @@ Traycer provides flexibility in how you trigger code analysis:
    This allows users to initiate the analysis at their convenience through various methods, providing flexibility and control.
    - **Analyze File:** This option comprehensively reviews the entire file, regardless of recent changes. It checks the code for consistency, errors, and adherence to coding standards.
    - **Re-Analyze File:** This option behaves similarly to `Analyze File` but is useful for re-evaluating the entire file without evaluating what has already been analyzed in a previous analysis.
-   - **Analyze Changes:** This option focuses solely on recently modified functions. It's ideal for quickly verifying modifications without analyzing unchanged parts of the file.
+   - **Analyze Changes in File:** This option focuses solely on recently modified functions in the currently open file. It's ideal for quickly verifying modifications without analyzing unchanged parts of the file.
+   - **Analyze Changes in Workspace:** This option reviews all modified files in the workspace, providing a comprehensive analysis of recent changes across multiple files.
 
 ### Switching Between Manual and Automated Analysis
 
@@ -87,11 +87,9 @@ This allows users to have full control over when the analysis runs. Users can tr
 
    ![Editor Toolbar](https://github.com/user-attachments/assets/6ed8f703-1a36-4d8d-8153-96c8e6f1c93a)
 
-2. **Right-click Menu**: Right-click anywhere in the code file and select Traycer > `Analyze File`, `Re-Analyze File`, or `Analyze Changes`.
+2. **Right-click Menu**: Right-click anywhere in the code file and select Traycer > `Analyze File`, `Re-Analyze File`, `Analyze Changes in File`, or `Analyze Changes in Workspace`.
 
-3. **Command Palette**: Run `Traycer: Analyze File`, `Traycer: Re-Analyze File`, or `Traycer: Analyze Changes` from the command palette by using `Ctrl + Shift + P` or `Cmd + Shift + P`.
-
-_**Note**: Only available for [supported languages](#supported-languages)._
+3. **Command Palette**: Run `Traycer: Analyze File`, `Traycer: Re-Analyze File`, `Traycer: Analyze Changes in File`, or `Traycer: Analyze Changes in Workspace` from the command palette by using `Ctrl + Shift + P` or `Cmd + Shift + P`.
 
 ### Checking Analysis Status
 
@@ -219,19 +217,6 @@ Specifies how comments are highlighted in the editor. Highlighting is useful for
 ### Output Level
 
 Specifies how much (if any) output will be sent to the Traycer output channel. You can configure the level of detail for the output, ranging from minimal to detailed logs. The default level is set to "info".
-
-## Supported Languages
-
-Currently, Traycer supports the following programming languages:
-
-- Python
-- TypeScript
-- JavaScript
-- Golang
-- TypeScript React
-- JavaScript React
-- Rust
-- PHP
 
 ## Feedback Forum
 
