@@ -33,6 +33,7 @@ Traycer is an AI-powered coding assistant that transforms how you handle coding 
   - [Execution Mode](#execution-mode)
   - [Comment Indicator](#comment-indicator)
   - [Comments Highlighting](#comments-highlighting)
+  - [Index Refresh on Startup](#index-refresh-on-startup)
   - [Output Level](#output-level)
 - [Feedback Forum](#feedback-forum)
 - [Terms of Service and Privacy Policy](#terms-of-service-and-privacy-policy)
@@ -266,6 +267,14 @@ Specifies how comments are displayed in the editor. You can choose from the foll
 #### Comments Highlighting
 
 Specifies how comments are highlighted in the editor. Highlighting is useful for quickly identifying code lines with comments. You can enable or disable highlighting and customize the color to fit your preferences. The default setting is disabled.
+
+#### Index Refresh on Startup
+
+Specifies whether Traycer should refresh its code index when VS Code starts. The code index helps Traycer understand your codebase structure and dependencies for more accurate analysis.
+
+1. **Enabled (default):** Traycer will rebuild its code index each time VS Code starts, ensuring the most up-to-date understanding of your codebase.
+
+2. **Disabled:** Traycer will use the existing code index from the previous session, which may be faster but could miss recent changes made outside VS Code.
 
 #### Output Level
 
