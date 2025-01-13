@@ -30,7 +30,7 @@ Traycer is an AI-powered coding assistant that transforms how you handle coding 
     - [Via Extension Settings Page](#via-extension-settings-page)
     - [Via Command Palette](#via-command-palette)
     - [Via Side Panel Preferences](#via-side-panel-preferences)
-  - [Execution Mode](#execution-mode)
+  - [Auto Analysis](#auto-analysis)
   - [Comment Indicator](#comment-indicator)
   - [Comments Highlighting](#comments-highlighting)
   - [Output Level](#output-level)
@@ -100,10 +100,10 @@ The Review feature allows you to analyze your code for potential issues, enhance
 
 Traycer provides flexibility in how you trigger code analysis:
 
-1. **Automatic Analysis** (default)
-   Traycer continuously tracks your activities and performs analysis in real-time. Analysis is triggered automatically by events such as saving your work.
+1. **Automatic Analysis** (Pro users only)
+   When enabled, Traycer continuously tracks your activities and performs analysis in real-time. Analysis is triggered automatically by events such as saving your work.
 2. **Manually Triggered Analysis**
-   This allows users to initiate the analysis at their convenience through various methods, providing flexibility and control.
+   Available to all users, this allows users to initiate the analysis at your convenience through various methods, providing flexibility and control.
    - **Analyze File:** This option comprehensively reviews the entire file, regardless of recent changes. It checks the code for consistency, errors, and adherence to coding standards.
    - **Re-Analyze File:** This option behaves similarly to `Analyze File` but is useful for re-evaluating the entire file without evaluating what has already been analyzed in a previous analysis.
    - **Analyze Changes in File:** This option focuses solely on recently modified functions in the currently open file. It's ideal for quickly verifying modifications without analyzing unchanged parts of the file.
@@ -123,7 +123,7 @@ Configure your preferences to switch between manual and automated analysis modes
 2. **Extension Settings Page:**
 
    - Go to the Traycer extension settings page in VS Code.
-   - Change the "Traycer: Execution Mode" setting to "Manual" or "Auto".
+   - Enable or disable the "Traycer: Enable Auto Analysis" setting.
      <br/><br/>
 
      <video src="https://github.com/traycerai/community/assets/76090263/262b6321-50d7-4f3c-8348-dbaa262bd816" controls autoplay loop muted style="max-width: 100%; border: 1px solid black;">
@@ -245,13 +245,13 @@ To modify any setting, follow these steps:
 2. Click on the gear icon at the top.
 3. Modify the settings as needed.
 
-#### Execution Mode
+#### Auto Analysis
 
-Specifies how Traycer triggers analysis of files.
+Controls whether Traycer automatically analyzes your code as you work.
 
-1. **Auto:** (Default) Traycer continuously tracks your activities and performs analysis in real-time as you write and modify your code. Analysis is triggered automatically by events such as saving your work.
+1. **Enabled:** (Pro users only) Traycer continuously tracks your activities and performs analysis in real-time as you write and modify your code. Analysis is triggered automatically by events such as saving your work.
 
-2. **Manual:** Users have full control over when the analysis runs. You can trigger the analysis process manually at specific points in your development workflow, either for the entire file or only for recent changes.
+2. **Disabled:** Users have full control over when the analysis runs. You can trigger the analysis process manually at specific points in your development workflow, either for the entire file or only for recent changes.
 
 #### Comment Indicator
 
