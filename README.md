@@ -13,6 +13,7 @@ Traycer is an AI-powered coding assistant that transforms how you handle coding 
     - [Plan Specification](#plan-specification)
     - [Code Changes](#code-changes)
     - [Task History](#task-history)
+  - [Ticket Assist](#ticket-assist)
   - [Review](#review)
     - [Triggering Analysis](#triggering-analysis-manual-vs-automated)
     - [Switching Between Manual and Automated Analysis](#switching-between-manual-and-automated-analysis)
@@ -87,6 +88,12 @@ This file-specific chat enhances collaboration and ensures the proposed changes 
 Traycer maintains a log of your completed and ongoing tasks in the Task History panel. Each entry displays the task description and its current status, such as `"Planning"`, `"Plan Generated"` etc. You can revisit any task to view its details or pick up where you left off, ensuring a seamless workflow and easy access to past and ongoing tasks.
 
 ![Task-history](https://github.com/user-attachments/assets/9e2f3872-eccb-4fb6-985c-d5c93506e9d8)
+
+### Ticket Assist
+
+Traycer’s Ticket Assist automates your ticketing workflow. It connects to your GitHub repositories and automatically creates action plans for your GitHub issues that you can then transfer to your IDE.
+
+See the [Traycer AI GitHub App page](https://github.com/apps/traycerai) for more details.
 
 ### Review
 
