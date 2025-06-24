@@ -21,7 +21,6 @@ Traycer is an AI-powered coding assistant that transforms how you handle coding 
     - [Checking Analysis Status](#checking-analysis-status)
     - [Comments & Replies](#comments--replies)
       - [(A) Navigator](#a-navigator)
-      - [(B) Traycer Comment](#b-traycer-comment)
     - [Learnings](#learnings)
       - [How It Works](#how-it-works)
       - [Managing Learnings](#managing-learnings)
@@ -173,22 +172,6 @@ To navigate and manage comments in Traycer, follow these steps:
 2. Browse through the list of comments categorized by labels such as `bugs`, `performance`, `security`, and `clarity`.
 3. Use the **Wand icon** (🪄) next to a comment to directly apply the suggested fix, if the icon is present. Some comments may not have a suggestion.
 4. Use the search box to find comments by text, filename, or file path.
-
-#### (B) Traycer Comment
-
-The Comment Detailed View in Traycer provides an in-depth look at each comment, offering context and actionable insights to help improve your code. Here are some key features:
-
-1. **Code Snippet Display with Diff:** The comment includes a relevant code snippet showing the differences between your current code and the suggested changes from Traycer AI. This helps you understand the exact context of the comment and the proposed improvements.
-
-2. **Reply and Discuss:** You can engage in a conversation with Traycer by replying to comments. This allows you to discuss the issues directly within the context of each comment, making it easier to resolve problems and refine your code.
-
-3. **Quick Fix:** The Wand icon allows you to directly apply the suggested fix, streamlining the process of addressing issues. If a comment does not have a suggested fix, the Wand icon will not be present.
-
-4. **Comment Deletion:** The Bin icon allows you to delete the entire comment along with its conversation.
-
-5. **Feedback Options:** You can give a thumbs up or thumbs down to provide feedback on the comment. This helps improve the accuracy and usefulness of future comments.
-
-6. **Actionable Insights:** Each comment suggests improvements or highlights potential issues such as bugs, performance, security, and clarity. The detailed view provides a clear explanation of the issue and how to address it.
 
 #### Learnings
 
