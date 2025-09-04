@@ -5,7 +5,7 @@ Traycer transforms your ideas into clear, step-by-step plans that AI coding tool
 - ✨ Detailed step by step implementation plans
 - ✅ Perfect for large scale code refactoring and feature roll
 - 🛠️ Seamless IDE integration (Copilot, Cursor, Windsurf, etc)
-- 🤖 Powered by cutting-edge AI models like Sonnet 4, o3, GPT 4.1 and more
+- 🤖 Powered by cutting-edge AI models like Sonnet 4, o3, GPT 5, GPT 4.1 and more
 - 🎁 Free to use forever
 - 🚀 14 day Pro trial, no credit card needed
 
@@ -61,8 +61,7 @@ Review scans the codebase, identifies bugs, and suggests improvements to securit
 - **Automatic Analysis** (_Pro users only_): When enabled, Traycer continuously tracks your activities and performs analysis in real-time. Analysis is triggered automatically by events such as saving your work.
 
 - **Manually Triggered Analysis**: Available to all users, this allows users to initiate the analysis at your convenience through various methods, providing flexibility and control.
-
-  - **Analyze Changes In File**:  This option focuses solely on recently modified functions in the currently open file. It's ideal for quickly verifying modifications without analyzing unchanged parts of the file.
+  - **Analyze Changes In File**: This option focuses solely on recently modified functions in the currently open file. It's ideal for quickly verifying modifications without analyzing unchanged parts of the file.
   - **Analyze Changes In Workspace**: This option reviews all modified files in the workspace, providing a comprehensive analysis of recent changes across multiple files.
   - **Analyze File**: This option comprehensively reviews the entire file, regardless of recent changes. It checks the code for consistency, errors, and adherence to coding standards.
 
@@ -73,12 +72,10 @@ Configure your preferences to switch between manual and automated analysis modes
 #### Different ways to switch between Manual and Automated Analysis
 
 1. **Using Command Palette: -**
-
    - Open the Command Palette in VS Code (`Ctrl+Shift+P` OR `Cmd+Shift+P` on Mac).
    - Type and select `Traycer: Enable Auto Analysis` OR `Traycer: Disable Auto Analysis`.
 
 2. **Extension Settings Page:**
-
    - Go to the Traycer extension settings page in VS Code.
    - Enable or disable the "Traycer: Enable Auto Analysis" setting.
 
