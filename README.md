@@ -7,7 +7,7 @@ Traycer transforms your ideas into clear, step-by-step plans that AI coding tool
 - 🛠️ Seamless IDE integration (Copilot, Cursor, Windsurf, etc)
 - 🤖 Powered by cutting-edge AI models like Sonnet 4, o3, GPT 5, GPT 4.1 and more
 - 🎁 Free to use forever
-- 🚀 14 day Pro trial, no credit card needed
+- 🚀 7 day Pro trial, no credit card needed
 
 <br />
 
@@ -17,7 +17,7 @@ Unable to load video.
 
 ## Important Links
 
-- **[Free 14-day trial](https://platform.traycer.ai)**: Get started with Traycer by signing up for a free 14-day trial. No credit card required.
+- **[Free 7-day trial](https://platform.traycer.ai)**: Get started with Traycer by signing up for a free 7-day trial. No credit card required.
 - **[Plans & Pricing](https://traycer.ai/#pricing)**: Explore our subscription plans and pricing options to choose the best fit for your needs.
 - **[FAQs](https://traycer.ai/#faq)**: Find answers to common questions about Traycer, its features, and usage.
 
