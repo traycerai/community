@@ -15,7 +15,7 @@ Traycer transforms your ideas into clear, step-by-step plans that AI coding tool
 - ✨ Detailed step by step implementation plans
 - ✅ Perfect for large scale code refactoring and feature roll
 - 🛠️ Seamless IDE integration (Copilot, Cursor, Windsurf, etc)
-- 🤖 Powered by cutting-edge AI models like Sonnet 4, o3, GPT 5, GPT 4.1 and more
+- 🤖 Powered by cutting-edge AI models like Sonnet 4.5, o3, GPT 5, GPT 4.1 and more
 - 🎁 Free to use forever
 - 🚀 7 day Pro trial, no credit card needed
 
