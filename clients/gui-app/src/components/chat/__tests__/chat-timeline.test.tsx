@@ -304,6 +304,19 @@ function renderedSince(
     .filter((id) => (renderCounts.get(id) ?? 0) !== (before.get(id) ?? 0));
 }
 
+/** Message ids that rendered since `before` and are not in `allowed`. The
+ *  allowed rows may render or not: the compiled row keeps its `ChatMessage`
+ *  element when only the highlight moves, so a highlighted row commits its
+ *  ring without rendering the message again. What is pinned is that no OTHER
+ *  row renders. */
+function renderedOutside(
+  messages: ReadonlyArray<ChatMessageModel>,
+  before: Map<string, number>,
+  allowed: ReadonlyArray<string>,
+): ReadonlyArray<string> {
+  return renderedSince(messages, before).filter((id) => !allowed.includes(id));
+}
+
 async function flushFrame(): Promise<void> {
   await advanceLegendListFrames(1);
 }
@@ -626,27 +639,29 @@ describe("ChatTimeline", () => {
 
     const baseline = snapshotRenderCounts(messages);
 
-    // Move the highlight onto message-3: only that row should render.
+    // Move the highlight onto message-3: no other row may render.
     rerenderMessages(messages, "message-3", undefined);
     await flushFrame();
-    expect(renderedSince(messages, baseline)).toEqual(["message-3"]);
+    expect(renderedOutside(messages, baseline, ["message-3"])).toEqual([]);
 
     const afterFirstMove = snapshotRenderCounts(messages);
 
-    // Move the highlight from message-3 to message-5: exactly the old and
-    // new highlighted rows should render - not the other 6 mounted rows.
+    // Move the highlight from message-3 to message-5: at most the old and
+    // new highlighted rows render - not the other 6 mounted rows.
     rerenderMessages(messages, "message-5", undefined);
     await flushFrame();
-    expect(new Set(renderedSince(messages, afterFirstMove))).toEqual(
-      new Set(["message-3", "message-5"]),
-    );
+    expect(
+      renderedOutside(messages, afterFirstMove, ["message-3", "message-5"]),
+    ).toEqual([]);
 
     const afterSecondMove = snapshotRenderCounts(messages);
 
-    // Clear the highlight: only the previously highlighted row should render.
+    // Clear the highlight: no row but the previously highlighted one renders.
     rerenderMessages(messages, null, undefined);
     await flushFrame();
-    expect(renderedSince(messages, afterSecondMove)).toEqual(["message-5"]);
+    expect(renderedOutside(messages, afterSecondMove, ["message-5"])).toEqual(
+      [],
+    );
   });
 
   const NAVIGATION_HIGHLIGHT_RING_CLASS = CHAT_NAVIGATION_HIGHLIGHT_CLASSNAME;
@@ -1061,9 +1076,7 @@ describe("ChatTimeline", () => {
 
       const expected =
         previousHighlight === null ? [nextId] : [previousHighlight, nextId];
-      expect(new Set(renderedSince(messages, before))).toEqual(
-        new Set(expected),
-      );
+      expect(renderedOutside(messages, before, expected)).toEqual([]);
       expect(highlightedRowIds(container)).toEqual([nextId]);
       previousHighlight = nextId;
     }
@@ -1114,7 +1127,6 @@ describe("ChatTimeline", () => {
     await flushFrame();
 
     const afterFirstMove = callCountByMessageId();
-    expect(afterFirstMove.get("message-3") ?? 0).toBeGreaterThan(0);
     for (const message of messages) {
       if (message.id === "message-3") continue;
       expect(afterFirstMove.get(message.id) ?? 0).toBe(0);
@@ -1125,9 +1137,8 @@ describe("ChatTimeline", () => {
     await flushFrame();
 
     const afterSecondMove = callCountByMessageId();
-    // Old + new highlighted rows re-render; everyone else stays quiet.
-    expect(afterSecondMove.get("message-3") ?? 0).toBeGreaterThan(0);
-    expect(afterSecondMove.get("message-0") ?? 0).toBeGreaterThan(0);
+    // Only the old and new highlighted rows may re-enter; everyone else
+    // stays quiet.
     for (const message of messages) {
       if (message.id === "message-3" || message.id === "message-0") continue;
       expect(afterSecondMove.get(message.id) ?? 0).toBe(0);

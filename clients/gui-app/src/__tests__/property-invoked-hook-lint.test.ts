@@ -8,8 +8,8 @@ import { describe, expect, it } from "vitest";
 /**
  * `handle.store(selector)` - a zustand bound-store hook reached through a
  * property name - is not recognizable as a hook to the React Compiler
- * (`vitest.react-compiler.config.ts`, `@rolldown/plugin-babel` +
- * `reactCompilerPreset()` in the desktop renderer's real build). The
+ * (`reactCompiler()` in `vite/react-compiler.ts`, which the suite and the
+ * desktop renderer's real build both run). The
  * compiler memoizes the call on the receiver and, on a later render with the
  * same receiver, skips it entirely instead of re-invoking the real hook -
  * silently going stale, or shifting the hook order. `use-epic-node-mutations.ts`

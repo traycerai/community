@@ -56,15 +56,14 @@ function resolveVitestEntry(): string {
   return path.resolve(path.dirname(manifestPath), manifest.bin.vitest);
 }
 
-function runVitest(configPath: string, filePath: string | undefined): number {
-  const args = [resolveVitestEntry(), "run", "--config", configPath];
-  if (filePath !== undefined) {
-    args.push(filePath);
-  }
-
-  if (configPath === "vitest.config.ts") {
-    args.push(...testArgs);
-  }
+function runVitest(): number {
+  const args = [
+    resolveVitestEntry(),
+    "run",
+    "--config",
+    "vitest.config.ts",
+    ...testArgs,
+  ];
 
   const result = spawnSync("node", args, { stdio: "inherit" });
   if (result.error !== undefined) {
@@ -77,8 +76,7 @@ function runVitest(configPath: string, filePath: string | undefined): number {
   // kill (137) and a segfault (139) were both reported as 1, with no summary
   // because the child never got to print one. Surface the signal explicitly
   // and return 128+n, the shell convention, so the next occurrence is
-  // self-identifying instead of ambiguous. Do not exit here: a red main
-  // suite used to skip the follow-up config.
+  // self-identifying instead of ambiguous.
   if (result.signal !== null) {
     const signalExit = SIGNAL_EXIT_CODES[result.signal] ?? 1;
     console.error(
@@ -91,39 +89,4 @@ function runVitest(configPath: string, filePath: string | undefined): number {
   return result.status ?? 1;
 }
 
-function readShardValue(args: string[]): string | undefined {
-  const equalsForm = args.find((arg) => arg.startsWith("--shard="));
-  if (equalsForm !== undefined) {
-    return equalsForm.slice("--shard=".length);
-  }
-
-  const flagIndex = args.indexOf("--shard");
-  return flagIndex === -1 ? undefined : args[flagIndex + 1];
-}
-
-const shard = readShardValue(testArgs);
-const runsFirstShard = shard === undefined || shard.split("/", 1)[0] === "1";
-
-function firstFailure(current: number, next: number): number {
-  return current !== 0 ? current : next;
-}
-
-let exitCode = 0;
-exitCode = firstFailure(exitCode, runVitest("vitest.config.ts", undefined));
-if (runsFirstShard) {
-  exitCode = firstFailure(
-    exitCode,
-    runVitest(
-      "vitest.react-compiler.config.ts",
-      "src/components/epic-canvas/comm-graph/__tests__/use-comm-graph-snapshot-cloud-authority.test.tsx",
-    ),
-  );
-  exitCode = firstFailure(
-    exitCode,
-    runVitest(
-      "vitest.react-compiler.config.ts",
-      "src/hooks/terminal/__tests__/use-epic-terminal-durable-create.test.tsx",
-    ),
-  );
-}
-process.exit(exitCode);
+process.exit(runVitest());

@@ -351,8 +351,8 @@ describe("useGraceCountdown", () => {
  * live grace-card freeze belonged to - the compiler memoizes a render-time
  * read of `sampledNowOf()` on inputs the clock's tick never changes, so the
  * leaf re-renders on every tick and returns its FIRST render's value.
- * `relative-time.ts` is in `REACT_COMPILER_REGRESSION_FILES`, so these run
- * compiled; uncompiled, this class is invisible.
+ * The suite compiles every module, so these run compiled; uncompiled, this
+ * class is invisible.
  */
 describe("minute-clock hooks re-render with a NEW value after a live tick (compiled)", () => {
   afterEach(() => {

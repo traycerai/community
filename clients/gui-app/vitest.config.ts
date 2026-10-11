@@ -1,9 +1,9 @@
 import path from "path";
 import os from "node:os";
-import babel from "@rolldown/plugin-babel";
 import tailwindcss from "@tailwindcss/vite";
-import react, { reactCompilerPreset } from "@vitejs/plugin-react";
+import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
+import { reactCompiler } from "./vite/react-compiler";
 
 const availableParallelism =
   typeof os.availableParallelism === "function"
@@ -13,48 +13,21 @@ const MAX_TEST_WORKERS = Math.min(
   2,
   Math.max(1, Math.floor(availableParallelism / 2)),
 );
-// `use-workspace-file-list-subscription` is here for the same reason: its
-// pending flag used to be a render-time read of a module-level registry, which
-// the compiler cached at "no entry yet" forever (the file tree's permanent
-// spinner). Only the compiled hook can regress that way, so only the compiled
-// hook can prove the fix. The `pr.*` shared-subscription trio had the same
-// shape (`registry.get(key)` and `entry.lastEvent` read at render).
-// `auth-brand-splash` / `auth-landing-page` join them after the same failure in
-// its sharpest form: the launch splash derived its phase from a boolean, the
-// compiler memoized that derivation on inputs the animation timer did not
-// touch, and the cached value outlived the timer - a sign-in screen that never
-// went away, on a real device. The suite was green throughout, because it ran
-// the UNCOMPILED hook while production mobile compiles everything. A test that
-// does not run the compiled component cannot see this class of bug at all.
-// `relative-time` / `routing-card` are the desktop repeat of the exact same
-// shape, caught live rather than in review: the routing card's countdown (then
-// `fallback-grace-card`) froze at "in 3m 27s" for a 15s window and never moved
-// until the host switched. The routing card's drain bar reads the same
-// snapshot (`useGraceCountdownState`), so a frozen bar is the same regression
-// with a width instead of a string. `useGraceCountdown` used to discard
-// `useSyncExternalStore`'s return and read the mutable
-// `secondClock.sampledNow()` at render time; the compiler memoized
-// `formatGraceCountdown(deadline, secondClock.sampledNow())` on `deadline`
-// alone, so every tick re-rendered the leaf and got back the FIRST render's
-// string. It now renders from the store's return value instead. The
-// minute-clock hooks in the same file
-// (`useCompactRelativeTime`, `useRelativeTimestamp`, `useSampledNow`,
-// `useResetCountdown`, `useIsFarReset`, `useMessageTime`) share the shape and
-// were invisible for the same reason: the suite ran them uncompiled while the
-// desktop renderer compiles the whole tree, its dev server included (where
-// the freeze was seen).
-// `chat-timeline` (W4 R-B round 3): its rows hook reads a stale-cached
-// mutable WeakMap entry when compiled, dropping `visible` from the inserted
-// memoization scope - only compiled coverage catches it.
-const REACT_COMPILER_REGRESSION_FILES =
-  /[/\\](?:composer-prompt-editor|use-workspace-file-list-subscription|shared-stream-subscription|use-header-tabs|use-pr-(?:list|detail)-subscription|auth-brand-splash|auth-landing-page|use-auth-splash-cover|relative-time|fallback-grace-card|chat-timeline|routing-card)\.(?:ts|tsx)$/;
 
 export default defineConfig({
-  // Run the affected composer boundary through the packaged desktop
-  // renderer's compiler preset. The regression that motivated it was
-  // invisible when tests skipped this pass because the compiler may replace a
-  // React imperative-handle facade during an ordinary editor render. The filter
-  // keeps unrelated GUI tests on their existing fast transform path.
+  // Every module goes through the React Compiler, as in the renderer build
+  // (`reactCompiler()` below is the same pass). A compiled component caches
+  // what it reads at render, so a read of a registry, a clock or a store
+  // without a subscription goes stale in compiled code only. A suite that runs
+  // the source cannot see that class of bug at all, and it has shipped more
+  // than once: the file tree's permanent spinner, a sign-in splash that never
+  // left, a countdown frozen at its first value, a terminal that kept its
+  // colours across a theme change.
+  //
+  // It also changes what a test may rely on. A compiled parent keeps a child
+  // element whose inputs are equal, so `rerender()` does not reach a component
+  // that reads a mock React cannot see: a mocked hook that a test changes
+  // mid-flight has to be reactive (`useSyncExternalStore`), as the real hook is.
   plugins: [
     react(),
     // This config is ALSO what the browser regressions serve their fixtures
@@ -75,13 +48,7 @@ export default defineConfig({
     // jsdom runs are unaffected: vitest does not process CSS by default, so
     // this changes what the dev server serves, not what the suite transforms.
     tailwindcss(),
-    babel({
-      include: REACT_COMPILER_REGRESSION_FILES,
-      presets: [reactCompilerPreset()],
-    }).then((plugin) => ({
-      ...plugin,
-      enforce: "post" as const,
-    })),
+    reactCompiler(),
   ],
   resolve: {
     alias: [

@@ -35,9 +35,9 @@ import {
   pendingReturn,
 } from "./fallback-fixtures";
 
-// `RoutingCard` is in `REACT_COMPILER_REGRESSION_FILES` (vitest.config.ts), so
-// every case here runs the COMPILED component - the mode in which a render-time
-// clock read freezes. The drain-bar pins below are the reason that entry exists.
+// The suite compiles every module (vitest.config.ts), so every case here runs
+// the COMPILED component - the mode in which a render-time clock read freezes.
+// The drain-bar pins below exist for that mode.
 
 const mocks = vi.hoisted(() => ({
   /** Every mutation the card sends: the host method and its variables. */
