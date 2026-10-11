@@ -17,7 +17,10 @@ import {
   chatActivityIndicator,
   type ChatActivityIndicator,
 } from "@/components/epic-canvas/renderers/chat-tile-session-state";
-import { approvalAwaitingJudge } from "@/components/epic-canvas/renderers/chat-approval-visibility";
+import {
+  chatSessionWaitingReason,
+  type ChatWaitingReason,
+} from "@/stores/chats/chat-run-activity";
 
 const CHAT_REGISTRY = getChatSessionRegistry();
 const EPIC_REGISTRY = getOpenEpicRegistry();
@@ -171,30 +174,8 @@ export function chatSessionActivity(
   return chatActivityIndicator(state);
 }
 
-/** What a chat is blocked on the user for: a question to answer, or a gate to approve. */
-export type EpicWaitingReason = "approval" | "reply";
-
-/**
- * The warm session's own gate facts, which stay true while the agent is
- * blocked, including when no prompt notification is lit for it (cleared,
- * superseded, or not yet filed). A pending interview outranks an approval, the
- * order `attentionTone` uses. An approval under an auto-judge is not waiting on
- * the user until the judge escalates it; a plan approval is.
- */
-export function chatSessionWaitingReason(
-  state: ChatSessionState,
-): EpicWaitingReason | null {
-  if (state.pendingInterviews.length > 0) return "reply";
-  if (
-    state.pendingApprovals.some(
-      (approval) => !approvalAwaitingJudge(approval),
-    ) ||
-    state.pendingFileEditApprovals.length > 0
-  ) {
-    return "approval";
-  }
-  return null;
-}
+/** What an epic's live chats are blocked on the user for; the same two reasons a chat has. */
+export type EpicWaitingReason = ChatWaitingReason;
 
 /**
  * Aggregates {@link chatSessionWaitingReason} over the epic's live chats with

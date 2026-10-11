@@ -1,11 +1,13 @@
 import type { ChatRunStatus } from "@traycer/protocol/host/agent/gui/subscribe";
+import { approvalAwaitingJudge } from "@/components/epic-canvas/renderers/chat-approval-visibility";
 import type { ChatSessionState } from "@/stores/chats/chat-session-store";
 
 // Pure readings of a chat's run state: whether a turn is genuinely in progress,
-// and whether what keeps the chat non-idle is the agent or only background
-// work. Shared by the chat surfaces (Stop/Send, spinners, row indicators) and
-// by the chat session registry's release gates, so the two cannot disagree
-// about what counts as the agent working.
+// whether what keeps the chat non-idle is the agent or only background work,
+// and whether the agent is blocked on the user. Shared by the chat surfaces
+// (Stop/Send, spinners, row indicators) and by the chat session registry's
+// release gates, so the two cannot disagree about what counts as the agent
+// working.
 
 /**
  * The composer's turn-status prop shape - a strict subset of
@@ -139,4 +141,32 @@ function hasRunningManagedCommand(
   managedCommands: ChatSessionState["managedCommands"],
 ): boolean {
   return managedCommands.some((command) => command.status.state === "running");
+}
+
+/** What a chat is blocked on the user for: a question to answer, or a gate to approve. */
+export type ChatWaitingReason = "approval" | "reply";
+
+/**
+ * The warm session's own gate facts, which stay true while the agent is
+ * blocked, including when no prompt notification is lit for it (cleared,
+ * superseded, or not yet filed). A pending interview outranks an approval, the
+ * order `attentionTone` uses. An approval under an auto-judge is not waiting on
+ * the user until the judge escalates it; a plan approval is.
+ */
+export function chatSessionWaitingReason(
+  state: Pick<
+    ChatSessionState,
+    "pendingInterviews" | "pendingApprovals" | "pendingFileEditApprovals"
+  >,
+): ChatWaitingReason | null {
+  if (state.pendingInterviews.length > 0) return "reply";
+  if (
+    state.pendingApprovals.some(
+      (approval) => !approvalAwaitingJudge(approval),
+    ) ||
+    state.pendingFileEditApprovals.length > 0
+  ) {
+    return "approval";
+  }
+  return null;
 }

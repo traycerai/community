@@ -14,11 +14,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import type { ManagedCommand } from "@traycer/protocol/host/managed-command/unary-schemas";
 import {
-  chatSessionWaitingReason,
   epicWaitingReasonFromSessions,
   useEpicActivityStatus,
   useEpicWaitingReason,
 } from "@/hooks/epic/use-epic-activity-status";
+import { chatSessionWaitingReason } from "@/stores/chats/chat-run-activity";
 import { __getOpenEpicRegistryForTests } from "@/lib/registries/epic-session-registry";
 import {
   __getChatSessionRegistryForTests,
