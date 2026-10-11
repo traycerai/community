@@ -12,6 +12,7 @@ import type { LegendListRef } from "@legendapp/list/react";
 import { SANDBOX_SCROLL_GESTURE_EVENT } from "@/lib/sandbox/bridge-host";
 import {
   CHAT_TIMELINE_FOLLOW_CORRECTION_MAX_ATTEMPTS,
+  type ChatTimelineFollowLatch,
   isChatTimelineAtStrictBottom,
   isChatTimelineGeometryMeasurable,
   useChatTimelineFollowLatch,
@@ -85,40 +86,64 @@ interface ControllableGeometry {
   clientHeight: number;
 }
 
+/** Reads of the three layout accessors since the last `clearReads()`. */
+interface GeometryReads {
+  readonly scrollTop: number;
+  readonly scrollHeight: number;
+  readonly clientHeight: number;
+}
+
 interface ScrollableNodeShim {
   readonly makeNode: (geometry: ControllableGeometry) => HTMLDivElement;
   readonly setGeometry: (
     node: HTMLDivElement,
     geometry: Partial<ControllableGeometry>,
   ) => void;
+  readonly reads: () => GeometryReads;
+  readonly clearReads: () => void;
 }
 
 function installScrollableNodeShim(): ScrollableNodeShim {
   const geometryByNode = new WeakMap<HTMLDivElement, ControllableGeometry>();
 
-  vi.spyOn(HTMLDivElement.prototype, "scrollTop", "get").mockImplementation(
-    function (this: HTMLDivElement) {
-      return geometryByNode.get(this)?.scrollTop ?? 0;
-    },
-  );
+  const scrollTopReads = vi.spyOn(HTMLDivElement.prototype, "scrollTop", "get");
+  scrollTopReads.mockImplementation(function (this: HTMLDivElement) {
+    return geometryByNode.get(this)?.scrollTop ?? 0;
+  });
   vi.spyOn(HTMLDivElement.prototype, "scrollTop", "set").mockImplementation(
     function (this: HTMLDivElement, value: number) {
       const current = geometryByNode.get(this);
       if (current) current.scrollTop = value;
     },
   );
-  vi.spyOn(HTMLDivElement.prototype, "scrollHeight", "get").mockImplementation(
-    function (this: HTMLDivElement) {
-      return geometryByNode.get(this)?.scrollHeight ?? 0;
-    },
+  const scrollHeightReads = vi.spyOn(
+    HTMLDivElement.prototype,
+    "scrollHeight",
+    "get",
   );
-  vi.spyOn(HTMLDivElement.prototype, "clientHeight", "get").mockImplementation(
-    function (this: HTMLDivElement) {
-      return geometryByNode.get(this)?.clientHeight ?? 0;
-    },
+  scrollHeightReads.mockImplementation(function (this: HTMLDivElement) {
+    return geometryByNode.get(this)?.scrollHeight ?? 0;
+  });
+  const clientHeightReads = vi.spyOn(
+    HTMLDivElement.prototype,
+    "clientHeight",
+    "get",
   );
+  clientHeightReads.mockImplementation(function (this: HTMLDivElement) {
+    return geometryByNode.get(this)?.clientHeight ?? 0;
+  });
 
   return {
+    reads: (): GeometryReads => ({
+      scrollTop: scrollTopReads.mock.calls.length,
+      scrollHeight: scrollHeightReads.mock.calls.length,
+      clientHeight: clientHeightReads.mock.calls.length,
+    }),
+    clearReads: (): void => {
+      scrollTopReads.mockClear();
+      scrollHeightReads.mockClear();
+      clientHeightReads.mockClear();
+    },
     makeNode: (geometry: ControllableGeometry): HTMLDivElement => {
       const node = document.createElement("div");
       geometryByNode.set(node, { ...geometry });
@@ -137,6 +162,11 @@ function installScrollableNodeShim(): ScrollableNodeShim {
 }
 
 let capturedResizeCallbacks: Array<ResizeObserverCallback>;
+/** Every `observe` / `unobserve` the latch made, in order. */
+let observerCalls: Array<{
+  readonly kind: "observe" | "unobserve";
+  readonly target: Element;
+}>;
 
 class ControllableResizeObserver implements ResizeObserver {
   private readonly callback: ResizeObserverCallback;
@@ -145,8 +175,12 @@ class ControllableResizeObserver implements ResizeObserver {
     this.callback = callback;
     capturedResizeCallbacks.push(this.callback);
   }
-  observe(): void {}
-  unobserve(): void {}
+  observe(target: Element): void {
+    observerCalls.push({ kind: "observe", target });
+  }
+  unobserve(target: Element): void {
+    observerCalls.push({ kind: "unobserve", target });
+  }
   disconnect(): void {
     const callbackIndex = capturedResizeCallbacks.indexOf(this.callback);
     if (callbackIndex !== -1) capturedResizeCallbacks.splice(callbackIndex, 1);
@@ -199,6 +233,7 @@ function notImplemented(): never {
 }
 
 const DEFAULT_FOLLOW_LATCH_OPTIONS = {
+  visible: true,
   onFollowIntentChange: undefined,
   onReaderGesture: undefined,
   isCorrectionSuppressed: undefined,
@@ -248,6 +283,7 @@ describe("useChatTimelineFollowLatch", () => {
 
   beforeEach(() => {
     capturedResizeCallbacks = [];
+    observerCalls = [];
     vi.stubGlobal("ResizeObserver", ControllableResizeObserver);
     animationFrameCallbacks = new Map();
     nextAnimationFrameId = 1;
@@ -322,6 +358,7 @@ describe("useChatTimelineFollowLatch", () => {
     });
     const { result } = renderHook(() =>
       useChatTimelineFollowLatch(listRef, true, true, {
+        visible: true,
         onFollowIntentChange,
         onReaderGesture: undefined,
         isCorrectionSuppressed: undefined,
@@ -382,6 +419,7 @@ describe("useChatTimelineFollowLatch", () => {
     });
     const { result } = renderHook(() =>
       useChatTimelineFollowLatch(listRef, true, true, {
+        visible: true,
         onFollowIntentChange,
         onReaderGesture: undefined,
         isCorrectionSuppressed: undefined,
@@ -431,6 +469,7 @@ describe("useChatTimelineFollowLatch", () => {
     });
     const { result } = renderHook(() =>
       useChatTimelineFollowLatch(listRef, true, true, {
+        visible: true,
         onFollowIntentChange,
         onReaderGesture: undefined,
         isCorrectionSuppressed: undefined,
@@ -470,6 +509,7 @@ describe("useChatTimelineFollowLatch", () => {
     const onFollowIntentChange = vi.fn();
     const { result } = renderHook(() =>
       useChatTimelineFollowLatch(listRef, true, true, {
+        visible: true,
         onFollowIntentChange,
         onReaderGesture: undefined,
         isCorrectionSuppressed: undefined,
@@ -511,6 +551,7 @@ describe("useChatTimelineFollowLatch", () => {
     });
     const { result } = renderHook(() =>
       useChatTimelineFollowLatch(listRef, true, true, {
+        visible: true,
         onFollowIntentChange,
         onReaderGesture: undefined,
         isCorrectionSuppressed: undefined,
@@ -556,6 +597,7 @@ describe("useChatTimelineFollowLatch", () => {
     const onReaderGesture = vi.fn();
     const { result } = renderHook(() =>
       useChatTimelineFollowLatch(listRef, true, true, {
+        visible: true,
         onFollowIntentChange,
         onReaderGesture,
         isCorrectionSuppressed: undefined,
@@ -587,6 +629,7 @@ describe("useChatTimelineFollowLatch", () => {
     const onFollowIntentChange = vi.fn();
     const { result } = renderHook(() =>
       useChatTimelineFollowLatch(listRef, true, true, {
+        visible: true,
         onFollowIntentChange,
         onReaderGesture: undefined,
         isCorrectionSuppressed: undefined,
@@ -671,6 +714,7 @@ describe("useChatTimelineFollowLatch", () => {
     const onFollowIntentChange = vi.fn();
     const { result } = renderHook(() =>
       useChatTimelineFollowLatch(listRef, true, true, {
+        visible: true,
         onFollowIntentChange,
         onReaderGesture: undefined,
         isCorrectionSuppressed: undefined,
@@ -726,6 +770,7 @@ describe("useChatTimelineFollowLatch", () => {
     const onFollowIntentChange = vi.fn();
     const { result } = renderHook(() =>
       useChatTimelineFollowLatch(listRef, true, true, {
+        visible: true,
         onFollowIntentChange,
         onReaderGesture: undefined,
         isCorrectionSuppressed: undefined,
@@ -858,6 +903,7 @@ describe("useChatTimelineFollowLatch", () => {
     const onFollowIntentChange = vi.fn();
     const { result } = renderHook(() =>
       useChatTimelineFollowLatch(listRef, true, true, {
+        visible: true,
         onFollowIntentChange,
         onReaderGesture: undefined,
         isCorrectionSuppressed: undefined,
@@ -893,6 +939,7 @@ describe("useChatTimelineFollowLatch", () => {
     const onFollowIntentChange = vi.fn();
     renderHook(() =>
       useChatTimelineFollowLatch(listRef, false, true, {
+        visible: true,
         onFollowIntentChange,
         onReaderGesture: undefined,
         isCorrectionSuppressed: undefined,
@@ -920,6 +967,7 @@ describe("useChatTimelineFollowLatch", () => {
     const onFollowIntentChange = vi.fn();
     const { result } = renderHook(() =>
       useChatTimelineFollowLatch(listRef, false, true, {
+        visible: true,
         onFollowIntentChange,
         onReaderGesture: undefined,
         isCorrectionSuppressed: undefined,
@@ -948,6 +996,7 @@ describe("useChatTimelineFollowLatch", () => {
     const onFollowIntentChange = vi.fn();
     const { result } = renderHook(() =>
       useChatTimelineFollowLatch(listRef, true, true, {
+        visible: true,
         onFollowIntentChange,
         onReaderGesture: undefined,
         isCorrectionSuppressed: undefined,
@@ -980,6 +1029,7 @@ describe("useChatTimelineFollowLatch", () => {
     const onFollowIntentChange = vi.fn();
     const { result } = renderHook(() =>
       useChatTimelineFollowLatch(listRef, false, true, {
+        visible: true,
         onFollowIntentChange,
         onReaderGesture: undefined,
         isCorrectionSuppressed: undefined,
@@ -1011,6 +1061,7 @@ describe("useChatTimelineFollowLatch", () => {
     const onFollowIntentChange = vi.fn();
     renderHook(() =>
       useChatTimelineFollowLatch(listRef, false, true, {
+        visible: true,
         onFollowIntentChange,
         onReaderGesture: undefined,
         isCorrectionSuppressed: undefined,
@@ -1037,6 +1088,7 @@ describe("useChatTimelineFollowLatch", () => {
     const onFollowIntentChange = vi.fn();
     renderHook(() =>
       useChatTimelineFollowLatch(listRef, false, true, {
+        visible: true,
         onFollowIntentChange,
         onReaderGesture: undefined,
         isCorrectionSuppressed: undefined,
@@ -1058,6 +1110,7 @@ describe("useChatTimelineFollowLatch", () => {
     const onFollowIntentChange = vi.fn();
     renderHook(() =>
       useChatTimelineFollowLatch(listRef, true, true, {
+        visible: true,
         onFollowIntentChange,
         onReaderGesture: undefined,
         isCorrectionSuppressed: () => true,
@@ -1416,6 +1469,7 @@ describe("useChatTimelineFollowLatch", () => {
     const onFollowIntentChange = vi.fn();
     const { result } = renderHook(() =>
       useChatTimelineFollowLatch(listRef, true, true, {
+        visible: true,
         onFollowIntentChange,
         onReaderGesture: undefined,
         isCorrectionSuppressed: undefined,
@@ -1451,5 +1505,172 @@ describe("useChatTimelineFollowLatch", () => {
     // Follow releases to the navigation; no corrective snap-back is issued.
     expect(listRef.scrollToEnd).not.toHaveBeenCalled();
     expect(onFollowIntentChange).toHaveBeenLastCalledWith(false);
+  });
+
+  // A hidden surface is not read: each read of the scroll node's geometry
+  // forces a layout of the whole document, and a tab switch hides a timeline
+  // that is still being resized, scrolled and fed.
+  describe("a hidden timeline", () => {
+    const NO_READS: GeometryReads = {
+      scrollTop: 0,
+      scrollHeight: 0,
+      clientHeight: 0,
+    };
+
+    function mountLatch(input: {
+      readonly node: HTMLDivElement;
+      readonly visible: boolean;
+      readonly initialScrollAtEnd: boolean;
+    }) {
+      const listRef = makeFakeListRef(input.node);
+      const onFollowIntentChange = vi.fn<(follow: boolean) => void>();
+      const view = renderHook(
+        ({ visible }) =>
+          useChatTimelineFollowLatch(listRef, input.initialScrollAtEnd, true, {
+            ...DEFAULT_FOLLOW_LATCH_OPTIONS,
+            visible,
+            onFollowIntentChange,
+          }),
+        { initialProps: { visible: input.visible } },
+      );
+      return { listRef, onFollowIntentChange, ...view };
+    }
+
+    /** Every maintain trigger and scroll report the timeline receives. */
+    function driveEveryTrigger(
+      node: HTMLDivElement,
+      latch: ChatTimelineFollowLatch,
+    ): void {
+      latch.followEndIfPermitted();
+      latch.observeLiveGeometry();
+      fireNativeScroll(node);
+      fireResizeObservers();
+    }
+
+    it("reads no geometry on any maintain trigger or scroll report", () => {
+      const node = shim.makeNode({
+        scrollTop: 400,
+        scrollHeight: 1700,
+        clientHeight: 500,
+      });
+      const { listRef, result } = mountLatch({
+        node,
+        visible: false,
+        initialScrollAtEnd: true,
+      });
+      shim.clearReads();
+
+      driveEveryTrigger(node, result.current);
+
+      expect(shim.reads()).toEqual(NO_READS);
+      expect(listRef.scrollToEnd).not.toHaveBeenCalled();
+    });
+
+    it("reads geometry on the same triggers once visible", () => {
+      const node = shim.makeNode({
+        scrollTop: 400,
+        scrollHeight: 1700,
+        clientHeight: 500,
+      });
+      const { listRef, result } = mountLatch({
+        node,
+        visible: true,
+        initialScrollAtEnd: true,
+      });
+      shim.clearReads();
+
+      driveEveryTrigger(node, result.current);
+
+      const reads = shim.reads();
+      expect(reads.scrollTop).toBeGreaterThan(0);
+      expect(reads.scrollHeight).toBeGreaterThan(0);
+      expect(reads.clientHeight).toBeGreaterThan(0);
+      expect(listRef.scrollToEnd).toHaveBeenCalled();
+    });
+
+    it("cancels a correction in flight when it is hidden, so no validation frame reads", () => {
+      const node = shim.makeNode({
+        scrollTop: 400,
+        scrollHeight: 1700,
+        clientHeight: 500,
+      });
+      const { listRef, rerender } = mountLatch({
+        node,
+        visible: true,
+        initialScrollAtEnd: true,
+      });
+      // Mounting reconciles once, away from the bottom while following: that
+      // issues the first scrollToEnd and schedules its validation frame.
+      expect(listRef.scrollToEnd).toHaveBeenCalledTimes(1);
+      expect(animationFrameCallbacks.size).toBeGreaterThan(0);
+      shim.clearReads();
+
+      rerender({ visible: false });
+      for (let frame = 0; frame < 6; frame += 1) flushAnimationFrame();
+
+      expect(shim.reads()).toEqual(NO_READS);
+      expect(listRef.scrollToEnd).toHaveBeenCalledTimes(1);
+    });
+
+    it("reconciles growth that happened while hidden from one read, after the reveal", () => {
+      const node = shim.makeNode({
+        scrollTop: 1000,
+        scrollHeight: 1500,
+        clientHeight: 500,
+      });
+      const { listRef, rerender } = mountLatch({
+        node,
+        visible: true,
+        initialScrollAtEnd: true,
+      });
+      rerender({ visible: false });
+      // The content grows while nothing is reading; no scrollToEnd follows.
+      shim.setGeometry(node, { scrollHeight: 1700 });
+      fireResizeObservers();
+      expect(listRef.scrollToEnd).not.toHaveBeenCalled();
+      observerCalls = [];
+      shim.clearReads();
+
+      rerender({ visible: true });
+
+      // The reveal commit observes the node again and reads nothing itself:
+      // the report that follows is the one read.
+      expect(observerCalls).toEqual([
+        { kind: "unobserve", target: node },
+        { kind: "observe", target: node },
+      ]);
+      expect(shim.reads()).toEqual(NO_READS);
+      expect(listRef.scrollToEnd).not.toHaveBeenCalled();
+
+      fireResizeObservers();
+
+      expect(shim.reads()).toEqual({
+        scrollTop: 1,
+        scrollHeight: 1,
+        clientHeight: 1,
+      });
+      expect(listRef.scrollToEnd).toHaveBeenCalledTimes(1);
+    });
+
+    it("leaves a reader who was free-reading free after the reveal", () => {
+      const node = shim.makeNode({
+        scrollTop: 300,
+        scrollHeight: 1500,
+        clientHeight: 500,
+      });
+      const { listRef, onFollowIntentChange, rerender } = mountLatch({
+        node,
+        visible: true,
+        initialScrollAtEnd: false,
+      });
+      rerender({ visible: false });
+      shim.setGeometry(node, { scrollHeight: 1700 });
+      rerender({ visible: true });
+
+      fireResizeObservers();
+
+      expect(listRef.scrollToEnd).not.toHaveBeenCalled();
+      expect(onFollowIntentChange).not.toHaveBeenCalledWith(true);
+    });
   });
 });

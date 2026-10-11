@@ -297,6 +297,7 @@ export const ChatTimeline = memo(function ChatTimeline({
     initialScrollAtEnd,
     rows.length > 0,
     {
+      visible,
       onFollowIntentChange,
       onReaderGesture,
       isCorrectionSuppressed: isFollowCorrectionSuppressed,
