@@ -614,11 +614,6 @@ describe("WsRpcClient persistent local session", () => {
         deliver: (socket: StubWebSocket) => socket.fireClose(),
       },
       {
-        name: "socket close on a keyed command",
-        key: "key-1",
-        deliver: (socket: StubWebSocket) => socket.fireClose(),
-      },
-      {
         name: "session UNAUTHORIZED fatal",
         key: null,
         deliver: (socket: StubWebSocket) =>
@@ -667,6 +662,51 @@ describe("WsRpcClient persistent local session", () => {
         expect(requestFrames(sockets[0])).toHaveLength(1);
       },
     );
+
+    it("replays a keyed command after a socket close, on a fresh session under the same idempotency key", async () => {
+      // The host deduplicates a negotiated key, so a replay of a command that
+      // may already have run is safe - unlike the unkeyed close above.
+      const { client, sockets } = harness(registry, DESKTOP);
+      const lease = new MutableBearerLease("token-1", "test-user");
+      const revalidate = vi.fn(async () => {
+        lease.rotate("token-2");
+        return "rotated" as const;
+      });
+      const stack = createRetryingMessenger<typeof registry>(
+        createAuthAwareMessenger<typeof registry>(client, {
+          revalidateExpectedBearer: revalidate,
+        }),
+        {
+          maxRetries: 3,
+          initialDelayMs: 0,
+          maxDelayMs: 0,
+          sleep: () => Promise.resolve(),
+          random: () => 0,
+        },
+      );
+
+      const pending = stack.request(
+        "host.status",
+        {},
+        opts(authority(lease), "key-1", null),
+      );
+      await establish(sockets[0], PERSISTENT_ACK);
+      const sent = requestFrames(sockets[0]);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].idempotencyKey).toBe("key-1");
+
+      sockets[0].fireClose();
+      await settle();
+      expect(sockets).toHaveLength(2);
+      await establish(sockets[1], PERSISTENT_ACK);
+      const replayed = requestFrames(sockets[1]);
+      expect(replayed).toHaveLength(1);
+      expect(replayed[0].idempotencyKey).toBe("key-1");
+      respond(sockets[1], replayed[0], { ready: true });
+
+      await expect(pending).resolves.toEqual({ ready: true });
+      expect(revalidate).not.toHaveBeenCalled();
+    });
   });
 
   describe("cancellation of a dispatched call", () => {

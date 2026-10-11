@@ -21,6 +21,7 @@ type PendingRequest = {
   readonly resolve: (frame: HostFrame) => void;
   readonly reject: (error: HostRpcError) => void;
   sent: boolean;
+  replaySafetyFromKey: boolean;
   settled: boolean;
   canCancel: boolean;
   timer: TimerHandle | null;
@@ -130,6 +131,7 @@ export class PersistentRpcSession {
         resolve,
         reject,
         sent: false,
+        replaySafetyFromKey: false,
         settled: false,
         canCancel: false,
         timer: null,
@@ -171,6 +173,7 @@ export class PersistentRpcSession {
         }
         beforeSend();
         entry.sent = true;
+        entry.replaySafetyFromKey = frame.idempotencyKey != null;
         entry.canCancel = canCancelAfterDispatch(frame.method);
         // Degrade dispatch can select a different wire method.
         entry.method = frame.method;
@@ -246,9 +249,9 @@ export class PersistentRpcSession {
     message: string,
     details: FatalErrorDetails | null,
   ): HostRpcError {
-    // Session-wide failure cannot attest that any particular sent command
-    // was never dispatched. Never promote it to an auth or keyed replay.
-    if (pending.sent)
+    // A sent unkeyed command has an unknown outcome. Keyed replay retains the
+    // same deduplication guarantee as a one-shot connection.
+    if (pending.sent && !pending.replaySafetyFromKey)
       return new HostTransportFailureError({
         code: "RPC_ERROR",
         message,
@@ -262,7 +265,7 @@ export class PersistentRpcSession {
       requestId: pending.requestId,
       method: pending.method,
       fatalDetails: details,
-      replaySafetyFromKey: false,
+      replaySafetyFromKey: pending.replaySafetyFromKey,
     });
   }
 
