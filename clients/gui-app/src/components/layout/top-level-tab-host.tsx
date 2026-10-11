@@ -503,20 +503,18 @@ function useMountedSurfaceKeys(
       advanceTopLevelSurfaceRecency(settledKeys, previous),
     );
   }
-  return useMemo(
-    () =>
-      Array.from(
-        new Set([
-          ...retainedTopLevelSurfaceKeys(
-            availableRefKeys,
-            settledKeys,
-            recency,
-          ),
-          ...activeRefKeys,
-        ]),
-      ),
-    [activeRefKeys, availableRefKeys, settledKeys, recency],
-  );
+  // Strip order for every mounted key, the previewed one included. Appending
+  // a cold preview at the end moved it into place when it settled, and React
+  // moves a keyed sibling by re-inserting the later ones: their iframes reload.
+  return useMemo(() => {
+    const retained = new Set(
+      retainedTopLevelSurfaceKeys(availableRefKeys, settledKeys, recency),
+    );
+    const active = new Set(activeRefKeys);
+    return availableRefKeys.filter(
+      (key) => retained.has(key) || active.has(key),
+    );
+  }, [activeRefKeys, availableRefKeys, settledKeys, recency]);
 }
 
 function FillableSplitSlots(props: {

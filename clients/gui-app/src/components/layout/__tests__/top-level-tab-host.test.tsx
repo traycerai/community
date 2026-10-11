@@ -697,6 +697,56 @@ describe("<TopLevelTabHost />", () => {
     ).toBeNull();
   });
 
+  it("mounts a cold previewed tab at its strip position, so settling it never re-inserts the warm tabs after it", () => {
+    const EPIC_X: TabRef = { kind: "epic", id: "epic-x" };
+    const strip = [EPIC_A, EPIC_X, EPIC_B];
+    const surfaceOrder = (): ReadonlyArray<string | undefined> =>
+      Array.from(document.querySelectorAll("[data-surface-ref]")).map(
+        (element) =>
+          element instanceof HTMLElement
+            ? element.dataset.surfaceRef
+            : undefined,
+      );
+    seedSources(strip);
+    setSingle(EPIC_A, strip);
+    render(<TopLevelTabHost />);
+    // B is warm too: both ends of the strip have been settled on once, X never.
+    act(() => setSingle(EPIC_B, strip));
+    act(() => setSingle(EPIC_A, strip));
+    expect(screen.queryByTestId("epic-surface-content-epic-x")).toBeNull();
+    const warmB = surfaceRef(EPIC_B);
+    expect(surfaceOrder()).toEqual(
+      strip.map(tabRefKey).filter((key) => key !== tabRefKey(EPIC_X)),
+    );
+
+    // The cursor lands on the cold middle tab: it joins the DOM, in strip order.
+    act(() => {
+      setTopLevelDemand([tabRefKey(EPIC_X)], "preview");
+      setSingle(EPIC_X, strip);
+    });
+    expect(surfaceOrder()).toEqual(strip.map(tabRefKey));
+    expect(surfaceRef(EPIC_B)).toBe(warmB);
+
+    // Settling changes who is retained, never where a mounted tab sits, so the
+    // warm tab after it keeps the very same element and is never detached and
+    // re-inserted (which reloads its iframes).
+    const observer = new MutationObserver(() => undefined);
+    observer.observe(document.body, { childList: true, subtree: true });
+    act(() => setTopLevelDemand([tabRefKey(EPIC_X)], "settled"));
+    const movedWarmB = observer
+      .takeRecords()
+      .some(
+        (record) =>
+          Array.from(record.removedNodes).includes(warmB) ||
+          Array.from(record.addedNodes).includes(warmB),
+      );
+    observer.disconnect();
+    expect(screen.getByTestId("epic-surface-content-epic-x")).toBeTruthy();
+    expect(surfaceOrder()).toEqual(strip.map(tabRefKey));
+    expect(surfaceRef(EPIC_B)).toBe(warmB);
+    expect(movedWarmB).toBe(false);
+  });
+
   it("keeps split partner keys mounted while swapping their slots", () => {
     seedSources([EPIC_A, DRAFT_A]);
     setSplit(EPIC_A, DRAFT_A, "left");
