@@ -271,23 +271,27 @@ export const ChatTimeline = memo(function ChatTimeline({
     rowsVisible,
   );
   const rowStore = use(ChatRowStoreContext);
+  const shownRowStore = useShownRowStore(rowStore, rowsVisible);
+  // Live while visible, so a reveal lists what is there now; the rows
+  // themselves catch up through `shownRowStore` in the same commit.
   const readListEntries = useCallback(
-    () => rowStore?.getState().listEntries ?? null,
-    [rowStore],
+    () =>
+      (rowsVisible ? rowStore : shownRowStore)?.getState().listEntries ?? null,
+    [rowStore, rowsVisible, shownRowStore],
   );
   const listEntries = useSyncExternalStore(
-    rowStore?.subscribe ?? noRowSubscription,
+    shownRowStore?.subscribe ?? noRowSubscription,
     readListEntries,
     readListEntries,
   );
+  const sourceRows = rowsVisible ? inputRows : frozenRows;
   // Inline editing may retain an original row after the source removes it.
-  const visibleRows =
-    listEntries !== null && listEntries.length === inputRows.length
+  // The store's entries keep their identity across a hide and a show, so the
+  // list is handed the same items and re-renders none of them for the flip.
+  const rows: ReadonlyArray<TimelineItem> =
+    listEntries !== null && listEntries.length === sourceRows.length
       ? listEntries
-      : inputRows;
-  const rows: ReadonlyArray<TimelineItem> = rowsVisible
-    ? visibleRows
-    : frozenRows;
+      : sourceRows;
 
   // Fixup (fix-detached-streaming-yank/callback-synchronous-follow): see the
   // hook's own doc comment. Bottom-follow is owned entirely here now -
@@ -380,13 +384,12 @@ export const ChatTimeline = memo(function ChatTimeline({
         />
       ) : (
         <SubscribedChatTimelineRow
-          store={rowStore}
+          store={shownRowStore}
           rowId={item.key}
           fallback={item.kind === "hydrated" ? item.model : null}
-          visible={rowsVisible}
         />
       ),
-    [rowHeightMemory, rowStore, rowsVisible],
+    [rowHeightMemory, shownRowStore],
   );
 
   const handleScroll = useCallback(() => {
@@ -644,24 +647,85 @@ function timelineItemType(item: TimelineItem): string {
   return item.agentAuthored ? "user:a2a" : "user:human";
 }
 
+/**
+ * The row store as one timeline shows it: live while its rows are visible, and
+ * held at the snapshot it had when they were hidden. A hidden pane keeps its
+ * last committed content, and a reveal publishes what moved meanwhile.
+ *
+ * Rows subscribe here and take no `visible` of their own, so a hide or a show
+ * renders only the rows whose content changed across it. A snapshot is an
+ * immutable value, so holding one costs a reference.
+ */
+interface ShownRowStore {
+  readonly source: StoreApi<ChatRowSnapshot>;
+  readonly getState: () => ChatRowSnapshot;
+  readonly subscribe: (listener: () => void) => () => void;
+  readonly setVisible: (visible: boolean) => void;
+}
+
+function createShownRowStore(source: StoreApi<ChatRowSnapshot>): ShownRowStore {
+  let held: ChatRowSnapshot | null = null;
+  let stopSource: (() => void) | null = null;
+  const listeners = new Set<() => void>();
+  const publish = (): void => {
+    for (const listener of listeners) listener();
+  };
+  return {
+    source,
+    getState: () => held ?? source.getState(),
+    subscribe: (listener) => {
+      listeners.add(listener);
+      stopSource ??= source.subscribe(() => {
+        if (held === null) publish();
+      });
+      return () => {
+        listeners.delete(listener);
+        if (listeners.size > 0) return;
+        stopSource?.();
+        stopSource = null;
+      };
+    },
+    setVisible: (visible) => {
+      if (visible === (held === null)) return;
+      held = visible ? null : source.getState();
+      if (visible) publish();
+    },
+  };
+}
+
+function useShownRowStore(
+  source: StoreApi<ChatRowSnapshot> | null,
+  visible: boolean,
+): ShownRowStore | null {
+  const [shown, setShown] = useState(() =>
+    source === null ? null : createShownRowStore(source),
+  );
+  if ((shown?.source ?? null) !== source) {
+    setShown(source === null ? null : createShownRowStore(source));
+  }
+  // A layout effect: it holds the snapshot the hiding commit just rendered,
+  // and on a reveal its rows re-read before the browser paints.
+  useLayoutEffect(() => {
+    shown?.setVisible(visible);
+  }, [shown, visible]);
+  return shown;
+}
+
 function SubscribedChatTimelineRow({
   store,
   rowId,
   fallback,
-  visible,
 }: {
-  readonly store: StoreApi<ChatRowSnapshot> | null;
+  readonly store: ShownRowStore | null;
   readonly rowId: string;
   readonly fallback: ChatMessageModel | null;
-  readonly visible: boolean;
 }) {
   const getSnapshot = useCallback(() => {
-    if (!visible || store === null) return fallback;
-    const row = store.getState().byId.get(rowId);
+    const row = store?.getState().byId.get(rowId);
     return row?.kind === "hydrated" ? row.model : fallback;
-  }, [store, rowId, fallback, visible]);
+  }, [store, rowId, fallback]);
   const message = useSyncExternalStore(
-    visible ? (store?.subscribe ?? noRowSubscription) : noRowSubscription,
+    store?.subscribe ?? noRowSubscription,
     getSnapshot,
     getSnapshot,
   );
