@@ -3,7 +3,7 @@ import { useAuthStore } from "@/stores/auth/auth-store";
 import { useSurfaceDemand } from "@/stores/tabs/surface-demand";
 import type { HostClient } from "@traycer-clients/shared/host-client/host-client";
 import type { HostRpcRegistry } from "@traycer/protocol/host/index";
-import { createContext, use, useEffect, useId } from "react";
+import { createContext, use, useEffect, useId, useState } from "react";
 import type {
   OrganizationAction,
   OrganizationView,
@@ -35,13 +35,18 @@ export function useOrganizationTasks(taskIds: readonly string[]) {
   // A previewed surface reads the view it already has and adds no demand: a
   // held tab cycle mounts the Start Page's rows on every pass, and each new id
   // would open an `organization.subscribe` stream that the next step closes.
+  // A latch, because the same holds the other way: a surface that registered
+  // and is then passed over keeps its ids. Releasing them for that one step
+  // moves the id set twice, and each move reopens the stream.
   const preview = useSurfaceDemand() === "preview";
+  const [admitted, setAdmitted] = useState(!preview);
+  if (!preview && !admitted) setAdmitted(true);
   useEffect(
     () =>
-      preview
-        ? undefined
-        : register?.(id, identity ? identity.split(",") : EMPTY_IDS),
-    [register, id, identity, preview],
+      admitted
+        ? register?.(id, identity ? identity.split(",") : EMPTY_IDS)
+        : undefined,
+    [register, id, identity, admitted],
   );
   return organization;
 }
