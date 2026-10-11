@@ -5,8 +5,11 @@ import { flushStdio, writeStderr, writeStdout } from "../../std-write";
 // the kernel answers every later write with EPIPE.
 //
 // `WORKER_STREAM` picks which descriptor is written. `WORKER_INJECT_ERROR_CODE`
-// additionally emits a synthetic stream error with that code after the first
-// write, for the case where the error is NOT a closed reader.
+// additionally makes the stream's own write path fail with that code after the
+// first write, for the case where the error is NOT a closed reader.
+// `WORKER_OWN_ERROR_LISTENER=1` installs a no-op `error` listener BEFORE the
+// first write, the way `acknowledgeRelocationEntry` does for a relocated
+// host-stopping command, so another listener already owns stream errors.
 const stream = process.env.WORKER_STREAM;
 if (stream !== "stdout" && stream !== "stderr") {
   throw new Error(
@@ -15,6 +18,10 @@ if (stream !== "stdout" && stream !== "stderr") {
 }
 const write = stream === "stdout" ? writeStdout : writeStderr;
 const target = stream === "stdout" ? process.stdout : process.stderr;
+
+if (process.env.WORKER_OWN_ERROR_LISTENER === "1") {
+  target.on("error", () => undefined);
+}
 
 // One kernel pipe buffer per chunk, so each write is a real syscall against
 // the closed reader rather than something the stream buffers away.
@@ -31,10 +38,24 @@ write("ready\n");
 
 const injectedCode = process.env.WORKER_INJECT_ERROR_CODE;
 if (injectedCode !== undefined && injectedCode.length > 0) {
-  target.emit(
-    "error",
-    Object.assign(new Error("injected stream error"), { code: injectedCode }),
-  );
+  // Fail the stream's own write path, so the error reaches `error` listeners
+  // the way a real failing write does (Writable destroys the stream and emits
+  // `error`) rather than by hand-emitting the event.
+  Object.defineProperty(target, "_write", {
+    configurable: true,
+    value: (
+      _chunk: Buffer | string,
+      _encoding: BufferEncoding,
+      callback: (error?: Error | null) => void,
+    ): void => {
+      callback(
+        Object.assign(new Error("injected stream error"), {
+          code: injectedCode,
+        }),
+      );
+    },
+  });
+  write("after-injection\n");
 }
 
 for (let round = 0; round < ROUNDS; round += 1) {

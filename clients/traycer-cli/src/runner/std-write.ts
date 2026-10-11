@@ -108,7 +108,11 @@ const guardedStreams = new WeakSet<NodeJS.WriteStream>();
  * (TRAYCER-CLI-25) over a closed pipe that is not a CLI fault. Only EPIPE is
  * absorbed - a listener's presence would otherwise swallow every other stream
  * error too, so anything else is rethrown to reach the uncaught-exception
- * path exactly as it did before the listener existed.
+ * path exactly as it did before the listener existed. "Exactly as before"
+ * includes another listener owning the error: a relocated host-stopping
+ * command installs its own `error` handler on these streams to outlive the
+ * closed PTY (`acknowledgeRelocationEntry`), and EventEmitter calls every
+ * listener, so this one only rethrows when it is the sole listener left.
  *
  * Attached lazily, on the first write through this module, so a process that
  * never writes pays nothing and one that does pays once per descriptor.
@@ -118,6 +122,9 @@ function ignoreClosedReader(stream: NodeJS.WriteStream): void {
   guardedStreams.add(stream);
   stream.on("error", (error: NodeJS.ErrnoException) => {
     if (error.code === "EPIPE") return;
+    // Another listener has taken responsibility for the error; the stream
+    // would not have been unhandled without this one, so do not make it so.
+    if (stream.listenerCount("error") > 1) return;
     throw error;
   });
 }

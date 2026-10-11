@@ -47,6 +47,8 @@ interface WorkerOptions {
   /** Close the parent's read end of `stream` once the first line arrives. */
   readonly closeReader: boolean;
   readonly injectErrorCode: string | null;
+  /** The worker installs its own `error` listener before its first write. */
+  readonly ownErrorListener: boolean;
 }
 
 let bundleDir = "";
@@ -78,6 +80,7 @@ function runWorker(options: WorkerOptions): Promise<WorkerRun> {
         ...process.env,
         WORKER_STREAM: options.stream,
         WORKER_INJECT_ERROR_CODE: options.injectErrorCode ?? "",
+        WORKER_OWN_ERROR_LISTENER: options.ownErrorListener ? "1" : "",
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -111,6 +114,7 @@ describe("std-write survives a reader that closed the pipe", () => {
         stream,
         closeReader: true,
         injectErrorCode: null,
+        ownErrorListener: false,
       });
 
       // A stderr reader that is gone cannot show us the crash text, so the
@@ -131,12 +135,36 @@ describe("std-write survives a reader that closed the pipe", () => {
         stream: "stdout",
         closeReader: false,
         injectErrorCode: "EIO",
+        ownErrorListener: false,
       });
 
       // Swallowing EIO (or any other code) would hide a genuinely broken
-      // descriptor; only EPIPE means "nobody is listening any more".
+      // descriptor; only EPIPE means "nobody is listening any more". The
+      // error comes out of the stream's own failing write, not a hand-emitted
+      // event.
       expect(run.code).not.toBe(0);
       expect(run.stderr).toContain("injected stream error");
+    },
+    SPAWN_TIMEOUT_MS,
+  );
+
+  it(
+    "leaves a stream error to another listener that already owns it",
+    async () => {
+      // `acknowledgeRelocationEntry` installs a no-op `error` listener on a
+      // relocated host-stopping command so the EIO from its closed PTY cannot
+      // kill the update. EventEmitter runs every listener, so ours must not
+      // rethrow what that one has already taken responsibility for.
+      const run = await runWorker({
+        stream: "stdout",
+        closeReader: false,
+        injectErrorCode: "EIO",
+        ownErrorListener: true,
+      });
+
+      expect(run.signal).toBeNull();
+      expect(run.code).toBe(0);
+      expect(run.stderr).not.toContain("injected stream error");
     },
     SPAWN_TIMEOUT_MS,
   );
