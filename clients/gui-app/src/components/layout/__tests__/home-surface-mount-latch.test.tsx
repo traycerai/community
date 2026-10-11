@@ -19,6 +19,10 @@ import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { NavigateOptions } from "@tanstack/react-router";
 import { TopLevelTabHost } from "@/components/layout/top-level-tab-host";
+// The Home tab loads this view as a lazy chunk on its first visit. Imported
+// here so it is loaded before any test runs: the lookups below then wait for
+// the view to render, not for its module to load.
+import "@/components/home-focus/home-focus-view";
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
 import { useLandingDraftStore } from "@/stores/home/landing-draft-store";
 import {

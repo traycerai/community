@@ -174,6 +174,10 @@ vi.mock("@/components/epics/history-surface", () => ({
 }));
 
 import { AppShell } from "@/components/layout/app-shell";
+// The Home tab loads this view as a lazy chunk on its first visit. Imported
+// here so it is loaded before any test runs: the lookups below then wait for
+// the view to render, not for its module to load.
+import "@/components/home-focus/home-focus-view";
 import {
   hostRpcRegistry,
   HostRuntimeProvider,

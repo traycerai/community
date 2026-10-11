@@ -12,6 +12,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeEditorHost } from "@/components/settings/themes/theme-editor-host";
+// `ThemeEditorHost` loads this panel as a lazy chunk when a draft opens.
+// Imported here so it is loaded before any test runs: the dialog lookups
+// below then wait for the editor to render, not for its module to load.
+import "@/components/settings/themes/theme-editor-panel";
 import { ThemeGallery } from "@/components/settings/themes/theme-gallery";
 import { ThemeProvider } from "@/providers/theme-provider";
 import { useSettingsStore } from "@/stores/settings/settings-store";
