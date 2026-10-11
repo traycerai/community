@@ -1,4 +1,10 @@
-import { createContext, use, useContext } from "react";
+import {
+  createContext,
+  use,
+  useContext,
+  useLayoutEffect,
+  useState,
+} from "react";
 import type { StoreApi } from "zustand/vanilla";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { shallow } from "zustand/shallow";
@@ -34,10 +40,17 @@ export function useSurfaceNotificationIndicatorState(
   originHostId: string | null,
 ): NotificationIndicatorState {
   const store = useContext(NotificationIndicatorStoreContext);
-  // Direct aggregate providers remain supported; normal surfaces use the
-  // stable store context and never consume the broadcasting aggregate.
-  const inherited =
-    store === null ? use(NotificationIndicatorsContext) : EMPTY_INDICATORS;
+  const [committed, setCommitted] = useState(false);
+  useLayoutEffect(() => {
+    setCommitted(true);
+  }, []);
+  // A newly mounted row reads this render's context so its initial waiting
+  // pulse sees the current flags. After commit it subscribes only to its
+  // entity in the store; speculative provider renders cannot mutate that store.
+  const readInherited = store === null || !committed;
+  const inherited = readInherited
+    ? use(NotificationIndicatorsContext)
+    : EMPTY_INDICATORS;
   const hostState = useStoreWithEqualityFn(
     store ?? {
       getState: () => inherited,
@@ -47,5 +60,11 @@ export function useSurfaceNotificationIndicatorState(
     (indicators) => selectHostIndicatorState(indicators, entity, originHostId),
     shallow,
   );
-  return useHostNotificationIndicatorState(entity, originHostId, hostState);
+  return useHostNotificationIndicatorState(
+    entity,
+    originHostId,
+    readInherited
+      ? selectHostIndicatorState(inherited, entity, originHostId)
+      : hostState,
+  );
 }

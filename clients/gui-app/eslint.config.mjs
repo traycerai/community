@@ -2653,7 +2653,12 @@ export default tseslint.config(
     // `react-hooks/immutability`, and a timer would make a deterministic
     // mount fact into a race. The cost the rule is warning about is one extra
     // render of a flex row of at most five pills.
-    files: ["src/components/chat/chat-dock-compact-strip.tsx"],
+    // Notification consumers likewise seed their first render from context,
+    // then switch to the committed store without retaining a broad subscription.
+    files: [
+      "src/components/chat/chat-dock-compact-strip.tsx",
+      "src/components/notifications/notification-indicator-context.ts",
+    ],
     rules: {
       "react-hooks/set-state-in-effect": "off",
     },

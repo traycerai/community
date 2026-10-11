@@ -4,7 +4,16 @@
  * projection, and two entities under one provider must narrow independently.
  * Full mixed/local-mode semantics stay owned by `use-notification-indicators-query.test.tsx`.
  */
-import { memo, useLayoutEffect, useState, type ReactNode } from "react";
+import {
+  memo,
+  Suspense,
+  startTransition,
+  use,
+  useEffect,
+  useLayoutEffect,
+  useState,
+  type ReactNode,
+} from "react";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { HostNotificationsCloudFeedRow } from "@traycer/protocol/host/notifications/contracts";
@@ -320,5 +329,91 @@ describe("NotificationIndicatorsProvider per-entity narrowing", () => {
     );
 
     expect(firstReads).toEqual(["approval"]);
+  });
+
+  it("does not let an abandoned concurrent render change what a committed consumer reads", async () => {
+    const lit: SurfaceNotificationIndicators = {
+      epics: {},
+      chats: {
+        "chat-1": {
+          unreadFailure: false,
+          pendingFork: false,
+          pendingApproval: true,
+          pendingInterview: false,
+          unreadDone: false,
+        },
+      },
+    };
+    const gate = {
+      suspended: false,
+      pending: new Promise<void>(() => undefined),
+    };
+    const seen: {
+      setIndicators: (next: SurfaceNotificationIndicators) => void;
+      bumpProbe: (tick: number) => void;
+    } = { setIndicators: () => undefined, bumpProbe: () => undefined };
+
+    function Suspender(): null {
+      // Suspends for as long as the gate is shut; the promise never settles.
+      if (gate.suspended) use(gate.pending);
+      return null;
+    }
+    function Probe(): ReactNode {
+      const [, setTick] = useState(0);
+      useEffect(() => {
+        seen.bumpProbe = setTick;
+      }, [setTick]);
+      const state = useSurfaceNotificationIndicatorState(
+        { epicId: EPIC_ID, chatId: "chat-1" },
+        null,
+      );
+      return (
+        <span data-testid="flag">
+          {state.pendingApproval ? "approval" : "none"}
+        </span>
+      );
+    }
+    function Harness(): ReactNode {
+      const [indicators, setIndicators] = useState(emptyIndicators());
+      useEffect(() => {
+        seen.setIndicators = setIndicators;
+      }, [setIndicators]);
+      return (
+        <NotificationIndicatorsProvider indicators={indicators}>
+          <Probe />
+          <Suspense fallback={null}>
+            <Suspender />
+          </Suspense>
+        </NotificationIndicatorsProvider>
+      );
+    }
+
+    render(<Harness />);
+    expect(screen.getByTestId("flag").textContent).toBe("none");
+
+    // A transition renders the provider with the lit state, then suspends
+    // below it, so React throws the whole render away without committing.
+    gate.suspended = true;
+    await act(async () => {
+      startTransition(() => seen.setIndicators(lit));
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId("flag").textContent).toBe("none");
+
+    // An urgent update re-renders only the consumer, which reads the store
+    // again. What it reads must still be what last committed.
+    await act(async () => {
+      seen.bumpProbe(1);
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId("flag").textContent).toBe("none");
+
+    // The same change, once it can commit, reaches the consumer.
+    gate.suspended = false;
+    await act(async () => {
+      seen.setIndicators(lit);
+      await Promise.resolve();
+    });
+    expect(screen.getByTestId("flag").textContent).toBe("approval");
   });
 });

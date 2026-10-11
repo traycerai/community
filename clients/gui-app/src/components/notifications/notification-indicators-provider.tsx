@@ -12,16 +12,13 @@ interface NotificationIndicatorsProviderProps {
 }
 
 interface IndicatorsStore extends ReadonlyIndicatorsStore {
-  /** Replaces the state without telling subscribers. */
   readonly publish: (next: SurfaceNotificationIndicators) => void;
-  readonly notify: () => void;
 }
 
 function createIndicatorsStore(
   initial: SurfaceNotificationIndicators,
 ): IndicatorsStore {
   let state = initial;
-  let announced = initial;
   const listeners = new Set<
     (
       state: SurfaceNotificationIndicators,
@@ -38,11 +35,9 @@ function createIndicatorsStore(
       };
     },
     publish: (next) => {
+      if (state === next) return;
+      const previous = state;
       state = next;
-    },
-    notify: () => {
-      const previous = announced;
-      announced = state;
       for (const listener of listeners) listener(state, previous);
     },
   };
@@ -52,14 +47,8 @@ export function NotificationIndicatorsProvider(
   props: NotificationIndicatorsProviderProps,
 ): ReactNode {
   const [store] = useState(() => createIndicatorsStore(props.indicators));
-  // Published while rendering and announced in the layout effect: a row that
-  // mounts in this very commit (a task moved to another section remounts
-  // there) reads the new state at once, and does not see its own state change
-  // one commit later - which is what the waiting pulse is keyed on. The
-  // subscribers already mounted are woken by the effect, once.
-  store.publish(props.indicators);
   useLayoutEffect(() => {
-    store.notify();
+    store.publish(props.indicators);
   }, [store, props.indicators]);
   return (
     <NotificationIndicatorStoreContext.Provider value={store}>
