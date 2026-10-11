@@ -1,11 +1,33 @@
+import { useEffect } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import * as Y from "yjs";
 import type { EpicStreamCallbacks } from "@traycer-clients/shared/host-transport/epic-stream-client";
+import type { IHostStreamClient } from "@traycer-clients/shared/host-transport/host-stream-client";
+import type { IStreamSession } from "@traycer-clients/shared/host-transport/i-stream-session";
+import {
+  recordNegotiatedHostManifest,
+  resetNegotiatedManifests,
+} from "@traycer-clients/shared/host-transport/negotiated-manifest-registry";
+import {
+  WsStreamClient,
+  type ParamsOf,
+  type StreamMethodSupport,
+} from "@traycer-clients/shared/host-transport/ws-stream-client";
+import { NO_TRANSPORT_EVIDENCE } from "@traycer-clients/shared/host-selection/transport-evidence";
+import { TEST_CLIENT_IDENTITY } from "@traycer-clients/shared/test-fixtures/client-identity";
+import type { SchemaVersion } from "@traycer/protocol/framework/index";
+import {
+  hostStreamRpcRegistry,
+  type HostStreamRpcRegistry,
+} from "@traycer/protocol/host/registry";
 import type { PermissionRole } from "@traycer/protocol/host/epic/unary-schemas";
 import type { SnapshotMetaEpic } from "@traycer/protocol/host/epic/snapshot-meta";
 import { EpicShell } from "@/components/epic-canvas/epic-shell";
+import { useMaybeOpenEpicHandle } from "@/providers/use-open-epic-handle";
+import { resolveTabEpicIdentity } from "@/stores/epics/canvas/store";
+import { PLAIN_TERMINAL_RPC_METHODS } from "@/lib/terminals/plain-terminal-authority";
 import {
   DEFAULT_ARRANGEMENT,
   type EdgeSide,
@@ -96,9 +118,61 @@ vi.mock("@/hooks/epic/use-epic-title-mutation", () => ({
   }),
 }));
 
-vi.mock("@/components/epic-canvas/panels/epic-connection-pill", () => ({
-  EpicConnectionPill: () => <div data-testid="epic-connection-pill" />,
+// The pill is the body's stream owner: the real `usePlainTerminalAuthority`
+// opens `terminal.plain.subscribeList` from inside it. The mock counts its own
+// mounts and, when a test hands it a stream client, owns that list stream the
+// same way, so "the body was not remounted" is observable as an unchanged
+// mount count and an unchanged number of stream opens.
+const pillProbe = vi.hoisted(() => ({
+  hostId: "host-pill-stream",
+  mounts: 0,
+  unmounts: 0,
+  streamClient: null as IHostStreamClient<HostStreamRpcRegistry> | null,
 }));
+
+vi.mock("@/hooks/host/use-host-capability-probe", () => ({
+  useHostCapabilityProbe: () => ({ data: undefined }),
+}));
+
+vi.mock("@/components/epic-canvas/panels/epic-connection-pill", async () => {
+  const { usePlainTerminalAuthority } =
+    await import("@/hooks/terminal/use-plain-terminal-authority");
+
+  function ListStreamOwner(props: {
+    readonly epicId: string;
+    readonly streamClient: IHostStreamClient<HostStreamRpcRegistry>;
+  }) {
+    usePlainTerminalAuthority({
+      hostId: pillProbe.hostId,
+      scope: { kind: "epic", epicId: props.epicId },
+      client: null,
+      streamClient: props.streamClient,
+      capabilityIncarnation: "epic-shell-pill",
+    });
+    return null;
+  }
+
+  return {
+    EpicConnectionPill: (props: { readonly epicId: string }) => {
+      useEffect(() => {
+        pillProbe.mounts += 1;
+        return () => {
+          pillProbe.unmounts += 1;
+        };
+      }, []);
+      return (
+        <div data-testid="epic-connection-pill">
+          {pillProbe.streamClient === null ? null : (
+            <ListStreamOwner
+              epicId={props.epicId}
+              streamClient={pillProbe.streamClient}
+            />
+          )}
+        </div>
+      );
+    },
+  };
+});
 
 vi.mock("@/components/epic-canvas/panels/epic-connection-toasts", () => ({
   EpicConnectionToasts: () => null,
@@ -123,6 +197,155 @@ interface ControlledStream {
 
 const EPIC_ID = "epic-shell";
 const TAB_ID = "epic-shell-tab";
+
+const LIST_STREAM_VERSION: SchemaVersion = { major: 2, minor: 1 };
+
+class ListStreamSession implements IStreamSession {
+  closeCount = 0;
+
+  sendClientFrame(): void {}
+  onServerFrame(): void {}
+  onStatusChange(): void {}
+  requestReconnect(): void {}
+
+  getNegotiatedSchemaVersion(): SchemaVersion | null {
+    return LIST_STREAM_VERSION;
+  }
+
+  close(): void {
+    this.closeCount += 1;
+  }
+}
+
+/** Counts opens and closes of `terminal.plain.subscribeList`; never dials. */
+class ListStreamClient extends WsStreamClient<HostStreamRpcRegistry> {
+  readonly sessions: ListStreamSession[] = [];
+
+  constructor() {
+    super({
+      clientIdentity: TEST_CLIENT_IDENTITY,
+      registry: hostStreamRpcRegistry,
+      hostId: null,
+      endpoint: () => null,
+      bearer: () => null,
+      auth: null,
+      clock: null,
+      hostCredentialMint: null,
+      onHostCredentialState: null,
+      webSocketFactory: {
+        create: () => {
+          throw new Error("list stream fixture must not dial");
+        },
+      },
+      evidence: NO_TRANSPORT_EVIDENCE,
+      dialTimeoutMs: 1_000,
+      openAckTimeoutMs: 1_000,
+      pingIntervalMs: 25_000,
+      pongTimeoutMs: 50_000,
+      initialBackoffMs: 10,
+      maxBackoffMs: 1_000,
+    });
+  }
+
+  get opens(): number {
+    return this.sessions.length;
+  }
+
+  get closes(): number {
+    return this.sessions.reduce((sum, session) => sum + session.closeCount, 0);
+  }
+
+  override subscribe<Method extends keyof HostStreamRpcRegistry & string>(
+    _method: Method,
+    _params: ParamsOf<HostStreamRpcRegistry, Method>,
+  ): IStreamSession {
+    const session = new ListStreamSession();
+    this.sessions.push(session);
+    return session;
+  }
+
+  override getMethodSupport<
+    Method extends keyof HostStreamRpcRegistry & string,
+  >(_method: Method): StreamMethodSupport {
+    return "supported";
+  }
+
+  override getMethodSchemaVersion<
+    Method extends keyof HostStreamRpcRegistry & string,
+  >(_method: Method): SchemaVersion | null {
+    return LIST_STREAM_VERSION;
+  }
+
+  override subscribeMethodSupport(_listener: () => void): () => void {
+    return () => undefined;
+  }
+}
+
+/** Makes the mocked pill own a real list stream on a counting fake client. */
+function installListStreamProbe(): ListStreamClient {
+  const manifest: Record<string, SchemaVersion> = {
+    "host.status": { major: 1, minor: 0 },
+  };
+  for (const method of PLAIN_TERMINAL_RPC_METHODS) {
+    manifest[method] = LIST_STREAM_VERSION;
+  }
+  recordNegotiatedHostManifest(pillProbe.hostId, manifest);
+  const streamClient = new ListStreamClient();
+  pillProbe.streamClient = streamClient;
+  return streamClient;
+}
+
+/** What a held preview cycle must leave untouched on a mounted body. */
+function bodyFootprint(streamClient: ListStreamClient) {
+  return {
+    pillMounts: pillProbe.mounts,
+    pillUnmounts: pillProbe.unmounts,
+    pillPresent: screen.queryByTestId("epic-connection-pill") !== null,
+    canvasPresent: screen.queryByTestId("tile-canvas-stub") !== null,
+    previewShellPresent: screen.queryByTestId("surface-preview-shell") !== null,
+    listStreamOpens: streamClient.opens,
+    listStreamCloses: streamClient.closes,
+  };
+}
+
+interface CommittedHandle {
+  readonly label: string;
+  readonly epicId: string;
+  readonly hasHandle: boolean;
+}
+
+/** Every session handle a probe committed with, oldest first. */
+const committedHandles: CommittedHandle[] = [];
+
+/**
+ * Records, per commit, whether the session context held a handle. Sits beside
+ * `EpicShell` under the same provider, so a commit where the gate showed its
+ * fallback is a commit where this recorded `hasHandle: false`.
+ */
+function HandleProbe(props: {
+  readonly label: string;
+  readonly epicId: string;
+}) {
+  const hasHandle = useMaybeOpenEpicHandle() !== null;
+  useEffect(() => {
+    committedHandles.push({
+      label: props.label,
+      epicId: props.epicId,
+      hasHandle,
+    });
+  });
+  return null;
+}
+
+const MOUNTED_BODY_FOOTPRINT = {
+  pillMounts: 1,
+  pillUnmounts: 0,
+  pillPresent: true,
+  canvasPresent: true,
+  previewShellPresent: false,
+  listStreamOpens: 1,
+  listStreamCloses: 0,
+} as const;
 
 function buildMeta(
   title: string,
@@ -336,10 +559,15 @@ describe("<EpicShell />", () => {
     window.localStorage.clear();
     __getOpenEpicRegistryForTests().disposeAll();
     useLayoutStore.setState({ arrangement: DEFAULT_ARRANGEMENT });
+    pillProbe.mounts = 0;
+    pillProbe.unmounts = 0;
+    pillProbe.streamClient = null;
+    committedHandles.length = 0;
   });
 
   afterEach(() => {
     cleanup();
+    resetNegotiatedManifests();
     __getOpenEpicRegistryForTests().disposeAll();
     // RESTORED, not nulled - see `previousWorkerFactory`.
     __setEpicRuntimeWorkerFactoryForTests(previousWorkerFactory);
@@ -404,6 +632,7 @@ describe("<EpicShell />", () => {
 
   it("a previewed epic whose session is up but has no snapshot yet stays on the static shell until it settles", async () => {
     installControlledFactory();
+    const listStream = installListStreamProbe();
     const queryClient = new QueryClient({
       defaultOptions: {
         queries: { retry: false, gcTime: 0, staleTime: 60_000 },
@@ -414,14 +643,196 @@ describe("<EpicShell />", () => {
 
     expect(screen.getByTestId("surface-preview-shell")).toBeTruthy();
     expect(screen.queryByTestId("epic-connection-pill")).toBeNull();
+    // A body that has never mounted mounts nothing under preview demand.
+    expect(pillProbe.mounts).toBe(0);
+    expect(listStream.opens).toBe(0);
 
     rerender(shellUnderDemand(queryClient, "settled"));
     await waitFor(() => {
       expect(screen.getByTestId("epic-connection-pill")).not.toBeNull();
     });
     expect(screen.queryByTestId("surface-preview-shell")).toBeNull();
+    expect(pillProbe.mounts).toBe(1);
+    await waitFor(() => expect(listStream.opens).toBe(1));
 
     queryClient.clear();
+  });
+
+  describe("a body that has mounted is never replaced by a preview", () => {
+    function mountedBodyQueryClient(): QueryClient {
+      return new QueryClient({
+        defaultOptions: {
+          queries: { retry: false, gcTime: 0, staleTime: 60_000 },
+        },
+      });
+    }
+
+    it("keeps the owners, the canvas and the list stream through repeated hold cycles before the snapshot loads", async () => {
+      installControlledFactory();
+      const listStream = installListStreamProbe();
+      const queryClient = mountedBodyQueryClient();
+      const { rerender } = render(shellUnderDemand(queryClient, "settled"));
+      await waitFor(() => expect(listStream.opens).toBe(1));
+      expect(bodyFootprint(listStream)).toEqual(MOUNTED_BODY_FOOTPRINT);
+
+      for (let cycle = 0; cycle < 5; cycle += 1) {
+        rerender(shellUnderDemand(queryClient, "preview"));
+        expect(bodyFootprint(listStream)).toEqual(MOUNTED_BODY_FOOTPRINT);
+        rerender(shellUnderDemand(queryClient, "settled"));
+        expect(bodyFootprint(listStream)).toEqual(MOUNTED_BODY_FOOTPRINT);
+      }
+
+      queryClient.clear();
+    });
+
+    it("draws no loading indicator while the mounted body is previewed", async () => {
+      installControlledFactory();
+      const queryClient = mountedBodyQueryClient();
+      const { rerender } = render(shellUnderDemand(queryClient, "settled"));
+      await waitFor(() => {
+        expect(screen.getByTestId("epic-connection-pill")).not.toBeNull();
+      });
+
+      rerender(shellUnderDemand(queryClient, "preview"));
+
+      expect(
+        screen.getByTestId("epic-shell").querySelector('[aria-busy="true"]'),
+      ).toBeNull();
+      expect(screen.queryByTestId("tile-canvas-loading")).toBeNull();
+
+      queryClient.clear();
+    });
+
+    it("applies a snapshot that lands during a hold in place", async () => {
+      const controlled = installControlledFactory();
+      const listStream = installListStreamProbe();
+      const queryClient = mountedBodyQueryClient();
+      const { rerender } = render(shellUnderDemand(queryClient, "settled"));
+      await waitFor(() => {
+        expect(
+          screen.getByTestId("chat-stream-prewarm").dataset.snapshotLoaded,
+        ).toBe("false");
+      });
+      await waitFor(() => expect(listStream.opens).toBe(1));
+
+      rerender(shellUnderDemand(queryClient, "preview"));
+      act(() => {
+        controlled
+          .streams()[0]
+          .callbacks.onConnectionStatus("open", null, true);
+        controlled
+          .streams()[0]
+          .callbacks.onSnapshot(
+            buildMeta("Held Epic", "editor"),
+            buildSnapshot("Held Epic"),
+          );
+      });
+
+      await waitFor(() => {
+        expect(
+          screen.getByTestId("chat-stream-prewarm").dataset.snapshotLoaded,
+        ).toBe("true");
+      });
+      expect(bodyFootprint(listStream)).toEqual(MOUNTED_BODY_FOOTPRINT);
+
+      rerender(shellUnderDemand(queryClient, "settled"));
+      expect(bodyFootprint(listStream)).toEqual(MOUNTED_BODY_FOOTPRINT);
+      expect(
+        screen.getByTestId("chat-stream-prewarm").dataset.snapshotLoaded,
+      ).toBe("true");
+
+      queryClient.clear();
+    });
+
+    it("does not carry a mounted body into another epic that is unloaded under preview", async () => {
+      installControlledFactory();
+      const epicB = "epic-shell-b";
+      const siblingTabId = "epic-shell-tab-b";
+      const queryClient = mountedBodyQueryClient();
+      // `epicB`'s session is published through a sibling tab BEFORE the slot
+      // switches to it, so the handle is non-null in the switching render and
+      // the gate never shows its fallback in between.
+      const tree = (slotEpicId: string, demand: ActiveSurfaceDemand) => (
+        <QueryClientProvider client={queryClient}>
+          <TooltipProvider>
+            <TestEpicSessionTab epicId={epicB} tabId={siblingTabId}>
+              <HandleProbe label="sibling" epicId={epicB} />
+            </TestEpicSessionTab>
+            <TestEpicSessionTab epicId={slotEpicId} tabId={TAB_ID}>
+              <SurfaceDemandContext.Provider value={demand}>
+                <HandleProbe label="slot" epicId={slotEpicId} />
+                <EpicShell epicId={slotEpicId} tabId={TAB_ID} active />
+              </SurfaceDemandContext.Provider>
+            </TestEpicSessionTab>
+          </TooltipProvider>
+        </QueryClientProvider>
+      );
+      const { rerender } = render(tree(EPIC_ID, "settled"));
+      await waitFor(() => {
+        expect(screen.getByTestId("epic-connection-pill")).not.toBeNull();
+      });
+      await waitFor(() => {
+        expect(
+          committedHandles.some(
+            (commit) => commit.label === "sibling" && commit.hasHandle,
+          ),
+        ).toBe(true);
+      });
+      expect(pillProbe.mounts).toBe(1);
+
+      committedHandles.length = 0;
+      act(() => {
+        resolveTabEpicIdentity(TAB_ID, EPIC_ID, epicB);
+        rerender(tree(epicB, "preview"));
+      });
+
+      // No fallback commit in between, or this test shows nothing.
+      const slotCommits = committedHandles.filter(
+        (commit) => commit.label === "slot",
+      );
+      expect(slotCommits.some((commit) => commit.epicId === epicB)).toBe(true);
+      expect(slotCommits.filter((commit) => !commit.hasHandle)).toEqual([]);
+
+      expect(screen.getByTestId("surface-preview-shell")).toBeTruthy();
+      expect(screen.queryByTestId("epic-connection-pill")).toBeNull();
+      expect(pillProbe.mounts).toBe(1);
+      expect(pillProbe.unmounts).toBe(1);
+
+      rerender(tree(epicB, "settled"));
+      await waitFor(() => {
+        expect(screen.getByTestId("epic-connection-pill")).not.toBeNull();
+      });
+      expect(screen.queryByTestId("surface-preview-shell")).toBeNull();
+      expect(pillProbe.mounts).toBe(2);
+
+      queryClient.clear();
+    });
+
+    it("is cold again once the body has unmounted and mounts under preview", async () => {
+      installControlledFactory();
+      const listStream = installListStreamProbe();
+      const queryClient = mountedBodyQueryClient();
+      const first = render(shellUnderDemand(queryClient, "settled"));
+      await waitFor(() => expect(listStream.opens).toBe(1));
+      expect(pillProbe.mounts).toBe(1);
+
+      first.unmount();
+      const { rerender } = render(shellUnderDemand(queryClient, "preview"));
+      await waitForSessionReady();
+
+      expect(screen.getByTestId("surface-preview-shell")).toBeTruthy();
+      expect(screen.queryByTestId("epic-connection-pill")).toBeNull();
+      expect(pillProbe.mounts).toBe(1);
+      expect(listStream.opens).toBe(1);
+
+      rerender(shellUnderDemand(queryClient, "settled"));
+      await waitFor(() => {
+        expect(screen.getByTestId("epic-connection-pill")).not.toBeNull();
+      });
+      expect(pillProbe.mounts).toBe(2);
+
+      queryClient.clear();
+    });
   });
 
   it("draws no divider of its own: the canvas frame below it owns the border now (flush surface)", () => {

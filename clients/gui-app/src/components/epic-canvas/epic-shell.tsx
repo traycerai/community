@@ -5,7 +5,7 @@
  * canvas for its pane, so sidebar collapse/resize can never remount canvas
  * content.
  */
-import { use, useMemo, type ReactNode } from "react";
+import { use, useMemo, useState, type ReactNode } from "react";
 import { useSurfaceDemand } from "@/stores/tabs/surface-demand";
 import { SurfacePreviewShell } from "@/components/layout/surface-preview-shell";
 import { TileCanvas } from "@/components/epic-canvas/canvas/tile-canvas";
@@ -150,7 +150,25 @@ function EpicShellSessionBody(
     [snapshotLoaded, snapshotFetchError],
   );
 
-  if (demand === "preview" && !snapshotLoaded) return <SurfacePreviewShell />;
+  // A latch, like `TopLevelSurfaceMount`'s: the shell stands in only for a
+  // body that has never mounted. A held header cycle passes a loading tab once
+  // per turn, and swapping the mounted body out for that one step unmounted
+  // every owner below it - the connection pill closed and reopened its
+  // terminal list stream on each pass. A mounted loading body stays quiet
+  // under a preview because its loaders gate on settled demand themselves.
+  //
+  // The latch holds the epic it admitted, not a flag: a tab can change its
+  // epic in place (`resolveTabEpicIdentity`), and where the new epic's handle
+  // is already published the gate above never falls back, so this instance
+  // lives on. The other epic has not mounted here and starts cold.
+  const previewedUnloaded = demand === "preview" && !snapshotLoaded;
+  const [mountedEpicId, setMountedEpicId] = useState(
+    previewedUnloaded ? null : props.epicId,
+  );
+  if (!previewedUnloaded && mountedEpicId !== props.epicId) {
+    setMountedEpicId(props.epicId);
+  }
+  if (mountedEpicId !== props.epicId) return <SurfacePreviewShell />;
 
   return (
     <SnapshotLoadingProvider value={snapshotContextValue}>
