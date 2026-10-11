@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -32,6 +33,8 @@ import {
 } from "@/components/chat/chat-attachment-scope-context";
 import { ChatScrollToPageContext } from "@/components/chat/chat-scroll-to-block";
 import { PageRow } from "@/components/chat/segments/page-row";
+import { TabBodySelectedContext } from "@/components/epic-canvas/canvas/tab-body-selected-context";
+import { PaneVisibilityContext } from "@/components/epic-tabs/pane-visibility-context";
 import { Analytics, AnalyticsEvent } from "@/lib/analytics";
 import type { TileOpenIntent } from "@/lib/canvas/tile-open/intent";
 import {
@@ -164,11 +167,11 @@ const SHOWN: RowOverrides = {
   inputDetail: null,
 };
 
-function renderRow(
+function rowTree(
   rpc: EpicFileRpc,
   row: RowOverrides,
   scrollToPage: ((pageRef: string) => boolean) | null,
-): void {
+): ReactNode {
   const client = new QueryClient({
     defaultOptions: { queries: { gcTime: Infinity } },
   });
@@ -187,21 +190,27 @@ function renderRow(
       </ResolvedThemeContext.Provider>
     </QueryClientProvider>
   );
-  render(
-    wrap(
-      <PageRow
-        id={BLOCK_ID}
-        page={row.page}
-        inputSummary={row.inputSummary}
-        inputDetail={row.inputDetail}
-        error={row.error}
-        isStreaming={row.isStreaming}
-        stopped={row.stopped}
-        startedAt={Date.now()}
-        fallback={<div data-testid="ordinary-tool-row" />}
-      />,
-    ),
+  return wrap(
+    <PageRow
+      id={BLOCK_ID}
+      page={row.page}
+      inputSummary={row.inputSummary}
+      inputDetail={row.inputDetail}
+      error={row.error}
+      isStreaming={row.isStreaming}
+      stopped={row.stopped}
+      startedAt={Date.now()}
+      fallback={<div data-testid="ordinary-tool-row" />}
+    />,
   );
+}
+
+function renderRow(
+  rpc: EpicFileRpc,
+  row: RowOverrides,
+  scrollToPage: ((pageRef: string) => boolean) | null,
+): void {
+  render(rowTree(rpc, row, scrollToPage));
 }
 
 beforeEach(() => {
@@ -397,6 +406,61 @@ describe("<PageRow /> showing the page", () => {
 
     expect(screen.queryByText(/Updated from/)).toBeNull();
   });
+});
+
+interface TileVisibility {
+  readonly pane: boolean;
+  readonly tab: boolean;
+}
+
+const TILE_SHOWN: TileVisibility = { pane: true, tab: true };
+
+/** The two contexts `useTileBodyVisible()` composes, as a tile body provides. */
+function TileBody(props: {
+  readonly visibility: TileVisibility;
+  readonly children: ReactNode;
+}): ReactNode {
+  return (
+    <PaneVisibilityContext.Provider value={props.visibility.pane}>
+      <TabBodySelectedContext.Provider value={props.visibility.tab}>
+        {props.children}
+      </TabBodySelectedContext.Provider>
+    </PaneVisibilityContext.Provider>
+  );
+}
+
+describe("<PageRow /> in a tile body that is not on screen", () => {
+  const HIDDEN: ReadonlyArray<readonly [string, TileVisibility]> = [
+    ["its pane is not the shown pane", { pane: false, tab: true }],
+    ["its tab is not the front tab", { pane: true, tab: false }],
+  ];
+
+  it.each(HIDDEN)(
+    "reads and runs nothing while %s, loads once shown, and keeps the live page when hidden again",
+    async (_case, hidden) => {
+      const rpc = makeRpc(textResponse("open"));
+      const tree = rowTree(rpc, SHOWN, null);
+      const settle = () =>
+        act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+
+      const view = render(<TileBody visibility={hidden}>{tree}</TileBody>);
+      await settle();
+      expect(rpc.readFile).not.toHaveBeenCalled();
+      expect(screen.queryByTestId("sandbox-frame")).toBeNull();
+
+      view.rerender(<TileBody visibility={TILE_SHOWN}>{tree}</TileBody>);
+      const frame = await screen.findByTestId("sandbox-frame");
+      expect(rpc.readFile).toHaveBeenCalledTimes(1);
+
+      // A page that is running is not torn down and reloaded for a tab switch.
+      view.rerender(<TileBody visibility={hidden}>{tree}</TileBody>);
+      await settle();
+      expect(screen.getByTestId("sandbox-frame")).toBe(frame);
+      expect(rpc.readFile).toHaveBeenCalledTimes(1);
+    },
+  );
 });
 
 describe("<PageRow /> when the page cannot be read", () => {

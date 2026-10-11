@@ -24,6 +24,7 @@ import {
 import type { JsonObject } from "@traycer/protocol/persistence/chat-sync/json";
 import type { ToolCallMcpAppStamp } from "@traycer/protocol/persistence/epic/content-blocks";
 import { useChatAttachmentScope } from "@/components/chat/chat-attachment-scope-context";
+import { useTileBodyVisible } from "@/components/epic-canvas/hooks/use-tile-body-visible";
 import { useBlockingLayerClaim } from "@/components/layout/shell/blocking-layer-claim";
 import { SandboxFrame } from "@/components/sandbox/sandbox-frame";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
@@ -139,7 +140,10 @@ function grantedPermissions(
  */
 export function McpAppRow(props: McpAppRowProps): ReactNode {
   const scope = useChatAttachmentScope();
-  if (scope === null) return props.fallback;
+  const visible = useTileBodyVisible();
+  const [loaded, setLoaded] = useState(false);
+  if (!loaded && visible && scope !== null) setLoaded(true);
+  if (scope === null || (!visible && !loaded)) return props.fallback;
   return (
     <LiveMcpApp
       id={props.id}

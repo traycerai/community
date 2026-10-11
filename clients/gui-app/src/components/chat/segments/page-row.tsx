@@ -10,6 +10,7 @@ import {
 } from "@traycer/protocol/persistence/epic/files";
 import { useChatAttachmentScope } from "@/components/chat/chat-attachment-scope-context";
 import { useScrollToChatPage } from "@/components/chat/chat-scroll-to-block";
+import { useTileBodyVisible } from "@/components/epic-canvas/hooks/use-tile-body-visible";
 import { HtmlViewer } from "@/components/files/viewers/html-viewer";
 import { LivePulse } from "@/components/ui/live-pulse";
 import { Shimmer } from "@/components/ui/shimmer";
@@ -57,7 +58,13 @@ export interface PageRowProps {
  */
 export function PageRow(props: PageRowProps): ReactNode {
   const scope = useChatAttachmentScope();
+  const visible = useTileBodyVisible();
+  const [loaded, setLoaded] = useState(false);
+  if (!loaded && visible && props.page !== null && scope !== null) {
+    setLoaded(true);
+  }
   if (props.page !== null && scope !== null) {
+    if (!visible && !loaded) return props.fallback;
     return (
       <ShownPage
         page={props.page}
