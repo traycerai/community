@@ -238,6 +238,7 @@ import {
   buildSubmittedChatJSONContent,
   type SlashCommandCatalog,
 } from "@/lib/composer/tiptap-json-content";
+import type { SlashCommand } from "@/lib/composer/types";
 import {
   buildChatRunSettings,
   importedChatSettingsSeed,
@@ -336,6 +337,35 @@ const EMPTY_WORKSPACE_PATH_SET: ReadonlySet<string> = new Set();
 // One empty list: a fresh `[]` per render gave the tombstoned-profile
 // context a new resolver each time and re-rendered every user message.
 const NO_PROVIDERS: ReadonlyArray<ProviderCliState> = [];
+// True when `commands` would build a catalog equal to `catalog`, compared by
+// content: the commands list is rebuilt with new objects whenever its query
+// is re-enabled, so identity says nothing about whether it changed.
+interface HeldSlashCatalog {
+  /** The query scope the catalog was loaded for: host, harness, roots. */
+  readonly scope: string;
+  readonly catalog: SlashCommandCatalog;
+}
+
+function slashCatalogMatches(
+  catalog: SlashCommandCatalog,
+  commands: ReadonlyArray<SlashCommand>,
+): boolean {
+  if (catalog.size !== commands.length) return false;
+  return commands.every((command) => {
+    const held = catalog.get(command.name.toLowerCase());
+    return (
+      held !== undefined &&
+      (held === command ||
+        (held.source === command.source &&
+          held.harnessId === command.harnessId &&
+          held.name === command.name &&
+          held.description === command.description &&
+          held.argumentHint === command.argumentHint &&
+          held.kind === command.kind &&
+          JSON.stringify(held.metadata) === JSON.stringify(command.metadata)))
+    );
+  });
+}
 const EMPTY_BACKGROUND_STOP_TASK_IDS: ReadonlySet<string> = new Set();
 // How long a compact-conversation click stays locked out against a repeat
 // click. Not tied to the send settling - just long enough that a double-click
@@ -2415,25 +2445,44 @@ function useChatTileSessionViewModel(
   // commands" - and chip nothing while looking resolved. An unanswered query is
   // unresolved, not empty. The `$` then stays prose, which the host still
   // resolves lexically; the cost is the pill, never the skill.
-  const slashCatalog = useMemo<SlashCommandCatalog | null>(
-    () =>
-      activationQueries.discoverActionSlashCommands &&
-      !slashCommandsLoading &&
-      slashCommandsError === null
-        ? new Map(
-            slashCommands.map((command) => [
-              command.name.toLowerCase(),
-              command,
-            ]),
-          )
-        : null,
-    [
-      activationQueries.discoverActionSlashCommands,
-      slashCommands,
-      slashCommandsLoading,
-      slashCommandsError,
-    ],
-  );
+  // Held across focus loss. The catalog query is gated on focus, so without
+  // this every focus flip took the catalog to null and back to a new Map,
+  // and everything built on it (the inline-edit send, the next-step send,
+  // so every transcript row and the composer) re-rendered on both tiles of
+  // each tab step. Focused, the tile reads only the live list: the held
+  // catalog is reused only while its content equals that list, so a catalog
+  // that changed in the cache while unfocused is current the moment the tile
+  // is focused again, and the held one never outlives it. The hold is also
+  // fenced by the query's scope (host, harness, working roots): a settings or
+  // workspace change while unfocused drops it rather than letting an
+  // unfocused send chip against another scope's commands.
+  const slashCatalogScope = [
+    activeHostId,
+    currentComposerSettings.harnessId,
+    ...resolvedComposerMentionRoots,
+  ].join("\u0000");
+  const [heldSlashCatalog, setHeldSlashCatalog] =
+    useState<HeldSlashCatalog | null>(null);
+  const heldInScope =
+    heldSlashCatalog !== null && heldSlashCatalog.scope === slashCatalogScope
+      ? heldSlashCatalog.catalog
+      : null;
+  let slashCatalog: SlashCommandCatalog | null = null;
+  if (!activationQueries.discoverActionSlashCommands) {
+    slashCatalog = heldInScope;
+  } else if (!slashCommandsLoading && slashCommandsError === null) {
+    if (
+      heldInScope !== null &&
+      slashCatalogMatches(heldInScope, slashCommands)
+    ) {
+      slashCatalog = heldInScope;
+    } else {
+      slashCatalog = new Map(
+        slashCommands.map((command) => [command.name.toLowerCase(), command]),
+      );
+      setHeldSlashCatalog({ scope: slashCatalogScope, catalog: slashCatalog });
+    }
+  }
   const canModifyMessages = state.canModifyMessages;
   const activeInlineEdit = useStore(
     handle.store,
