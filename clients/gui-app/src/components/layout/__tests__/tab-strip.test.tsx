@@ -2503,7 +2503,10 @@ describe("<TabStrip />", () => {
       CHAT_SESSION_HOST,
     );
     if (handle === null) throw new Error("expected chat session handle");
+    // The owner's chat: a gate waits on the user only with chat access that
+    // lets them act (the epic role above is not chat access).
     handle.store.setState({
+      access: { role: "owner", ownerUserId: "chat-owner", canAct: true },
       pendingInterviews: [{ blockId: "question-1", requestedAt: 1 }],
     });
     const router = buildRouter("/epics/e-a/e-a");
@@ -2525,7 +2528,10 @@ describe("<TabStrip />", () => {
       CHAT_SESSION_HOST,
     );
     if (handle === null) throw new Error("expected chat session handle");
+    // The owner's chat: a gate waits on the user only with chat access that
+    // lets them act (the epic role above is not chat access).
     handle.store.setState({
+      access: { role: "owner", ownerUserId: "chat-owner", canAct: true },
       pendingApprovals: [
         {
           kind: "tool",

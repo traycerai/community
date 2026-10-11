@@ -275,7 +275,11 @@ function registerEditableEpic(writes: EpicWriteCommandIntent[]): void {
   __getOpenEpicRegistryForTests().acquire(EPIC_ID, () => handle);
 }
 
-/** A live epic projection holding `CHAT_ID`, with a warm session parked on a command approval. */
+/**
+ * A live epic projection holding `CHAT_ID`, with a warm session parked on a
+ * command approval, in a chat this user owns and can answer. A gate counts as
+ * "waiting on the user" only with that access.
+ */
 function registerChatWaitingOnApproval(): void {
   const epic = openStoreForTest({
     epicId: EPIC_ID,
@@ -324,6 +328,7 @@ function registerChatWaitingOnApproval(): void {
       }),
   );
   chat.store.setState({
+    access: { role: "owner", ownerUserId: "chat-owner", canAct: true },
     pendingApprovals: [
       {
         kind: "tool",
