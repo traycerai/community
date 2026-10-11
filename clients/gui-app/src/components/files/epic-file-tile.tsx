@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { MoreHorizontal } from "lucide-react";
 import { EpicFileDownloadButton } from "@/components/files/epic-file-download-button";
@@ -9,6 +9,7 @@ import { ImageViewer } from "@/components/files/viewers/image-viewer";
 import { PdfViewer } from "@/components/files/viewers/pdf-viewer";
 import { VideoViewer } from "@/components/files/viewers/video-viewer";
 import { useTabHostId } from "@/components/epic-canvas/hooks/use-tab-host-id";
+import { useTileBodyVisible } from "@/components/epic-canvas/hooks/use-tile-body-visible";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -60,6 +61,13 @@ export function EpicFileTile(props: EpicFileTileProps): ReactNode {
     via: node.via,
   };
   const viewer = epicFileViewer(node.path);
+  const visible = useTileBodyVisible();
+  const [pageLoaded, setPageLoaded] = useState(false);
+  // Restored retention history is not a page viewed in this window session.
+  // Load it on first show, then keep its running document through tab switches.
+  if (!pageLoaded && visible && viewer.kind === "html") {
+    setPageLoaded(true);
+  }
   // The manifest's title names the file where it has one (a page, an app).
   const title = useEpicFileRecord(node.path)?.entry.title?.trim() ?? "";
   const download = useEpicFileDownload(hostId, address);
@@ -110,14 +118,16 @@ export function EpicFileTile(props: EpicFileTileProps): ReactNode {
             versionNav={versionNav}
             actions={fileActions}
           >
-            <HtmlViewer
-              // A new version is a new document, with fresh frame state.
-              key={node.sha256}
-              hostId={hostId}
-              address={address}
-              title={title.length > 0 ? title : node.name}
-              initialHeight={null}
-            />
+            {visible || pageLoaded ? (
+              <HtmlViewer
+                // A new version is a new document, with fresh frame state.
+                key={node.sha256}
+                hostId={hostId}
+                address={address}
+                title={title.length > 0 ? title : node.name}
+                initialHeight={null}
+              />
+            ) : null}
           </PathBar>
         );
       case "image":
