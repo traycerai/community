@@ -368,16 +368,20 @@ export function createComposerDraftStorage() {
     persistSubmittedDraftNowOrThrow(
       chatId: string,
       draftId: string | null,
+      supersedes: string | null,
     ): unknown {
       if (currentName === null) return null;
       const key = composerDraftRowKey(currentName, "draft", chatId);
       const saved = readRow(key);
       // An accepted send retires this identity despite another window's edits
-      // to it. A fresh identity belongs to the NEXT message and must survive.
+      // to it. Preserve a different identity written since our last snapshot,
+      // except a fork's ancestor: that identity is retired with this send too.
       const nextDraft =
+        saved?.revision !== baseline.get(key) &&
         isRecord(saved?.value) &&
         typeof saved.value.draftId === "string" &&
-        migratedLegacyComposerDraftId(saved.value.draftId) !== draftId
+        migratedLegacyComposerDraftId(saved.value.draftId) !== draftId &&
+        migratedLegacyComposerDraftId(saved.value.draftId) !== supersedes
           ? saved.value
           : null;
       if (saved === null) baseline.delete(key);

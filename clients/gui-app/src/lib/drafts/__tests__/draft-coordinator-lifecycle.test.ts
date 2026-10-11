@@ -478,6 +478,65 @@ describe("submitComposerDraft: another window changed the same chat's saved draf
     );
   });
 
+  it.each([
+    { name: "the saved row still holds the ancestor id", rewritten: false },
+    {
+      name: "the other window rewrote the ancestor id at a new revision",
+      rewritten: true,
+    },
+  ])(
+    "does not keep the submitted fork's own ancestor as the next draft when $name",
+    async ({ rewritten }) => {
+      // `detachDraftIdentity` re-keyed the draft to a fresh id whose first
+      // write has not landed, so the identity saved on disk is the fork's
+      // ANCESTOR - an older identity of the very draft being submitted, not
+      // a newer draft some other window started.
+      const TAB_HOST = "host-tab-ancestor";
+      const log: ForeignSubmitLog = {
+        retracts: [],
+        deletes: [],
+        retractFailures: 0,
+      };
+      mountTabHostSession(TAB_HOST, log);
+      bindComposerDraftHost(CHAT_ID, TAB_HOST);
+      const ancestorId = typedAndSaved(CHAT_ID);
+      useComposerDraftStore.getState().detachDraftIdentity(CHAT_ID);
+      const freshId = readDraftId();
+      expect(freshId).not.toBe(ancestorId);
+      if (rewritten) {
+        otherWindowWrites(
+          CHAT_ID,
+          "ancestor edited in the other window",
+          ancestorId,
+        );
+      }
+
+      await submitComposerDraft(CHAT_ID);
+
+      // What the user sees first: nothing of the submitted draft is in
+      // memory, nothing is left on disk, and the next launch starts empty.
+      expect(readDraft().content).toEqual(EMPTY_COMPOSER_DRAFT.content);
+      expect(readDraft().draftId).toBeNull();
+      const onDisk = readDraftRow(CHAT_ID, ANON_NAME);
+      expect(onDisk?.content ?? EMPTY_COMPOSER_DRAFT.content).toEqual(
+        EMPTY_COMPOSER_DRAFT.content,
+      );
+      expect(onDisk?.draftId).not.toBe(ancestorId);
+      expect(onDisk?.draftId).not.toBe(freshId);
+      await useComposerDraftStore.persist.rehydrate();
+      expect(readComposerDraftSnapshot(CHAT_ID).content).toEqual(
+        EMPTY_COMPOSER_DRAFT.content,
+      );
+      expect(readComposerDraftSnapshot(CHAT_ID).draftId).not.toBe(ancestorId);
+
+      // Both identities of the submitted draft are retired on the host: the
+      // ancestor through the fork's `supersedes`, the fresh id by delete.
+      // Which identities, not how many times: the coordinator may retry.
+      expect(new Set(log.retracts)).toEqual(new Set([ancestorId]));
+      expect(new Set(log.deletes)).toEqual(new Set([freshId]));
+    },
+  );
+
   it("still refuses an ordinary replacement over the conflict and keeps the unsaved text owed", () => {
     typedAgainstAStaleRevision(CHAT_ID, typedAndSaved(CHAT_ID), "my message");
 

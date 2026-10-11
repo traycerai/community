@@ -447,7 +447,7 @@ export const useComposerDraftStore = create<ComposerDraftStore>()(
         scheduleLandingImageReconcile();
       },
       clearSubmittedDraft: (chatId, hostId) => {
-        const draftId = ensureDraft(get().drafts, chatId).draftId;
+        const { draftId, supersedes } = ensureDraft(get().drafts, chatId);
         set((state) => {
           const current = ensureDraft(state.drafts, chatId);
           return {
@@ -472,6 +472,7 @@ export const useComposerDraftStore = create<ComposerDraftStore>()(
         const nextDraft = composerDraftStorage.persistSubmittedDraftNowOrThrow(
           chatId,
           draftId,
+          supersedes,
         );
         if (nextDraft !== null) {
           const current = get();
