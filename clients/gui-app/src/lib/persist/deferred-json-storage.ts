@@ -48,7 +48,7 @@ export function flushDeferredJsonWrite(key: string): void {
   try {
     persistNowOrThrow(key);
   } catch {
-    appLogger.warn("[persist] deferred local write failed", { key });
+    appLogger.warn("[persist] deferred local write failed", {});
   }
 }
 

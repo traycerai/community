@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { appLogger } from "@/lib/logger";
+import { composerDraftStorageKey } from "@/lib/persist/keys";
 import {
   cancelDeferredJsonWrites,
   deferJsonWrite,
@@ -44,8 +45,10 @@ describe("deferred-json-storage", () => {
     expect(flushedAtMs).toBeLessThanOrEqual(MAX_WAIT_MS);
   });
 
-  it("a failed deferred write is retained (not dropped) and a later lifecycle flush retries and lands it, logging the key only", () => {
-    const key = "retry-key";
+  it("a failed deferred write is retained (not dropped) and a later lifecycle flush retries and lands it, logging neither the account-bearing key nor the error", () => {
+    // A composer draft's storage key carries the account's user id, and a
+    // warning line is what ends up in a pasted bug report.
+    const key = composerDraftStorageKey("user-7f3a-account-id");
     let attempt = 0;
     const write = vi.fn(() => {
       attempt += 1;
@@ -72,12 +75,15 @@ describe("deferred-json-storage", () => {
     vi.advanceTimersByTime(MAX_WAIT_MS);
     expect(write).toHaveBeenCalledTimes(2);
 
-    // The one failed attempt logged the key only - never the error/content.
+    // The one failed attempt is reported, and what it reports names neither
+    // the account the key carries nor the error's own text.
     expect(warnSpy).toHaveBeenCalledTimes(1);
-    expect(warnSpy).toHaveBeenCalledWith(
+    expect(warnSpy.mock.calls[0]?.[0]).toBe(
       "[persist] deferred local write failed",
-      { key },
     );
+    const logged = JSON.stringify(warnSpy.mock.calls);
+    expect(logged).not.toContain("user-7f3a-account-id");
+    expect(logged).not.toContain("secret content");
   });
 
   it("persistNowOrThrow throws on a failing write, retains it for a retry, and clears it once it succeeds", () => {
