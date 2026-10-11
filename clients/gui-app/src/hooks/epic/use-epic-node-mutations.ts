@@ -2,6 +2,7 @@ import type { HostClient } from "@traycer-clients/shared/host-client/host-client
 import type { HostRpcRegistry } from "@/lib/host";
 import { pruneRecoveryTiles } from "@/lib/tab-recovery/history";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useCallback } from "react";
 
 import { useHostMutation } from "@/hooks/host/use-host-query";
 import { useEpicSessionHostClient } from "@/hooks/epic/use-epic-session-host-client";
@@ -298,31 +299,40 @@ export function useEpicRenameArtifact(
   interface Response {
     readonly updated: boolean;
   }
-  const mutateAsync = async (variables: Variables): Promise<Response> => {
-    try {
-      await enqueueAndWait(handle, {
-        kind: "rename-artifact",
-        artifactId: variables.artifactId,
-        title: variables.title,
-      });
-      if (trackUserIntent) {
-        Analytics.getInstance().track(AnalyticsEvent.ArtifactRenamed, null);
+  // Stable across renders, like a TanStack mutation function: callers hold
+  // it in callback deps (the canvas tab rename), and a fresh closure per
+  // render re-rendered every tab in every strip.
+  const mutateAsync = useCallback(
+    async (variables: Variables): Promise<Response> => {
+      try {
+        await enqueueAndWait(handle, {
+          kind: "rename-artifact",
+          artifactId: variables.artifactId,
+          title: variables.title,
+        });
+        if (trackUserIntent) {
+          Analytics.getInstance().track(AnalyticsEvent.ArtifactRenamed, null);
+        }
+        return { updated: true };
+      } catch (error: unknown) {
+        const normalized =
+          error instanceof Error ? error : new Error(String(error));
+        toast.error("Couldn't rename artifact.", {
+          description: normalized.message,
+        });
+        throw normalized;
       }
-      return { updated: true };
-    } catch (error: unknown) {
-      const normalized =
-        error instanceof Error ? error : new Error(String(error));
-      toast.error("Couldn't rename artifact.", {
-        description: normalized.message,
-      });
-      throw normalized;
-    }
-  };
-  const mutate = (variables: Variables): void => {
-    // Consumed for the same reason the status wrapper above consumes it: the
-    // rename's refusal path is the same `enqueueAndWait` throw, and this
-    // surface's callers (the mobile switcher rename) are fire-and-forget.
-    void mutateAsync(variables).then(undefined, () => {});
-  };
+    },
+    [handle, trackUserIntent],
+  );
+  const mutate = useCallback(
+    (variables: Variables): void => {
+      // Consumed for the same reason the status wrapper above consumes it: the
+      // rename's refusal path is the same `enqueueAndWait` throw, and this
+      // surface's callers (the mobile switcher rename) are fire-and-forget.
+      void mutateAsync(variables).then(undefined, () => {});
+    },
+    [mutateAsync],
+  );
   return { mutate, mutateAsync, isPending };
 }

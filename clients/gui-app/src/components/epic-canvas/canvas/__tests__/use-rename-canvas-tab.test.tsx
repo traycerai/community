@@ -98,41 +98,45 @@ vi.mock("@/providers/use-open-epic-handle", () => ({
   },
 }));
 
-vi.mock("@/hooks/epic/use-epic-chat-mutations", () => ({
-  useEpicRenameChat: () => ({
-    mutateAsync: makeMutateAsync(
-      (variables: {
-        readonly chatId: string;
-        readonly title: string;
-        readonly hostId: string | null;
-      }) => {
-        mocks.chatCalls.push({
-          chatId: variables.chatId,
-          title: variables.title,
-          hostId: variables.hostId,
-        });
-      },
-    ),
-  }),
-}));
+vi.mock("@/hooks/epic/use-epic-chat-mutations", () => {
+  // Hoisted out of the hook on purpose: TanStack's `useMutation` returns a NEW
+  // result object on every render but a STABLE `mutateAsync`, and the hook
+  // under test relies on exactly that to hand out a stable callback. A mock
+  // that built a fresh `mutateAsync` per call would model a hook TanStack
+  // never produces.
+  const mutateAsync = makeMutateAsync(
+    (variables: {
+      readonly chatId: string;
+      readonly title: string;
+      readonly hostId: string | null;
+    }) => {
+      mocks.chatCalls.push({
+        chatId: variables.chatId,
+        title: variables.title,
+        hostId: variables.hostId,
+      });
+    },
+  );
+  return { useEpicRenameChat: () => ({ mutateAsync }) };
+});
 
-vi.mock("@/hooks/epic/use-epic-tui-agent-mutations", () => ({
-  useEpicRenameTuiAgent: () => ({
-    mutateAsync: makeMutateAsync(
-      (variables: {
-        readonly tuiAgentId: string;
-        readonly title: string;
-        readonly hostId: string | null;
-      }) => {
-        mocks.tuiCalls.push({
-          tuiAgentId: variables.tuiAgentId,
-          title: variables.title,
-          hostId: variables.hostId,
-        });
-      },
-    ),
-  }),
-}));
+vi.mock("@/hooks/epic/use-epic-tui-agent-mutations", () => {
+  // Stable `mutateAsync`, new result object per call: see the chat mock above.
+  const mutateAsync = makeMutateAsync(
+    (variables: {
+      readonly tuiAgentId: string;
+      readonly title: string;
+      readonly hostId: string | null;
+    }) => {
+      mocks.tuiCalls.push({
+        tuiAgentId: variables.tuiAgentId,
+        title: variables.title,
+        hostId: variables.hostId,
+      });
+    },
+  );
+  return { useEpicRenameTuiAgent: () => ({ mutateAsync }) };
+});
 
 import { useRenameCanvasTab } from "@/components/epic-canvas/canvas/use-rename-canvas-tab";
 
@@ -405,6 +409,22 @@ describe("useRenameCanvasTab", () => {
     mocks.settleAs = "success";
     mocks.handle.current?.dispose();
     mocks.handle.current = null;
+  });
+
+  it("returns the same callback across re-renders", () => {
+    mocks.handle.current = newSession();
+    const { result, rerender, unmount } = renderHook(() =>
+      useRenameCanvasTab(EPIC_ID, VIEW_TAB_ID),
+    );
+    const first = result.current;
+
+    rerender();
+    rerender();
+
+    // The strip's menu handlers close over this callback; a new identity each
+    // render re-renders every canvas tab.
+    expect(result.current).toBe(first);
+    unmount();
   });
 
   it("stamps a trimmed optimistic rename before the RPC fires, and marks it landed (not deleted) once the RPC settles OK", async () => {

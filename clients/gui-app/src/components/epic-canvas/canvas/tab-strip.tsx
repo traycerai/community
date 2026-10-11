@@ -4,6 +4,7 @@ import { useBrowserAttention } from "@/hooks/notifications/use-browser-attention
 import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
 import { NOTIFICATION_STATUS_TONES } from "@/components/notifications/notification-indicator-tones";
 import {
+  memo,
   useCallback,
   useContext,
   useEffect,
@@ -319,12 +320,8 @@ export function TabStrip(props: TabStripProps) {
                   onClose={onCloseTab}
                   onPromotePreview={onPromotePreview}
                   canRenameTabs={canRenameTabs}
-                  menuProps={{
-                    groupId,
-                    tabId: tab.instanceId,
-                    canCloseRight: index < tabs.length - 1,
-                    ...menuHandlers,
-                  }}
+                  canCloseRight={index < tabs.length - 1}
+                  menuHandlers={menuHandlers}
                 />
               );
             })}
@@ -444,10 +441,14 @@ interface TabItemProps {
   readonly onClose: (groupId: string, tabId: string) => void;
   readonly onPromotePreview: (groupId: string) => void;
   readonly canRenameTabs: boolean;
-  readonly menuProps: Omit<
-    TabStripContextMenuProps,
-    "canRename" | "onCopyFilePath" | "onEditTitle" | "onOpenUsage"
-  >;
+  readonly canCloseRight: boolean;
+  /**
+   * The strip's shared handlers, passed through as one stable object. The
+   * per-tab menu props are built inside the item: an object literal built in
+   * the strip's map is new on every strip render, which defeated `memo` and
+   * re-rendered every tab on each tab step.
+   */
+  readonly menuHandlers: TabStripProps["menuHandlers"];
 }
 
 // Ticket 12's chat cost line: the tab's own overflow (this context menu),
@@ -487,7 +488,11 @@ interface TerminalTabControl {
   readonly rename: (title: string) => void;
 }
 
-function TabItem(props: TabItemProps) {
+// Behind `memo`: the strip re-renders on every tab step (drop indicator,
+// offsets, its parent's demand), and every prop here is stable or a
+// primitive, so a tab whose own inputs did not change skips. Active and
+// preview state is read per tab inside (`useTabActivation`).
+const TabItem = memo(function TabItem(props: TabItemProps) {
   if (props.tab.type === "browser-session") {
     return <BrowserTabItem {...props} tab={props.tab} />;
   }
@@ -505,7 +510,7 @@ function TabItem(props: TabItemProps) {
       <TerminalTabItem {...props} tab={props.tab} />
     </TabHostProvider>
   );
-}
+});
 
 function BrowserTabItem(
   props: Omit<TabItemProps, "tab"> & { readonly tab: BrowserSessionTileRef },
@@ -565,7 +570,7 @@ function useTabRenameControl(args: {
   readonly canRenameTabs: boolean;
   readonly terminalControl: TerminalTabControl | null;
   readonly browserPresentation: BrowserTabPresentation | null;
-  readonly onRename: TabItemProps["menuProps"]["onRename"];
+  readonly onRename: TabItemProps["menuHandlers"]["onRename"];
 }) {
   const {
     tab,
@@ -656,8 +661,18 @@ function TabItemBody(
     onClose,
     onPromotePreview,
     canRenameTabs,
-    menuProps,
+    canCloseRight,
+    menuHandlers,
   } = props;
+  const menuProps = useMemo(
+    () => ({
+      groupId,
+      tabId: tab.instanceId,
+      canCloseRight,
+      ...menuHandlers,
+    }),
+    [canCloseRight, groupId, menuHandlers, tab.instanceId],
+  );
   // Read this tab's active/preview/globally-active state per tab so the strip's
   // map need not depend on the group's `activeTabId`; an active-switch then
   // re-renders only the two tabs whose flags flip. See `makeSelectTabActivation`.

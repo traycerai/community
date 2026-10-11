@@ -107,7 +107,10 @@ import {
   useSurfaceHostSelectionStore,
 } from "@/stores/host/surface-host-selection-store";
 
-import { TabStrip } from "@/components/epic-canvas/canvas/tab-strip";
+import {
+  TabStrip,
+  type TabStripProps,
+} from "@/components/epic-canvas/canvas/tab-strip";
 import { useRenameCanvasTab } from "@/components/epic-canvas/canvas/use-rename-canvas-tab";
 import { useLeftPanelStore } from "@/stores/epics/left-panel-store";
 import { type LeftPanelId } from "@/lib/left-panel-ids";
@@ -417,6 +420,42 @@ export const TabGroupView = memo(function TabGroupView(
     [tabs, renameTab],
   );
 
+  // One object for the strip's context menus, built once per input change:
+  // the strip hands it to every tab, and a fresh object per render
+  // re-rendered every tab in every strip on each tab step.
+  const menuHandlers = useMemo<TabStripProps["menuHandlers"]>(
+    () => ({
+      onClose: handleCloseTab,
+      onCloseOthers: (gid, tid) =>
+        navigateNested(epicId, tabId, () =>
+          prepareCloseOtherCanvasTabsFocusTarget(tabId, gid, tid),
+        ),
+      onCloseRight: (gid, tid) =>
+        navigateNested(epicId, tabId, () =>
+          prepareCloseRightCanvasTabsFocusTarget(tabId, gid, tid),
+        ),
+      onCloseAll: (gid) =>
+        navigateNested(epicId, tabId, () =>
+          prepareCloseAllCanvasTabsFocusTarget(tabId, gid),
+        ),
+      onSplit: handleSplitFromMenu,
+      onRevealInSidebar: handleRevealInSidebar,
+      onRename: handleRename,
+    }),
+    [
+      epicId,
+      handleCloseTab,
+      handleRename,
+      handleRevealInSidebar,
+      handleSplitFromMenu,
+      navigateNested,
+      prepareCloseAllCanvasTabsFocusTarget,
+      prepareCloseOtherCanvasTabsFocusTarget,
+      prepareCloseRightCanvasTabsFocusTarget,
+      tabId,
+    ],
+  );
+
   const activeTab = useMemo<EpicCanvasTileRef | null>(() => {
     if (tabs.length === 0) return null;
     const activeInstanceId = resolveActivePaneTab(
@@ -487,24 +526,7 @@ export const TabGroupView = memo(function TabGroupView(
                 onCloseGroup={handleCloseGroup}
                 onOpenBlankTab={handleOpenBlankTab}
                 canRenameTabs={canRenameTabs}
-                menuHandlers={{
-                  onClose: handleCloseTab,
-                  onCloseOthers: (gid, tid) =>
-                    navigateNested(epicId, tabId, () =>
-                      prepareCloseOtherCanvasTabsFocusTarget(tabId, gid, tid),
-                    ),
-                  onCloseRight: (gid, tid) =>
-                    navigateNested(epicId, tabId, () =>
-                      prepareCloseRightCanvasTabsFocusTarget(tabId, gid, tid),
-                    ),
-                  onCloseAll: (gid) =>
-                    navigateNested(epicId, tabId, () =>
-                      prepareCloseAllCanvasTabsFocusTarget(tabId, gid),
-                    ),
-                  onSplit: handleSplitFromMenu,
-                  onRevealInSidebar: handleRevealInSidebar,
-                  onRename: handleRename,
-                }}
+                menuHandlers={menuHandlers}
               />
             ) : null}
             <div
