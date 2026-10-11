@@ -170,3 +170,24 @@ export function chatSessionWaitingReason(
   }
   return null;
 }
+
+/**
+ * {@link chatSessionWaitingReason} for the person at this window: what the
+ * chat is waiting on THEM for. A gate is theirs to answer only when the
+ * session says they can act on the chat. A viewer's session carries the same
+ * pending gates and cannot answer one, and the host files the prompt
+ * notification for the chat's owner alone, so "waiting for your approval"
+ * would be false for a viewer. A session whose access has not arrived yet
+ * reads as not waiting until it does.
+ */
+export function chatSessionWaitingOnUser(
+  state: Pick<
+    ChatSessionState,
+    | "access"
+    | "pendingInterviews"
+    | "pendingApprovals"
+    | "pendingFileEditApprovals"
+  >,
+): ChatWaitingReason | null {
+  return state.access?.canAct === true ? chatSessionWaitingReason(state) : null;
+}

@@ -13,7 +13,7 @@ import { withWaitingIndicator } from "@/components/layout/tabs/tab-waiting";
 import type { IndicatorRunningKind } from "@/components/notifications/notification-indicator-icon";
 import type { AgentActivityCoverage } from "@/lib/agent-activity";
 import { useAgentActivityCoverage } from "@/stores/agent-activity-store";
-import { chatSessionWaitingReason } from "@/stores/chats/chat-run-activity";
+import { chatSessionWaitingOnUser } from "@/stores/chats/chat-run-activity";
 import type { ChatSessionStoreHandle } from "@/stores/chats/chat-session-store";
 import type { NotificationIndicatorState } from "@/stores/notifications/notification-indicator-state";
 import { EPIC_NODE_ICONS } from "@/lib/artifacts/node-display";
@@ -148,11 +148,9 @@ function ChatProgressIconWithHandle(props: {
   // asking, and for as long as that feed is slow. So an open session lights
   // the bit itself, as the task tab does (`useEpicWaitingReason`).
   //
-  // Only for someone who can answer it. A viewer's session carries the same
-  // pending gates, and "waiting for your approval" would be false for them.
-  const waitingReason = useStore(props.handle.store, (state) =>
-    state.access?.canAct === true ? chatSessionWaitingReason(state) : null,
-  );
+  // Only for someone who can answer it, the rule the task tab reads through
+  // the same helper.
+  const waitingReason = useStore(props.handle.store, chatSessionWaitingOnUser);
   return (
     <ChatProgressPresentation
       indicatorState={withWaitingIndicator(props.indicatorState, waitingReason)}
