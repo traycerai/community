@@ -81,6 +81,7 @@ import type { PlainTerminalProjection } from "@traycer/protocol/host/terminal/pl
 import { retryEpicTerminalDurableCreate } from "@/lib/terminals/epic-terminal-durable-create-coordinator";
 import { hasTerminalPendingCreate } from "@/lib/terminals/pending-create-identity";
 import { useEpicTerminalDurableCreate } from "@/hooks/terminal/use-epic-terminal-durable-create";
+import { useTileBodyVisible } from "@/components/epic-canvas/hooks/use-tile-body-visible";
 
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
@@ -560,6 +561,7 @@ function HostTerminalTileLive(
 ) {
   const hostId = useTabHostId();
   const epicId = useOpenEpicId();
+  const tileBodyVisible = useTileBodyVisible();
   const pendingCreate = useEpicCanvasStore((state) =>
     hasTerminalPendingCreate(
       state.pendingCreateTerminalIdentities,
@@ -632,7 +634,11 @@ function HostTerminalTileLive(
     projectionStatus:
       projection === undefined ? "missing" : projection.runtime.status,
     pendingCreate: pendingCreate && durableCreate === null,
-    active: props.isActive,
+    // On screen, not focused: `isActive` is pane FOCUS, and a dormant terminal
+    // shown in an unfocused split pane (every terminal after a host restart
+    // while the user types in a chat) would wait on "Starting terminal
+    // session…" until clicked. The landing panel passes its visible tab too.
+    active: tileBodyVisible,
     canMutate: props.controller.canMutate,
     gridReady,
     dispatch,
