@@ -73,6 +73,7 @@ class TraycerStreamingHighlighter implements StreamingHighlighter {
   }
 
   private readonly listeners = new Set<ReadyListener>();
+  private readonly blockListeners = new Map<string, Set<ReadyListener>>();
   private unsubscribeTheme: (() => void) | null = null;
   /** One-time palette observer - not cleared on core load failure. */
   private observersAttached = false;
@@ -124,6 +125,7 @@ class TraycerStreamingHighlighter implements StreamingHighlighter {
     this.core = null;
     this.coreLoad = null;
     this.listeners.clear();
+    this.blockListeners.clear();
     this.unsubscribeTheme?.();
     this.unsubscribeTheme = null;
     this.observersAttached = false;
@@ -146,9 +148,16 @@ class TraycerStreamingHighlighter implements StreamingHighlighter {
   }
 
   private notify(): void {
-    for (const listener of this.listeners) {
-      listener();
+    for (const listener of this.listeners) listener();
+    for (const listeners of this.blockListeners.values()) {
+      for (const listener of listeners) listener();
     }
+  }
+
+  private notifyBlock(blockKey: string): void {
+    const listeners = this.blockListeners.get(blockKey);
+    if (listeners === undefined) return;
+    for (const listener of listeners) listener();
   }
 
   highlight(code: string, lang: string): HighlightOutput | null {
@@ -212,7 +221,7 @@ class TraycerStreamingHighlighter implements StreamingHighlighter {
       }
       entry.finished = true;
       this.trimDeferred();
-      this.notify();
+      this.notifyBlock(blockKey);
     };
     if (typeof window.requestIdleCallback === "function") {
       const id = window.requestIdleCallback(run, { timeout: 500 });
@@ -250,14 +259,21 @@ class TraycerStreamingHighlighter implements StreamingHighlighter {
   ): () => void {
     const blockKey = `${lang}\0${contentFingerprint(code)}`;
     this.consumers.set(blockKey, (this.consumers.get(blockKey) ?? 0) + 1);
-    const unsubscribe = this.subscribe(onReadyChange);
+    this.ensureBoot();
+    let listeners = this.blockListeners.get(blockKey);
+    if (listeners === undefined) {
+      listeners = new Set();
+      this.blockListeners.set(blockKey, listeners);
+    }
+    listeners.add(onReadyChange);
     // Retry through Tailmark after ownership commits. Calling highlight here
     // would bypass its streaming throttle whenever the source changes.
     if (code.length >= 4096 && this.getCached(code, lang) === null) {
       onReadyChange();
     }
     return () => {
-      unsubscribe();
+      listeners.delete(onReadyChange);
+      if (listeners.size === 0) this.blockListeners.delete(blockKey);
       const remaining = (this.consumers.get(blockKey) ?? 1) - 1;
       if (remaining > 0) {
         this.consumers.set(blockKey, remaining);

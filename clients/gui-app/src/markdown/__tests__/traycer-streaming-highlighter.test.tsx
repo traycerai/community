@@ -274,6 +274,69 @@ describe("Traycer StreamingHighlighter adapter - deferred large blocks (block-ow
 
     unsubB();
   });
+
+  it("notifies only the owners of the block whose queued job ran, not every mounted block", async () => {
+    await waitForReady();
+    const core = await getOrCreateHighlighter();
+    const codeToHtml = vi.spyOn(core, "codeToHtml");
+    // Hand-driven idle queue: the test decides which block's job runs.
+    const idleQueue: IdleRequestCallback[] = [];
+    vi.stubGlobal("requestIdleCallback", (callback: IdleRequestCallback) => {
+      idleQueue.push(callback);
+      return idleQueue.length;
+    });
+    vi.stubGlobal("cancelIdleCallback", () => undefined);
+    try {
+      const codeA = bigCodeFixture("fanout-a");
+      const codeB = bigCodeFixture("fanout-b");
+      const blockA = createTraycerBlockHighlighter(codeA, "ts", false, {
+        node: null,
+      });
+      const blockB = createTraycerBlockHighlighter(codeB, "ts", false, {
+        node: null,
+      });
+      const onReadyA = vi.fn();
+      const onReadyB = vi.fn();
+      const unsubA = blockA.subscribe(onReadyA);
+      const unsubB = blockB.subscribe(onReadyB);
+      expect(blockA.highlight(codeA, "ts")).toBeNull();
+      expect(blockB.highlight(codeB, "ts")).toBeNull();
+      expect(idleQueue).toHaveLength(2);
+      // Subscribing a cold block fires its own eager retry, and a boot may
+      // still be settling: clear both before the one job under test runs.
+      onReadyA.mockClear();
+      onReadyB.mockClear();
+      codeToHtml.mockClear();
+
+      const runNextIdleJob = (): void => {
+        const job = idleQueue.shift();
+        if (job === undefined) throw new Error("no queued idle job");
+        job({ didTimeout: false, timeRemaining: () => 0 });
+      };
+      runNextIdleJob();
+
+      expect(codeToHtml).toHaveBeenCalledTimes(1);
+      expect(onReadyA).toHaveBeenCalled();
+      expect(onReadyB).not.toHaveBeenCalled();
+      const settledA = blockA.highlight(codeA, "ts");
+      expect(settledA).not.toBeNull();
+
+      runNextIdleJob();
+      expect(codeToHtml).toHaveBeenCalledTimes(2);
+      expect(onReadyB).toHaveBeenCalled();
+      const settledB = blockB.highlight(codeB, "ts");
+      expect(settledB).not.toBeNull();
+
+      // Tailmark settles both: that retires each transient slot, whose
+      // cancel handle would otherwise outlive the stubbed idle API.
+      if (settledA !== null) blockA.setCached(codeA, "ts", settledA);
+      if (settledB !== null) blockB.setCached(codeB, "ts", settledB);
+      unsubA();
+      unsubB();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });
 
 describe("useThrottledHighlight + Traycer adapter", () => {
