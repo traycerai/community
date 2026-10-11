@@ -1,5 +1,5 @@
 import { useColumnOverlayPlacement } from "@/components/layout/column-edge-context";
-import { useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type {
   AnimationEvent,
   ComponentPropsWithRef,
@@ -139,6 +139,8 @@ export interface SideTabRowProps {
    * meter's attention pip, and what starts the entry pulse.
    */
   readonly badge: RailBadgeKind | null;
+  /** Reads committed notification flags to exclude a mount-time correction from the pulse. */
+  readonly readCommittedWaiting?: (() => boolean) | null;
   /** The task's live agents, drawn by the collapsed tile's meter. */
   readonly agents: SideTabLiveAgents;
   /** Expanded: the one trailing status, or `null` for a row with none. */
@@ -209,18 +211,30 @@ function tabAccentOf(tint: string | null, tile: SideTabTile): string | null {
  * reply): only on the transition, never on mount or a re-render, never in a
  * loop, and not at all while motion is off. The pulse ends with its animation.
  */
-function useWaitingPulse(badge: RailBadgeKind | null): {
+function useWaitingPulse(
+  badge: RailBadgeKind | null,
+  readCommittedWaiting: (() => boolean) | null | undefined,
+): {
   readonly pulsing: boolean;
   readonly onAnimationEnd: (event: AnimationEvent<HTMLDivElement>) => void;
 } {
   const motionEnabled = useMotionEnabled();
   const waiting = badge === "approval" || badge === "reply";
-  const [wasWaiting, setWasWaiting] = useState(waiting);
+  const wasWaiting = useRef(waiting);
+  const mounted = useRef(false);
   const [pulsing, setPulsing] = useState(false);
-  if (waiting !== wasWaiting) {
-    setWasWaiting(waiting);
+  useLayoutEffect(() => {
+    if (!mounted.current || waiting === wasWaiting.current) return;
+    wasWaiting.current = waiting;
     setPulsing(waiting && motionEnabled);
-  }
+  }, [waiting, motionEnabled]);
+  useEffect(() => {
+    if (mounted.current) return;
+    // The provider's layout publication precedes this baseline. A row mounted
+    // in that same commit can still be awaiting its before-paint correction.
+    wasWaiting.current = waiting || (readCommittedWaiting?.() ?? false);
+    mounted.current = true;
+  });
   const onAnimationEnd = (event: AnimationEvent<HTMLDivElement>): void => {
     if (event.animationName === "side-strip-waiting-pulse") setPulsing(false);
   };
@@ -238,7 +252,7 @@ export function SideTabRow(props: SideTabRowProps) {
   const collapsed = props.variant === "collapsed";
   const sessionActive = props.session === "active";
   const accent = tabAccentOf(props.tint, props.tile);
-  const pulse = useWaitingPulse(props.badge);
+  const pulse = useWaitingPulse(props.badge, props.readCommittedWaiting);
   const { ref: titleRef, isTruncated } = useIsTextTruncated<HTMLSpanElement>(
     typeof props.title === "string" ? props.title : "",
   );

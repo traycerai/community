@@ -1,10 +1,4 @@
-import {
-  createContext,
-  use,
-  useContext,
-  useLayoutEffect,
-  useState,
-} from "react";
+import { createContext, use, useContext, useCallback } from "react";
 import type { StoreApi } from "zustand/vanilla";
 import { useStoreWithEqualityFn } from "zustand/traditional";
 import { shallow } from "zustand/shallow";
@@ -40,17 +34,10 @@ export function useSurfaceNotificationIndicatorState(
   originHostId: string | null,
 ): NotificationIndicatorState {
   const store = useContext(NotificationIndicatorStoreContext);
-  const [committed, setCommitted] = useState(false);
-  useLayoutEffect(() => {
-    setCommitted(true);
-  }, []);
-  // A newly mounted row reads this render's context so its initial waiting
-  // pulse sees the current flags. After commit it subscribes only to its
-  // entity in the store; speculative provider renders cannot mutate that store.
-  const readInherited = store === null || !committed;
-  const inherited = readInherited
-    ? use(NotificationIndicatorsContext)
-    : EMPTY_INDICATORS;
+  // The provider publishes at commit. A newly mounted consumer corrects a
+  // changed snapshot synchronously before paint, without a mount-only update.
+  const inherited =
+    store === null ? use(NotificationIndicatorsContext) : EMPTY_INDICATORS;
   const hostState = useStoreWithEqualityFn(
     store ?? {
       getState: () => inherited,
@@ -60,11 +47,24 @@ export function useSurfaceNotificationIndicatorState(
     (indicators) => selectHostIndicatorState(indicators, entity, originHostId),
     shallow,
   );
-  return useHostNotificationIndicatorState(
-    entity,
-    originHostId,
-    readInherited
-      ? selectHostIndicatorState(inherited, entity, originHostId)
-      : hostState,
-  );
+  return useHostNotificationIndicatorState(entity, originHostId, hostState);
+}
+
+/** Seed a row's entry-pulse baseline after the provider's commit publication. */
+export function useSurfaceNotificationWaitingProbe(
+  entity: HostNotificationsEntityRef,
+  originHostId: string | null,
+): (() => boolean) | null {
+  const store = useContext(NotificationIndicatorStoreContext);
+  const { epicId, chatId } = entity;
+  const readWaiting = useCallback(() => {
+    if (store === null) return false;
+    const state = selectHostIndicatorState(
+      store.getState(),
+      { epicId, chatId },
+      originHostId,
+    );
+    return state.pendingApproval || state.pendingInterview;
+  }, [store, epicId, chatId, originHostId]);
+  return store === null ? null : readWaiting;
 }

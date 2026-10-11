@@ -8,6 +8,13 @@ import {
 } from "@testing-library/react";
 import { createRef, type ComponentPropsWithRef, type ReactNode } from "react";
 import { ColumnEdgeContext } from "@/components/layout/column-edge-context";
+import { NotificationIndicatorsProvider } from "@/components/notifications/notification-indicators-provider";
+import {
+  useSurfaceNotificationIndicatorState,
+  useSurfaceNotificationWaitingProbe,
+} from "@/components/notifications/notification-indicator-context";
+import type { SurfaceNotificationIndicators } from "@/stores/notifications/notification-indicator-state";
+import { railBadgeOf } from "../side-strip/rail-badge-kind";
 import { useThemeLibraryStore } from "@/stores/settings/theme-library-store";
 import {
   SideTabRow,
@@ -577,6 +584,94 @@ describe("SideTabRow entry pulse", () => {
     const { row, rerender } = renderPulse({ badge: null });
     rerender(<SideTabRow {...baseProps()} badge="approval" />);
     expect(row.dataset.waitingPulse).toBeUndefined();
+  });
+});
+
+describe("SideTabRow entry pulse fed by the indicator provider", () => {
+  /** The two waiting reasons, each lit by its own indicator flag. */
+  const WAITING_REASONS = [
+    { reason: "approval", pendingApproval: true, pendingInterview: false },
+    { reason: "reply", pendingApproval: false, pendingInterview: true },
+  ] as const;
+  type WaitingReason = (typeof WAITING_REASONS)[number];
+
+  function waitingIndicators(
+    waiting: WaitingReason,
+  ): SurfaceNotificationIndicators {
+    return {
+      epics: {},
+      chats: {
+        "chat-1": {
+          unreadFailure: false,
+          pendingFork: false,
+          pendingApproval: waiting.pendingApproval,
+          pendingInterview: waiting.pendingInterview,
+          unreadDone: false,
+        },
+      },
+    };
+  }
+  const QUIET: SurfaceNotificationIndicators = { epics: {}, chats: {} };
+
+  /**
+   * A real row fed as the strip's owners feed it: the badge from the surface
+   * indicator hook and the committed-state probe from its sibling hook.
+   */
+  function IndicatedRow(): ReactNode {
+    const entity = { epicId: "e1", chatId: "chat-1" };
+    const state = useSurfaceNotificationIndicatorState(entity, null);
+    const probe = useSurfaceNotificationWaitingProbe(entity, null);
+    return (
+      <SideTabRow
+        {...baseProps()}
+        badge={railBadgeOf(state)}
+        readCommittedWaiting={probe}
+      />
+    );
+  }
+
+  function provide(
+    indicators: SurfaceNotificationIndicators,
+    children: ReactNode,
+  ): ReactNode {
+    return (
+      <NotificationIndicatorsProvider indicators={indicators}>
+        {children}
+      </NotificationIndicatorsProvider>
+    );
+  }
+
+  describe.each(WAITING_REASONS)("waiting as $reason", (waiting) => {
+    const WAITING = waitingIndicators(waiting);
+
+    it("pulses a mounted row when its task goes into waiting", () => {
+      const view = render(provide(QUIET, <IndicatedRow />));
+      const row = screen.getByTestId(ROW_TEST_ID);
+      expect(row.dataset.waitingPulse).toBeUndefined();
+
+      view.rerender(provide(WAITING, <IndicatedRow />));
+
+      expect(row.dataset.waitingPulse).toBe("true");
+    });
+
+    it("does not pulse a row that mounts in the commit that makes its task waiting", () => {
+      // A task moving section remounts its row as its state changes. The row
+      // is new, so entering waiting is not a transition it witnessed.
+      const view = render(provide(QUIET, null));
+
+      view.rerender(provide(WAITING, <IndicatedRow />));
+
+      const row = screen.getByTestId(ROW_TEST_ID);
+      expect(row.dataset.waitingPulse).toBeUndefined();
+    });
+
+    it("does not pulse a row that mounts while its task is already waiting", () => {
+      render(provide(WAITING, <IndicatedRow />));
+
+      expect(
+        screen.getByTestId(ROW_TEST_ID).dataset.waitingPulse,
+      ).toBeUndefined();
+    });
   });
 });
 

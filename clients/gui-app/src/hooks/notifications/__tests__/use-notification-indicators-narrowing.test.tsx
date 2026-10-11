@@ -288,19 +288,61 @@ describe("NotificationIndicatorsProvider per-entity narrowing", () => {
     expect(providerRenders["chat-1"]).toBe(afterMountOne);
   });
 
-  it("hands a consumer that mounts in the commit of a change the new state at its first render", () => {
-    const firstReads: string[] = [];
+  it("mounts each consumer once when the provider already holds its state", () => {
+    const commits: Record<string, number> = {};
+    function CountedRow(props: { readonly chatId: string }): ReactNode {
+      // Commits, not render attempts (see `IndicatorProbe`): a consumer that
+      // renders again to pick the store up commits twice.
+      useLayoutEffect(() => {
+        commits[props.chatId] = (commits[props.chatId] ?? 0) + 1;
+      });
+      const state = useSurfaceNotificationIndicatorState(
+        { epicId: EPIC_ID, chatId: props.chatId },
+        null,
+      );
+      return (
+        <span data-testid={`counted-${props.chatId}`}>
+          {state.pendingApproval ? "approval" : "none"}
+        </span>
+      );
+    }
+    const litTwo: SurfaceNotificationIndicators = {
+      epics: {},
+      chats: {
+        "chat-2": {
+          unreadFailure: false,
+          pendingFork: false,
+          pendingApproval: true,
+          pendingInterview: false,
+          unreadDone: false,
+        },
+      },
+    };
+
+    render(
+      <NotificationIndicatorsProvider indicators={litTwo}>
+        <CountedRow chatId="chat-1" />
+        <CountedRow chatId="chat-2" />
+        <CountedRow chatId="chat-3" />
+      </NotificationIndicatorsProvider>,
+    );
+
+    expect(commits).toEqual({ "chat-1": 1, "chat-2": 1, "chat-3": 1 });
+    expect(screen.getByTestId("counted-chat-2").textContent).toBe("approval");
+    expect(screen.getByTestId("counted-chat-1").textContent).toBe("none");
+  });
+
+  it("paints a consumer that mounts in the commit of a change with the new state", () => {
     const Late = (): ReactNode => {
       const state = useSurfaceNotificationIndicatorState(
         { epicId: EPIC_ID, chatId: "chat-late" },
         null,
       );
-      // What the first render saw, whatever it sees later.
-      const [first] = useState(state.pendingApproval ? "approval" : "none");
-      useLayoutEffect(() => {
-        firstReads.push(first);
-      }, [first]);
-      return null;
+      return (
+        <span data-testid="late-flag">
+          {state.pendingApproval ? "approval" : "none"}
+        </span>
+      );
     };
     const lit: SurfaceNotificationIndicators = {
       epics: {},
@@ -320,15 +362,15 @@ describe("NotificationIndicatorsProvider per-entity narrowing", () => {
       </NotificationIndicatorsProvider>,
     );
     // A task that moves section remounts its row in the commit that changes
-    // its state: the row's waiting pulse is keyed on seeing the state CHANGE
-    // after mount, so it must not see the old state first.
+    // its state. Whatever the row rendered on the way, what reaches the screen
+    // when the commit finishes - no timer, no later tick - is the new state.
     view.rerender(
       <NotificationIndicatorsProvider indicators={lit}>
         <Late />
       </NotificationIndicatorsProvider>,
     );
 
-    expect(firstReads).toEqual(["approval"]);
+    expect(screen.getByTestId("late-flag").textContent).toBe("approval");
   });
 
   it("does not let an abandoned concurrent render change what a committed consumer reads", async () => {
