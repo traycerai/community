@@ -107,9 +107,16 @@ vi.mock("@/components/epic-canvas/hooks/use-canvas-host-id", () => ({
 vi.mock("@/hooks/host/use-host-client-for-host-id", () => ({
   // `getRequestContextUserId` because the provider asks the client whether
   // this renderer knows who it is signed in as yet (H10); it never names the
-  // user to main, so `null` is a complete answer here.
+  // user to main, so `null` is a complete answer here. It reads that as a
+  // subscription, hence `onChange`; this one never changes.
   useHostClientForHostId: (hostId: string | null) =>
-    hostId === null ? null : { hostId, getRequestContextUserId: () => null },
+    hostId === null
+      ? null
+      : {
+          hostId,
+          getRequestContextUserId: () => null,
+          onChange: () => () => undefined,
+        },
 }));
 vi.mock("@/hooks/epic/use-epic-session-host-client", () => ({
   useEpicSessionHostClient: () => null,

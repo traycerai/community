@@ -12,6 +12,7 @@ import {
 } from "@traycer/protocol/host/index";
 import type { ManagedCommandDeliverHeldResponse } from "@traycer/protocol/host/managed-command/unary-schemas";
 import { createHostQueryInvalidator } from "@/lib/host/query-invalidator";
+import { managedCommandMutationKeys } from "@/lib/query-keys/managed-command-mutation-keys";
 
 /**
  * `managedCommand.deliverHeld`, driven against a real `HostClient` and a mock
@@ -509,5 +510,31 @@ describe("useManagedCommandDeliverHeld", () => {
     await waitFor(() => {
       expect(second.result.current).toBe(false);
     });
+  });
+});
+
+describe("useManagedCommandDeliverHeldIsPending follows a changed chat while mounted", () => {
+  it("reads the Deliver of the chat it is given, not the chat it was first mounted with", () => {
+    act(() => {
+      void queryClient
+        .getMutationCache()
+        .build(queryClient, {
+          mutationKey: managedCommandMutationKeys.deliverHeld("chat-a"),
+          mutationFn: () => new Promise<never>(() => undefined),
+        })
+        .execute(undefined);
+    });
+    const { result, rerender } = renderHook(
+      (props: { readonly chatId: string }) =>
+        useManagedCommandDeliverHeldIsPending(props.chatId),
+      { initialProps: { chatId: "chat-a" }, wrapper },
+    );
+    expect(result.current).toBe(true);
+
+    rerender({ chatId: "chat-b" });
+    expect(result.current).toBe(false);
+
+    rerender({ chatId: "chat-a" });
+    expect(result.current).toBe(true);
   });
 });

@@ -5,11 +5,12 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useIsMutating, useMutation } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { v4 as uuidv4 } from "uuid";
 import type { BrowserSessionsState } from "@/lib/browser-view/sessions/browser-sessions-coordinator";
 import { browserSessionsRefusal } from "@traycer-clients/shared/platform/browser-view";
+import { useIsMutatingKey } from "@/hooks/use-is-mutating-key";
 import { browserMutationKeys } from "@/lib/query-keys/browser-mutation-keys";
 import { DEFAULT_BROWSER_TILE_URL } from "@/stores/epics/canvas/tile-schema/browser-tile";
 import {
@@ -267,12 +268,16 @@ export function useLandingBrowserOpenTab(args: {
       releaseLandingBrowserOpen(context.hold);
     },
   });
-  const isOpening = useIsMutating({ mutationKey: openTabKey }) > 0;
+  // Not `useIsMutating`: the key follows `hostId`, and that hook answers a
+  // changed key only at the next mutation event. An open still in flight on
+  // device A then read as "opening" on device B, and B ignored its New tab
+  // clicks.
+  const isOpening = useIsMutatingKey(openTabKey, false);
   const mutate = openMutation.mutate;
   const open = useCallback(
     (request: LandingBrowserOpenRequest) => {
-      // `isOpening` is RENDERED state: `useIsMutating` publishes through the
-      // query cache's subscription, so two `open()` calls in one tick both read
+      // `isOpening` is RENDERED state: the mutation cache publishes through
+      // its subscription, so two `open()` calls in one tick both read
       // the value from the render they were dispatched in - `false` - and both
       // reach the mutation. Only a ref moves within the tick.
       //

@@ -12,6 +12,7 @@ import {
 } from "@traycer/protocol/host/index";
 import type { ManagedCommand } from "@traycer/protocol/host/managed-command/unary-schemas";
 import { createHostQueryInvalidator } from "@/lib/host/query-invalidator";
+import { managedCommandMutationKeys } from "@/lib/query-keys/managed-command-mutation-keys";
 
 /**
  * "Stop all" over a chat's host-supervised commands, driven against a real
@@ -255,5 +256,31 @@ describe("useManagedCommandStopAll", () => {
 
     expect(stoppedCommandIds).toEqual(["cmd-1", "cmd-2"]);
     expect(toastError).not.toHaveBeenCalled();
+  });
+});
+
+describe("useManagedCommandStopAllIsPending follows a changed chat while mounted", () => {
+  it("reads the batch of the chat it is given, not the chat it was first mounted with", () => {
+    act(() => {
+      void queryClient
+        .getMutationCache()
+        .build(queryClient, {
+          mutationKey: managedCommandMutationKeys.stopAll("chat-a"),
+          mutationFn: () => new Promise<never>(() => undefined),
+        })
+        .execute(undefined);
+    });
+    const { result, rerender } = renderHook(
+      (props: { readonly chatId: string }) =>
+        useManagedCommandStopAllIsPending(props.chatId),
+      { initialProps: { chatId: "chat-a" }, wrapper },
+    );
+    expect(result.current).toBe(true);
+
+    rerender({ chatId: "chat-b" });
+    expect(result.current).toBe(false);
+
+    rerender({ chatId: "chat-a" });
+    expect(result.current).toBe(true);
   });
 });

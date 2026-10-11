@@ -4,7 +4,9 @@ import {
   streamTransportRetain,
   useHostStreamClientBindingFor,
 } from "@/hooks/host/use-host-stream-client-for";
+import { useRequestContextUserId } from "@/hooks/host/use-request-context-user-id";
 import { useHostClient } from "@/lib/host";
+import { readOnSignal } from "@/lib/read-on-signal";
 import { useStreamAuthRevalidator } from "@/lib/host/stream-auth-revalidator";
 import type { StreamRuntimeBinding } from "@/lib/host/stream-runtime-context";
 import { transientClientEntry } from "@/components/settings/host-scope/host-scope-model";
@@ -55,7 +57,11 @@ export function useScopedStreamBinding(
   const auth = useStreamAuthRevalidator();
   const ambientClient = useHostClient();
   const binding = useHostStreamClientBindingFor(target, auth);
-  const expectedKey = authenticatedOwnerIdentityKey(ambientClient, target);
+  const requestUserId = useRequestContextUserId(ambientClient);
+  const expectedKey = readOnSignal(
+    () => authenticatedOwnerIdentityKey(ambientClient, target),
+    requestUserId,
+  );
   const matched =
     binding !== null && binding.transportKey === expectedKey ? binding : null;
   // Safe to read off `target` only BECAUSE the key matched: that comparison is

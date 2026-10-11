@@ -15,6 +15,7 @@ import type {
   CommGraphHostState,
   CommGraphHostStatus,
 } from "@/lib/comm-graph/comm-graph-events";
+import { readOnSignal } from "@/lib/read-on-signal";
 import {
   getCommGraphCloudSubscriptionManager,
   observeCommGraphCloudSubscription,
@@ -127,10 +128,14 @@ export function useCommGraphFeedHealth(
     () => "",
   );
   return useMemo(() => {
-    // `key` is the dependency that matters; `read` is stable per manager
-    // and re-reading it here is what turns the key back into host states.
     if (key === "") return null;
-    const { attached, hosts } = read();
-    return deriveCommGraphFeedHealth(attached, hosts);
+    // `key` is the dependency that matters; `read` is stable per manager
+    // and re-reading it here is what turns the key back into host states. So
+    // the key is the read's signal: named only in the `if` above, the cached
+    // derivation depended on `read` alone and kept its first answer.
+    return readOnSignal(() => {
+      const { attached, hosts } = read();
+      return deriveCommGraphFeedHealth(attached, hosts);
+    }, key);
   }, [key, read]);
 }

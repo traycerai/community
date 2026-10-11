@@ -1,9 +1,9 @@
 import {
-  useIsMutating,
   useMutation,
   useMutationState,
   type UseMutationResult,
 } from "@tanstack/react-query";
+import { useIsMutatingKey } from "@/hooks/use-is-mutating-key";
 import { toast } from "sonner";
 import {
   HostRpcError,
@@ -155,10 +155,7 @@ export interface ManagedCommandStopAllVariables {
  * the first tile's batch starts, or it re-submits the same command ids.
  */
 export function useManagedCommandStopAllIsPending(chatId: string): boolean {
-  return (
-    useIsMutating({ mutationKey: managedCommandMutationKeys.stopAll(chatId) }) >
-    0
-  );
+  return useIsMutatingKey(managedCommandMutationKeys.stopAll(chatId), false);
 }
 
 /**
@@ -269,13 +266,9 @@ export function managedCommandConfigureScopeId(
 export function useManagedCommandConfigureIsPending(
   target: ManagedCommandConfigureTarget,
 ): boolean {
-  return (
-    useIsMutating({
-      mutationKey: managedCommandMutationKeys.configure(
-        target.hostId,
-        target.commandId,
-      ),
-    }) > 0
+  return useIsMutatingKey(
+    managedCommandMutationKeys.configure(target.hostId, target.commandId),
+    false,
   );
 }
 
@@ -520,10 +513,9 @@ export interface ManagedCommandDeliverHeldVariables {
  * duplicate of a narrower request but the identical whole-chat action.
  */
 export function useManagedCommandDeliverHeldIsPending(chatId: string): boolean {
-  return (
-    useIsMutating({
-      mutationKey: managedCommandMutationKeys.deliverHeld(chatId),
-    }) > 0
+  return useIsMutatingKey(
+    managedCommandMutationKeys.deliverHeld(chatId),
+    false,
   );
 }
 

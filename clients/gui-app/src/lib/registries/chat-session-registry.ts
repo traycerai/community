@@ -30,6 +30,8 @@ import {
   authenticatedHostStreamKey,
   authenticatedOwnerIdentityKey,
 } from "@/hooks/host/use-host-stream-client-for";
+import { useRequestContextUserId } from "@/hooks/host/use-request-context-user-id";
+import { readOnSignal } from "@/lib/read-on-signal";
 import { isLocalHostBootingEntry } from "@/lib/host/transport-key";
 import { useDurableStreamTransportFactory } from "@/lib/host/use-durable-stream-transport";
 import { openOwnedDurableStreamClient } from "@/lib/host/owned-durable-stream-client";
@@ -333,6 +335,9 @@ export function useChatSessionHandle(
   // opener wires the shared "durable stream = auth + wake" recovery; the returned
   // handle's `close()` tears it all down when the session disposes.
   const globalClient = useHostClient();
+  // The two keys below read the request context off the client, which a
+  // render cannot depend on; this is what makes them follow a sign-out.
+  const requestUserId = useRequestContextUserId(globalClient);
   const authService = useAuthService();
   const authServiceRef = useRef(authService);
   const userId = useAuthStore((state) => state.profile?.userId ?? null);
@@ -348,7 +353,10 @@ export function useChatSessionHandle(
   const transportKey =
     streamClientFactoryOverride !== null
       ? "test-stream-client-factory"
-      : authenticatedHostStreamKey(globalClient, hostEntry);
+      : readOnSignal(
+          () => authenticatedHostStreamKey(globalClient, hostEntry),
+          requestUserId,
+        );
   // Owner identity (R-1), which with the host's kind is the whole of the
   // session's scope: `hostId + userId` for a local host, plus the public key
   // and relay attach URL for a remote one, so a remote public-key rotation
@@ -356,7 +364,10 @@ export function useChatSessionHandle(
   const ownerIdentityKey =
     streamClientFactoryOverride !== null
       ? "test-stream-client-factory"
-      : authenticatedOwnerIdentityKey(globalClient, hostEntry);
+      : readOnSignal(
+          () => authenticatedOwnerIdentityKey(globalClient, hostEntry),
+          requestUserId,
+        );
   const hostKind = hostEntry?.kind ?? null;
   // Whether this chat may hold its session. A dialable host may. So may a host
   // that is coming back, which is what keeps the store and its transcript

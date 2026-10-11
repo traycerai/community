@@ -19,6 +19,8 @@ import {
   authenticatedHostStreamKey,
   authenticatedOwnerIdentityKey,
 } from "@/hooks/host/use-host-stream-client-for";
+import { useRequestContextUserId } from "@/hooks/host/use-request-context-user-id";
+import { readOnSignal } from "@/lib/read-on-signal";
 import {
   acquireBrowserSessionsCoordinator,
   browserSessionsCoordinatorKey,
@@ -142,16 +144,22 @@ function useSelectedBrowserSessions<T>(
     [surfaceFocused, surfaceVisible, viewTabId],
   );
   const hostEntry = useHostDirectoryEntry(hostId ?? UNKNOWN_HOST_PLACEHOLDER);
-  const transportReady =
-    args.hostClient !== null &&
-    authenticatedHostStreamKey(args.hostClient, hostEntry) !== null;
-  const ownerIdentityKey = browserSessionsOwnerIdentityKey(
-    args.hostClient,
-    hostEntry,
+  // Subscribed, because the two keys below read the request context off the
+  // client, which a render cannot depend on. Also what decides whether asking
+  // main is worth an IPC: main reads the signed-in user from the desktop auth
+  // session it owns, so this is not sent to it.
+  const userId = useRequestContextUserId(args.hostClient);
+  const { hostClient } = args;
+  const transportReady = readOnSignal(
+    () =>
+      hostClient !== null &&
+      authenticatedHostStreamKey(hostClient, hostEntry) !== null,
+    userId,
   );
-  // Not sent to main, which reads the signed-in user from the desktop auth
-  // session it owns; it only decides whether asking is worth an IPC.
-  const userId = args.hostClient?.getRequestContextUserId() ?? null;
+  const ownerIdentityKey = readOnSignal(
+    () => browserSessionsOwnerIdentityKey(hostClient, hostEntry),
+    userId,
+  );
   const openTransport = useDurableStreamTransportFactory();
   const owner = useMemo<BrowserSessionsOwner | null>(
     () =>
