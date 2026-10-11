@@ -83,8 +83,10 @@ const SENTRY_FLUSH_TIMEOUT_MS = 10_000;
 // outcome is chained off that same settlement through its own, separately
 // registered `.then()`s - close, but not guaranteed to fire before `flush`
 // resolves. This only bounds the (practically unreachable, since nothing in
-// this app's Sentry init samples or filters feedback events) case where the
-// hook never fires at all despite `flush` saying the queue is empty; in the
+// this app's Sentry init samples or filters feedback events - the size guard
+// in `support-report-size-guard.ts` trims a report, never drops it) case
+// where the hook never fires at all despite `flush` saying the queue is
+// empty; in the
 // normal case the hook resolves within a handful of microtasks, nowhere near
 // this window.
 const SEND_OUTCOME_GRACE_MS = 500;

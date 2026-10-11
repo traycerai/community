@@ -14,8 +14,34 @@ import {
   sentryOfflineQueuePath,
   sentryReportRateLimitWindow,
 } from "./sentry-delivery-observer";
+import { boundFeedbackEvent } from "./support-report-size-guard";
 
 export { isSentryEnabled } from "./crash-reporter-state";
+
+/**
+ * Keeps a support report's `feedback` event under Relay's event size limit,
+ * which `beforeSend` cannot do: core applies it to error events only. A
+ * global event processor runs for every type, inside `prepareEvent`, before
+ * the SDK reads `hint.attachments` for the envelope - so the guard can move
+ * an oversize report text into an attachment on the same hint. See
+ * `support-report-size-guard.ts` for why the drop it prevents is invisible
+ * to the client otherwise.
+ */
+function installSupportReportSizeGuard(): void {
+  SentryElectron.addEventProcessor((event, hint) => {
+    if (event.type !== "feedback") return event;
+    const bounded = boundFeedbackEvent(event, hint);
+    if (bounded.trimmed !== null) {
+      log.warn("[support] report trimmed to fit Sentry's event size limit", {
+        reportId: event.tags?.reportId ?? null,
+        trimmed: bounded.trimmed,
+        originalBytes: bounded.originalBytes,
+        sentBytes: bounded.sentBytes,
+      });
+    }
+    return bounded.event;
+  });
+}
 
 /**
  * Wires native crash collection. `crashReporter.start()` must be called before
@@ -118,6 +144,7 @@ export function initCrashReporter(): void {
       return span;
     },
   });
+  installSupportReportSizeGuard();
   installSentryRateLimitObserver();
   markSentryEnabled();
   log.info("[crash-reporter] sentry initialized", { environment });
