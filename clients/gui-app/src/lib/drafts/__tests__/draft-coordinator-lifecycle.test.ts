@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DraftDocument, DraftWrite } from "@traycer/protocol/host";
 import type { CloudChatSummary } from "@traycer/protocol/host/epic/cloud-chat";
 import {
@@ -24,7 +24,23 @@ import {
   pendingLandingDraftDeleteHostId,
   resetLandingDraftRetirementsForTests,
 } from "@/lib/drafts/landing-draft-retirement";
-import { useComposerDraftStore } from "@/stores/composer/composer-draft-store";
+import {
+  EMPTY_COMPOSER_DRAFT,
+  readComposerDraftSnapshot,
+  useComposerDraftStore,
+} from "@/stores/composer/composer-draft-store";
+import {
+  hasDeferredJsonWrite,
+  persistNowOrThrow,
+} from "@/lib/persist/deferred-json-storage";
+import {
+  ANON_NAME,
+  draftWithFields,
+  readDraftRow,
+  resetComposerDraftPersistence,
+  rowKey,
+  seedRow,
+} from "@/stores/composer/__tests__/composer-draft-rows";
 import { useInterviewDraftStore } from "@/stores/composer/interview-draft-store";
 import {
   adoptLandingDraft,
@@ -333,6 +349,177 @@ async function applyForeignComposerDocument(params: {
     },
   });
 }
+
+describe("submitComposerDraft: another window changed the same chat's saved draft", () => {
+  const OTHER_CHAT_ID = "chat-2";
+  const SELECTION = { from: 1, to: 6 };
+
+  beforeEach(async () => {
+    await resetComposerDraftPersistence();
+  });
+
+  // The conflicts above leave unsaved debt and stale revisions behind; later
+  // suites in this file must start from an empty store and an empty disk.
+  afterEach(async () => {
+    await resetComposerDraftPersistence();
+  });
+
+  /** What another window's flush looks like from here: a row, then the event. */
+  function otherWindowWrites(
+    chatId: string,
+    text: string,
+    draftId: string | null,
+  ): void {
+    seedRow(
+      "draft",
+      chatId,
+      {
+        value: draftWithFields(text, { draftId }),
+        revision: `other-window-${crypto.randomUUID()}`,
+      },
+      ANON_NAME,
+    );
+    window.dispatchEvent(
+      new StorageEvent("storage", { key: rowKey("draft", chatId, ANON_NAME) }),
+    );
+  }
+
+  /** A draft this window typed and saved: its row is on disk at our revision. */
+  function typedAndSaved(chatId: string): string {
+    const store = useComposerDraftStore.getState();
+    store.bindTarget(chatId, EPIC_ID);
+    store.setSnapshot(chatId, typed("first"), SELECTION);
+    const draftId = useComposerDraftStore.getState().drafts[chatId]?.draftId;
+    if (draftId === undefined || draftId === null) {
+      throw new Error("missing composer draft id");
+    }
+    persistNowOrThrow(ANON_NAME);
+    return draftId;
+  }
+
+  /**
+   * The other window changes the saved row, this window types again while it
+   * changes it once more: the unsaved text is owed against a revision that is
+   * no longer on disk.
+   */
+  function typedAgainstAStaleRevision(
+    chatId: string,
+    draftId: string,
+    mine: string,
+  ): void {
+    otherWindowWrites(chatId, "from the other window", draftId);
+    useComposerDraftStore
+      .getState()
+      .setSnapshot(chatId, typed(mine), SELECTION);
+    otherWindowWrites(chatId, "from the other window, again", draftId);
+  }
+
+  function mountHostFor(chatId: string): HostLog {
+    const log: HostLog = {
+      upserts: [],
+      deletes: [],
+      rows: [],
+      deleteFailures: 0,
+    };
+    mountSession(log);
+    bindComposerDraftHost(chatId, HOST_ID);
+    return log;
+  }
+
+  it("clears the draft durably and retires its identity despite the conflict, and a reload is empty", async () => {
+    mountHostFor(CHAT_ID);
+    const draftId = typedAndSaved(CHAT_ID);
+    typedAgainstAStaleRevision(CHAT_ID, draftId, "my message");
+
+    await submitComposerDraft(CHAT_ID);
+
+    // Sent text must not come back: not in memory, not on disk, not on the
+    // next launch.
+    expect(readDraft().content).toEqual(EMPTY_COMPOSER_DRAFT.content);
+    expect(readDraft().draftId).not.toBe(draftId);
+    const onDisk = readDraftRow(CHAT_ID, ANON_NAME);
+    expect(onDisk?.content ?? EMPTY_COMPOSER_DRAFT.content).toEqual(
+      EMPTY_COMPOSER_DRAFT.content,
+    );
+    expect(onDisk?.draftId).not.toBe(draftId);
+    await useComposerDraftStore.persist.rehydrate();
+    expect(readComposerDraftSnapshot(CHAT_ID).content).toEqual(
+      EMPTY_COMPOSER_DRAFT.content,
+    );
+  });
+
+  it("keeps a different draft the other window saved under a fresh identity, while retiring the submitted one", async () => {
+    // The other window already sent its own copy of this message and started
+    // the next one under a new draft id. Retiring what this window sent must
+    // not erase that.
+    const log = mountHostFor(CHAT_ID);
+    const draftId = typedAndSaved(CHAT_ID);
+    useComposerDraftStore
+      .getState()
+      .setSnapshot(CHAT_ID, typed("my message"), SELECTION);
+    otherWindowWrites(
+      CHAT_ID,
+      "next message from the other window",
+      "fresh-draft-id",
+    );
+
+    await submitComposerDraft(CHAT_ID);
+
+    // The submitted identity, and only that one, is retired on the host.
+    expect(log.deletes).toEqual([draftId]);
+    expect(readDraftRow(CHAT_ID, ANON_NAME)?.draftId).toBe("fresh-draft-id");
+    expect(readDraftRow(CHAT_ID, ANON_NAME)?.content).toEqual(
+      typed("next message from the other window"),
+    );
+    await useComposerDraftStore.persist.rehydrate();
+    expect(readDraft().draftId).toBe("fresh-draft-id");
+    expect(readDraft().content).toEqual(
+      typed("next message from the other window"),
+    );
+  });
+
+  it("still refuses an ordinary replacement over the conflict and keeps the unsaved text owed", () => {
+    typedAgainstAStaleRevision(CHAT_ID, typedAndSaved(CHAT_ID), "my message");
+
+    expect(() =>
+      useComposerDraftStore
+        .getState()
+        .replaceDraft(CHAT_ID, typed("restored"), SELECTION),
+    ).toThrow();
+
+    expect(hasDeferredJsonWrite(ANON_NAME)).toBe(true);
+    expect(readDraftRow(CHAT_ID, ANON_NAME)?.content).toEqual(
+      typed("from the other window, again"),
+    );
+  });
+
+  it("leaves another chat's conflicted draft and its owed text alone", async () => {
+    mountHostFor(CHAT_ID);
+    const draftId = typedAndSaved(CHAT_ID);
+    const otherDraftId = typedAndSaved(OTHER_CHAT_ID);
+    typedAgainstAStaleRevision(CHAT_ID, draftId, "my message");
+    typedAgainstAStaleRevision(
+      OTHER_CHAT_ID,
+      otherDraftId,
+      "other chat message",
+    );
+
+    await submitComposerDraft(CHAT_ID);
+
+    expect(hasDeferredJsonWrite(ANON_NAME)).toBe(true);
+    expect(readDraftRow(OTHER_CHAT_ID, ANON_NAME)?.content).toEqual(
+      typed("from the other window, again"),
+    );
+    expect(readComposerDraftSnapshot(OTHER_CHAT_ID).content).toEqual(
+      typed("other chat message"),
+    );
+    expect(() =>
+      useComposerDraftStore
+        .getState()
+        .replaceDraft(OTHER_CHAT_ID, typed("restored"), SELECTION),
+    ).toThrow();
+  });
+});
 
 describe("submitComposerDraft: a row the tab host does not own (fixup B)", () => {
   const TAB_HOST = "host-tab";

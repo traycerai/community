@@ -6,6 +6,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import {
+  afterAll,
   afterEach,
   beforeAll,
   beforeEach,
@@ -47,6 +48,23 @@ beforeAll(async () => {
 
 beforeEach(() => {
   resetHighlightCacheForTests();
+});
+
+// React reports an invalid DOM property once per process, at the first render
+// that has it, so a test that renders late would find the warning already
+// spent. Every message this file's renders print is therefore kept from the
+// start, and passed through unchanged. (Not `vi.spyOn`: the suite's
+// `restoreAllMocks` would drop it after the first test.)
+const consoleErrors: string[] = [];
+const printConsoleError = console.error;
+beforeAll(() => {
+  console.error = (...args: unknown[]): void => {
+    consoleErrors.push(args.map(String).join(" "));
+    printConsoleError(...args);
+  };
+});
+afterAll(() => {
+  console.error = printConsoleError;
 });
 
 afterEach(() => {
@@ -152,7 +170,9 @@ describe("Traycer StreamingHighlighter adapter - deferred large blocks (block-ow
     const codeToHtml = vi.spyOn(core, "codeToHtml");
     const bigCode = bigCodeFixture("settle");
     expect(bigCode.length).toBeGreaterThanOrEqual(4096);
-    const block = createTraycerBlockHighlighter(bigCode, "ts", false);
+    const block = createTraycerBlockHighlighter(bigCode, "ts", false, {
+      node: null,
+    });
 
     const onReadyChange = vi.fn();
     const unsubscribe = block.subscribe(onReadyChange);
@@ -200,7 +220,9 @@ describe("Traycer StreamingHighlighter adapter - deferred large blocks (block-ow
     const core = await getOrCreateHighlighter();
     const codeToHtml = vi.spyOn(core, "codeToHtml");
     const bigCode = bigCodeFixture("unowned");
-    const block = createTraycerBlockHighlighter(bigCode, "ts", false);
+    const block = createTraycerBlockHighlighter(bigCode, "ts", false, {
+      node: null,
+    });
 
     expect(block.highlight(bigCode, "ts")).toBeNull();
     // Give a not-actually-scheduled idle/timeout callback a chance to prove
@@ -214,7 +236,9 @@ describe("Traycer StreamingHighlighter adapter - deferred large blocks (block-ow
     const core = await getOrCreateHighlighter();
     const codeToHtml = vi.spyOn(core, "codeToHtml");
     const bigCode = bigCodeFixture("solo-cancel");
-    const block = createTraycerBlockHighlighter(bigCode, "ts", false);
+    const block = createTraycerBlockHighlighter(bigCode, "ts", false, {
+      node: null,
+    });
 
     const unsubscribe = block.subscribe(vi.fn());
     expect(block.highlight(bigCode, "ts")).toBeNull();
@@ -231,8 +255,12 @@ describe("Traycer StreamingHighlighter adapter - deferred large blocks (block-ow
     const bigCode = bigCodeFixture("shared-survive");
     // Two independently-mounted adapters for the SAME source+lang - the
     // realistic shape of two CodeBlock instances rendering identical code.
-    const blockA = createTraycerBlockHighlighter(bigCode, "ts", false);
-    const blockB = createTraycerBlockHighlighter(bigCode, "ts", false);
+    const blockA = createTraycerBlockHighlighter(bigCode, "ts", false, {
+      node: null,
+    });
+    const blockB = createTraycerBlockHighlighter(bigCode, "ts", false, {
+      node: null,
+    });
 
     const unsubA = blockA.subscribe(vi.fn());
     const unsubB = blockB.subscribe(vi.fn());
@@ -510,6 +538,105 @@ describe("CodeBlock while its tile body is hidden", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("CodeBlock hidden and shown again while its message streams", () => {
+  // A highlighted block is never swapped for its plain form while a newer
+  // highlight is on its way: the reader sees the highlighted prefix on every
+  // frame, hidden or not, until the latest text's own highlight lands. The
+  // case that broke it: the tile is hidden, the text keeps growing (so the
+  // block's highlighter is rebuilt for every new text), a throttle tick runs
+  // against the hidden stand-in and finds nothing, and the block goes plain.
+  const row = (index: number): string =>
+    `const hiddenGrowthFixture_${index} = ${index};\n`;
+  const rowsOf = (count: number): string =>
+    Array.from({ length: count }, (_, index) => row(index)).join("");
+
+  it.each([
+    { name: "below the large-block threshold", startRows: 20 },
+    { name: "above the large-block threshold", startRows: 120 },
+  ])(
+    "keeps the highlighted prefix on every frame of a streamed block $name",
+    async ({ startRows }) => {
+      await waitForReady();
+      expect(rowsOf(startRows).length < 4096).toBe(startRows < 100);
+
+      vi.useFakeTimers();
+      try {
+        const streaming = (rows: number, visible: boolean): ReactNode => (
+          <TileBody visible={visible}>
+            <StreamingMarkdown isStreaming components={markdownComponents}>
+              {tsFence(rowsOf(rows))}
+            </StreamingMarkdown>
+          </TileBody>
+        );
+        const { container, rerender, unmount } = render(
+          streaming(startRows, true),
+        );
+        const highlighted = (): Element | null =>
+          container.querySelector(HIGHLIGHTED_BODY);
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(600);
+        });
+        expect(highlighted()).not.toBeNull();
+
+        // Hidden for ~1.2s while the text grows in bursts: each burst is
+        // followed by silence long enough for the throttle to tick.
+        let rows = startRows;
+        for (let burst = 0; burst < 3; burst += 1) {
+          rows += 2;
+          rerender(streaming(rows, false));
+          expect(highlighted()).not.toBeNull();
+          await act(async () => {
+            await vi.advanceTimersByTimeAsync(400);
+          });
+          expect(highlighted()).not.toBeNull();
+        }
+
+        // Shown again with yet more text, before any throttle tick: every
+        // frame from here until the latest text's highlight arrives still
+        // shows highlighted code, never the plain form.
+        rows += 2;
+        rerender(streaming(rows, true));
+        expect(highlighted()).not.toBeNull();
+        for (let frame = 0; frame < 40; frame += 1) {
+          await act(async () => {
+            await vi.advanceTimersByTimeAsync(16);
+          });
+          expect(highlighted()).not.toBeNull();
+        }
+        expect(highlighted()?.textContent).toContain(
+          `hiddenGrowthFixture_${rows - 1}`,
+        );
+        unmount();
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+});
+
+describe("Shiki markup rendered through trusted markup", () => {
+  it("maps tabindex to React's tabIndex, so rendering it raises no invalid-property warning", async () => {
+    await waitForReady();
+    const { container, unmount } = render(
+      <StreamingMarkdown isStreaming={false} components={markdownComponents}>
+        {tsFence("const tabindexFixture = 1;")}
+      </StreamingMarkdown>,
+    );
+    await waitFor(() => {
+      expect(container.querySelector(HIGHLIGHTED_BODY)).not.toBeNull();
+    });
+
+    // Shiki puts `tabindex="0"` on the code's <pre> so it can be scrolled by
+    // keyboard; it must reach the DOM as that attribute.
+    const pre = container.querySelector(`${HIGHLIGHTED_BODY} pre`);
+    expect(pre?.getAttribute("tabindex")).toBe("0");
+    expect(
+      consoleErrors.filter((message) => /tabindex/i.test(message)),
+    ).toEqual([]);
+    unmount();
   });
 });
 

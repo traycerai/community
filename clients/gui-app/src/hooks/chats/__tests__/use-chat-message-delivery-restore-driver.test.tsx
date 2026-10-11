@@ -23,6 +23,7 @@ import {
 } from "@/stores/composer/composer-draft-store";
 import { resetComposerDraftPersistence } from "@/stores/composer/__tests__/composer-draft-rows";
 import { appendBlocks } from "@/components/chat/quote/append-quote-to-draft";
+import { toast } from "sonner";
 
 /**
  * `useChatMessageDeliveryRestoreDriver` puts a withdrawn opening back in its
@@ -471,7 +472,8 @@ describe("useChatMessageDeliveryRestoreDriver: reload (coordinator addendum #4)"
 });
 
 describe("useChatMessageDeliveryRestoreDriver: local persistence failure", () => {
-  it("a quota failure while restoring throws and withholds the acknowledgement - nothing is sent as if durable when it is not", () => {
+  it("a quota failure while restoring is handled, tells the user, and withholds the acknowledgement - nothing is sent as if durable when it is not", () => {
+    const toastError = vi.spyOn(toast, "error").mockReturnValue("toast-id");
     const harness = createHarness();
     handles.push(harness.handle);
     const callbacks = harness.callbacks();
@@ -496,14 +498,19 @@ describe("useChatMessageDeliveryRestoreDriver: local persistence failure", () =>
         throw new DOMException("quota exceeded", "QuotaExceededError");
       });
     try {
-      // `replaceDraft` runs its durability barrier before returning; a
-      // failure there throws synchronously out of the effect, so the ACK on
-      // the very next line never executes.
-      expect(() => mountDriver(harness.handle, CHAT_ID, OWNER_ID)).toThrow();
+      // `replaceDraft` runs its durability barrier before returning and
+      // throws when the disk write fails. That must not escape the effect (an
+      // uncaught throw in an effect takes the surrounding tree down with it):
+      // it is handled here, and the ACK on the next line is not reached.
+      expect(() =>
+        mountDriver(harness.handle, CHAT_ID, OWNER_ID),
+      ).not.toThrow();
     } finally {
       setItemSpy.mockRestore();
     }
 
+    expect(toastError).toHaveBeenCalled();
+    toastError.mockRestore();
     expect(harness.sent).toHaveLength(0);
     // The merge itself is not lost - it landed in memory before the barrier
     // threw, exactly like the store-level "reached memory but failed on

@@ -365,6 +365,31 @@ export function createComposerDraftStorage() {
       flush([composerDraftRowKey(currentName, "draft", chatId)]);
       if (pending.size === 0) cancelDeferredJsonWrite(currentName);
     },
+    persistSubmittedDraftNowOrThrow(
+      chatId: string,
+      draftId: string | null,
+    ): unknown {
+      if (currentName === null) return null;
+      const key = composerDraftRowKey(currentName, "draft", chatId);
+      const saved = readRow(key);
+      // An accepted send retires this identity despite another window's edits
+      // to it. A fresh identity belongs to the NEXT message and must survive.
+      const nextDraft =
+        isRecord(saved?.value) &&
+        typeof saved.value.draftId === "string" &&
+        migratedLegacyComposerDraftId(saved.value.draftId) !== draftId
+          ? saved.value
+          : null;
+      if (saved === null) baseline.delete(key);
+      else baseline.set(key, saved.revision);
+      if (nextDraft !== null) pending.delete(key);
+      const keys = [key];
+      if (draftId !== null)
+        keys.push(composerDraftRowKey(currentName, "delete", draftId));
+      flush(keys);
+      if (pending.size === 0) cancelDeferredJsonWrite(currentName);
+      return nextDraft;
+    },
     rememberSnapshot(state: ComposerDraftPersistence): void {
       previous = state;
     },

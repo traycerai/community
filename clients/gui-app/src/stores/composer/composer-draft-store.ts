@@ -176,6 +176,8 @@ interface ComposerDraftStore {
    * routes the clear to the host mirror.
    */
   readonly clearDraft: (chatId: string) => void;
+  /** Accepted sends retire only the submitted identity, across local windows. */
+  readonly clearSubmittedDraft: (chatId: string, hostId: string | null) => void;
   /**
    * The fork rule for a chat draft another host owns (its row here is a
    * replica): re-mint the draft id and drop ownership while KEEPING the
@@ -442,6 +444,52 @@ export const useComposerDraftStore = create<ComposerDraftStore>()(
           EMPTY_COMPOSER_CONTENT,
           EMPTY_COMPOSER_SELECTION,
         );
+        scheduleLandingImageReconcile();
+      },
+      clearSubmittedDraft: (chatId, hostId) => {
+        const draftId = ensureDraft(get().drafts, chatId).draftId;
+        set((state) => {
+          const current = ensureDraft(state.drafts, chatId);
+          return {
+            drafts: {
+              ...state.drafts,
+              [chatId]: {
+                ...current,
+                content: EMPTY_COMPOSER_CONTENT,
+                selection: EMPTY_COMPOSER_SELECTION,
+                browserAnnotations: [],
+                lastTouchedAt: Date.now(),
+                generation: current.generation + 1,
+                syncedGeneration: current.generation + 1,
+                revision: current.revision + 1,
+                resetEpoch: current.resetEpoch + 1,
+              },
+            },
+          };
+        });
+        if (draftId !== null)
+          get().fenceAndDetachSubmittedDraft(chatId, draftId, hostId);
+        const nextDraft = composerDraftStorage.persistSubmittedDraftNowOrThrow(
+          chatId,
+          draftId,
+        );
+        if (nextDraft !== null) {
+          const current = get();
+          const merge = useComposerDraftStore.persist.getOptions().merge;
+          const hydrated = merge?.(
+            { drafts: { [chatId]: nextDraft } },
+            current,
+          );
+          if (hydrated !== undefined) {
+            composerDraftStorage.withoutPersistence(() => {
+              applyExternalComposerDraft(
+                chatId,
+                hydrated.drafts[chatId],
+                nextDraft,
+              );
+            });
+          }
+        }
         scheduleLandingImageReconcile();
       },
       detachDraftIdentity: (chatId) => {

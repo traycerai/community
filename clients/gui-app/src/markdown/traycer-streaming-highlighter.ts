@@ -301,8 +301,8 @@ export function createTraycerBlockHighlighter(
   code: string,
   lang: string,
   isStreaming: boolean,
+  lastHighlight: { node: ReactNode | null },
 ): TraycerBlockHighlighter {
-  let lastNode: ReactNode | null = null;
   return {
     highlight: () => {
       const output = traycerStreamingHighlighter.highlightForBlock(
@@ -310,12 +310,12 @@ export function createTraycerBlockHighlighter(
         lang,
         isStreaming,
       );
-      if (output !== null) lastNode = output.node;
+      if (output !== null) lastHighlight.node = output.node;
       return output;
     },
     getCached: () => {
       const node = traycerStreamingHighlighter.getCached(code, lang);
-      if (node !== null) lastNode = node;
+      if (node !== null) lastHighlight.node = node;
       return node;
     },
     setCached: (_code, _lang, output) =>
@@ -324,7 +324,7 @@ export function createTraycerBlockHighlighter(
       traycerStreamingHighlighter.subscribeBlock(code, lang, onReadyChange),
     inactive: {
       highlight: () => null,
-      getCached: () => lastNode,
+      getCached: () => lastHighlight.node,
       setCached: () => {},
       subscribe: () => () => {},
     },

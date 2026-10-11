@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { useStore } from "zustand";
 import { selectRestorableSetupInterruption } from "@/stores/chats/chat-session-selectors";
 import type { ChatSessionStoreHandle } from "@/stores/chats/chat-session-store";
@@ -107,7 +108,14 @@ export function useChatSetupFailureRestoreDriver(
       dedupe.ids.add(eventId);
       return;
     }
-    replaceDraft(nodeId, restored, null);
+    try {
+      replaceDraft(nodeId, restored, null);
+    } catch {
+      toast.error("Couldn't save the restored message.", {
+        description: "Your text is still in this window.",
+      });
+      return;
+    }
     handle.store.getState().takeSetupFailedRestoration(interruption.messageId);
     dedupe.ids.add(eventId);
     // A path-less setup failure (the generic `SETUP_AWAIT_FAILED` catch-all,

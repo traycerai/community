@@ -54,9 +54,15 @@ function FencedCodeBlock({
 }) {
   const visible = useTileBodyVisible();
   const isStreaming = useIsMarkdownStreaming();
+  // Hidden stream updates rebuild the adapter, but keep its displayed prefix.
+  const lastHighlight = useMemo<{ node: ReactNode | null }>(
+    () => ({ node: null }),
+    [],
+  );
   const highlighter = useMemo(
-    () => createTraycerBlockHighlighter(code, language, isStreaming),
-    [code, language, isStreaming],
+    () =>
+      createTraycerBlockHighlighter(code, language, isStreaming, lastHighlight),
+    [code, language, isStreaming, lastHighlight],
   );
   // Empty fence info stays unhighlighted (plain path) but still quoteable.
   const highlightLang = language.length > 0 ? language : null;

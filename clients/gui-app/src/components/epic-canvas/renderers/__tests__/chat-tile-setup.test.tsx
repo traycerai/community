@@ -413,7 +413,7 @@ describe("useChatSetupFailureRestoreDriver", () => {
     );
   });
 
-  it("a quota failure while restoring withholds the take - the pending prompt survives for retry", () => {
+  it("a quota failure while restoring is handled and reported, withholds the take - the pending prompt survives for retry and the text stays in the composer", () => {
     const harness = createHarness();
     emitSnapshot(harness.callbacks(), [], []);
 
@@ -448,7 +448,8 @@ describe("useChatSetupFailureRestoreDriver", () => {
         throw new DOMException("quota exceeded", "QuotaExceededError");
       });
     try {
-      // The persist barrier throws before the take call is reached.
+      // The persist barrier throws before the take call is reached, and that
+      // throw must not escape the effect and take the tile down with it.
       expect(() => {
         act(() => {
           appendEvent(
@@ -461,18 +462,23 @@ describe("useChatSetupFailureRestoreDriver", () => {
             ),
           );
         });
-      }).toThrow();
+      }).not.toThrow();
     } finally {
       setItemSpy.mockRestore();
     }
 
-    // The source slot survives: the pending entry was never taken.
+    // The user is told, and nothing was consumed: the pending entry was never
+    // taken, and the restored text is in the composer's memory.
+    expect(sonnerToastError).toHaveBeenCalled();
     expect(harness.handle.store.getState().pendingUserMessages).toEqual([sent]);
     expect(
       harness.handle.store
         .getState()
         .peekSetupFailedRestoration(sent.messageId),
     ).toEqual(failedContent);
+    expect(useComposerDraftStore.getState().drafts[CHAT_ID]?.content).toEqual(
+      failedContent,
+    );
   });
 
   it("restores the failed prompt on the windowed line, where no event ever reaches state.events", () => {

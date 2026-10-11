@@ -25,6 +25,11 @@ import {
   type DraftBlobClient,
 } from "@/lib/drafts/draft-blob-transport";
 import { useAuthStore } from "@/stores/auth/auth-store";
+import { toast } from "sonner";
+import {
+  readComposerDraftSnapshot,
+  useComposerDraftStore,
+} from "@/stores/composer/composer-draft-store";
 
 vi.mock("sonner", () => ({
   toast: Object.assign(vi.fn(), {
@@ -423,5 +428,64 @@ describe("initial-chat-handoff driver: hash-first resend", () => {
     expect(attrs).not.toBeNull();
     expect(typeof attrs?.b64content).toBe("string");
     expect(attrs?.hash).toBeUndefined();
+  });
+});
+
+describe("initial-chat handoff driver: restoring a failed first send", () => {
+  it("a quota failure while restoring is handled and reported, and the failed send stays owed with its text in the composer", () => {
+    useComposerDraftStore.setState({ drafts: {} });
+    vi.mocked(toast.error).mockClear();
+    const handle = buildHandle(false);
+    handles.push(handle);
+    markSnapshotLoadedAndActable(handle, false);
+    const content: JsonContent = {
+      type: "doc",
+      content: [
+        {
+          type: "paragraph",
+          content: [{ type: "text", text: "failed prompt" }],
+        },
+      ],
+    };
+    handle.store.setState({
+      failedSendRestoration: {
+        clientActionId: "cai-restore",
+        messageId: null,
+        content,
+        browserAnnotations: [],
+        reason: "Rejected",
+        displacedReason: "Rejected",
+        stated: false,
+      },
+    });
+    // Support native Storage and the setup's own-method fallback.
+    const storageSpyTarget: Storage = Object.hasOwn(
+      window.localStorage,
+      "setItem",
+    )
+      ? window.localStorage
+      : Storage.prototype;
+    const setItemSpy = vi
+      .spyOn(storageSpyTarget, "setItem")
+      .mockImplementation(() => {
+        throw new DOMException("quota exceeded", "QuotaExceededError");
+      });
+    try {
+      // The persist barrier throws inside the restore; that must not escape
+      // the effect and take the tile down with it.
+      expect(() => mountDriver(handle)).not.toThrow();
+    } finally {
+      setItemSpy.mockRestore();
+    }
+
+    expect(vi.mocked(toast.error).mock.calls[0]?.[0]).toBe(
+      "Couldn't save the restored message.",
+    );
+    // Not acknowledged: the slot is still the one place the prompt is owed.
+    expect(handle.store.getState().failedSendRestoration?.clientActionId).toBe(
+      "cai-restore",
+    );
+    expect(readComposerDraftSnapshot(CHAT_ID).content).toEqual(content);
+    useComposerDraftStore.setState({ drafts: {} });
   });
 });
