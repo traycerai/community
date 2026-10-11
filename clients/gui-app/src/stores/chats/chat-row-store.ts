@@ -81,11 +81,8 @@ export type ChatRowListEntry =
 
 export interface ChatRowSnapshot {
   readonly messages: ReadonlyArray<ChatMessage>;
-  readonly settledRows: ReadonlyArray<ChatMessage>;
-  readonly liveRows: ReadonlyArray<ChatMessage>;
   readonly rows: ReadonlyArray<TranscriptListRow>;
   readonly listEntries: ReadonlyArray<ChatRowListEntry>;
-  readonly rowIds: ReadonlyArray<string>;
   readonly byId: ReadonlyMap<string, TranscriptListRow>;
   readonly queue: OpenChatQueueState;
   readonly todo: PinnedTodoSnapshot | null;
@@ -228,92 +225,103 @@ export function createChatRowStore(source: StoreApi<ChatSessionState>): {
     { memoize: lruMemoize, argsMemoize: lruMemoize },
   );
   const selectActiveTurnId = (state: ChatSessionState) =>
-    state.activeTurn?.turnId ?? state.liveAssistantMessage?.turnId ?? null;
+    state.activeTurn?.turnId ?? null;
   let sharedMessages = EMPTY_STABLE_CHAT_TIMELINE_ROWS_STATE;
   let sharedRows = EMPTY_STABLE_TRANSCRIPT_LIST_ROWS_STATE;
   let previous: ChatRowSnapshot | undefined;
-  const derive = (state: ChatSessionState): ChatRowSnapshot => {
-    const rendered = selectMessages(state);
-    const painted = selectPainted(state);
-    sharedMessages = computeStableChatTimelineRows(
-      painted.messages.map((row) =>
-        replaceEqualDeep(sharedMessages.byId.get(row.id), row),
-      ),
-      sharedMessages,
-    );
-    sharedRows = computeStableTranscriptListRows(
-      transcriptListRows({
-        window:
+  const derive = createSelector(
+    [
+      createStructuredSelector({
+        rendered: selectMessages,
+        painted: selectPainted,
+        queue: selectQueue,
+        hostChanges: selectHostChanges,
+        activeTurnId: selectActiveTurnId,
+        window: (state: ChatSessionState) =>
           state.transcriptDerived === null ? null : state.transcriptWindow,
-        rendered: sharedMessages.result,
-      }),
-      sharedRows,
-    );
-    const activeTurnId = selectActiveTurnId(state);
-    const liveRows = sharedMessages.result.filter(
-      (row) =>
-        row.runState !== null ||
-        (activeTurnId !== null && row.turnId === activeTurnId),
-    );
-    const liveIds = new Set(liveRows.map((row) => row.id));
-    const settledRows = sharedMessages.result.filter(
-      (row) => !liveIds.has(row.id),
-    );
-    const rowIds = sharedRows.result.map((row) => row.key);
-    const listEntries = sharedRows.result.map(
-      (row, index): ChatRowListEntry => {
-        const entry: ChatRowListEntry =
-          row.kind === "placeholder"
-            ? row
-            : {
-                kind: "stored",
-                key: row.key,
-                ordinal: row.ordinal,
-                role: row.model.role,
-                agentAuthored: row.model.agentSenderInfo !== null,
-              };
-        const previousEntry = previous?.listEntries[index];
-        return previousEntry !== undefined && shallow(previousEntry, entry)
-          ? previousEntry
-          : entry;
-      },
-    );
-    const pendingIds = new Set(
-      state.pendingInterviews.map((interview) => interview.blockId),
-    );
-    const next: ChatRowSnapshot = {
-      messages: sharedMessages.result,
-      settledRows: reuseShallow(previous?.settledRows, settledRows),
-      liveRows: reuseShallow(previous?.liveRows, liveRows),
-      rows: sharedRows.result,
-      listEntries: reuseShallow(previous?.listEntries, listEntries),
-      rowIds: reuseShallow(previous?.rowIds, rowIds),
-      byId: sharedRows.byKey,
-      queue: replaceEqualDeep(previous?.queue, selectQueue(state)),
-      todo: replaceEqualDeep(previous?.todo, painted.todo),
-      pendingInterview: replaceEqualDeep(
-        previous?.pendingInterview,
-        findPendingInterview(rendered, (id) => pendingIds.has(id)),
-      ),
-      unanswerableInterviews: replaceEqualDeep(
-        previous?.unanswerableInterviews,
-        findUnanswerableInterviews(
-          rendered,
-          state.pendingInterviews,
+        pendingInterviews: (state: ChatSessionState) => state.pendingInterviews,
+        interviewAnswerability: (state: ChatSessionState) =>
           state.transcriptDerived?.interviewAnswerability ?? null,
+        events: (state: ChatSessionState) => state.events,
+      }),
+    ],
+    ({
+      rendered,
+      painted,
+      queue,
+      hostChanges,
+      activeTurnId,
+      window,
+      pendingInterviews,
+      interviewAnswerability,
+      events,
+    }): ChatRowSnapshot => {
+      sharedMessages = computeStableChatTimelineRows(
+        painted.messages.map((row) =>
+          replaceEqualDeep(sharedMessages.byId.get(row.id), row),
         ),
-      ),
-      accumulatedFileChanges: replaceEqualDeep(
-        previous?.accumulatedFileChanges,
-        accumulatedChangeRows(rendered, selectHostChanges(state), activeTurnId),
-      ),
-      setupCardShown: transcriptShowsSetupCard(rendered),
-      importedSourceProvider:
-        importedProvenance(state.events)?.sourceProvider ?? null,
-    };
-    previous = reuseShallow(previous, next);
-    return previous;
-  };
+        sharedMessages,
+      );
+      sharedRows = computeStableTranscriptListRows(
+        transcriptListRows({
+          window,
+          rendered: sharedMessages.result,
+        }),
+        sharedRows,
+      );
+      const listEntries = sharedRows.result.map(
+        (row, index): ChatRowListEntry => {
+          const entry: ChatRowListEntry =
+            row.kind === "placeholder"
+              ? row
+              : {
+                  kind: "stored",
+                  key: row.key,
+                  ordinal: row.ordinal,
+                  role: row.model.role,
+                  agentAuthored: row.model.agentSenderInfo !== null,
+                };
+          const previousEntry = previous?.listEntries[index];
+          return previousEntry !== undefined && shallow(previousEntry, entry)
+            ? previousEntry
+            : entry;
+        },
+      );
+      const pendingIds = new Set(
+        pendingInterviews.map((interview) => interview.blockId),
+      );
+      const next: ChatRowSnapshot = {
+        messages: sharedMessages.result,
+        rows: sharedRows.result,
+        listEntries: reuseShallow(previous?.listEntries, listEntries),
+        byId: sharedRows.byKey,
+        queue: replaceEqualDeep(previous?.queue, queue),
+        todo: replaceEqualDeep(previous?.todo, painted.todo),
+        pendingInterview: replaceEqualDeep(
+          previous?.pendingInterview,
+          findPendingInterview(rendered, (id) => pendingIds.has(id)),
+        ),
+        unanswerableInterviews: replaceEqualDeep(
+          previous?.unanswerableInterviews,
+          findUnanswerableInterviews(
+            rendered,
+            pendingInterviews,
+            interviewAnswerability,
+          ),
+        ),
+        accumulatedFileChanges: replaceEqualDeep(
+          previous?.accumulatedFileChanges,
+          accumulatedChangeRows(rendered, hostChanges, activeTurnId),
+        ),
+        setupCardShown: transcriptShowsSetupCard(rendered),
+        importedSourceProvider:
+          importedProvenance(events)?.sourceProvider ?? null,
+      };
+      previous = reuseShallow(previous, next);
+      return previous;
+    },
+    { memoize: lruMemoize, argsMemoize: lruMemoize },
+  );
   const store = createStore<ChatRowSnapshot>(() => derive(source.getState()));
   const dispose = source.subscribe((state) =>
     store.setState(derive(state), true),

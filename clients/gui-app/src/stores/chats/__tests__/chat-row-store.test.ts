@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { JsonContent } from "@traycer/protocol/common/registry";
 import type {
   AgentSender,
@@ -10,6 +10,29 @@ import type {
   LiveAssistantMessage,
 } from "@/stores/chats/chat-session-store";
 import { createTestChatSession } from "@/stores/chats/test-support/create-test-chat-session";
+
+// Real implementations, counted: the stable-row pass is what walks every
+// retained row, so how often it runs is the cost of an update to this store.
+const walks = vi.hoisted(() => ({ timeline: 0, list: 0 }));
+vi.mock("@/components/chat/chat-stable-rows", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/components/chat/chat-stable-rows")>();
+  return {
+    ...actual,
+    computeStableChatTimelineRows: (
+      ...args: Parameters<typeof actual.computeStableChatTimelineRows>
+    ) => {
+      walks.timeline += 1;
+      return actual.computeStableChatTimelineRows(...args);
+    },
+    computeStableTranscriptListRows: (
+      ...args: Parameters<typeof actual.computeStableTranscriptListRows>
+    ) => {
+      walks.list += 1;
+      return actual.computeStableTranscriptListRows(...args);
+    },
+  };
+});
 
 const ASSISTANT_SENDER: AgentSender = {
   type: "agent",
@@ -162,7 +185,7 @@ afterEach(() => {
 });
 
 describe("session row store", () => {
-  it("keeps settled rows and rowIds by identity while the live row streams", () => {
+  it("keeps settled rows and list entries by identity while the live row streams", () => {
     const { store: source, rows } = openSession();
     source.setState({
       messages: [userMessage("u-1", "hello", 1000)],
@@ -171,20 +194,62 @@ describe("session row store", () => {
       liveAssistantMessage: liveAssistant("turn-1", "a", 1),
     });
     const before = rows.getState();
-    expect(before.rowIds).toEqual(["u-1", "assistant:turn-1"]);
-    expect(before.settledRows.map((row) => row.id)).toEqual(["u-1"]);
-    expect(before.liveRows.map((row) => row.id)).toEqual(["assistant:turn-1"]);
+    expect(before.rows.map((row) => row.key)).toEqual([
+      "u-1",
+      "assistant:turn-1",
+    ]);
+    expect(before.messages.map((row) => row.id)).toEqual([
+      "u-1",
+      "assistant:turn-1",
+    ]);
 
     source.setState({ liveAssistantMessage: liveAssistant("turn-1", "ab", 2) });
 
     const after = rows.getState();
-    expect(after.rowIds).toBe(before.rowIds);
-    expect(after.settledRows).toBe(before.settledRows);
     expect(after.listEntries).toBe(before.listEntries);
-    expect(after.liveRows).not.toBe(before.liveRows);
+    expect(after.byId.get("u-1")).toBe(before.byId.get("u-1"));
+    expect(after.messages[0]).toBe(before.messages[0]);
     expect(after.byId.get("assistant:turn-1")).not.toBe(
       before.byId.get("assistant:turn-1"),
     );
+    expect(after.messages[1]).not.toBe(before.messages[1]);
+  });
+
+  it("does not walk the retained rows again for a session update none of the store's operands read", () => {
+    const { store: source, rows } = openSession();
+    source.setState({
+      messages: [
+        userMessage("u-1", "one", 1000),
+        userMessage("u-2", "two", 1001),
+        userMessage("u-3", "three", 1002),
+      ],
+    });
+    const before = rows.getState();
+    let notified = 0;
+    const stop = rows.subscribe(() => {
+      notified += 1;
+    });
+    const walked = { ...walks };
+
+    source.setState({ suggestedPrompt: "try this next" });
+
+    expect(rows.getState()).toBe(before);
+    expect(notified).toBe(0);
+    expect(walks).toEqual(walked);
+
+    // Positive control: the counter does move when an operand it reads does.
+    source.setState({
+      messages: [
+        userMessage("u-1", "one", 1000),
+        userMessage("u-2", "two", 1001),
+        userMessage("u-3", "three", 1002),
+        userMessage("u-4", "four", 1003),
+      ],
+    });
+    expect(walks.timeline).toBeGreaterThan(walked.timeline);
+    expect(walks.list).toBeGreaterThan(walked.list);
+    expect(rows.getState().rows.map((row) => row.key)).toContain("u-4");
+    stop();
   });
 
   it("keeps a settled row that carries a pinned todo by identity while the next turn streams", () => {
@@ -202,13 +267,13 @@ describe("session row store", () => {
     });
     const before = rows.getState();
     expect(before.todo?.items.map((item) => item.text)).toEqual(["ship it"]);
-    const settledIds = before.settledRows.map((row) => row.id);
-    expect(settledIds).toContain("assistant:turn-1");
+    expect(before.messages.map((row) => row.id)).toContain("assistant:turn-1");
 
     source.setState({ liveAssistantMessage: liveAssistant("turn-2", "ab", 2) });
 
     const after = rows.getState();
-    expect(after.settledRows).toBe(before.settledRows);
+    expect(after.messages[0]).toBe(before.messages[0]);
+    expect(after.messages[1]).toBe(before.messages[1]);
     expect(after.todo).toBe(before.todo);
     expect(after.byId.get("assistant:turn-1")).toBe(
       before.byId.get("assistant:turn-1"),
@@ -225,9 +290,52 @@ describe("session row store", () => {
     });
 
     const after = rows.getState();
-    expect(after.settledRows).not.toBe(before.settledRows);
+    expect(after.messages).not.toBe(before.messages);
     expect(after.byId.get("u-1")).not.toBe(before.byId.get("u-1"));
-    expect(after.rowIds).toBe(before.rowIds);
+    expect(after.listEntries).toBe(before.listEntries);
+  });
+
+  it("builds the changes panel's own row only for the host's active turn: a live row lingering after the turn ended adds none", () => {
+    const { store: source, rows } = openSession();
+    const editing = (blocksVersion: number): LiveAssistantMessage => ({
+      ...liveAssistant("turn-1", "editing", blocksVersion),
+      blocks: [
+        {
+          type: "file_change",
+          blockId: "edit-1",
+          filePath: "/repo/src/app.ts",
+          operation: "edit",
+          diffSource: "snapshot",
+          beforeHash: "a".repeat(64),
+          afterHash: "b".repeat(64),
+          additions: 1,
+          deletions: 1,
+          reason: "snapshot",
+          status: "completed",
+          timestamp: 20,
+        },
+      ],
+    });
+    source.setState({
+      messages: [userMessage("u-1", "edit it", 1000)],
+      activeTurn: activeTurn("turn-1"),
+      runStatus: "running",
+      liveAssistantMessage: editing(1),
+    });
+    // While the host's turn runs, the file the turn just edited is listed
+    // from the client's own row.
+    expect(
+      rows.getState().accumulatedFileChanges.map((row) => row.filePath),
+    ).toEqual(["/repo/src/app.ts"]);
+
+    // The host ends the turn; the live row lingers for a frame. It is no
+    // longer the active turn, and the host's accumulated set takes over.
+    source.setState({ activeTurn: null, runStatus: "idle" });
+
+    expect(rows.getState().messages.map((row) => row.id)).toContain(
+      "assistant:turn-1",
+    );
+    expect(rows.getState().accumulatedFileChanges).toEqual([]);
   });
 
   it("stops following the session store once the handle is disposed", () => {
