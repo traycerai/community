@@ -18,7 +18,7 @@ import type { LocalHostSnapshot } from "@traycer-clients/shared/platform/runner-
 import { createRendererContextFixture } from "@traycer-clients/shared/test-fixtures/request-context";
 import type { HostListResponse } from "@traycer/protocol/host/host-status";
 import { providersListResponseSchema } from "@traycer/protocol/host/provider-schemas";
-import { rateLimitUsageResponseSchemaV40 } from "@traycer/protocol/host/rate-limit/schemas";
+import { rateLimitUsageResponseSchemaV51 } from "@traycer/protocol/host/rate-limit/schemas";
 import { RateLimitPollProvider } from "@/providers/rate-limit-poll-provider";
 import { createResourcesStore } from "@/stores/resources/resources-store";
 import { resourcesRegistry } from "@/stores/resources/resources-registry";
@@ -742,7 +742,7 @@ function fixtureRateLimitUsage(providerId: string | undefined) {
     resetsAt: FIXTURE_RESETS_AT,
     durationMinutes,
   });
-  return rateLimitUsageResponseSchemaV40.parse({
+  return rateLimitUsageResponseSchemaV51.parse({
     totalTokens: 0,
     remainingTokens: 0,
     providerRateLimits:

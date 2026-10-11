@@ -38,7 +38,12 @@ const HOST_ID = "host-1";
 // A minimal valid `host.getRateLimitUsage` response - only the ordering/count
 // of `request` calls matters to most of these tests, not the payload.
 function response() {
-  return { totalTokens: 0, remainingTokens: 0, providerRateLimits: null };
+  return {
+    totalTokens: 0,
+    remainingTokens: 0,
+    providerRateLimits: null,
+    usageUpdatedAt: null,
+  };
 }
 
 // A provider-pull response reporting a specific unavailable reason - used
@@ -50,7 +55,12 @@ function unavailableResponse(reason: RateLimitUnavailableReason) {
     available: false,
     reason,
   };
-  return { totalTokens: 0, remainingTokens: 0, providerRateLimits };
+  return {
+    totalTokens: 0,
+    remainingTokens: 0,
+    providerRateLimits,
+    usageUpdatedAt: null,
+  };
 }
 
 function keyFor(providerId: ProviderId, profileId: string | null) {

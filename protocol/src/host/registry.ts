@@ -589,6 +589,7 @@ import {
   hostGetRateLimitUsageV30,
   hostGetRateLimitUsageV40,
   hostGetRateLimitUsageV50,
+  hostGetRateLimitUsageV51,
   hostGetRateLimitUsageUpgradeV10ToV11,
   hostGetRateLimitUsageUpgradeV11ToV12,
   hostGetRateLimitUsageUpgradeV12ToV20,
@@ -596,6 +597,7 @@ import {
   hostGetRateLimitUsageUpgradeV21ToV30,
   hostGetRateLimitUsageUpgradeV30ToV40,
   hostGetRateLimitUsageUpgradeV40ToV50,
+  hostGetRateLimitUsageUpgradeV50ToV51,
   hostGetRateLimitUsageDowngradeV2ToV1,
   hostGetRateLimitUsageDowngradeV3ToV2,
   hostGetRateLimitUsageDowngradeV3ToV1,
@@ -6502,11 +6504,15 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
       },
     },
     5: {
-      latestMinor: 0,
+      latestMinor: 1,
       versions: {
         0: {
           contract: hostGetRateLimitUsageV50,
           upgradeFromPreviousVersion: hostGetRateLimitUsageUpgradeV40ToV50,
+        },
+        1: {
+          contract: hostGetRateLimitUsageV51,
+          upgradeFromPreviousVersion: hostGetRateLimitUsageUpgradeV50ToV51,
         },
       },
       downgradePathsFromLatest: {

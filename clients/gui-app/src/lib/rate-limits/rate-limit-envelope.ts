@@ -8,7 +8,10 @@ import type { ResponseOfMethod } from "@traycer-clients/shared/host-transport/ho
 import type { HostRpcRegistry } from "@/lib/host";
 
 import { hostQueryKeys } from "@/lib/query-keys/host-query-keys";
-import { invalidateProviderFamilyQueries } from "@/lib/query-keys/providers-query-keys";
+import {
+  invalidateProviderFamilyQueries,
+  providersListQueryKey,
+} from "@/lib/query-keys/providers-query-keys";
 
 /** The `available: true` arm of `ProviderRateLimits` - the only shape worth retaining. */
 export type AvailableProviderRateLimits = Extract<
@@ -127,73 +130,147 @@ export interface ProviderRateLimitEnvelope {
  * cli_not_found, ...) gate out too: they carry no usage the host's gauge cache
  * could have captured, so `providers.list` has nothing new to converge on.
  */
-function isManagedProfileCapableRateLimitsResponse(
+function managedProfileCapableProvider(
   response: RateLimitUsageResponse,
-): boolean {
+): string | null {
   const provider = response.providerRateLimits;
-  return (
-    provider !== null &&
+  return provider !== null &&
     provider.available &&
     (provider.provider === "codex" ||
       provider.provider === "claude-code" ||
       provider.provider === "grok" ||
       provider.provider === "antigravity")
-  );
+    ? provider.provider
+    : null;
 }
 
-// Hosts owed a `providers.list` re-read once their rate-limit reads settle.
-const owedConvergence = new WeakMap<QueryClient, Set<string>>();
+/** The capture one read reported, until its host's list row is known to hold it. */
+interface OwedCapture {
+  readonly providerId: string;
+  readonly profileId: string | null;
+  /** `null` from a host older than `host.getRateLimitUsage@5.1`: no information. */
+  readonly usageUpdatedAt: number | null;
+}
+
+// Per host, the captures owed a comparison with its `providers.list` rows.
+const owedConvergence = new WeakMap<QueryClient, Map<string, OwedCapture[]>>();
+
+function requestedProfileId(queryKey: QueryKey): string | null {
+  const params = queryKey[3];
+  return typeof params === "object" &&
+    params !== null &&
+    "profileId" in params &&
+    typeof params.profileId === "string"
+    ? params.profileId
+    : null;
+}
 
 /**
- * A gauge is host-local; refresh only that host's provider snapshot. The
- * re-read waits for the host's last in-flight rate-limit read to settle, so a
- * burst of reads (every provider at reload) converges the list once, after the
- * final capture, instead of once per response.
- * ponytail: a slow straggler read holds its host's convergence until it
- * settles; a host capture timestamp on `host.getRateLimitUsage` would let each
- * response converge only when it is newer than the cached row.
+ * A gauge is host-local, so a read can only put that host's provider list
+ * behind. The list is compared once the host's last in-flight rate-limit read
+ * has settled, so a burst of reads (every provider at reload) costs one
+ * comparison, and it is re-read only when a capture is newer than the row the
+ * list holds for that profile (`usageUpdatedAt` on both). A host that answers
+ * from a reading the list already reports costs no second list read.
  */
 function invalidateProvidersListForConvergence(
   queryClient: QueryClient,
   queryKey: QueryKey,
   response: RateLimitUsageResponse,
 ): void {
-  if (!isManagedProfileCapableRateLimitsResponse(response)) return;
+  const providerId = managedProfileCapableProvider(response);
   const hostId = queryKey[1];
-  if (typeof hostId !== "string") return;
+  if (providerId === null || typeof hostId !== "string") return;
   let owed = owedConvergence.get(queryClient);
   if (owed === undefined) {
-    owed = new Set();
+    owed = new Map();
     owedConvergence.set(queryClient, owed);
     subscribeConvergenceOnSettle(queryClient, owed);
   }
-  owed.add(hostId);
+  const captures = owed.get(hostId) ?? [];
+  captures.push({
+    providerId,
+    profileId: requestedProfileId(queryKey),
+    usageUpdatedAt: response.usageUpdatedAt,
+  });
+  owed.set(hostId, captures);
+}
+
+type ProvidersListResponse = ResponseOfMethod<
+  HostRpcRegistry,
+  "providers.list"
+>;
+
+/** Whether every capture is already in the list row for its profile. */
+function listHoldsCaptures(
+  list: ProvidersListResponse | undefined,
+  captures: ReadonlyArray<OwedCapture>,
+): boolean {
+  if (list === undefined) return false;
+  return captures.every((capture) => {
+    const capturedAt = capture.usageUpdatedAt;
+    if (capturedAt === null) return false;
+    const row = list.providers
+      .find((provider) => provider.providerId === capture.providerId)
+      ?.profiles.find((profile) =>
+        capture.profileId === null
+          ? profile.kind === "ambient"
+          : profile.profileId === capture.profileId,
+      );
+    return (
+      row !== undefined &&
+      row.usageUpdatedAt !== null &&
+      row.usageUpdatedAt >= capturedAt
+    );
+  });
 }
 
 function subscribeConvergenceOnSettle(
   queryClient: QueryClient,
-  owed: Set<string>,
+  owed: Map<string, OwedCapture[]>,
 ): void {
   const unsubscribe = queryClient.getQueryCache().subscribe((event) => {
     if (event.type !== "updated" && event.type !== "removed") return;
-    for (const hostId of owed) {
-      const rateLimitReads = hostQueryKeys.methodScope(
-        hostId,
-        "host.getRateLimitUsage",
-      );
-      if (queryClient.isFetching({ queryKey: rateLimitReads }) > 0) continue;
-      owed.delete(hostId);
-      if (owed.size === 0) {
-        unsubscribe();
-        owedConvergence.delete(queryClient);
-      }
-      invalidateProviderFamilyQueries(
-        queryClient,
-        hostId,
-        ["providers.list"],
-        "classic",
-      );
+    // Only the host's own rate-limit reads and its list can settle what it is
+    // owed; every other query event returns here, before any cache scan.
+    const queryKey: unknown = event.query.queryKey;
+    if (!Array.isArray(queryKey)) return;
+    const method: unknown = queryKey[2];
+    if (method !== "host.getRateLimitUsage" && method !== "providers.list")
+      return;
+    const hostId: unknown = queryKey[1];
+    if (typeof hostId !== "string") return;
+    const captures = owed.get(hostId);
+    if (captures === undefined) return;
+    const rateLimitReads = hostQueryKeys.methodScope(
+      hostId,
+      "host.getRateLimitUsage",
+    );
+    if (queryClient.isFetching({ queryKey: rateLimitReads }) > 0) return;
+    const listKey = providersListQueryKey(hostId);
+    const stamped = captures.every(
+      (capture) => capture.usageUpdatedAt !== null,
+    );
+    // A list read in flight may or may not have seen the capture. Its answer
+    // says which, so wait for it instead of cancelling it for a second read.
+    if (
+      stamped &&
+      queryClient.isFetching({ queryKey: listKey, exact: true }) > 0
+    )
+      return;
+    owed.delete(hostId);
+    if (owed.size === 0) {
+      unsubscribe();
+      owedConvergence.delete(queryClient);
     }
+    const list = queryClient.getQueryData<ProvidersListResponse>(listKey);
+    if (listHoldsCaptures(list, captures)) return;
+    invalidateProviderFamilyQueries(
+      queryClient,
+      hostId,
+      ["providers.list"],
+      "classic",
+    );
   });
 }
 

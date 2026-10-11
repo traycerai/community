@@ -22,6 +22,7 @@ import {
   rateLimitUsageResponseSchemaV30,
   rateLimitUsageResponseSchemaV40,
   rateLimitUsageResponseSchemaV50,
+  rateLimitUsageResponseSchemaV51,
   mapCursorAvailableToUnavailable,
   mapGrokAvailableToUnavailable,
   mapHuggingFaceAvailableToUnavailable,
@@ -601,15 +602,43 @@ export const hostGetRateLimitUsageUpgradeV40ToV50 = defineUpgradePath<
   upgradeResponse: (response) => response,
 });
 
-// Downgrade bridge 5.0 -> 4.0: the request is identical (both carry `force`).
+// v5.1 adds the response's `usageUpdatedAt` (see
+// `rateLimitUsageResponseSchemaV51`). The request is unchanged from 5.0. A 5.0
+// caller of a 5.1 host is served through the frozen 5.0 response schema, whose
+// parse drops the key.
+export const hostGetRateLimitUsageV51 = defineRpcContract({
+  method: "host.getRateLimitUsage",
+  schemaVersion: { major: 5, minor: 1 } as const,
+  requestSchema: rateLimitUsageRequestSchemaV40,
+  responseSchema: rateLimitUsageResponseSchemaV51,
+});
+
+export const hostGetRateLimitUsageUpgradeV50ToV51 = defineUpgradePath<
+  typeof hostGetRateLimitUsageV50,
+  typeof hostGetRateLimitUsageV51
+>({
+  from: hostGetRateLimitUsageV50.schemaVersion,
+  to: hostGetRateLimitUsageV51.schemaVersion,
+  upgradeRequest: (request) => request,
+  // Parsing fills `usageUpdatedAt` with null: a 5.0 host says nothing about
+  // when it captured the reading.
+  upgradeResponse: (response) =>
+    rateLimitUsageResponseSchemaV51.parse(response),
+});
+
+// The 5 -> N bridges leave from 5.1, the line's latest minor. Each ends in the
+// older line's own parse, which drops `usageUpdatedAt` along with everything
+// else that line never carried.
+//
+// Downgrade bridge 5.1 -> 4.0: the request is identical (both carry `force`).
 // An Antigravity reading, on either arm, is refused (see
 // `namesProviderNewerThanV40`); every other snapshot is already valid 4.0 and
 // passes the parse unchanged.
 export const hostGetRateLimitUsageDowngradeV5ToV4 = defineDowngradePath<
-  typeof hostGetRateLimitUsageV50,
+  typeof hostGetRateLimitUsageV51,
   typeof hostGetRateLimitUsageV40
 >({
-  from: hostGetRateLimitUsageV50.schemaVersion,
+  from: hostGetRateLimitUsageV51.schemaVersion,
   to: hostGetRateLimitUsageV40.schemaVersion,
   downgradeRequest: (request) => ({ ok: true, value: request }),
   downgradeResponse: (response) => {
@@ -623,14 +652,14 @@ export const hostGetRateLimitUsageDowngradeV5ToV4 = defineDowngradePath<
   },
 });
 
-// Downgrade bridge 5.0 -> 3.0: an Antigravity reading is refused first - the
+// Downgrade bridge 5.1 -> 3.0: an Antigravity reading is refused first - the
 // v3.0 unavailable arm names the live enum, so the parse alone would pass an
 // unavailable one - then the 4.0 -> 3.0 degrades and the v3.0 parse.
 export const hostGetRateLimitUsageDowngradeV5ToV3 = defineDowngradePath<
-  typeof hostGetRateLimitUsageV50,
+  typeof hostGetRateLimitUsageV51,
   typeof hostGetRateLimitUsageV30
 >({
-  from: hostGetRateLimitUsageV50.schemaVersion,
+  from: hostGetRateLimitUsageV51.schemaVersion,
   to: hostGetRateLimitUsageV30.schemaVersion,
   downgradeRequest: (request) => ({ ok: true, value: dropForce(request) }),
   downgradeResponse: (response) => {
@@ -649,13 +678,13 @@ export const hostGetRateLimitUsageDowngradeV5ToV3 = defineDowngradePath<
   },
 });
 
-// Downgrade bridge 5.0 -> 2.1: an Antigravity reading is refused first (as on
-// 5.0 -> 3.0), then the 4.0 -> 2.1 degrades and the v2.1 parse.
+// Downgrade bridge 5.1 -> 2.1: an Antigravity reading is refused first (as on
+// 5.1 -> 3.0), then the 4.0 -> 2.1 degrades and the v2.1 parse.
 export const hostGetRateLimitUsageDowngradeV5ToV2 = defineDowngradePath<
-  typeof hostGetRateLimitUsageV50,
+  typeof hostGetRateLimitUsageV51,
   typeof hostGetRateLimitUsageV21
 >({
-  from: hostGetRateLimitUsageV50.schemaVersion,
+  from: hostGetRateLimitUsageV51.schemaVersion,
   to: hostGetRateLimitUsageV21.schemaVersion,
   downgradeRequest: (request) => ({ ok: true, value: dropForce(request) }),
   downgradeResponse: (response) => {
@@ -674,14 +703,14 @@ export const hostGetRateLimitUsageDowngradeV5ToV2 = defineDowngradePath<
   },
 });
 
-// Downgrade bridge 5.0 -> 1.2: an Antigravity reading is refused first (as on
-// 5.0 -> 3.0), then the 4.0 -> 1.2 degrades and the v1.2 parse (which also
+// Downgrade bridge 5.1 -> 1.2: an Antigravity reading is refused first (as on
+// 5.1 -> 3.0), then the 4.0 -> 1.2 degrades and the v1.2 parse (which also
 // strips v2.1 reset-credit detail).
 export const hostGetRateLimitUsageDowngradeV5ToV1 = defineDowngradePath<
-  typeof hostGetRateLimitUsageV50,
+  typeof hostGetRateLimitUsageV51,
   typeof hostGetRateLimitUsageV12
 >({
-  from: hostGetRateLimitUsageV50.schemaVersion,
+  from: hostGetRateLimitUsageV51.schemaVersion,
   to: hostGetRateLimitUsageV12.schemaVersion,
   downgradeRequest: (request) => ({ ok: true, value: dropForce(request) }),
   downgradeResponse: (response) => {

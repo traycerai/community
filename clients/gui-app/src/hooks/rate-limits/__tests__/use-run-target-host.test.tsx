@@ -129,6 +129,7 @@ describe("useRunTargetHost", () => {
         totalTokens: 0,
         remainingTokens: 0,
         providerRateLimits: null,
+        usageUpdatedAt: null,
       }),
     );
 
@@ -146,6 +147,7 @@ describe("useRunTargetHost", () => {
       totalTokens: 0,
       remainingTokens: 0,
       providerRateLimits: null,
+      usageUpdatedAt: null,
     }));
     globalClientRef.value = buildClient(
       "default-host",
@@ -187,6 +189,7 @@ describe("useRunTargetHost", () => {
       totalTokens: 0,
       remainingTokens: 0,
       providerRateLimits: null,
+      usageUpdatedAt: null,
     }));
     globalClientRef.value = buildClient(
       "default-host",

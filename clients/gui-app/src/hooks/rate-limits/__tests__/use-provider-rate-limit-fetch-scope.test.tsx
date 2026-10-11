@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
       totalTokens: 0,
       remainingTokens: 0,
       providerRateLimits: null,
+      usageUpdatedAt: null,
     }),
   ),
 }));

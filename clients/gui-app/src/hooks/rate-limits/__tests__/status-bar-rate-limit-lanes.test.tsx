@@ -110,6 +110,7 @@ function createLaneHarness(): LaneHarness {
             totalTokens: 0,
             remainingTokens: 0,
             providerRateLimits: null,
+            usageUpdatedAt: null,
           };
         },
       },

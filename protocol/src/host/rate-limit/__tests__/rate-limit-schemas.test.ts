@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_ACCOUNT_CONTEXT } from "@traycer/protocol/common/schemas";
-import { downgradeResponseAcrossMajors } from "@traycer/protocol/framework/index";
+import {
+  downgradeResponseAcrossMajors,
+  upgradeResponseToVersion,
+} from "@traycer/protocol/framework/index";
 import {
   hostGetRateLimitUsageDowngradeV2ToV1,
   hostGetRateLimitUsageDowngradeV3ToV1,
@@ -36,6 +39,7 @@ import {
   rateLimitUsageResponseSchemaV30,
   rateLimitUsageResponseSchemaV40,
   rateLimitUsageResponseSchemaV50,
+  rateLimitUsageResponseSchemaV51,
 } from "@traycer/protocol/host/rate-limit/schemas";
 
 describe("providers.consumeRateLimitResetCredit schemas", () => {
@@ -1638,7 +1642,7 @@ describe("host.getRateLimitUsage v5.0 antigravity arm + downgrade bridges", () =
   });
 
   it("refuses to downgrade an antigravity-available reading on every 5.0 -> N bridge", () => {
-    const response = rateLimitUsageResponseSchemaV50.parse({
+    const response = rateLimitUsageResponseSchemaV51.parse({
       totalTokens: 0,
       remainingTokens: 0,
       providerRateLimits: antigravityAvailable,
@@ -1657,7 +1661,7 @@ describe("host.getRateLimitUsage v5.0 antigravity arm + downgrade bridges", () =
   });
 
   it("refuses the antigravity downgrade through the host registry major 5 -> 4 / 3 / 2 / 1 paths", () => {
-    const response = rateLimitUsageResponseSchemaV50.parse({
+    const response = rateLimitUsageResponseSchemaV51.parse({
       totalTokens: 0,
       remainingTokens: 0,
       providerRateLimits: antigravityAvailable,
@@ -1671,7 +1675,7 @@ describe("host.getRateLimitUsage v5.0 antigravity arm + downgrade bridges", () =
   });
 
   it("passes a codex reading through the 5.0 -> 4.0 bridge unchanged, and still degrades correctly on 5.0 -> 3.0", () => {
-    const response = rateLimitUsageResponseSchemaV50.parse({
+    const response = rateLimitUsageResponseSchemaV51.parse({
       totalTokens: 0,
       remainingTokens: 0,
       providerRateLimits: codexAvailable,
@@ -1742,7 +1746,7 @@ describe("host.getRateLimitUsage v5.0 antigravity arm + downgrade bridges", () =
     };
 
     it("refuses on the 5.0 -> 4.0 bridge", () => {
-      const response = rateLimitUsageResponseSchemaV50.parse({
+      const response = rateLimitUsageResponseSchemaV51.parse({
         totalTokens: 0,
         remainingTokens: 0,
         providerRateLimits: antigravityUnavailable,
@@ -1753,7 +1757,7 @@ describe("host.getRateLimitUsage v5.0 antigravity arm + downgrade bridges", () =
     });
 
     it("refuses on the 5.0 -> 3.0 bridge", () => {
-      const response = rateLimitUsageResponseSchemaV50.parse({
+      const response = rateLimitUsageResponseSchemaV51.parse({
         totalTokens: 0,
         remainingTokens: 0,
         providerRateLimits: antigravityUnavailable,
@@ -1764,7 +1768,7 @@ describe("host.getRateLimitUsage v5.0 antigravity arm + downgrade bridges", () =
     });
 
     it("refuses on the 5.0 -> 2.1 bridge", () => {
-      const response = rateLimitUsageResponseSchemaV50.parse({
+      const response = rateLimitUsageResponseSchemaV51.parse({
         totalTokens: 0,
         remainingTokens: 0,
         providerRateLimits: antigravityUnavailable,
@@ -1775,7 +1779,7 @@ describe("host.getRateLimitUsage v5.0 antigravity arm + downgrade bridges", () =
     });
 
     it("refuses on the 5.0 -> 1.2 bridge", () => {
-      const response = rateLimitUsageResponseSchemaV50.parse({
+      const response = rateLimitUsageResponseSchemaV51.parse({
         totalTokens: 0,
         remainingTokens: 0,
         providerRateLimits: antigravityUnavailable,
@@ -1783,6 +1787,98 @@ describe("host.getRateLimitUsage v5.0 antigravity arm + downgrade bridges", () =
       expect(
         hostGetRateLimitUsageDowngradeV5ToV1.downgradeResponse(response),
       ).toEqual({ ok: false, error: DOWNGRADE_UNSUPPORTED_ERROR });
+    });
+  });
+
+  // 5.1 adds `usageUpdatedAt` as a minor, so the skew runs both ways inside
+  // major 5: a 5.1 client fills the key in for a 5.0 host, and a 5.1 host must
+  // not send it to a 5.0 (or older) client.
+  describe("v5.1 usageUpdatedAt", () => {
+    const registry = hostRpcRegistry["host.getRateLimitUsage"];
+    const CAPTURED_AT = 1_735_689_600_000;
+    const withoutCapture = {
+      totalTokens: 0,
+      remainingTokens: 0,
+      providerRateLimits: codexAvailable,
+    };
+    const captured = { ...withoutCapture, usageUpdatedAt: CAPTURED_AT };
+
+    it("registers 5.1 as the latest line, with every bridge leaving from it", () => {
+      expect(registry[5].latestMinor).toBe(1);
+      expect(registry[5].versions[1].contract.schemaVersion).toEqual({
+        major: 5,
+        minor: 1,
+      });
+      for (const bridge of [
+        hostGetRateLimitUsageDowngradeV5ToV4,
+        hostGetRateLimitUsageDowngradeV5ToV3,
+        hostGetRateLimitUsageDowngradeV5ToV2,
+        hostGetRateLimitUsageDowngradeV5ToV1,
+      ]) {
+        expect(bridge.from).toEqual({ major: 5, minor: 1 });
+      }
+    });
+
+    it("keeps a captured time, and a null one, on the 5.1 line", () => {
+      expect(rateLimitUsageResponseSchemaV51.parse(captured)).toEqual(captured);
+      expect(
+        rateLimitUsageResponseSchemaV51.parse({
+          ...withoutCapture,
+          usageUpdatedAt: null,
+        }),
+      ).toEqual({ ...withoutCapture, usageUpdatedAt: null });
+    });
+
+    it("fills usageUpdatedAt: null when a 5.1 client upgrades a 5.0 host's answer", () => {
+      expect(
+        upgradeResponseToVersion(
+          registry,
+          { major: 5, minor: 0 },
+          { major: 5, minor: 1 },
+          rateLimitUsageResponseSchemaV50.parse(withoutCapture),
+        ),
+      ).toEqual({ ...withoutCapture, usageUpdatedAt: null });
+    });
+
+    it("fills usageUpdatedAt: null for a 4.0 host's answer too", () => {
+      expect(
+        upgradeResponseToVersion(
+          registry,
+          { major: 4, minor: 0 },
+          { major: 5, minor: 1 },
+          rateLimitUsageResponseSchemaV40.parse(withoutCapture),
+        ),
+      ).toEqual({ ...withoutCapture, usageUpdatedAt: null });
+    });
+
+    it("strips usageUpdatedAt for a 5.0 caller - the frozen 5.0 shape, byte for byte", () => {
+      const forV50Caller =
+        registry[5].versions[0].contract.responseSchema.parse(
+          rateLimitUsageResponseSchemaV51.parse(captured),
+        );
+      expect(forV50Caller).toEqual(withoutCapture);
+      expect(forV50Caller).not.toHaveProperty("usageUpdatedAt");
+    });
+
+    it("strips usageUpdatedAt on every 5 -> 4 / 3 / 2 / 1 registry path", () => {
+      const response = rateLimitUsageResponseSchemaV51.parse(captured);
+      for (const toMajor of [4, 3, 2, 1] as const) {
+        const downgraded = downgradeResponseAcrossMajors(
+          registry,
+          5,
+          toMajor,
+          response,
+        );
+        if (!downgraded.ok) {
+          throw new Error(`5 -> ${toMajor} refused: ${downgraded.error.code}`);
+        }
+        expect(downgraded.value).not.toHaveProperty("usageUpdatedAt");
+        expect(downgraded.value).toMatchObject({
+          totalTokens: 0,
+          remainingTokens: 0,
+          providerRateLimits: { provider: "codex", available: true },
+        });
+      }
     });
   });
 });

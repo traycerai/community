@@ -20,7 +20,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import { act, cleanup, render } from "@testing-library/react";
 import type { ReactNode } from "react";
-import type { ProviderId } from "@traycer/protocol/host/provider-schemas";
+import type {
+  ProviderCliState,
+  ProviderId,
+} from "@traycer/protocol/host/provider-schemas";
+import { rateLimitProviderState } from "@/hooks/rate-limits/__tests__/profile-usage-fixtures";
 import { DEFAULT_ACCOUNT_CONTEXT } from "@traycer/protocol/common/schemas";
 import type { StreamMethodSupport } from "@traycer-clients/shared/host-transport/ws-stream-client";
 import type {
@@ -60,6 +64,8 @@ const MANAGED_PROVIDERS = [
   "grok",
   "antigravity",
 ] as const satisfies ReadonlyArray<RateLimitProviderId>;
+
+type ManagedProviderId = (typeof MANAGED_PROVIDERS)[number];
 
 interface OpenedProvidersStream {
   readonly emitChanged: (providerId: ProviderId) => void;
@@ -149,6 +155,7 @@ function availableRateLimits(
           resetCredits: null,
           rateLimitReachedType: null,
         },
+        usageUpdatedAt: null,
       };
     case "claude-code":
       return {
@@ -165,6 +172,7 @@ function availableRateLimits(
           modelScoped: [],
           extraUsage: null,
         },
+        usageUpdatedAt: null,
       };
     case "grok":
       return {
@@ -183,6 +191,7 @@ function availableRateLimits(
           onDemandUsed: null,
           prepaidBalance: null,
         },
+        usageUpdatedAt: null,
       };
     case "antigravity":
       return {
@@ -194,6 +203,7 @@ function availableRateLimits(
           planName: null,
           groups: [],
         },
+        usageUpdatedAt: null,
       };
     default:
       throw new Error(`no fixture for rate-limit provider ${providerId}`);
@@ -202,7 +212,7 @@ function availableRateLimits(
 
 function isManagedProvider(
   providerId: string | undefined,
-): providerId is RateLimitProviderId {
+): providerId is ManagedProviderId {
   return MANAGED_PROVIDERS.some((id) => id === providerId);
 }
 
@@ -224,6 +234,16 @@ interface HostCounts {
   readonly rateLimit: Readonly<Record<string, number>>;
 }
 
+/**
+ * A host at `host.getRateLimitUsage@5.1`, which states when it captured each
+ * reading. Per managed provider, the time the `providers.list` row for its
+ * ambient profile reports and the time its rate-limit answer carries.
+ */
+interface StampingHost {
+  readonly rowTimes: Readonly<Record<ManagedProviderId, number | null>>;
+  readonly captureTimes: Readonly<Record<ManagedProviderId, number | null>>;
+}
+
 interface HarnessOptions {
   /** `providers.list` calls stay in flight until `releaseProvidersList`. */
   readonly providersListGated: boolean;
@@ -231,13 +251,81 @@ interface HarnessOptions {
   readonly harnessesGated: boolean;
   /** 1-based `providers.list` call numbers that fail with an application error. */
   readonly failingProvidersListCalls: ReadonlyArray<number>;
+  /**
+   * `null` is a host older than 5.1: its list is empty and its answers carry
+   * no capture time. Otherwise the list holds one real-shaped row per managed
+   * provider and the answers carry the stated times.
+   */
+  readonly stampingHost: StampingHost | null;
 }
 
 const UNGATED: HarnessOptions = {
   providersListGated: false,
   harnessesGated: false,
   failingProvidersListCalls: [],
+  stampingHost: null,
 };
+
+const ROW_TIME = 1000;
+
+/** Every capture equals the time its list row reports: nothing to converge. */
+const CAPTURES_HELD: StampingHost = {
+  rowTimes: {
+    codex: ROW_TIME,
+    "claude-code": ROW_TIME,
+    grok: ROW_TIME,
+    antigravity: ROW_TIME,
+  },
+  captureTimes: {
+    codex: ROW_TIME,
+    "claude-code": ROW_TIME,
+    grok: ROW_TIME,
+    antigravity: ROW_TIME,
+  },
+};
+
+/** One provider's list row is behind its capture. */
+const ONE_CAPTURE_NEWER: StampingHost = {
+  rowTimes: CAPTURES_HELD.rowTimes,
+  captureTimes: { ...CAPTURES_HELD.captureTimes, "claude-code": ROW_TIME + 1 },
+};
+
+/** The `providers.list` row of one managed provider's ambient profile. */
+function stampedProviderRow(
+  providerId: RateLimitProviderId,
+  usageUpdatedAt: number | null,
+): ProviderCliState {
+  return {
+    ...rateLimitProviderState("claude-code", "authenticated"),
+    providerId,
+    profiles: [
+      {
+        profileId: "ambient",
+        enabled: true,
+        kind: "ambient",
+        authType: "oauth",
+        label: "ambient",
+        auth: {
+          status: "authenticated",
+          badgeText: null,
+          label: null,
+          detail: null,
+        },
+        identity: {
+          email: "ambient@example.com",
+          tier: "Pro",
+          accountUuid: "ambient-uuid",
+        },
+        usageUpdatedAt,
+        rateLimitStatus: "unknown",
+        rateLimitLimitedScopes: null,
+        duplicateOfProfileId: null,
+        accentColor: null,
+        ambientDriftNotice: null,
+      },
+    ],
+  };
+}
 
 const GATED: HarnessOptions = {
   ...UNGATED,
@@ -294,7 +382,19 @@ function createReloadHarness(options: HarnessOptions): ReloadHarness {
         if (options.failingProvidersListCalls.includes(providersListCalls)) {
           throw new Error("providers.list application error");
         }
-        return { providers: [], native: null };
+        const { stampingHost } = options;
+        return {
+          providers:
+            stampingHost === null
+              ? []
+              : MANAGED_PROVIDERS.map((providerId) =>
+                  stampedProviderRow(
+                    providerId,
+                    stampingHost.rowTimes[providerId],
+                  ),
+                ),
+          native: null,
+        };
       },
       "agent.gui.listHarnesses": async () => {
         await harnessesGate.promise;
@@ -310,7 +410,11 @@ function createReloadHarness(options: HarnessOptions): ReloadHarness {
         const gate = rateLimitGates.get(providerId);
         if (gate === undefined) throw new Error(`no gate for ${providerId}`);
         await gate.promise;
-        return availableRateLimits(providerId);
+        return {
+          ...availableRateLimits(providerId),
+          usageUpdatedAt:
+            options.stampingHost?.captureTimes[providerId] ?? null,
+        };
       },
     },
   });
@@ -666,7 +770,7 @@ describe("one renderer reload against a warm host", () => {
 
   it("I: a providers.list read that errored before the first open is retried once by it; a read answered during the handshake is not", async () => {
     const harness = createReloadHarness({
-      providersListGated: false,
+      ...UNGATED,
       harnessesGated: true,
       failingProvidersListCalls: [1],
     });
@@ -784,6 +888,71 @@ describe("one renderer reload against a warm host", () => {
       withStragglerInFlight: withStragglerInFlight.providersList,
       afterStragglerSettled: afterStragglerSettled.providersList,
     }).toEqual({ withStragglerInFlight: 0, afterStragglerSettled: 1 });
+  });
+
+  it("M: a host that stamps its captures, every capture already in the list rows -> the list is read once, with no convergence read", async () => {
+    const harness = createReloadHarness({
+      ...UNGATED,
+      stampingHost: CAPTURES_HELD,
+    });
+
+    harness.mountReloadTree();
+    harness.startRateLimitReads(MANAGED_PROVIDERS, false);
+    await settle(PAST_COALESCING_WINDOW_MS);
+    await openStream();
+    await resolveRateLimitReadsOneByOne(harness);
+
+    expect(harness.counts()).toEqual({
+      providersList: 1,
+      listHarnesses: 1,
+      rateLimit: EVERY_RATE_LIMIT_ONCE,
+    });
+  });
+
+  it("N: a host that stamps its captures, one provider's capture newer than its row -> one convergence read", async () => {
+    const harness = createReloadHarness({
+      ...UNGATED,
+      stampingHost: ONE_CAPTURE_NEWER,
+    });
+
+    harness.mountReloadTree();
+    harness.startRateLimitReads(MANAGED_PROVIDERS, false);
+    await settle(PAST_COALESCING_WINDOW_MS);
+    await openStream();
+    await resolveRateLimitReadsOneByOne(harness);
+
+    expect(harness.counts()).toEqual({
+      providersList: 2,
+      listHarnesses: 1,
+      rateLimit: EVERY_RATE_LIMIT_ONCE,
+    });
+  });
+
+  it("O: a host that stamps its captures, the rate-limit reads settle while the list read is still in flight -> that read is waited for, and no second one is made", async () => {
+    const harness = createReloadHarness({
+      ...GATED,
+      stampingHost: CAPTURES_HELD,
+    });
+
+    harness.mountReloadTree();
+    harness.startRateLimitReads(MANAGED_PROVIDERS, false);
+    await settle(10);
+    await openStream();
+    for (const providerId of MANAGED_PROVIDERS) {
+      harness.resolveRateLimit(providerId);
+    }
+    await settle(PAST_COALESCING_WINDOW_MS);
+    // Held back behind the list read in flight, not answered by cancelling it.
+    expect(harness.counts().providersList).toBe(1);
+
+    harness.releaseInitialReads();
+    await settle(PAST_COALESCING_WINDOW_MS);
+
+    expect(harness.counts()).toEqual({
+      providersList: 1,
+      listHarnesses: 1,
+      rateLimit: EVERY_RATE_LIMIT_ONCE,
+    });
   });
 
   it("J: a first subscribe attempt closes before opening, a read lands, then a later attempt opens -> that read is caught up", async () => {

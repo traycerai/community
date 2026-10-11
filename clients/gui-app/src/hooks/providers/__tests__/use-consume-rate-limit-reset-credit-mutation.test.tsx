@@ -46,7 +46,12 @@ import { useProviderRateLimitFetchScope } from "@/hooks/rate-limits/use-provider
 import { useConsumeRateLimitResetCreditMutation } from "@/hooks/providers/use-consume-rate-limit-reset-credit-mutation";
 
 function usageResponse(): RateLimitUsageResponse {
-  return { totalTokens: 0, remainingTokens: 0, providerRateLimits: null };
+  return {
+    totalTokens: 0,
+    remainingTokens: 0,
+    providerRateLimits: null,
+    usageUpdatedAt: null,
+  };
 }
 
 interface Harness {

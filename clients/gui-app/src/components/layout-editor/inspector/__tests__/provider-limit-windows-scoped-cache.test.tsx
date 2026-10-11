@@ -207,6 +207,7 @@ function seedUsage(
       totalTokens: 0,
       remainingTokens: 0,
       providerRateLimits: claudeRateLimits(usedPercent),
+      usageUpdatedAt: null,
     },
     Date.now(),
   );
