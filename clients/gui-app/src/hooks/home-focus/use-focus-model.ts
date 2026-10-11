@@ -27,6 +27,7 @@ import {
   EMPTY_FOCUS_MODEL,
   focusActivityCoverage,
   focusActivityDegradedReason,
+  type BuildFocusModelInput,
 } from "@/lib/home-focus/build-focus-model";
 import { compareAscending } from "@/lib/home-focus/focus-identity";
 import {
@@ -515,63 +516,77 @@ export function useFocusModel(): FocusModel {
     [browserEpics, taskTitles, projection.agentIdentities],
   );
 
+  const input = useMemo<BuildFocusModelInput>(
+    () => ({
+      notificationRows,
+      tasks: {
+        byEpic,
+        taskTitles,
+        mountedEpicIds: projection.mountedEpicIds,
+        agentIdentities: projection.agentIdentities,
+        activityHostIds,
+        indicatorEpics: indicators.epics,
+        coldEpicHostIds,
+        activeHostId,
+        reachableHostIds,
+      },
+      backgroundChats,
+      browsers,
+      activity: {
+        connectionStatus,
+        cloudSyncStatus,
+        stateFrameSeenThisEpoch,
+        connectableHostCount: connectableHosts.hostIds.length,
+        connectableHostsResolved: connectableHosts.resolved,
+      },
+      degradedHosts,
+      feedMode,
+    }),
+    [
+      notificationRows,
+      byEpic,
+      taskTitles,
+      projection.mountedEpicIds,
+      projection.agentIdentities,
+      activityHostIds,
+      indicators.epics,
+      backgroundChats,
+      browsers,
+      coldEpicHostIds,
+      activeHostId,
+      reachableHostIds,
+      connectionStatus,
+      cloudSyncStatus,
+      stateFrameSeenThisEpoch,
+      degradedHosts,
+      connectableHosts.hostIds.length,
+      connectableHosts.resolved,
+      feedMode,
+    ],
+  );
   // React discards this reconciliation baseline with an abandoned render, so
   // a prompt can retain only an activation that actually reached a commit.
-  const [previous, setPrevious] = useState(EMPTY_FOCUS_MODEL);
-  const model = useMemo(() => {
-    return buildFocusModel(
-      {
-        notificationRows,
-        tasks: {
-          byEpic,
-          taskTitles,
-          mountedEpicIds: projection.mountedEpicIds,
-          agentIdentities: projection.agentIdentities,
-          activityHostIds,
-          indicatorEpics: indicators.epics,
-          coldEpicHostIds,
-          activeHostId,
-          reachableHostIds,
-        },
-        backgroundChats,
-        browsers,
-        activity: {
-          connectionStatus,
-          cloudSyncStatus,
-          stateFrameSeenThisEpoch,
-          connectableHostCount: connectableHosts.hostIds.length,
-          connectableHostsResolved: connectableHosts.resolved,
-        },
-        degradedHosts,
-        feedMode,
-      },
-      previous,
-    );
-  }, [
-    previous,
-    notificationRows,
-    byEpic,
-    taskTitles,
-    projection.mountedEpicIds,
-    projection.agentIdentities,
-    activityHostIds,
-    indicators.epics,
-    backgroundChats,
-    browsers,
-    coldEpicHostIds,
-    activeHostId,
-    reachableHostIds,
-    connectionStatus,
-    cloudSyncStatus,
-    stateFrameSeenThisEpoch,
-    degradedHosts,
-    connectableHosts.hostIds.length,
-    connectableHosts.resolved,
-    feedMode,
-  ]);
-  if (model !== previous) setPrevious(model);
+  // The input is held with the model it built: storing a new model renders
+  // again, and that render must read the model back, not build it a second time.
+  const [held, setHeld] = useState<HeldFocusModel>(NO_FOCUS_MODEL_BUILT);
+  const model = useMemo(
+    () =>
+      held.input === input ? held.model : buildFocusModel(input, held.model),
+    [held, input],
+  );
+  if (model !== held.model) setHeld({ input, model });
   return model;
 }
+
+interface HeldFocusModel {
+  readonly input: BuildFocusModelInput | null;
+  readonly model: FocusModel;
+}
+
+const NO_FOCUS_MODEL_BUILT: HeldFocusModel = {
+  input: null,
+  model: EMPTY_FOCUS_MODEL,
+};
 
 function workingEpicIds(
   byEpic: ReadonlyMap<string, { readonly working: ReadonlySet<string> }>,

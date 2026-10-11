@@ -6,6 +6,7 @@ import {
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { hostQueryKeys } from "@/lib/query-keys/host-query-keys";
 import {
+  invalidateHostMutationQueries,
   invalidateProviderFamilyQueries,
   providersListQueryKey,
 } from "@/lib/query-keys/providers-query-keys";
@@ -251,5 +252,59 @@ describe("invalidateProviderFamilyQueries", () => {
     await flush();
 
     expect(skills.reads).toHaveLength(1);
+  });
+});
+
+describe("invalidateHostMutationQueries", () => {
+  /**
+   * Counts the cache scans that carry a predicate, as opposed to the key-prefix
+   * scans `invalidateQueries` makes for itself. The provider-family match is
+   * the one that scans with a predicate.
+   */
+  function countPredicateScans(): () => number {
+    const findAll = vi.spyOn(queryClient.getQueryCache(), "findAll");
+    return () =>
+      findAll.mock.calls.filter(([filters]) => filters?.predicate !== undefined)
+        .length;
+  }
+
+  function seedHostQueries(): void {
+    for (let i = 0; i < 49; i += 1) {
+      queryClient.setQueryData(
+        [...hostQueryKeys.scope("host-a"), "epic.list", { page: i }],
+        {},
+      );
+    }
+  }
+
+  it("does not scan the cache for a provider match when the mutation names no provider method", () => {
+    queryClient = new QueryClient();
+    seedHostQueries();
+    const agentListKey = [...hostQueryKeys.scope("host-a"), "agent.list", {}];
+    queryClient.setQueryData(agentListKey, {});
+    const predicateScans = countPredicateScans();
+
+    invalidateHostMutationQueries(queryClient, "host-a", ["agent.list"], {});
+
+    expect(predicateScans()).toBe(0);
+    expect(queryClient.getQueryState(agentListKey)?.isInvalidated).toBe(true);
+  });
+
+  it("still refreshes the classic providers list for a provider method", async () => {
+    queryClient = new QueryClient();
+    seedHostQueries();
+    const classic = await watchSettled(providersListQueryKey("host-a"));
+    const predicateScans = countPredicateScans();
+
+    invalidateHostMutationQueries(
+      queryClient,
+      "host-a",
+      ["providers.list"],
+      {},
+    );
+    await flush();
+
+    expect(predicateScans()).toBe(1);
+    expect(classic.reads).toHaveLength(2);
   });
 });

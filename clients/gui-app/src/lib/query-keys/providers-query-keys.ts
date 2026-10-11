@@ -122,6 +122,8 @@ export function invalidateProviderFamilyQueries(
     | "classic"
     | { readonly receivedBy: number },
 ): void {
+  // Every host mutation arrives here, most with no provider method to match.
+  if (methods.length === 0) return;
   let pending = providerInvalidations.get(queryClient);
   if (pending === undefined) {
     pending = new Map();

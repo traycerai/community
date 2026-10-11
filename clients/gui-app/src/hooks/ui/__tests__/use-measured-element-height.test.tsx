@@ -1,8 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
-import { StrictMode, type ReactNode } from "react";
+import { StrictMode, useEffect, type ReactNode } from "react";
 import { PaneVisibilityContext } from "@/components/epic-tabs/pane-visibility-context";
 import { useMeasuredElementHeight } from "@/hooks/ui/use-measured-element-height";
+
+/**
+ * Called once per committed render of the owner with the `setElement` it was
+ * handed, so a case can count renders and compare the callback's identity
+ * across them.
+ */
+const onInnerRender =
+  vi.fn<(setElement: (el: HTMLDivElement | null) => void) => void>();
 
 /**
  * Ticket 18 rider: the chat-tile ResizeObserver->prop contract was previously
@@ -24,6 +32,11 @@ function MeasuredHeightInner(props: {
   const { setElement, element, height } = useMeasuredElementHeight(
     props.measureOnAttach,
   );
+  // Every commit of the owner reports the `setElement` it was handed. An
+  // effect, not the render body: the render body may not read a ref callback.
+  useEffect(() => {
+    onInnerRender(setElement);
+  });
   return (
     <div>
       <span data-testid="probe-height">
@@ -109,6 +122,7 @@ function resizeObserverFor(target: Element): ControllableResizeObserver {
 describe("useMeasuredElementHeight", () => {
   beforeEach(() => {
     controllableResizeObservers = [];
+    onInnerRender.mockClear();
     vi.stubGlobal("ResizeObserver", ControllableResizeObserver);
   });
 
@@ -298,5 +312,61 @@ describe("useMeasuredElementHeight", () => {
     // this read a second time.
     expect(rectSpy).toHaveBeenCalledTimes(1);
     expect(screen.getByTestId("probe-height").textContent).toBe("64");
+  });
+
+  it("hands the owner one setElement identity across a visibility flip", () => {
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 0, 90),
+    );
+    const { rerender } = render(
+      <MeasuredHeightProbe mounted measureOnAttach visible />,
+    );
+    act(() => {
+      rerender(<MeasuredHeightProbe mounted measureOnAttach visible={false} />);
+    });
+    act(() => {
+      rerender(<MeasuredHeightProbe mounted measureOnAttach visible />);
+    });
+
+    // Falsification: a `setElement` closed over `visible` is a new ref
+    // callback on every flip, which React detaches and re-attaches.
+    const identities = onInnerRender.mock.calls.map(
+      ([setElement]) => setElement,
+    );
+    expect(identities.length).toBeGreaterThanOrEqual(3);
+    for (const setElement of identities) {
+      expect(setElement).toBe(identities[0]);
+    }
+  });
+
+  it("renders the owner once per hide and once per show of a measured element, without touching its observer", () => {
+    vi.spyOn(Element.prototype, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 0, 90),
+    );
+    const { rerender } = render(
+      <MeasuredHeightProbe mounted measureOnAttach visible />,
+    );
+    const target = screen.getByTestId("probe-target");
+    const observer = resizeObserverFor(target);
+    const observerCount = controllableResizeObservers.length;
+    const disconnect = vi.spyOn(observer, "disconnect");
+    onInnerRender.mockClear();
+
+    act(() => {
+      rerender(<MeasuredHeightProbe mounted measureOnAttach visible={false} />);
+    });
+    // Falsification: a re-attached ref sets the element to null and back, and
+    // the owner renders a second time for each.
+    expect(onInnerRender).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      rerender(<MeasuredHeightProbe mounted measureOnAttach visible />);
+    });
+    expect(onInnerRender).toHaveBeenCalledTimes(2);
+
+    expect(controllableResizeObservers).toHaveLength(observerCount);
+    expect(disconnect).not.toHaveBeenCalled();
+    expect(observer.observed.has(target)).toBe(true);
+    expect(screen.getByTestId("probe-target")).toBe(target);
   });
 });

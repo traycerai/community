@@ -1,5 +1,11 @@
 import { observedBorderBox } from "@/lib/resize-observer-box";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
 import { useTileBodyVisible } from "@/components/epic-canvas/hooks/use-tile-body-visible";
 
 export interface UseMeasuredElementHeightResult {
@@ -24,19 +30,26 @@ export function useMeasuredElementHeight(
   const [height, setHeight] = useState(0);
   const visible = useTileBodyVisible();
   const initiallyMeasured = useRef(new WeakSet<HTMLDivElement>());
-  const setElement = useCallback(
-    (element: HTMLDivElement | null): void => {
-      updateElement(element);
-      if (!measureOnAttach || !visible || !element) return;
-      if (initiallyMeasured.current.has(element)) return;
-      initiallyMeasured.current.add(element);
-      // The chat dock needs its inset before first paint. History has a CSS
-      // fallback and stays observer-only; warm switches never re-read either.
-      const nextHeight = Math.ceil(element.getBoundingClientRect().height);
-      if (nextHeight > 0) setHeight(nextHeight);
-    },
-    [measureOnAttach, visible],
-  );
+  const attached = useRef<HTMLDivElement | null>(null);
+  const setElement = useCallback((next: HTMLDivElement | null): void => {
+    attached.current = next;
+    updateElement(next);
+  }, []);
+  // A layout effect, not the ref callback: a callback that closes over
+  // `visible` is a new ref on every hide and show, so React detaches and
+  // re-attaches it and the owner renders once more on each tab switch. The
+  // node is read from the ref, which the commit that attaches it has already
+  // set, so the first reading lands in the same render as the element.
+  useLayoutEffect(() => {
+    const node = attached.current;
+    if (!measureOnAttach || !visible || node === null) return;
+    if (initiallyMeasured.current.has(node)) return;
+    initiallyMeasured.current.add(node);
+    // The chat dock needs its inset before first paint. History has a CSS
+    // fallback and stays observer-only; warm switches never re-read either.
+    const nextHeight = Math.ceil(node.getBoundingClientRect().height);
+    if (nextHeight > 0) setHeight(nextHeight);
+  }, [measureOnAttach, visible, element]);
   useEffect(() => {
     if (!element || typeof ResizeObserver === "undefined") return;
     const observer = new ResizeObserver((entries) => {
