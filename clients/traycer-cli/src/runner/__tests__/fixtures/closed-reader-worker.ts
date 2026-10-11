@@ -46,7 +46,7 @@ if (injectedCode !== undefined && injectedCode.length > 0) {
     value: (
       _chunk: Buffer | string,
       _encoding: BufferEncoding,
-      callback: (error?: Error | null) => void,
+      callback: (error: Error | null | undefined) => void,
     ): void => {
       callback(
         Object.assign(new Error("injected stream error"), {
