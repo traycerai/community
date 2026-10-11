@@ -23,6 +23,7 @@ import { installWebviewAttachGuards } from "../browser-view/webview-guest-birth"
 import { buildAppUrl } from "../app/app-protocol";
 import { devRendererUrlFromEnv } from "../../ipc-contracts/dev-renderer-origin";
 import { minimumWindowSize } from "./window-layout";
+import { installBackgroundRenderingReset } from "./background-rendering";
 import {
   placementToBrowserWindowBounds,
   type WindowGeometryPlacement,
@@ -129,13 +130,15 @@ export function createMainWindow(options: MainWindowOptions): BrowserWindow {
       // window may create `<webview>` tags; attach is fail-closed in
       // `installWebviewAttachGuards` before the renderer loads.
       webviewTag: true,
-      // Keep receiver frame callbacks/stats running while occluded (#1613),
-      // or the sender ratchets capture down for the rest of the session.
-      // Intensive background timer throttling can also delay transport
-      // keepalives past their pong cutoff and falsely close healthy sockets.
-      // Renderer work gates use the main-process minimise/hide signal instead;
-      // native occlusion remains unavailable with throttling disabled.
-      backgroundThrottling: false,
+      // Throttled while covered, minimised or hidden, like a background tab:
+      // rendering stops. The renderer turns it off only while a browser
+      // tile's WebRTC video plane needs it (`background-rendering.ts`), and
+      // never for the whole window's life again: off, Electron keeps a window
+      // that was shown once "visible" and compositing forever (traycer#2355).
+      // Timers keep their cadence in a hidden window, so transport keepalives
+      // still meet their pong cutoff: `BACKGROUND_TIMER_THROTTLES`
+      // (`app/lifecycle.ts`) turns off Chromium's two timer throttles.
+      backgroundThrottling: true,
       zoomFactor: options.zoomFactor,
     },
   });
@@ -158,6 +161,7 @@ export function createMainWindow(options: MainWindowOptions): BrowserWindow {
   installNavigationGuard(window.webContents);
   installContextMenu(window.webContents);
   installResponsivenessListeners(window.webContents);
+  installBackgroundRenderingReset(window.webContents);
   installWebviewAttachGuards(window.webContents, options.windowId);
 
   const devWindowTitle = options.devWindowTitle;

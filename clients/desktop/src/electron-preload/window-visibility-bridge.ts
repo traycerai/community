@@ -6,9 +6,10 @@ import {
 import { subscribe, type Disposable, type Listener } from "./subscribe";
 
 /**
- * Main's shown/not-minimised answer. Desktop keeps throttling disabled for
- * video receiver stats (#1613) and transport keepalives, so DOM visibility
- * alone cannot report hide/minimise.
+ * Main's shown/not-minimised answer. The renderer ANDs it with Page
+ * Visibility, which cannot report hide/minimise while a WebRTC video plane
+ * keeps background throttling off
+ * (`electron-main/windows/background-rendering.ts`).
  */
 export interface WindowVisibilityBridgeSurface {
   /** The startup read; main's replay fires before any renderer subscription. */

@@ -93,6 +93,7 @@ import {
   WindowVisibilityTold,
 } from "./window-visibility-ipc";
 import { EpicWindowVisibility } from "../windows/epic-window-visibility";
+import { registerBackgroundRenderingIpc } from "../windows/background-rendering";
 import { registerPerWindowStateIpc } from "./per-window-state-ipc";
 import { registerHostIpc } from "./host-ipc";
 import { registerHostManagementIpc } from "./host-management-ipc";
@@ -729,6 +730,7 @@ export class RunnerIpcBridge {
     registerOwnershipIpc(this);
     registerEpicVisibilityIpc(this);
     registerWindowVisibilityIpc(this);
+    registerBackgroundRenderingIpc(this);
     registerPerWindowStateIpc(this);
     registerSupportIpc(this);
     registerHostIpc(this);
@@ -1377,8 +1379,9 @@ export class RunnerIpcBridge {
       this.epicVisibility.snapshot(),
     );
     // This window's OWN on-screen state (minimised / hidden, as main sees it).
-    // Throttling stays disabled for receiver stats (#1613) and transport
-    // keepalives, pinning DOM visibility to visible. Main reports hide/minimise.
+    // Page Visibility stays "visible" while a WebRTC video plane has turned
+    // background throttling off (`windows/background-rendering.ts`), so this
+    // is the renderer's only way to learn it then.
     const ownRecord = this.windowRegistry.getRecordById(windowId);
     if (ownRecord !== null) {
       const onScreen = windowOnScreen(ownRecord.window);

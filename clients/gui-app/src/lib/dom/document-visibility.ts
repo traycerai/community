@@ -7,10 +7,13 @@
  *    minimised, as main sees it - pushed in through
  *    `lib/epics/desktop-window-visibility.ts`.
  *
- * Desktop keeps background throttling disabled for receiver callbacks/stats
- * (#1613) and transport keepalives: intensive timer throttling can delay a
- * heartbeat beyond its pong cutoff. DOM visibility therefore stays visible;
- * the second input supplies minimise/hide. Neither detects native occlusion.
+ * Desktop windows are background-throttled, so the first input reports a
+ * minimised or hidden window as `"hidden"` there too, and a covered one on
+ * macOS and Windows (Linux has no occlusion tracking). The second input
+ * covers the one exception: while a browser tile's WebRTC video plane keeps
+ * throttling off (#1613, `lib/browser-view/tiles/desktop-background-rendering.ts`),
+ * DOM visibility stays visible and only main can still report minimise/hide.
+ * A window covered during that time is detected by neither input.
  *
  * `visibilityState`, deliberately, and NOT `document.hasFocus()`. Focus answers
  * a different question: a window the user can plainly see loses focus the
