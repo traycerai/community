@@ -85,24 +85,32 @@ const TEST_FILE = /[/\\]__tests__[/\\]|\.test\.[jt]sx?$/;
 
 /**
  * A tripwire for a compiler bug (`babel-plugin-react-compiler` 1.0.0, and the
- * experimental builds after it).
+ * experimental builds after it). The upstream issue, open at the time of
+ * writing, is https://github.com/react/react/issues/36128. This guard can go
+ * when a compiler release fixes it.
  *
  * The compiler also compiles a component or hook that is declared INSIDE
- * another function, and it moves that component's inner closures to module
- * scope when they capture nothing of the component. It does not check whether
- * they capture a local of the ENCLOSING function. The moved closure then reads
- * a name that does not exist there, and the first render throws
+ * another function. When that component is an arrow function or a function
+ * expression bound to a variable, the compiler moves its inner closures to
+ * module scope when they capture nothing of the component. It does not check
+ * whether they capture a local of the ENCLOSING function. The moved closure
+ * then reads a name that does not exist there, and the first render throws
  * `ReferenceError`:
  *
  * ```tsx
  * export function makeWrapper() {
  *   const slot = { current: 1 };
- *   return function Wrapper() {
+ *   const Wrapper = () => {
  *     return <i>{useSyncExternalStore(subscribe, () => slot.current)}</i>;
  *   };
+ *   return Wrapper;
  * }
  * // compiles to a module-level `function _temp() { return slot.current; }`
  * ```
+ *
+ * The other forms do not break: a nested `function Wrapper() {}` declaration
+ * keeps its moved closures inside the enclosing function, and
+ * `return function Wrapper() {}` is not compiled at all.
  *
  * Two checks, both on what the compiler actually produced:
  *
@@ -110,8 +118,9 @@ const TEST_FILE = /[/\\]__tests__[/\\]|\.test\.[jt]sx?$/;
  *    it. This is the bug itself, in whatever shape it arrives, and it holds
  *    for every file.
  * 2. Product code may not hold the shape at all: a compiled function nested
- *    inside another function. Tests are exempt from this one, because a
- *    component declared inside an `it()` is ordinary there and the first
+ *    inside another function, the safe declaration form included, so the
+ *    rule is one a reader can hold. Tests are exempt from this one, because
+ *    a component declared inside an `it()` is ordinary there and the first
  *    check still catches the case that breaks.
  *
  * It throws, so the build, the dev server and the suite all stop on the file.
@@ -156,7 +165,7 @@ function reactCompilerGuard(): GuardPlugin {
               if (!compiled || fn.getFunctionParent() === null) return;
               throw fn.buildCodeFrameError(
                 `\`${fn.node.id?.name ?? "A component or hook"}\` is declared inside another function. ` +
-                  "The React Compiler moves its inner closures to module scope, where the enclosing function's variables do not exist. " +
+                  "For an arrow function or a function expression, the React Compiler moves the inner closures to module scope, where the enclosing function's variables do not exist. " +
                   "Declare it at module scope.",
               );
             },
