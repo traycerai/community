@@ -4,7 +4,10 @@ import { Dialog as DialogPrimitive } from "radix-ui";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { XIcon } from "lucide-react";
-import { usePaneAwareContentGuard } from "@/components/epic-tabs/pane-visibility-context";
+import {
+  usePaneAwareContentGuard,
+  usePaneFocused,
+} from "@/components/epic-tabs/pane-visibility-context";
 import { usePortalConcealed } from "@/components/ui/portal-concealment-context";
 
 function Dialog({
@@ -47,15 +50,9 @@ function DialogOverlay({
   );
 }
 
-function DialogContent({
-  ref,
-  className,
-  children,
-  showCloseButton = true,
-  layout = "padded",
-  onCloseAutoFocus,
-  ...props
-}: React.ComponentProps<typeof DialogPrimitive.Content> & {
+type DialogContentProps = React.ComponentProps<
+  typeof DialogPrimitive.Content
+> & {
   showCloseButton?: boolean;
   /**
    * `padded` is one padded box - the dialog's own `p-4 gap-4`, with the footer
@@ -70,7 +67,35 @@ function DialogContent({
    * name for the composition is what settles that.
    */
   layout?: "padded" | "banded";
-}) {
+};
+
+function DialogContent(props: DialogContentProps) {
+  return (
+    <DialogPortal>
+      <PresentedDialogOverlay />
+      <PresentedDialogContent {...props} />
+    </DialogPortal>
+  );
+}
+
+function PresentedDialogOverlay(
+  props: React.ComponentProps<typeof DialogPrimitive.Overlay>,
+) {
+  const paneFocused = usePaneFocused();
+  const concealed = usePortalConcealed();
+  if (!paneFocused || concealed) return null;
+  return <DialogOverlay {...props} />;
+}
+
+function PresentedDialogContent({
+  ref,
+  className,
+  children,
+  showCloseButton = true,
+  layout = "padded",
+  onCloseAutoFocus,
+  ...props
+}: DialogContentProps) {
   // Dialog roots retain their logical open state so operation/staging state
   // survives split focus changes. A modal dialog kept mounted in the background
   // would keep aria-hiding + scroll-locking the focused split partner, so an
@@ -86,56 +111,53 @@ function DialogContent({
   const concealed = usePortalConcealed();
   if (!paneFocused || concealed) return null;
   return (
-    <DialogPortal>
-      <DialogOverlay />
-      <DialogPrimitive.Content
-        ref={ref}
-        data-slot="dialog-content"
-        data-layout={layout}
-        className={cn(
-          // `top-safe-center-y` / `left-safe-center-x`, not `top-1/2` /
-          // `left-1/2`: a fixed element centres on the viewport, which on a
-          // phone includes the strips the app never paints into - the status
-          // bar above, and the sensor housing on one side in landscape. Both
-          // collapse to the halfway marks wherever the insets are zero.
-          //
-          // `max-w-safe-dvw` caps the width against the same region. It is
-          // unmodified so a caller's `sm:max-w-*` still wins at width; a caller
-          // that sets an UNMODIFIED `max-w-*` displaces it, which is what the
-          // contract test watches for.
-          //
-          // `grid-cols-1`, not the bare `grid` the shadcn source ships: a
-          // bare grid's one column is `auto`, which grows to the widest
-          // unbreakable line in the dialog - a launch command, a stack frame's
-          // bundle URL - and widens the whole box past its `w-*`. Any caller
-          // that also put `overflow-y-auto` on the box then got a horizontal
-          // scrollbar, and a trackpad swipe shifted every band and the close
-          // button with it (the profile edit dialog shipped that in desktop
-          // v1.3.0). `grid-cols-1` is `minmax(0, 1fr)`, which pins the column
-          // to the box and leaves overflow to whichever descendant scrolls.
-          "group/dialog-content fixed top-safe-center-y left-safe-center-x z-50 grid grid-cols-1 w-full max-w-[min(calc(100%-2rem),var(--safe-area-width))] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-ui-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
-          // The bands carry the padding, so the box carries none.
-          layout === "banded" && "gap-0 p-0",
-          className,
-        )}
-        onCloseAutoFocus={handleCloseAutoFocus}
-        {...props}
-      >
-        {children}
-        {showCloseButton ? (
-          <DialogPrimitive.Close data-slot="dialog-close" asChild>
-            <Button
-              variant="ghost"
-              className="absolute top-2 right-2"
-              size="icon-sm"
-            >
-              <XIcon />
-              <span className="sr-only">Close</span>
-            </Button>
-          </DialogPrimitive.Close>
-        ) : null}
-      </DialogPrimitive.Content>
-    </DialogPortal>
+    <DialogPrimitive.Content
+      ref={ref}
+      data-slot="dialog-content"
+      data-layout={layout}
+      className={cn(
+        // `top-safe-center-y` / `left-safe-center-x`, not `top-1/2` /
+        // `left-1/2`: a fixed element centres on the viewport, which on a
+        // phone includes the strips the app never paints into - the status
+        // bar above, and the sensor housing on one side in landscape. Both
+        // collapse to the halfway marks wherever the insets are zero.
+        //
+        // `max-w-safe-dvw` caps the width against the same region. It is
+        // unmodified so a caller's `sm:max-w-*` still wins at width; a caller
+        // that sets an UNMODIFIED `max-w-*` displaces it, which is what the
+        // contract test watches for.
+        //
+        // `grid-cols-1`, not the bare `grid` the shadcn source ships: a
+        // bare grid's one column is `auto`, which grows to the widest
+        // unbreakable line in the dialog - a launch command, a stack frame's
+        // bundle URL - and widens the whole box past its `w-*`. Any caller
+        // that also put `overflow-y-auto` on the box then got a horizontal
+        // scrollbar, and a trackpad swipe shifted every band and the close
+        // button with it (the profile edit dialog shipped that in desktop
+        // v1.3.0). `grid-cols-1` is `minmax(0, 1fr)`, which pins the column
+        // to the box and leaves overflow to whichever descendant scrolls.
+        "group/dialog-content fixed top-safe-center-y left-safe-center-x z-50 grid grid-cols-1 w-full max-w-[min(calc(100%-2rem),var(--safe-area-width))] -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl bg-popover p-4 text-ui-sm text-popover-foreground ring-1 ring-foreground/10 duration-100 outline-none sm:max-w-sm data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+        // The bands carry the padding, so the box carries none.
+        layout === "banded" && "gap-0 p-0",
+        className,
+      )}
+      onCloseAutoFocus={handleCloseAutoFocus}
+      {...props}
+    >
+      {children}
+      {showCloseButton ? (
+        <DialogPrimitive.Close data-slot="dialog-close" asChild>
+          <Button
+            variant="ghost"
+            className="absolute top-2 right-2"
+            size="icon-sm"
+          >
+            <XIcon />
+            <span className="sr-only">Close</span>
+          </Button>
+        </DialogPrimitive.Close>
+      ) : null}
+    </DialogPrimitive.Content>
   );
 }
 

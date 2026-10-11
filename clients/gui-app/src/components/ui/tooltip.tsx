@@ -62,7 +62,18 @@ function TooltipTrigger({
   return <TooltipPrimitive.Trigger data-slot="tooltip-trigger" {...props} />;
 }
 
-function TooltipContent({
+function TooltipContent(
+  props: React.ComponentProps<typeof TooltipPrimitive.Content>,
+) {
+  // Radix's portal presence mounts the guard only while content is presented.
+  return (
+    <TooltipPrimitive.Portal>
+      <PresentedTooltipContent {...props} />
+    </TooltipPrimitive.Portal>
+  );
+}
+
+function PresentedTooltipContent({
   ref,
   className,
   sideOffset = 0,
@@ -85,45 +96,43 @@ function TooltipContent({
   );
   if (concealed) return null;
   return (
-    <TooltipPrimitive.Portal>
-      <TooltipPrimitive.Content
-        ref={ref}
-        data-slot="tooltip-content"
-        sideOffset={sideOffset}
-        // The safe-area insets are the DEFAULT collision padding, because the
-        // guarantee has to hold for tooltips nobody thought about. Radix
-        // collides against the viewport, which on a phone includes the strip
-        // the app never paints into - so a `side="top"` label on a control in
-        // the app header finds "space" inside the status bar and renders into
-        // it instead of flipping below the trigger. Padding the collision box
-        // by the insets makes that space stop existing, which is the same
-        // thing `#root`'s padding does for everything not portalled.
+    <TooltipPrimitive.Content
+      ref={ref}
+      data-slot="tooltip-content"
+      sideOffset={sideOffset}
+      // The safe-area insets are the DEFAULT collision padding, because the
+      // guarantee has to hold for tooltips nobody thought about. Radix
+      // collides against the viewport, which on a phone includes the strip
+      // the app never paints into - so a `side="top"` label on a control in
+      // the app header finds "space" inside the status bar and renders into
+      // it instead of flipping below the trigger. Padding the collision box
+      // by the insets makes that space stop existing, which is the same
+      // thing `#root`'s padding does for everything not portalled.
+      //
+      // A caller may still pass its own, and one does: a tooltip inside a
+      // dialog pads against the dialog's edge, where the device inset is not
+      // the boundary that matters.
+      collisionPadding={collisionPadding ?? safeAreaInsets}
+      className={cn(
+        // Tooltip content is label-only (see hover-card.tsx for the
+        // interactive-content surface); `pointer-events-none` stops the
+        // portalled content from ever winning hit-testing away from its
+        // trigger, which otherwise can drive a hover/reposition loop when
+        // the trigger sits directly under the content (e.g. a top-pinned
+        // strip flipping the tooltip to `side="bottom"`).
         //
-        // A caller may still pass its own, and one does: a tooltip inside a
-        // dialog pads against the dialog's edge, where the device inset is not
-        // the boundary that matters.
-        collisionPadding={collisionPadding ?? safeAreaInsets}
-        className={cn(
-          // Tooltip content is label-only (see hover-card.tsx for the
-          // interactive-content surface); `pointer-events-none` stops the
-          // portalled content from ever winning hit-testing away from its
-          // trigger, which otherwise can drive a hover/reposition loop when
-          // the trigger sits directly under the content (e.g. a top-pinned
-          // strip flipping the tooltip to `side="bottom"`).
-          //
-          // This class covers the content ONLY. Radix Popper's same-size
-          // positioning wrapper around it stays `pointer-events: auto` and
-          // swallowed clicks on its own until `index.css` opted it out too -
-          // keep both, neither is sufficient alone (traycerai/traycer#466).
-          "pointer-events-none z-50 inline-flex w-fit max-w-xs origin-(--radix-tooltip-content-transform-origin) items-center gap-1.5 rounded-md bg-foreground px-3 py-1.5 text-ui-xs text-background [overflow-wrap:anywhere] has-data-[slot=kbd]:pr-1.5 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 **:data-[slot=kbd]:relative **:data-[slot=kbd]:isolate **:data-[slot=kbd]:z-50 **:data-[slot=kbd]:rounded-sm data-[state=delayed-open]:animate-in data-[state=delayed-open]:fade-in-0 data-[state=delayed-open]:zoom-in-95 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
-          className,
-        )}
-        {...props}
-      >
-        {children}
-        <TooltipPrimitive.Arrow className="z-50 size-2.5 translate-y-[calc(-50%_-_2px)] rotate-45 rounded-xs bg-foreground fill-foreground" />
-      </TooltipPrimitive.Content>
-    </TooltipPrimitive.Portal>
+        // This class covers the content ONLY. Radix Popper's same-size
+        // positioning wrapper around it stays `pointer-events: auto` and
+        // swallowed clicks on its own until `index.css` opted it out too -
+        // keep both, neither is sufficient alone (traycerai/traycer#466).
+        "pointer-events-none z-50 inline-flex w-fit max-w-xs origin-(--radix-tooltip-content-transform-origin) items-center gap-1.5 rounded-md bg-foreground px-3 py-1.5 text-ui-xs text-background [overflow-wrap:anywhere] has-data-[slot=kbd]:pr-1.5 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 **:data-[slot=kbd]:relative **:data-[slot=kbd]:isolate **:data-[slot=kbd]:z-50 **:data-[slot=kbd]:rounded-sm data-[state=delayed-open]:animate-in data-[state=delayed-open]:fade-in-0 data-[state=delayed-open]:zoom-in-95 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+        className,
+      )}
+      {...props}
+    >
+      {children}
+      <TooltipPrimitive.Arrow className="z-50 size-2.5 translate-y-[calc(-50%_-_2px)] rotate-45 rounded-xs bg-foreground fill-foreground" />
+    </TooltipPrimitive.Content>
   );
 }
 
