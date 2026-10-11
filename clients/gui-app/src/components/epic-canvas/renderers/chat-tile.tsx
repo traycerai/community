@@ -1,3 +1,4 @@
+import type { ProviderCliState } from "@traycer/protocol/host/provider-schemas";
 import {
   ChatRowPresentationContext,
   ChatRowStoreContext,
@@ -332,6 +333,9 @@ import { tileIntent } from "@/lib/canvas/tile-open/intent";
 import type { UserMessageSender } from "@traycer/protocol/persistence/epic/schemas";
 
 const EMPTY_WORKSPACE_PATH_SET: ReadonlySet<string> = new Set();
+// One empty list: a fresh `[]` per render gave the tombstoned-profile
+// context a new resolver each time and re-rendered every user message.
+const NO_PROVIDERS: ReadonlyArray<ProviderCliState> = [];
 const EMPTY_BACKGROUND_STOP_TASK_IDS: ReadonlySet<string> = new Set();
 // How long a compact-conversation click stays locked out against a repeat
 // click. Not tied to the send settling - just long enough that a double-click
@@ -645,7 +649,7 @@ function ChatTileForChat(props: ChatTileProps) {
     <div className="flex h-full min-h-0 flex-col" data-node-id={node.id}>
       {deadTileBanner}
       <TombstonedProfileProvider
-        providers={providersList.data?.providers ?? []}
+        providers={providersList.data?.providers ?? NO_PROVIDERS}
         hostId={tabHostId}
       >
         <ChatTileSessionView

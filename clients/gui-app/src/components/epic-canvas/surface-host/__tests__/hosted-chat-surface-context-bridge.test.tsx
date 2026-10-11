@@ -23,7 +23,11 @@ import { EpicViewTabContext } from "@/components/epic-canvas/view-tab-context";
 import { useOpenEpicHandle } from "@/providers/use-open-epic-handle";
 import { BrowserSessionsContext } from "@/components/epic-canvas/renderers/browser-sessions-context";
 import { handleHostIds } from "@/lib/registries/epic-session-registry";
-import { usePanePortalContainer } from "@/components/epic-tabs/pane-visibility-context";
+import {
+  PaneSurfaceActivityContext,
+  usePanePortalContainer,
+  type PaneSurfaceActivity,
+} from "@/components/epic-tabs/pane-visibility-context";
 import {
   SurfaceDemandContext,
   setPaneDemand,
@@ -65,6 +69,8 @@ interface CaptureState {
   lastPanePortalContainer: HTMLElement | null;
   lastPaneActivationFocusIntent: PaneActivationFocusIntent | null;
   lastSurfaceDemand: ActiveSurfaceDemand | null;
+  lastPaneSurfaceActivity: PaneSurfaceActivity | null;
+  paneSurfaceActivities: PaneSurfaceActivity[];
 }
 
 const capture = vi.hoisted((): CaptureState => ({
@@ -77,6 +83,8 @@ const capture = vi.hoisted((): CaptureState => ({
   lastPanePortalContainer: null,
   lastPaneActivationFocusIntent: null,
   lastSurfaceDemand: null,
+  lastPaneSurfaceActivity: null,
+  paneSurfaceActivities: [],
 }));
 
 interface PermissionRoleState {
@@ -154,6 +162,8 @@ vi.mock("@/components/epic-canvas/renderers/tile-render", () => ({
       capture.lastPanePortalContainer = usePanePortalContainer();
       capture.lastPaneActivationFocusIntent = usePaneActivationFocusIntent();
       capture.lastSurfaceDemand = use(SurfaceDemandContext);
+      capture.lastPaneSurfaceActivity = use(PaneSurfaceActivityContext);
+      capture.paneSurfaceActivities.push(capture.lastPaneSurfaceActivity);
       return (
         <div
           data-testid="hosted-bridge-probe"
@@ -229,6 +239,8 @@ function resetCapture(): void {
   capture.lastPanePortalContainer = null;
   capture.lastPaneActivationFocusIntent = null;
   capture.lastSurfaceDemand = null;
+  capture.lastPaneSurfaceActivity = null;
+  capture.paneSurfaceActivities = [];
   permissionRole.role = "owner";
 }
 
@@ -416,6 +428,68 @@ describe("HostedChatSurfaceContextBridge", () => {
 
     act(() => setPaneDemand(PANE_ID, INSTANCE_ID, "preview"));
     expect(capture.lastSurfaceDemand).toBe("preview");
+  });
+
+  it("re-provides the pane surface activity from the environment's presentation flags", () => {
+    const environment = buildEnvironment({
+      canvasActivity: { tabSelected: true, canvasPaneActive: true },
+      presentation: { topLevelVisible: true, topLevelFocused: false },
+    });
+    const view = render(
+      <HostedChatSurfaceContextBridge environment={environment} />,
+    );
+    expect(capture.lastPaneSurfaceActivity).toEqual({
+      visible: true,
+      focused: false,
+    });
+
+    view.rerender(
+      <HostedChatSurfaceContextBridge
+        environment={{
+          ...environment,
+          presentation: { topLevelVisible: true, topLevelFocused: true },
+        }}
+      />,
+    );
+    expect(capture.lastPaneSurfaceActivity).toEqual({
+      visible: true,
+      focused: true,
+    });
+  });
+
+  it("keeps the pane surface activity identity across a new environment object with the same presentation flags", () => {
+    const environment = buildEnvironment({
+      canvasActivity: { tabSelected: true, canvasPaneActive: true },
+      presentation: { topLevelVisible: true, topLevelFocused: false },
+    });
+    const view = render(
+      <HostedChatSurfaceContextBridge environment={environment} />,
+    );
+    const first = capture.lastPaneSurfaceActivity;
+    expect(first).not.toBeNull();
+
+    // The slot publishes a new environment object for any change to it (a
+    // geometry or service update); the presentation flags are what the
+    // activity context carries, and they did not move.
+    view.rerender(
+      <HostedChatSurfaceContextBridge
+        environment={{
+          ...environment,
+          presentation: { topLevelVisible: true, topLevelFocused: false },
+        }}
+      />,
+    );
+    view.rerender(
+      <HostedChatSurfaceContextBridge
+        environment={{
+          ...environment,
+          presentation: { topLevelVisible: true, topLevelFocused: false },
+        }}
+      />,
+    );
+
+    expect(capture.lastPaneSurfaceActivity).toBe(first);
+    expect(new Set(capture.paneSurfaceActivities).size).toBe(1);
   });
 
   it("renders nothing when the canvas tile is missing from the store", () => {
