@@ -360,6 +360,14 @@ beforeEach(() => {
   useSurfaceDemandStore.setState(useSurfaceDemandStore.getInitialState(), true);
 });
 
+// The background tab under test is genuinely OUTSIDE the active keys (another
+// tab holds the screen), not merely "no demand written yet": only that shape
+// separates "no demand either way, keeps its ordinary claim" from a previewed
+// entry, which acquires nothing.
+function holdAnotherTabActive(): void {
+  setTopLevelDemand(["epic:tab-some-other-active-tab"], "settled");
+}
+
 describe("EpicSessionController: session lifecycle with no surface mounted", () => {
   let previousWorkerFactory: (() => RuntimeWorkerLike) | null = null;
   let constructionCount = 0;
@@ -400,6 +408,7 @@ describe("EpicSessionController: session lifecycle with no surface mounted", () 
   it("swap without activate: an unnamed tab opened in the background acquires a session with no provider mounted", () => {
     const EPIC_ID = "epic-swap-no-activate";
     const controller = getEpicSessionController();
+    holdAnotherTabActive();
 
     useEpicCanvasStore.getState().openEpicTabInBackground(EPIC_ID, "");
     __syncEpicParkingOpenTabsForTests();
@@ -452,6 +461,7 @@ describe("EpicSessionController: session lifecycle with no surface mounted", () 
 
   it("placeholder-named tabs count as unnamed and each acquires", () => {
     const controller = getEpicSessionController();
+    holdAnotherTabActive();
     const placeholders: ReadonlyArray<readonly [string, string]> = [
       ["epic-placeholder-untitled-task", "Untitled task"],
       ["epic-placeholder-host-untitled", "Untitled"],
@@ -1507,6 +1517,7 @@ describe("session-owned write-throughs", () => {
   }
 
   it("never-activated tab: a generated title reaches the tab record and the cached History row with no surface ever attached", () => {
+    holdAnotherTabActive();
     const session = acquireLiveTitledSession(
       "epic-write-through-never-activated",
       "tab-write-through-never-activated",
@@ -2169,11 +2180,18 @@ describe("EpicSessionController: cold acquisition under surface demand", () => {
 
     try {
       setTopLevelDemand([`epic:${TAB_ID}`], "preview");
-      openTestEpicTab(TAB_ID, EPIC_ID, "");
-      openTestEpicTab(OTHER_TAB_ID, OTHER_EPIC_ID, "");
+      // Real names: an UNNAMED tab outside the active keys is a background
+      // open that acquires for its title like any other, so it would not
+      // isolate what this proves, that a preview acquires nothing.
+      openTestEpicTab(TAB_ID, EPIC_ID, "Epic the cursor passes through");
+      openTestEpicTab(OTHER_TAB_ID, OTHER_EPIC_ID, "Epic the cursor lands on");
 
       // Cursor: A (preview) -> B (preview) -> B (settled).
       setTopLevelDemand([`epic:${OTHER_TAB_ID}`], "preview");
+      // The tab the cursor lands on is shown, as it is while it settles.
+      activateHeaderTab(OTHER_TAB_ID);
+      setEpicSurfaceVisibility(OTHER_EPIC_ID, OTHER_TAB_ID, true);
+      getEpicSessionController().attachSurface(OTHER_EPIC_ID, OTHER_TAB_ID);
       sample("after-move");
       setTopLevelDemand([`epic:${OTHER_TAB_ID}`], "settled");
       sample("after-settle");

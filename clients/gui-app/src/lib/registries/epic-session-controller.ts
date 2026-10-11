@@ -1441,16 +1441,25 @@ function createEpicSessionController(): EpicSessionController {
     entry.suspended = false;
   }
 
-  function hasSettledSurfaceDemand(entry: ControllerEntry): boolean {
+  /**
+   * Whether a held tab cycle is only previewing this entry: some tab is the
+   * preview and none is settled. A tab outside the active keys (a background
+   * open, a task created elsewhere) has no demand either way and keeps its
+   * ordinary claim, so an unnamed one still acquires for its title.
+   */
+  function isOnlyPreviewed(entry: ControllerEntry): boolean {
     const attached = surfaces.get(entry.epicId);
     const tabIds =
       attached === undefined || attached.size === 0
         ? entry.tabs.keys()
         : attached;
+    let previewed = false;
     for (const tabId of tabIds) {
-      if (topLevelDemand(`epic:${tabId}`) === "settled") return true;
+      const demand = topLevelDemand(`epic:${tabId}`);
+      if (demand === "settled") return false;
+      if (demand === "preview") previewed = true;
     }
-    return false;
+    return previewed;
   }
 
   /**
@@ -1461,7 +1470,7 @@ function createEpicSessionController(): EpicSessionController {
     entry: ControllerEntry,
     inputs: ReconcileInputs,
   ): string | null {
-    if (entry.session === null && !hasSettledSurfaceDemand(entry)) return null;
+    if (entry.session === null && isOnlyPreviewed(entry)) return null;
     if (!inputs.ownershipClaimed || inputs.parked || entry.suspended) {
       return null;
     }
