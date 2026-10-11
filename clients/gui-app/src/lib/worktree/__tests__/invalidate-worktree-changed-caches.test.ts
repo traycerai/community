@@ -18,6 +18,27 @@ const OWNER_ID = "chat-1";
 // prove narrowing is legitimate for a genuinely host-created checkout.
 const MANAGED_UNRELATED_PATH = "/repo/wt/managed-unrelated";
 const DELETED_MANAGED_PATH = "/repo/wt/deleted";
+// A worktree created after every cached answer was read, outside the
+// workspace's own directory, as the host's managed checkouts are.
+const NEW_MANAGED_PATH = "/home/user/.traycer/worktrees/repo/feature-x";
+
+type BindingAnswer = {
+  readonly binding: {
+    readonly entries: ReadonlyArray<{
+      readonly mode: "worktree";
+      readonly isImported: boolean;
+      readonly worktreePath: string;
+      readonly workspacePath: string;
+    }>;
+  } | null;
+  readonly missingWorktreePaths: ReadonlyArray<string>;
+};
+type WorkspaceListing = {
+  readonly workspaces: ReadonlyArray<{
+    readonly workspacePath: string;
+    readonly worktrees: ReadonlyArray<{ readonly worktreePath: string }>;
+  }>;
+};
 
 function managedWorktreeEntry(
   worktreePath: string,
@@ -222,6 +243,40 @@ describe("invalidateWorktreeChangedCaches + worktree.getBinding", () => {
     });
 
     await waitUntil(() => fetches === 2);
+    stop();
+  });
+
+  it("refreshes a MOUNTED binding query that holds no binding and no missing paths when a path event names a worktree it cannot list, so a binding made elsewhere shows up", async () => {
+    // A chat with no worktree caches `{ binding: null, missingWorktreePaths: [] }`.
+    // Another agent or window then binds it to a NEW worktree, and the push
+    // names that worktree's path: a path nothing in the cached answer can
+    // contain, because the cached answer is the very thing that is now wrong.
+    const queryClient = createAppQueryClient();
+    let served: BindingAnswer = { binding: null, missingWorktreePaths: [] };
+    const observer = new QueryObserver(queryClient, {
+      queryKey: bindingKey(),
+      queryFn: () => Promise.resolve(served),
+    });
+    const stop = observer.subscribe(() => undefined);
+    await waitUntil(() => observer.getCurrentResult().data !== undefined);
+    const theirs = hostQueryKeys.method("other-host", "worktree.getBinding", {
+      epicId: EPIC_ID,
+      ownerId: OWNER_ID,
+      ownerKind: "chat",
+    });
+    queryClient.setQueryData(theirs, served);
+
+    const bound = managedWorktreeEntry(NEW_MANAGED_PATH, REPO);
+    served = { binding: { entries: [bound] }, missingWorktreePaths: [] };
+    invalidateWorktreeChangedCaches(queryClient, HOST_ID, {
+      root: false,
+      worktreePaths: new Set([NEW_MANAGED_PATH]),
+    });
+
+    await waitUntil(() => observer.getCurrentResult().data?.binding !== null);
+    expect(observer.getCurrentResult().data?.binding?.entries).toEqual([bound]);
+    // Another host's answer about the same owner is not this host's to refresh.
+    expect(queryClient.getQueryState(theirs)?.isInvalidated).toBe(false);
     stop();
   });
 
@@ -465,6 +520,55 @@ describe("invalidateWorktreeChangedCaches + worktree.getBinding", () => {
 
     expect(queryClient.getQueryState(mine)?.isInvalidated).toBe(true);
     expect(queryClient.getQueryState(theirs)?.isInvalidated).toBe(false);
+  });
+});
+
+describe("invalidateWorktreeChangedCaches + worktree.listByWorkspacePaths", () => {
+  it("refreshes a MOUNTED workspace listing that does not name the pushed worktree, leaving another host's listing alone", async () => {
+    // A path push says a worktree changed, and a listing is by WORKSPACE: a
+    // worktree that was just created is in no cached listing yet, so the
+    // listing that is missing it is exactly the one to refresh.
+    const queryClient = createAppQueryClient();
+    let served: WorkspaceListing = {
+      workspaces: [{ workspacePath: REPO, worktrees: [] }],
+    };
+    const key = hostQueryKeys.method(HOST_ID, "worktree.listByWorkspacePaths", {
+      workspacePaths: [REPO],
+      scriptRefs: [],
+      forceRefresh: false,
+    });
+    const observer = new QueryObserver(queryClient, {
+      queryKey: key,
+      queryFn: () => Promise.resolve(served),
+    });
+    const stop = observer.subscribe(() => undefined);
+    await waitUntil(() => observer.getCurrentResult().data !== undefined);
+    const theirs = hostQueryKeys.method(
+      "other-host",
+      "worktree.listByWorkspacePaths",
+      { workspacePaths: [REPO], scriptRefs: [], forceRefresh: false },
+    );
+    queryClient.setQueryData(theirs, served);
+
+    served = {
+      workspaces: [
+        {
+          workspacePath: REPO,
+          worktrees: [{ worktreePath: NEW_MANAGED_PATH }],
+        },
+      ],
+    };
+    invalidateWorktreeChangedCaches(queryClient, HOST_ID, {
+      root: false,
+      worktreePaths: new Set([NEW_MANAGED_PATH]),
+    });
+
+    await waitUntil(
+      () =>
+        observer.getCurrentResult().data?.workspaces[0]?.worktrees.length === 1,
+    );
+    expect(queryClient.getQueryState(theirs)?.isInvalidated).toBe(false);
+    stop();
   });
 });
 

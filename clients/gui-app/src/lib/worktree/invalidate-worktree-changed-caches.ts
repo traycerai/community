@@ -44,7 +44,9 @@ import { worktreePathMatcher } from "@/lib/worktree/worktree-path-match";
  * row's frame.
  *
  * Path pushes refresh keys with matching managed paths, plus imported/local
- * bindings whose path identity is uncertain. Root pushes refresh every active
+ * bindings whose path identity is uncertain, and unbound owners. Workspace
+ * listings always refresh because a newly created path cannot appear in their
+ * cached membership. Root pushes refresh every active
  * listing: external membership changes and late cold-workspace discovery
  * publish at root scope.
  */
@@ -102,7 +104,6 @@ export function invalidateWorktreeChangedCaches(
       "worktree.listByWorkspacePaths",
     ),
     refetchType: "active",
-    predicate: (query) => isAffected(query.queryKey),
   });
   // Re-read the affected owner's disk-derived missing paths; inactive owners
   // remain stale until observed.

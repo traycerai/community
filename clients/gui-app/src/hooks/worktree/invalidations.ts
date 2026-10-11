@@ -55,7 +55,7 @@ export function affectedWorktreeQueryKeys(
       >(key);
     if (
       data?.missingWorktreePaths.some(isAffectedPath) ||
-      (data?.binding === null && data.missingWorktreePaths.length > 0)
+      data?.binding === null
     )
       keys.add(key);
     for (const entry of data?.binding?.entries ?? []) {
