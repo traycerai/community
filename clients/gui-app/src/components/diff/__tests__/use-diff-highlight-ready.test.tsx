@@ -182,6 +182,57 @@ describe("useDiffs highlight gates", () => {
     });
   });
 
+  it("primes the file cache again when only the theme changes", async () => {
+    const primeFileHighlightCache = vi.fn(() => Promise.resolve());
+    poolState.pool = {
+      setRenderOptions: vi.fn(() => Promise.resolve()),
+      primeFileHighlightCache,
+      primeDiffHighlightCache: vi.fn(() => Promise.resolve()),
+    };
+    // One object, so the file and the pool are exactly what they were.
+    const file = sampleFile();
+    const rendered = render(
+      <FileReadyProbe file={file} theme="pierre-dark" enabled />,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("ready").textContent).toBe("ready");
+    });
+    expect(primeFileHighlightCache).toHaveBeenCalledTimes(1);
+
+    rendered.rerender(
+      <FileReadyProbe file={file} theme="pierre-light" enabled />,
+    );
+
+    await waitFor(() => {
+      expect(primeFileHighlightCache).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it("primes the diff cache again when only the theme changes", async () => {
+    const primeDiffHighlightCache = vi.fn(() => Promise.resolve());
+    poolState.pool = {
+      setRenderOptions: vi.fn(() => Promise.resolve()),
+      primeFileHighlightCache: vi.fn(() => Promise.resolve()),
+      primeDiffHighlightCache,
+    };
+    const fileDiffs = [sampleDiff("a.ts")];
+    const rendered = render(
+      <DiffReadyProbe fileDiffs={fileDiffs} theme="pierre-dark" enabled />,
+    );
+    await waitFor(() => {
+      expect(screen.getByTestId("ready").textContent).toBe("ready");
+    });
+    expect(primeDiffHighlightCache).toHaveBeenCalledTimes(1);
+
+    rendered.rerender(
+      <DiffReadyProbe fileDiffs={fileDiffs} theme="pierre-light" enabled />,
+    );
+
+    await waitFor(() => {
+      expect(primeDiffHighlightCache).toHaveBeenCalledTimes(2);
+    });
+  });
+
   it("renders DiffHighlightLoading with the requested test id", () => {
     render(<DiffHighlightLoading testId="workspace-file-highlighting" />);
     expect(screen.getByTestId("workspace-file-highlighting")).toBeTruthy();

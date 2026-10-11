@@ -1,7 +1,16 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { formatChordForDisplay } from "@/lib/keybindings/chord";
+import { formatFullTimestamp } from "@/lib/relative-time";
 import { setMobileApp } from "@/lib/mobile-app";
 import { HostClient } from "@traycer-clients/shared/host-client/host-client";
 import { MockHostMessenger } from "@traycer-clients/shared/host-client/mock/mock-host-messenger";
@@ -745,5 +754,48 @@ describe("<CommentSidebar /> state-lane threads", () => {
     expect(await screen.findByText("the lane's answer")).not.toBeNull();
     expect(unavailablePanel()).toBeNull();
     expect(loadingPanel()).toBeNull();
+  });
+});
+
+describe("<CommentSidebar /> comment age label", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("reads 'now' for a fresh comment and moves on to minutes as the clock advances", async () => {
+    // Only the clock and the interval are faked: the query client and the
+    // Testing Library polling keep their real timers.
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    const createdAt = Date.now();
+    const lane = threadFixtureWith("lane-thread", "the lane's answer");
+    renderSidebar(defaultEpicHandle, [
+      {
+        ...lane,
+        createdAt,
+        comments: lane.comments.map((comment) => ({ ...comment, createdAt })),
+      },
+    ]);
+
+    expect(await screen.findByText("the lane's answer")).not.toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /1 comment/ }));
+    expect(screen.getByText(/now/i)).not.toBeNull();
+
+    for (let minute = 0; minute < 3; minute += 1) {
+      act(() => {
+        vi.advanceTimersByTime(60_000);
+      });
+    }
+
+    expect(screen.getByText("3m")).not.toBeNull();
+    expect(screen.queryByText(/now/i)).toBeNull();
+
+    // The exact time is the label's hover tooltip, as on a chat message stamp.
+    const user = userEvent.setup();
+    await user.hover(screen.getByText("3m"));
+    await waitFor(() => {
+      expect(
+        screen.getAllByText(formatFullTimestamp(createdAt)).length,
+      ).toBeGreaterThan(0);
+    });
   });
 });

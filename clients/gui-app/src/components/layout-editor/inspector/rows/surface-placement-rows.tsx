@@ -54,7 +54,10 @@ import {
   tabStripPlacementChanged,
 } from "@/lib/layout/layout-diff";
 import type { SettingsRowDefinition } from "@/lib/settings-search/settings-definitions";
-import { useLayoutStore } from "@/stores/layout/layout-store";
+import {
+  useLayoutSnapshot,
+  useLayoutStore,
+} from "@/stores/layout/layout-store";
 import { Switch } from "@/components/ui/switch";
 import {
   Slider,
@@ -505,6 +508,7 @@ export function ResourceReadingsRow(
   props: AreaRowPlacement & { readonly context: LayoutFormContext },
 ): ReactNode {
   const on = props.context.values.resourceMonitor.agentRows;
+  const snapshot = useLayoutSnapshot();
   const page = useLayoutFormHost() === "page";
   // Each host opens the monitor's row its own way: the page lands on it as a
   // settings result does, the editor opens its area with the row expanded.
@@ -523,7 +527,7 @@ export function ResourceReadingsRow(
       row={RESOURCE_READINGS_ROW}
       icon={Cpu}
       onRevert={
-        isControlValueChanged("resourceMonitor", "agentRows")
+        isControlValueChanged(snapshot, "resourceMonitor", "agentRows")
           ? () => {
               revertControlValue("resourceMonitor", "agentRows");
             }

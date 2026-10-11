@@ -790,6 +790,39 @@ describe("useWorktreeActivityEnrichment (live fetch → cache → overlay)", () 
     expect(result.current.erroredPaths).toEqual(new Set());
   });
 
+  it("lists a viewport path as errored once its probe is rejected, with no retry state moving", async () => {
+    vi.useFakeTimers();
+    const fixture = createFixture(
+      new Map([["/wt/a", enrichedEntry("/wt/a", "feat-a")]]),
+      () => {
+        throw new Error("host unreachable");
+      },
+      null,
+      new QueryClient({ defaultOptions: { queries: { retry: false } } }),
+    );
+    const { result } = renderHook(
+      () =>
+        useWorktreeActivityEnrichment(
+          fixture.client,
+          true,
+          HOST_ID,
+          NO_SWEEP_PATHS,
+        ),
+      { wrapper: fixture.Wrapper },
+    );
+    expect(result.current.erroredPaths).toEqual(new Set());
+
+    await act(async () => {
+      result.current.reportVisiblePaths(["/wt/a"]);
+      await vi.advanceTimersByTimeAsync(WORKTREE_DEBOUNCE_SETTLE_MS);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(WORKTREE_BATCH_FLUSH_MS);
+    });
+
+    expect(result.current.erroredPaths).toEqual(new Set(["/wt/a"]));
+  });
+
   describe("background sweep (no scrolling required)", () => {
     function warmEntry(path: string, branch: string): WorktreeHostEntryV16 {
       // `prState: "none"` = probed, no PR - a WARM row the sweep must fetch
@@ -1715,6 +1748,44 @@ describe("useWorktreeActivityEnrichment (live fetch → cache → overlay)", () 
         expect(fixture.queryClient.isFetching()).toBe(0);
         expect(result.current.seededPaths.has("/wt/a")).toBe(false);
       });
+    });
+
+    it("drops the SEEDED flag when a re-read lands data deep-equal to the seed", () => {
+      const entry = warmEntry("/wt/a", "feat-a");
+      const response = { worktrees: [entry], nextCursor: null };
+      const fixture = createFixture(
+        new Map([["/wt/a", entry]]),
+        null,
+        null,
+        new QueryClient(),
+      );
+      // Restored before this session started: older than the app's start.
+      fixture.queryClient.setQueryData<WorktreeListAllForHostResponseV16>(
+        perPathKey("/wt/a"),
+        response,
+        { updatedAt: 1 },
+      );
+      const { result } = renderHook(
+        () =>
+          useWorktreeActivityEnrichment(fixture.client, true, HOST_ID, [
+            "/wt/a",
+          ]),
+        { wrapper: fixture.Wrapper },
+      );
+      expect(result.current.seededPaths.has("/wt/a")).toBe(true);
+      const folded = result.current.enrichedByPath;
+
+      // Same data again, now stamped by this session: structural sharing keeps
+      // every entry (so the overlay's identity holds), but the path is live.
+      act(() => {
+        fixture.queryClient.setQueryData<WorktreeListAllForHostResponseV16>(
+          perPathKey("/wt/a"),
+          { worktrees: [{ ...entry }], nextCursor: null },
+        );
+      });
+
+      expect(result.current.enrichedByPath).toBe(folded);
+      expect(result.current.seededPaths.has("/wt/a")).toBe(false);
     });
 
     it("never overwrites live cache data with the snapshot", () => {

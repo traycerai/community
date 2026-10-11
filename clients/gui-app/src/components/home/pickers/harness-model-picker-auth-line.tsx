@@ -56,7 +56,7 @@ import { useProviderTerminalLoginScopeSupported } from "@/hooks/providers/use-pr
  * a shell variable that the provider never reads. The steps live HERE only
  * while the model list below still has rows to show (the host serves the last
  * good catalog through a sign-out); once the list itself is in the signed-out
- * error state, `ModelRowsState` renders the full setup CTA in that space and
+ * error state, `modelRowsState` renders the full setup CTA in that space and
  * this line drops back to the compact label, so the popover never says the
  * same thing twice.
  */

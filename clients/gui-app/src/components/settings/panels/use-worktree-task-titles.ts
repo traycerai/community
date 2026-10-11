@@ -15,6 +15,7 @@ import { cloudVerdictPreflight } from "@/lib/host/cloud-verdict-preflight";
 import { TASK_CONTEXT_TITLE_STALE_TIME_MS } from "@/hooks/epic/use-epic-get-task-contexts-query";
 import { useCloudEpicTasksQuery } from "@/hooks/epics/use-cloud-epic-tasks-query";
 import { readEpicTitlesFromCloudTaskCaches } from "@/lib/cloud-epic-tasks-query/cache";
+import { readOnSignal } from "@/lib/read-on-signal";
 
 const EMPTY_TASK_TITLES: ReadonlyMap<string, string> = new Map();
 const EMPTY_TITLE_RECORD: Record<string, string> = {};
@@ -69,11 +70,14 @@ export function useWorktreeTaskTitles(
     if (userId === null || epicIds.length === 0) return EMPTY_TITLE_RECORD;
     // `cloudTasks` is a recompute trigger: the read scans the query cache
     // directly, so we re-derive whenever a fetched page changes it.
-    void cloudTasks;
-    return readEpicTitlesFromCloudTaskCaches(
-      queryClient,
-      { hostId: null, userId },
-      epicIds,
+    return readOnSignal(
+      () =>
+        readEpicTitlesFromCloudTaskCaches(
+          queryClient,
+          { hostId: null, userId },
+          epicIds,
+        ),
+      cloudTasks,
     );
   }, [queryClient, userId, epicIds, cloudTasks]);
 

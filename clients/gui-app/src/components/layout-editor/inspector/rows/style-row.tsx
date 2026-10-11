@@ -13,7 +13,10 @@ import type { LayoutValues } from "@/lib/layout/layout-values";
 import type { RegionId } from "@/lib/layout/region-id";
 import { PicturedOptions } from "@/components/layout-editor/inspector/pictured-options";
 import { useLayoutEditorStore } from "@/stores/layout/layout-editor-store";
-import { useLayoutStore } from "@/stores/layout/layout-store";
+import {
+  useLayoutSnapshot,
+  useLayoutStore,
+} from "@/stores/layout/layout-store";
 
 /**
  * A single-value style enum (Context usage's Chip style, Model's Style and
@@ -51,7 +54,8 @@ export function StyleRow(props: {
     ),
   );
   const keys = [styleKey];
-  const changed = changedControlKeys(regionId, keys).length > 0;
+  const snapshot = useLayoutSnapshot();
+  const changed = changedControlKeys(snapshot, regionId, keys).length > 0;
 
   return (
     <LayoutFormRow

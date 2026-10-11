@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -23,6 +24,7 @@ function resetThemeStores(): void {
     version: 2,
     themes: [],
     selected: { light: null, dark: null },
+    contrast: 100,
     draft: null,
     error: null,
   });
@@ -312,5 +314,68 @@ describe("theme editor flow", () => {
     });
     await user.clear(reopenedSearch);
     expect(screen.getAllByRole("option")).toHaveLength(17);
+  });
+
+  it("updates the contrast readout when the cascade changes under an unchanged draft", async () => {
+    renderThemes();
+    // No background or foreground of its own: both read from the cascade.
+    act(() => {
+      useThemeLibraryStore.getState().setDraft({
+        version: 1,
+        id: "cascade-draft",
+        name: "Cascade draft",
+        appearance: "light",
+        base: "neutral",
+        colors: { primary: "#336699ff" },
+        syntax: null,
+      });
+    });
+    const ratio = async (): Promise<number> => {
+      const readout = await screen.findByText(/Main text contrast/);
+      const match = /Main text contrast ([\d.]+):1/.exec(readout.textContent);
+      if (match?.[1] === undefined) throw new Error("no contrast ratio shown");
+      return Number.parseFloat(match[1]);
+    };
+
+    const cascadeForeground = (): string =>
+      getComputedStyle(document.documentElement).getPropertyValue(
+        "--foreground",
+      );
+    const baseline = await ratio();
+    const baselineForeground = cascadeForeground();
+    act(() => {
+      useThemeLibraryStore.setState({ contrast: 70 });
+    });
+    // The precondition: the cascade really did move under the same draft.
+    expect(cascadeForeground()).not.toBe(baselineForeground);
+    const softened = await ratio();
+    expect(softened).toBeLessThan(baseline);
+
+    act(() => {
+      useThemeLibraryStore.setState({ contrast: 100 });
+    });
+    expect(await ratio()).toBe(baseline);
+  });
+
+  it("moves the Active marker between the light and dark theme rows with the app mode", () => {
+    renderThemes();
+
+    const rowLabel = (name: "Light theme" | "Dark theme"): string =>
+      screen.getByText(new RegExp(`^${name}`)).textContent;
+
+    expect(rowLabel("Light theme")).toContain("Active");
+    expect(rowLabel("Dark theme")).not.toContain("Active");
+
+    act(() => {
+      useSettingsStore.getState().setTheme("dark");
+    });
+    expect(rowLabel("Dark theme")).toContain("Active");
+    expect(rowLabel("Light theme")).not.toContain("Active");
+
+    act(() => {
+      useSettingsStore.getState().setTheme("light");
+    });
+    expect(rowLabel("Light theme")).toContain("Active");
+    expect(rowLabel("Dark theme")).not.toContain("Active");
   });
 });

@@ -30,7 +30,11 @@ import { pinnedFieldOrderChanged } from "@/lib/layout/layout-diff";
 import type { LayoutValues, RegionValueKey } from "@/lib/layout/layout-values";
 import type { RegionId } from "@/lib/layout/region-id";
 import { useLayoutEditorStore } from "@/stores/layout/layout-editor-store";
-import { useLayoutStore } from "@/stores/layout/layout-store";
+import {
+  getLayoutSnapshot,
+  useLayoutSnapshot,
+  useLayoutStore,
+} from "@/stores/layout/layout-store";
 
 /** A region's detail rows, and the four control shapes they are operated with. */
 
@@ -84,6 +88,7 @@ export function FineTuneRowView(props: {
 }): ReactNode {
   const { row, regionId, regionValues, availability, depth } = props;
   const { control } = row;
+  const snapshot = useLayoutSnapshot();
 
   if (control.kind === "switch") {
     const checked = readControlValue(regionValues, control.key) === true;
@@ -99,7 +104,7 @@ export function FineTuneRowView(props: {
         revertLabel={`Revert ${row.label}`}
         description={row.description}
         onRevert={
-          isControlValueChanged(regionId, control.key)
+          isControlValueChanged(snapshot, regionId, control.key)
             ? () => {
                 revertControlValue(regionId, control.key);
               }
@@ -132,7 +137,7 @@ export function FineTuneRowView(props: {
         revertLabel={`Revert ${row.label}`}
         description={row.description}
         onRevert={
-          isControlValueChanged(regionId, control.key)
+          isControlValueChanged(snapshot, regionId, control.key)
             ? () => {
                 revertControlValue(regionId, control.key);
               }
@@ -166,7 +171,7 @@ export function FineTuneRowView(props: {
         revertLabel={`Revert ${row.label}`}
         description={row.description}
         onRevert={
-          keys.some((key) => isControlValueChanged(regionId, key))
+          keys.some((key) => isControlValueChanged(snapshot, regionId, key))
             ? () => {
                 revertControlValues(regionId, keys);
               }
@@ -200,7 +205,7 @@ export function FineTuneRowView(props: {
 
   const order = props.arrangement.pinnedContextFieldOrder;
   const changed =
-    isControlValueChanged(regionId, control.key) ||
+    isControlValueChanged(snapshot, regionId, control.key) ||
     pinnedFieldOrderChanged(props.arrangement, DEFAULT_ARRANGEMENT);
   return (
     <LayoutFormRow
@@ -340,7 +345,7 @@ function writeFieldChecksOrder(ids: ReadonlyArray<string>): void {
 
 /** The set and its order put back as ONE gesture: one row, one undo step. */
 function revertFieldChecks(regionId: RegionId, key: RegionValueKey): void {
-  const keys = changedControlKeys(regionId, [key]);
+  const keys = changedControlKeys(getLayoutSnapshot(), regionId, [key]);
   useLayoutEditorStore.getState().recordGesture(() => {
     const store = useLayoutStore.getState();
     if (keys.length > 0) store.clearRegionValues(regionId, keys);

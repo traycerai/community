@@ -14,6 +14,7 @@ import { getResolvedTheme, subscribeResolvedTheme } from "@/lib/theme-applier";
 import { isMac } from "@/lib/keybindings/platform";
 import { useOpenLink } from "@/lib/links/open-link";
 import { isMobileApp } from "@/lib/mobile-app";
+import { readOnSignal } from "@/lib/read-on-signal";
 import {
   SANDBOX_SCROLL_GESTURE_EVENT,
   SandboxBridgeHost,
@@ -218,14 +219,19 @@ export function SandboxFrame(props: SandboxFrameProps) {
   }, [kind, networkPolicy, appCsp]);
   const csp = policy.csp;
 
-  const theme = useMemo(() => {
+  const theme = useMemo(
     // The values arrive through the cascade `getComputedStyle` reads, which
     // `theme-applier.ts` has already updated when the revision moves.
-    themeRevision;
-    return sandboxTheme(kind, resolvedTheme, (token) =>
-      readCssVar(document, token),
-    );
-  }, [kind, resolvedTheme, themeRevision]);
+    () =>
+      readOnSignal(
+        () =>
+          sandboxTheme(kind, resolvedTheme, (token) =>
+            readCssVar(document, token),
+          ),
+        themeRevision,
+      ),
+    [kind, resolvedTheme, themeRevision],
+  );
 
   const forwardedShortcuts = useMemo(
     () => sandboxForwardedShortcuts(bindings, isMac()),

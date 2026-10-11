@@ -29,6 +29,7 @@ import { UNKNOWN_HOST_PLACEHOLDER } from "@/lib/host/constants";
 import { useRemoteSessionsPollReadiness } from "@/hooks/host/use-remote-sessions-poll-readiness";
 import { dialableHostEndpointFor } from "@/lib/host/transport-key";
 import { isCommGraphOriginAvailable } from "@/lib/comm-graph/comm-graph-origin-availability";
+import { readOnSignal } from "@/lib/read-on-signal";
 import {
   makeOpenableNodeRef,
   type EpicArtifactRef,
@@ -157,14 +158,16 @@ export function useCommGraphJump(
     () => "",
   );
   const isOriginAvailable = useCallback(
-    (event: CommGraphEvent): boolean => {
-      void directorySnapshot;
-      return isCommGraphOriginAvailable(
-        directory,
-        event,
-        hasReadySessionFor(event.hostId),
-      );
-    },
+    (event: CommGraphEvent): boolean =>
+      readOnSignal(
+        () =>
+          isCommGraphOriginAvailable(
+            directory,
+            event,
+            hasReadySessionFor(event.hostId),
+          ),
+        directorySnapshot,
+      ),
     [directory, directorySnapshot, hasReadySessionFor],
   );
 

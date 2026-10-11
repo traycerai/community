@@ -1,5 +1,6 @@
 import { useMemo, useSyncExternalStore } from "react";
 import type { WorktreeBusyHolder } from "@traycer/protocol/framework/worktree-busy-holders";
+import { readOnSignal } from "@/lib/read-on-signal";
 import { getOpenEpicRegistry } from "@/lib/registries/epic-session-registry";
 
 const EMPTY_NAMES: ReadonlyMap<string, string> = new Map();
@@ -21,10 +22,11 @@ export function useTeardownAgentNames(
     (listener) => subscribeTeardownAgentNames(holders, listener),
     () => teardownAgentNamesSnapshot(holders),
   );
-  return useMemo(() => {
-    void titlesRevision;
-    return collectTeardownAgentNames(holders);
-  }, [holders, titlesRevision]);
+  return useMemo(
+    () =>
+      readOnSignal(() => collectTeardownAgentNames(holders), titlesRevision),
+    [holders, titlesRevision],
+  );
 }
 
 function subscribeTeardownAgentNames(

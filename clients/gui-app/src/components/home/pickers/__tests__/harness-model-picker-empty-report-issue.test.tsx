@@ -10,7 +10,7 @@ import { HostRpcError } from "@traycer-clients/shared/host-transport/host-messen
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { useDesktopDialogStore } from "@/stores/dialogs/desktop-dialog-store";
 import type { GuiHarnessCatalogEntry } from "@/hooks/harnesses/use-gui-harness-catalog";
-import { ModelRowsState } from "../harness-model-picker-empty";
+import { modelRowsState } from "../harness-model-picker-empty";
 
 function harnessEntry(
   overrides: Partial<GuiHarnessCatalogEntry>,
@@ -34,11 +34,11 @@ function harnessEntry(
 }
 
 function renderRowsState(
-  props: Omit<Parameters<typeof ModelRowsState>[0], "onOpenProviderSettings">,
+  props: Omit<Parameters<typeof modelRowsState>[0], "onOpenProviderSettings">,
 ): void {
   render(
     <TooltipProvider>
-      {ModelRowsState({
+      {modelRowsState({
         ...props,
         onOpenProviderSettings: () => undefined,
       })}
@@ -46,7 +46,7 @@ function renderRowsState(
   );
 }
 
-describe("<ModelRowsState /> catalog and model failure report actions", () => {
+describe("modelRowsState catalog and model failure report actions", () => {
   afterEach(() => {
     cleanup();
     useDesktopDialogStore.setState({

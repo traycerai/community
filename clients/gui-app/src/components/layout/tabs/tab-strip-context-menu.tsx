@@ -55,6 +55,40 @@ import {
   type TabSplitCommandAvailability,
   type TabSplitCommandId,
 } from "@/stores/tabs/tab-split-commands";
+import {
+  getTabStructuralLockRevision,
+  subscribeTabStructuralLocks,
+} from "@/stores/tabs/tab-structural-lock";
+import { useTabsStore } from "@/stores/tabs/store";
+import { useShallow } from "zustand/react/shallow";
+
+/**
+ * A tab's split commands as a SUBSCRIBED value, for a menu that stays mounted
+ * while the layout moves under it.
+ *
+ * `resolveTabSplitCommandAvailability` reads the tabs store and the
+ * structural locks itself, so a bare call at render is answered once: nothing
+ * re-renders the menu when either moves, and the React Compiler caches the
+ * call on the tab's id and kind besides. The resolver stays the one place
+ * that decides (the click handlers ask it again); this only re-asks it when
+ * one of its two sources changes.
+ */
+function useTabSplitCommandAvailability(
+  tab: HeaderTab,
+): TabSplitCommandAvailability {
+  // A lock is not tabs-store state, so it needs its own wake-up. The store
+  // hook below re-asks the resolver on every render, this one included.
+  useSyncExternalStore(
+    subscribeTabStructuralLocks,
+    getTabStructuralLockRevision,
+    getTabStructuralLockRevision,
+  );
+  return useTabsStore(
+    useShallow(() =>
+      resolveTabSplitCommandAvailability({ kind: tab.kind, id: tab.id }),
+    ),
+  );
+}
 
 interface TabContextMenuContentProps {
   readonly tab: HeaderTab;
@@ -516,8 +550,8 @@ function usePreservedOrphanSession(tab: HeaderTab): boolean {
 }
 
 /**
- * The split-command section. Availability is resolved here at render time so
- * the menu reflects the live layout. Group-scoped commands remain directly in
+ * The split-command section. Availability is subscribed here so the menu
+ * reflects the live layout. Group-scoped commands remain directly in
  * the main menu: in a split, the creation commands above them are disabled, so
  * a second arrangement submenu only adds an unnecessary navigation step.
  */
@@ -526,10 +560,7 @@ function TabSplitMenuItems(props: {
   readonly onSplitCommand: (id: TabSplitCommandId, tab: HeaderTab) => void;
 }): React.ReactNode {
   const { tab, onSplitCommand } = props;
-  const splitAvailability = resolveTabSplitCommandAvailability({
-    kind: tab.kind,
-    id: tab.id,
-  });
+  const splitAvailability = useTabSplitCommandAvailability(tab);
   const showsGroupCommands =
     splitAvailability.swap ||
     splitAvailability.separate ||
@@ -628,10 +659,7 @@ export function SplitSlotMenuContent(props: {
   readonly partner: HeaderTab;
   readonly onSplitCommand: (id: TabSplitCommandId, tab: HeaderTab) => void;
 }): React.ReactNode {
-  const availability = resolveTabSplitCommandAvailability({
-    kind: props.partner.kind,
-    id: props.partner.id,
-  });
+  const availability = useTabSplitCommandAvailability(props.partner);
   return (
     <ContextMenuContent onCloseAutoFocus={(event) => event.preventDefault()}>
       <TabSplitArrangeItems
@@ -648,10 +676,7 @@ export function SplitQuickActionsMenuContent(props: {
   readonly tab: HeaderTab;
   readonly onSplitCommand: (id: TabSplitCommandId, tab: HeaderTab) => void;
 }): React.ReactNode {
-  const availability = resolveTabSplitCommandAvailability({
-    kind: props.tab.kind,
-    id: props.tab.id,
-  });
+  const availability = useTabSplitCommandAvailability(props.tab);
   return (
     <DropdownMenuContent
       align="start"

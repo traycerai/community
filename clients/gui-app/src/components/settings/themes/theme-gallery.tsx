@@ -1,6 +1,13 @@
 import type { CSSProperties } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { lazy, Suspense, useId, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useId,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   ChevronsUpDown,
   Copy,
@@ -64,8 +71,8 @@ import {
   getActiveThemeDefinition,
   getActiveThemePreset,
   getResolvedTheme,
+  subscribeResolvedTheme,
 } from "@/lib/theme-applier";
-import { useThemeRevision } from "@/providers/use-theme-revision";
 import { cn } from "@/lib/utils";
 
 const ThemeImportDialog = lazy(() =>
@@ -81,7 +88,11 @@ const modes = [
 const paletteTokens: ThemeToken[] = ["background", "foreground", "primary"];
 
 export function ThemeGallery() {
-  useThemeRevision();
+  const resolvedTheme = useSyncExternalStore(
+    subscribeResolvedTheme,
+    getResolvedTheme,
+    getResolvedTheme,
+  );
   const mode = useSettingsStore((state) => state.theme);
   const setMode = useSettingsStore((state) => state.setTheme);
   const library = useThemeLibraryStore(
@@ -147,8 +158,8 @@ export function ThemeGallery() {
             </div>
           }
         />
-        <ThemeSlot appearance="light" active={getResolvedTheme() === "light"} />
-        <ThemeSlot appearance="dark" active={getResolvedTheme() === "dark"} />
+        <ThemeSlot appearance="light" active={resolvedTheme === "light"} />
+        <ThemeSlot appearance="dark" active={resolvedTheme === "dark"} />
       </SettingsGroup>
       <div className="space-y-2">
         <div className="flex flex-wrap items-center gap-1 pt-1">

@@ -24,6 +24,7 @@ import {
 } from "@/lib/query-keys/worktree-enrichment-keys";
 import { logPerfEvent } from "@/lib/perf/perf-telemetry";
 import { useReactiveHostReadiness } from "@/hooks/host/use-reactive-host-readiness";
+import { readOnSignal } from "@/lib/read-on-signal";
 import {
   createWorktreeEnrichmentBatcherForClient,
   keepResolvedEnrichmentRows,
@@ -1137,38 +1138,39 @@ export function useWorktreeActivityEnrichment(
   // `sweepTick` is the sweep completion signal; `results` covers observer-owned
   // transitions. A retry clears the error presentation while it is fetching.
   const erroredPaths = useMemo(() => {
-    void results;
-    void sweepTick;
-    if (hostId === null) return EMPTY_ERRORED;
-    const errored = new Set<string>();
-    const viewportPaths = new Set(requestedPaths);
-    const candidatePaths = new Set([...worktreePaths, ...requestedPaths]);
-    for (const path of candidatePaths) {
-      const state =
-        queryClient.getQueryState<WorktreeListAllForHostResponseV14>(
-          perPathEnrichmentQueryKey(hostId, path),
-        );
-      const sweepExhausted =
-        sweepExhaustion.hostId === hostId && sweepExhaustion.paths.has(path);
-      const viewportExhausted =
-        viewportRetrySnapshot.get(path)?.terminal === true;
-      const hasColdData =
-        state?.data !== undefined && responseHasColdPrState(state.data);
-      if (
-        isTerminalEnrichmentError({
-          state,
-          viewportOwned: viewportPaths.has(path),
-          viewportExhausted,
-          sweepExhausted,
-          hasColdData,
-        })
-      ) {
-        errored.add(path);
+    const readErrored = (): ReadonlySet<string> => {
+      if (hostId === null) return EMPTY_ERRORED;
+      const errored = new Set<string>();
+      const viewportPaths = new Set(requestedPaths);
+      const candidatePaths = new Set([...worktreePaths, ...requestedPaths]);
+      for (const path of candidatePaths) {
+        const state =
+          queryClient.getQueryState<WorktreeListAllForHostResponseV14>(
+            perPathEnrichmentQueryKey(hostId, path),
+          );
+        const sweepExhausted =
+          sweepExhaustion.hostId === hostId && sweepExhaustion.paths.has(path);
+        const viewportExhausted =
+          viewportRetrySnapshot.get(path)?.terminal === true;
+        const hasColdData =
+          state?.data !== undefined && responseHasColdPrState(state.data);
+        if (
+          isTerminalEnrichmentError({
+            state,
+            viewportOwned: viewportPaths.has(path),
+            viewportExhausted,
+            sweepExhausted,
+            hasColdData,
+          })
+        ) {
+          errored.add(path);
+        }
       }
-    }
-    // The stable constant in the (overwhelmingly common) empty case, so this
-    // prop can't defeat downstream memoization on every `results` identity.
-    return errored.size === 0 ? EMPTY_ERRORED : errored;
+      // The stable constant in the (overwhelmingly common) empty case, so this
+      // prop can't defeat downstream memoization on every `results` identity.
+      return errored.size === 0 ? EMPTY_ERRORED : errored;
+    };
+    return readOnSignal(readErrored, results, sweepTick);
   }, [
     hostId,
     queryClient,
@@ -1206,19 +1208,21 @@ export function useWorktreeActivityEnrichment(
   // deliberately unchanged) recomputes via the tick - either way a live
   // fetch's fresh `dataUpdatedAt` drops the path immediately.
   const seededPaths = useMemo(() => {
-    void seedTick;
-    if (hostId === null || enrichedByPath.size === 0) return EMPTY_SEEDED;
-    const seeded = new Set<string>();
-    for (const path of enrichedByPath.keys()) {
-      const state =
-        queryClient.getQueryState<WorktreeListAllForHostResponseV14>(
-          perPathEnrichmentQueryKey(hostId, path),
-        );
-      if (state !== undefined && state.dataUpdatedAt < APP_SESSION_START_MS) {
-        seeded.add(path);
+    const readSeeded = (): ReadonlySet<string> => {
+      if (hostId === null || enrichedByPath.size === 0) return EMPTY_SEEDED;
+      const seeded = new Set<string>();
+      for (const path of enrichedByPath.keys()) {
+        const state =
+          queryClient.getQueryState<WorktreeListAllForHostResponseV14>(
+            perPathEnrichmentQueryKey(hostId, path),
+          );
+        if (state !== undefined && state.dataUpdatedAt < APP_SESSION_START_MS) {
+          seeded.add(path);
+        }
       }
-    }
-    return seeded.size === 0 ? EMPTY_SEEDED : seeded;
+      return seeded.size === 0 ? EMPTY_SEEDED : seeded;
+    };
+    return readOnSignal(readSeeded, seedTick);
   }, [enrichedByPath, hostId, queryClient, seedTick]);
   useEffect(() => {
     seedsOutstandingRef.current = seededPaths.size > 0;

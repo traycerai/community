@@ -21,6 +21,10 @@ import {
   type ThemeToken,
 } from "@/lib/themes/theme-definition";
 import { cn } from "@/lib/utils";
+import {
+  createCascadeSnapshot,
+  useCascadeSnapshot,
+} from "@/providers/use-theme-revision";
 import { useThemeLibraryStore } from "@/stores/settings/theme-library-store";
 import { ThemeInspector } from "./theme-inspector";
 
@@ -43,23 +47,39 @@ const editorColors: CSSProperties & Record<string, string | number> = {
   "--destructive": "#fda4af",
 };
 
-function colorFor(theme: ThemeDefinition, token: ThemeToken): string {
+type CascadeColors = Readonly<Record<string, string>>;
+
+/** Every theme token as the document resolves it, for a colour a draft leaves unset. */
+const cascadeColorsSnapshot = createCascadeSnapshot((): CascadeColors => {
+  const style = getComputedStyle(document.documentElement);
+  return Object.fromEntries(
+    themeTokens.map((token) => [
+      token.key,
+      style.getPropertyValue(`--${token.key}`),
+    ]),
+  );
+});
+
+function colorFor(
+  theme: ThemeDefinition,
+  token: ThemeToken,
+  cascade: CascadeColors,
+): string {
   return (
     normalizeThemeColor(theme.colors[token] ?? "") ??
-    normalizeThemeColor(
-      getComputedStyle(document.documentElement).getPropertyValue(`--${token}`),
-    ) ??
+    normalizeThemeColor(cascade[token] ?? "") ??
     "#808080ff"
   );
 }
 
 function ThemeContrastStatus({ draft }: { draft: ThemeDefinition }) {
+  const cascade = useCascadeSnapshot(cascadeColorsSnapshot);
   const contrast = wcagContrast(
-    colorFor(draft, "background"),
-    colorFor(draft, "foreground"),
+    colorFor(draft, "background", cascade),
+    colorFor(draft, "foreground", cascade),
   );
   const hasTransparency = (["background", "foreground"] as const).some(
-    (token) => colorFor(draft, token).slice(7) !== "ff",
+    (token) => colorFor(draft, token, cascade).slice(7) !== "ff",
   );
   let message = `Main text contrast ${contrast.toFixed(2)}:1. Increase text or background contrast for easier reading.`;
   if (contrast >= 4.5)
@@ -198,6 +218,7 @@ export function ThemeEditorPanel({ draft }: { draft: ThemeDefinition }) {
   const setDraft = useThemeLibraryStore((state) => state.setDraft);
   const cancelDraft = useThemeLibraryStore((state) => state.cancelDraft);
   const error = useThemeLibraryStore((state) => state.error);
+  const cascade = useCascadeSnapshot(cascadeColorsSnapshot);
   const [advanced, setAdvanced] = useState(false);
   const [query, setQuery] = useState("");
   const [minimized, setMinimized] = useState(false);
@@ -273,8 +294,10 @@ export function ThemeEditorPanel({ draft }: { draft: ThemeDefinition }) {
             ...deriveThemeColors(
               token === "background"
                 ? normalized
-                : colorFor(draft, "background"),
-              token === "primary" ? normalized : colorFor(draft, "primary"),
+                : colorFor(draft, "background", cascadeColorsSnapshot()),
+              token === "primary"
+                ? normalized
+                : colorFor(draft, "primary", cascadeColorsSnapshot()),
               draft.appearance,
             ),
           }
@@ -328,7 +351,7 @@ export function ThemeEditorPanel({ draft }: { draft: ThemeDefinition }) {
           collection,
           colors: deriveThemeColors(
             appearance === "dark" ? "#18181b" : "#fafafa",
-            colorFor(draft, "primary"),
+            colorFor(draft, "primary", cascadeColorsSnapshot()),
             appearance,
           ),
           syntax: null,
@@ -584,7 +607,7 @@ export function ThemeEditorPanel({ draft }: { draft: ThemeDefinition }) {
                           key={`${draft.appearance}:${token.key}`}
                           token={token.key}
                           label={token.label}
-                          color={colorFor(draft, token.key)}
+                          color={colorFor(draft, token.key, cascade)}
                           selected={selectedToken === token.key}
                           onChange={updateColor}
                           onSelect={(key) =>

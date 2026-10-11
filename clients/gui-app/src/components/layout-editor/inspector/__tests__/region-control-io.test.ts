@@ -39,8 +39,9 @@ describe("writing and reverting", () => {
     writeControlValue("model", "style", "bars");
 
     expect(getLayoutSnapshot().overrides).toEqual({ model: { style: "bars" } });
-    expect(isControlValueChanged("model", "style")).toBe(true);
-    expect(isControlValueChanged("model", "shown")).toBe(false);
+    const snapshot = getLayoutSnapshot();
+    expect(isControlValueChanged(snapshot, "model", "style")).toBe(true);
+    expect(isControlValueChanged(snapshot, "model", "shown")).toBe(false);
   });
 
   it("drops the region once its last changed key goes back to the base", () => {
@@ -56,7 +57,11 @@ describe("writing and reverting", () => {
     writeControlValue("usageLimits", "amount", "remaining");
 
     expect(
-      changedControlKeys("usageLimits", ["reset", "amount", "shown"]),
+      changedControlKeys(getLayoutSnapshot(), "usageLimits", [
+        "reset",
+        "amount",
+        "shown",
+      ]),
     ).toEqual(["reset", "amount"]);
 
     revertControlValues("usageLimits", ["reset"]);

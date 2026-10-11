@@ -46,6 +46,7 @@ import type {
 import type { TaskLight } from "@traycer/protocol/host/epic/unary-schemas";
 import type { EpicNodeRecord } from "@/lib/artifacts/node-display";
 import { displayTitle } from "@/lib/display-title";
+import { readOnSignal } from "@/lib/read-on-signal";
 import {
   useRegisteredEpicAgentSessionCounts,
   useRegisteredEpicLiveAgents,
@@ -1287,12 +1288,13 @@ function ResourceMonitorPanel(props: {
   );
 
   const tombstoneEvidence = usePlainTerminalTombstoneEvidence();
-  const canvasIndex = useMemo(() => {
+  const canvasIndex = useMemo(
     // Not read by the builder directly - it is the Query-side input the
     // builder's tombstone gate reads, so the index has to re-derive with it.
-    void tombstoneEvidence;
-    return buildCanvasResourceIndex(canvas);
-  }, [canvas, tombstoneEvidence]);
+    () =>
+      readOnSignal(() => buildCanvasResourceIndex(canvas), tombstoneEvidence),
+    [canvas, tombstoneEvidence],
+  );
   // The live epic projection is what says an agent row EXISTS (and what it is
   // called): the canvas's own record list only ever holds what this window
   // created, so an agent created by another window, device or agent would
