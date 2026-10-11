@@ -30,7 +30,11 @@ interface Harness {
   readonly failNextFactoryRun: () => void;
 }
 
-function createHarness(chatId: string): Harness {
+/**
+ * A handle exactly as the registry holds one for a chat no tile has mounted a
+ * surface for: nothing has ever reported its visibility.
+ */
+function createUnreportedHarness(chatId: string): Harness {
   let runs = 0;
   let failNext = false;
   let lastCallbacks: ChatStreamCallbacks | null = null;
@@ -72,6 +76,13 @@ function createHarness(chatId: string): Harness {
       failNext = true;
     },
   };
+}
+
+/** A chat shown on a visible tile: the surface has reported itself visible. */
+function createHarness(chatId: string): Harness {
+  const harness = createUnreportedHarness(chatId);
+  harness.handle.setSurfaceVisibility("test-surface", true);
+  return harness;
 }
 
 function driveTerminallyClosed(harness: Harness): void {
@@ -396,6 +407,52 @@ describe("subscribeChatSessionWakeRetry", () => {
 
       vi.advanceTimersByTime(200);
       expect(hidden.factoryRuns()).toBe(2);
+
+      dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("staggers the wake re-dials of closed sessions no surface has ever reported on, one per background tick", () => {
+    const runnerHost = makeRunnerHost();
+    const { fireResume } = wireResumeSpy(runnerHost);
+    vi.spyOn(Math, "random").mockReturnValue(0);
+
+    // Warm sessions that no tile has mounted a surface for (an Epic's
+    // background chats): real handles, never told anything about visibility.
+    const unreported = ["chat-bg-1", "chat-bg-2", "chat-bg-3"].map((chatId) => {
+      const harness = createUnreportedHarness(chatId);
+      __getChatSessionRegistryForTests().acquire(
+        {
+          epicId: EPIC_ID,
+          chatId,
+          hostId: HOST_ID,
+          scopeKey: "wake-test-scope",
+        },
+        () => harness.handle,
+      );
+      driveTerminallyClosed(harness);
+      return harness;
+    });
+    const redialed = (): number =>
+      unreported.filter((harness) => harness.factoryRuns() === 2).length;
+
+    vi.useFakeTimers();
+    try {
+      const dispose = subscribeChatSessionWakeRetry(runnerHost);
+
+      fireResume();
+      // Nothing dials inside the wake pulse itself: a screen-less session is
+      // background work, and N of them must not rebuild in one task.
+      expect(redialed()).toBe(0);
+
+      vi.advanceTimersByTime(100);
+      expect(redialed()).toBe(1);
+      vi.advanceTimersByTime(100);
+      expect(redialed()).toBe(2);
+      vi.advanceTimersByTime(100);
+      expect(redialed()).toBe(3);
 
       dispose();
     } finally {

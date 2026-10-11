@@ -584,6 +584,7 @@ export function createPublishedChatSessionHandle(
     },
     deliveredRestoreCompletionKeys: new Set(),
     isSurfaceVisible: () => true,
+    hasVisibleSurface: () => false,
     setSurfaceVisibility: () => undefined,
     clearSurfaceVisibility: () => undefined,
     dispose: rows.dispose,

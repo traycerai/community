@@ -12502,17 +12502,22 @@ describe("surface visibility rollup", () => {
 
     // Default-visible before any surface has ever reported.
     expect(handle.isSurfaceVisible()).toBe(true);
+    // `hasVisibleSurface` is the strict question background work asks (the
+    // wake retry): the flush default of "visible" is not a surface.
+    expect(handle.hasVisibleSurface()).toBe(false);
     // Ignore the initial registration report.
     reported.length = 0;
 
     handle.setSurfaceVisibility("surface-a", false);
     expect(reported).toEqual([false]);
     expect(handle.isSurfaceVisible()).toBe(false);
+    expect(handle.hasVisibleSurface()).toBe(false);
 
     // A second visible surface flips the chat visible (visible-if-any).
     handle.setSurfaceVisibility("surface-b", true);
     expect(reported).toEqual([false, true]);
     expect(handle.isSurfaceVisible()).toBe(true);
+    expect(handle.hasVisibleSurface()).toBe(true);
 
     // Unchanged report is a no-op.
     handle.setSurfaceVisibility("surface-b", true);
@@ -12520,6 +12525,7 @@ describe("surface visibility rollup", () => {
 
     handle.clearSurfaceVisibility("surface-b");
     expect(reported).toEqual([false, true, false]);
+    expect(handle.hasVisibleSurface()).toBe(false);
 
     // No reporting surfaces left: once a report has ever landed, the latch
     // never falls back to the default - this reports (and reads) hidden,
@@ -12527,6 +12533,7 @@ describe("surface visibility rollup", () => {
     handle.clearSurfaceVisibility("surface-a");
     expect(reported).toEqual([false, true, false, false]);
     expect(handle.isSurfaceVisible()).toBe(false);
+    expect(handle.hasVisibleSurface()).toBe(false);
 
     // Clearing an unknown surface is a no-op.
     handle.clearSurfaceVisibility("surface-a");
@@ -12536,6 +12543,7 @@ describe("surface visibility rollup", () => {
     handle.setSurfaceVisibility("surface-c", true);
     expect(reported).toEqual([false, true, false, false, true]);
     expect(handle.isSurfaceVisible()).toBe(true);
+    expect(handle.hasVisibleSurface()).toBe(true);
   });
 
   it("also gates the flush lease on document visibility, while isSurfaceVisible() stays surface-only", () => {

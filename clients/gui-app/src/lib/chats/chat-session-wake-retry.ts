@@ -135,7 +135,7 @@ export function subscribeChatSessionWakeRetry(
   const drainRetries = (): void => {
     retryTimer = null;
     for (const [handle, reason] of queuedRetries) {
-      if (!isDocumentVisible() || !handle.isSurfaceVisible()) continue;
+      if (!isDocumentVisible() || !handle.hasVisibleSurface()) continue;
       queuedRetries.delete(handle);
       recordAttempts(retryClosedChatSessions([handle], reason), Date.now());
     }
@@ -158,7 +158,7 @@ export function subscribeChatSessionWakeRetry(
   ): void => {
     for (const handle of handles) {
       pendingLateCloseReason.delete(handle);
-      if (isDocumentVisible() && handle.isSurfaceVisible()) {
+      if (isDocumentVisible() && handle.hasVisibleSurface()) {
         queuedRetries.delete(handle);
         recordAttempts(retryClosedChatSessions([handle], reason), Date.now());
       } else {

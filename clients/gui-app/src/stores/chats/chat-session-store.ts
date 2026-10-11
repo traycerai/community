@@ -2335,6 +2335,8 @@ export interface ChatSessionStoreHandle {
    * its last surface detaches it stays in the hidden tier until resurfaced.
    */
   readonly isSurfaceVisible: () => boolean;
+  /** Wake priority requires a visible surface report, unlike the flush default. */
+  readonly hasVisibleSurface: () => boolean;
   readonly setSurfaceVisibility: (surfaceId: string, visible: boolean) => void;
   readonly clearSurfaceVisibility: (surfaceId: string) => void;
   readonly dispose: () => void;
@@ -3610,9 +3612,10 @@ export function createChatSessionStoreWithNotificationDependencies(
   const surfaceVisibility = new Map<string, boolean>();
   let hasSurfaceVisibilityReport = false;
   let resumeViewportHydration = (): void => {};
-  const isSurfaceVisible = (): boolean =>
-    !hasSurfaceVisibilityReport ||
+  const hasVisibleSurface = (): boolean =>
     Array.from(surfaceVisibility.values()).some((value) => value);
+  const isSurfaceVisible = (): boolean =>
+    !hasSurfaceVisibilityReport || hasVisibleSurface();
 
   const updateFlushVisibility = (): void => {
     if (flushLease === null) return;
@@ -12156,6 +12159,7 @@ export function createChatSessionStoreWithNotificationDependencies(
       settlePrivateStringSetCharge,
     ),
     isSurfaceVisible,
+    hasVisibleSurface,
     setSurfaceVisibility: (surfaceId, visible) => {
       if (surfaceVisibility.get(surfaceId) === visible) return;
       const wasVisible = isSurfaceVisible();
