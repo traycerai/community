@@ -8,6 +8,7 @@ import {
   type Mock,
 } from "vitest";
 import { legacyComposerDraftId } from "@/lib/drafts/draft-ids";
+import { appLogger } from "@/lib/logger";
 import { setDraftLocalEditListener } from "@/lib/drafts/draft-local-edits";
 import { useAuthStore } from "@/stores/auth/auth-store";
 import {
@@ -141,7 +142,7 @@ describe("composer draft storage: one row per draft", () => {
     );
   });
 
-  it("a removed draft leaves a tombstone: a stale window cannot resurrect it, and hydration skips it", async () => {
+  it("a removed draft's row is deleted from disk when no legacy blob exists: a stale window still cannot resurrect it, and hydration skips it", async () => {
     const a = await openWindow(NAME);
     void a.adapter.setItem(NAME, draftsState({ "chat-1": draftWith("sent") }));
     persistNowOrThrow(NAME);
@@ -150,18 +151,52 @@ describe("composer draft storage: one row per draft", () => {
     void a.adapter.setItem(NAME, draftsState({}));
     persistNowOrThrow(NAME);
 
-    expect(readStoredRow("draft", "chat-1", NAME)?.value).toBeNull();
+    // Gone, not tombstoned: nothing is left to accumulate per sent draft.
+    expect(readStoredRow("draft", "chat-1", NAME)).toBeNull();
+    expect(rowKeys(NAME)).toEqual([]);
+    // The stale window still holds the revision it read, so its write meets a
+    // row that is no longer there and is refused rather than landing.
     void stale.adapter.setItem(
       NAME,
       draftsState({ "chat-1": draftWith("resurrected") }),
     );
     expect(() => persistNowOrThrow(NAME)).toThrow();
-    expect(readStoredRow("draft", "chat-1", NAME)?.value).toBeNull();
+    expect(readStoredRow("draft", "chat-1", NAME)).toBeNull();
     const fresh = await openWindow(NAME);
     expect(fresh.hydrated?.state.drafts).toEqual({});
   });
 
-  it("pending submitted-draft deletes are their own rows, keyed by draft id, and tombstone on completion", async () => {
+  it("a removal while a legacy blob still exists leaves a tombstone, so finishing the interrupted migration cannot resurrect it", async () => {
+    seedLegacyBlob(
+      {
+        drafts: { "chat-1": draftWith("one"), "chat-2": draftWith("two") },
+      },
+      NAME,
+    );
+    // chat-2's row cannot be written: the migration stops with the blob kept.
+    const quota = failWritesWhere(
+      (key) => key === rowKey("draft", "chat-2", NAME),
+    );
+    const a = await openWindow(NAME);
+    quota.mockRestore();
+    expect(window.localStorage.getItem(NAME)).not.toBeNull();
+
+    // The user sends chat-1 from this window.
+    a.adapter.rememberSnapshot({
+      drafts: { "chat-1": draftWith("one"), "chat-2": draftWith("two") },
+      pendingSubmittedDraftDeletes: {},
+    });
+    void a.adapter.setItem(NAME, draftsState({ "chat-2": draftWith("two") }));
+    persistNowOrThrow(NAME);
+
+    expect(readStoredRow("draft", "chat-1", NAME)?.value).toBeNull();
+    // The next launch finishes the copy: the sent draft stays sent.
+    const next = await openWindow(NAME);
+    expect(Object.keys(next.hydrated?.state.drafts ?? {})).toEqual(["chat-2"]);
+    expect(window.localStorage.getItem(NAME)).toBeNull();
+  });
+
+  it("pending submitted-draft deletes are their own rows, keyed by draft id, and are deleted from disk on completion", async () => {
     const a = await openWindow(NAME);
     void a.adapter.setItem(
       NAME,
@@ -180,7 +215,7 @@ describe("composer draft storage: one row per draft", () => {
 
     void a.adapter.setItem(NAME, draftsState({}));
     persistNowOrThrow(NAME);
-    expect(readStoredRow("delete", "draft-1", NAME)?.value).toBeNull();
+    expect(readStoredRow("delete", "draft-1", NAME)).toBeNull();
     expect(
       (await openWindow(NAME)).hydrated?.state.pendingSubmittedDraftDeletes,
     ).toEqual({});
@@ -211,6 +246,34 @@ describe("composer draft storage: one row per draft", () => {
     );
     expect(hasDeferredJsonWrite(NAME)).toBe(false);
   });
+
+  it.each([
+    ["is not valid JSON", "{not json"],
+    ["is JSON but not a row", JSON.stringify({ value: 1 })],
+  ])(
+    "a row that %s is skipped with a warning and left byte for byte, and the valid drafts still hydrate",
+    async (_case, raw) => {
+      seedRow(
+        "draft",
+        "chat-ok",
+        { value: draftWith("fine"), revision: "rev-ok" },
+        NAME,
+      );
+      const badKey = rowKey("draft", "chat-bad", NAME);
+      window.localStorage.setItem(badKey, raw);
+      const warn = vi
+        .spyOn(appLogger, "warn")
+        .mockImplementation(() => undefined);
+
+      const { hydrated } = await openWindow(NAME);
+
+      expect(Object.keys(hydrated?.state.drafts ?? {})).toEqual(["chat-ok"]);
+      expect(window.localStorage.getItem(badKey)).toBe(raw);
+      expect(warn).toHaveBeenCalled();
+      // The row's key carries the account; the warning must not.
+      expect(JSON.stringify(warn.mock.calls)).not.toContain("adapter-account");
+    },
+  );
 
   it("removeItem clears only its own namespace: every row and the legacy blob, plus the queued write", async () => {
     const other = composerDraftStorageKey("other-account");

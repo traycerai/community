@@ -170,9 +170,20 @@ export function createComposerDraftStorage() {
             "This draft changed in another window; local edits are still held here",
           );
         }
-        const revision = crypto.randomUUID();
-        window.localStorage.setItem(key, encode(row, revision));
-        baseline.set(key, revision);
+        if (
+          row.value === undefined &&
+          currentName !== null &&
+          window.localStorage.getItem(currentName) === null
+        ) {
+          window.localStorage.removeItem(key);
+          baseline.delete(key);
+        } else {
+          // An unfinished migration still needs the tombstone to suppress its
+          // legacy copy. Otherwise the removed row has no durable work left.
+          const revision = crypto.randomUUID();
+          window.localStorage.setItem(key, encode(row, revision));
+          baseline.set(key, revision);
+        }
         pending.delete(key);
       } catch (error) {
         // A conflicted row must not prevent unrelated drafts reaching disk on
@@ -257,7 +268,16 @@ export function createComposerDraftStorage() {
           }
         }
         for (const key of rowKeys(namespace)) {
-          const row = readRow(key);
+          let row: StoredRow | null;
+          try {
+            row = readRow(key);
+          } catch {
+            appLogger.warn(
+              "[persist] unreadable composer draft row retained",
+              {},
+            );
+            continue;
+          }
           if (row === null) continue;
           if (namespace === name) baseline.set(key, row.revision);
           const parts = key
