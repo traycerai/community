@@ -8,6 +8,10 @@ import { TabHostProvider } from "@/components/epic-canvas/tab-host-provider";
 import { PaneVisibilityContext } from "@/components/epic-tabs/pane-visibility-context";
 import { MEASURE_GRID_TIMEOUT_MS } from "@/hooks/agent/use-terminal-tile-bootstrap";
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
+import {
+  SurfaceDemandContext,
+  type ActiveSurfaceDemand,
+} from "@/stores/tabs/surface-demand";
 import { collectPanes } from "@/stores/epics/canvas/tile-tree";
 import type { EpicTerminalRef } from "@/stores/epics/canvas/types";
 
@@ -133,11 +137,16 @@ function openHostTerminalFixture(): {
   return { viewTabId, paneId: collectPanes(canvas.root)[0].id, node };
 }
 
-/** Mounts the tile in an UNFOCUSED pane (`isActive={false}`) and lets the grid gate lapse. */
+/**
+ * Mounts the tile in an UNFOCUSED pane (`isActive={false}`) and lets the grid
+ * gate lapse. `rerenderWithDemand` swaps the surface demand the same tile sees,
+ * the way a held tab cycle's keyup does.
+ */
 function renderUnfocusedDormantTile(placement: {
   readonly paneVisible: boolean;
   readonly tabSelected: boolean;
-}): void {
+  readonly demand: ActiveSurfaceDemand;
+}): { readonly rerenderWithDemand: (demand: ActiveSurfaceDemand) => void } {
   const fixture = openHostTerminalFixture();
   const tile: ReactNode = (
     <TerminalTile
@@ -147,20 +156,27 @@ function renderUnfocusedDormantTile(placement: {
       isActive={false}
     />
   );
-  render(
-    <QueryClientProvider client={new QueryClient()}>
+  const queryClient = new QueryClient();
+  const tree = (demand: ActiveSurfaceDemand): ReactNode => (
+    <QueryClientProvider client={queryClient}>
       <TabHostProvider hostId={HOST_ID}>
         <PaneVisibilityContext value={placement.paneVisible}>
           <TabBodySelectedContext value={placement.tabSelected}>
-            {tile}
+            <SurfaceDemandContext value={demand}>{tile}</SurfaceDemandContext>
           </TabBodySelectedContext>
         </PaneVisibilityContext>
       </TabHostProvider>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const view = render(tree(placement.demand));
   act(() => {
     vi.advanceTimersByTime(MEASURE_GRID_TIMEOUT_MS);
   });
+  return {
+    rerenderWithDemand: (demand) => {
+      view.rerender(tree(demand));
+    },
+  };
 }
 
 describe("<TerminalTile /> waking a dormant terminal", () => {
@@ -177,7 +193,11 @@ describe("<TerminalTile /> waking a dormant terminal", () => {
   });
 
   it("asks the host to start a dormant terminal that is on screen in an unfocused pane", () => {
-    renderUnfocusedDormantTile({ paneVisible: true, tabSelected: true });
+    renderUnfocusedDormantTile({
+      paneVisible: true,
+      tabSelected: true,
+      demand: "settled",
+    });
 
     expect(screen.getByText("Starting terminal session…")).toBeDefined();
     expect(testState.ensureRunning).toHaveBeenCalledTimes(1);
@@ -196,9 +216,42 @@ describe("<TerminalTile /> waking a dormant terminal", () => {
   ])(
     "leaves a dormant terminal in $name asleep",
     ({ paneVisible, tabSelected }) => {
-      renderUnfocusedDormantTile({ paneVisible, tabSelected });
+      renderUnfocusedDormantTile({
+        paneVisible,
+        tabSelected,
+        demand: "settled",
+      });
 
       expect(testState.ensureRunning).not.toHaveBeenCalled();
     },
   );
+  it("does not wake a dormant terminal a held tab cycle is only previewing, and wakes it once, when the hold settles", () => {
+    const view = renderUnfocusedDormantTile({
+      paneVisible: true,
+      tabSelected: true,
+      demand: "preview",
+    });
+
+    // On screen and selected, yet only passed through: a wake per pass would
+    // start every dormant terminal the cursor crosses after a host restart.
+    expect(screen.getByText("Starting terminal session…")).toBeDefined();
+    expect(testState.ensureRunning).not.toHaveBeenCalled();
+
+    act(() => {
+      view.rerenderWithDemand("settled");
+    });
+    expect(testState.ensureRunning).toHaveBeenCalledTimes(1);
+    expect(testState.ensureRunning).toHaveBeenCalledWith(
+      expect.objectContaining({ hostId: HOST_ID, terminalId: TERMINAL_ID }),
+    );
+
+    // A later preview of the same tile does not ask again.
+    act(() => {
+      view.rerenderWithDemand("preview");
+    });
+    act(() => {
+      view.rerenderWithDemand("settled");
+    });
+    expect(testState.ensureRunning).toHaveBeenCalledTimes(1);
+  });
 });

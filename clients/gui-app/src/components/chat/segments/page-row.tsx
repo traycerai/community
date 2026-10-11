@@ -10,7 +10,6 @@ import {
 } from "@traycer/protocol/persistence/epic/files";
 import { useChatAttachmentScope } from "@/components/chat/chat-attachment-scope-context";
 import { useScrollToChatPage } from "@/components/chat/chat-scroll-to-block";
-import { useTileBodyVisible } from "@/components/epic-canvas/hooks/use-tile-body-visible";
 import { HtmlViewer } from "@/components/files/viewers/html-viewer";
 import { LivePulse } from "@/components/ui/live-pulse";
 import { Shimmer } from "@/components/ui/shimmer";
@@ -26,6 +25,7 @@ import type { EpicFileAddress } from "@/hooks/files/use-epic-file-text-query";
 import { Analytics, AnalyticsEvent } from "@/lib/analytics";
 import { tileIntent } from "@/lib/canvas/tile-open/intent";
 import { makeEpicFileTileRef } from "@/stores/epics/canvas/tile-schema/epic-file-tile";
+import { useSurfaceDemand } from "@/stores/tabs/surface-demand";
 import { LiveElapsed } from "./segment-elapsed";
 import { TouchActionsSheet } from "./touch-actions-sheet";
 
@@ -58,13 +58,14 @@ export interface PageRowProps {
  */
 export function PageRow(props: PageRowProps): ReactNode {
   const scope = useChatAttachmentScope();
-  const visible = useTileBodyVisible();
+  // A held tab cycle's preview must not load the page; settling does.
+  const settled = useSurfaceDemand() === "settled";
   const [loaded, setLoaded] = useState(false);
-  if (!loaded && visible && props.page !== null && scope !== null) {
+  if (!loaded && settled && props.page !== null && scope !== null) {
     setLoaded(true);
   }
   if (props.page !== null && scope !== null) {
-    if (!visible && !loaded) return props.fallback;
+    if (!settled && !loaded) return props.fallback;
     return (
       <ShownPage
         page={props.page}

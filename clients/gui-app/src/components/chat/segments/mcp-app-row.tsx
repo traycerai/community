@@ -24,7 +24,6 @@ import {
 import type { JsonObject } from "@traycer/protocol/persistence/chat-sync/json";
 import type { ToolCallMcpAppStamp } from "@traycer/protocol/persistence/epic/content-blocks";
 import { useChatAttachmentScope } from "@/components/chat/chat-attachment-scope-context";
-import { useTileBodyVisible } from "@/components/epic-canvas/hooks/use-tile-body-visible";
 import { useBlockingLayerClaim } from "@/components/layout/shell/blocking-layer-claim";
 import { SandboxFrame } from "@/components/sandbox/sandbox-frame";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
@@ -91,6 +90,7 @@ import type { SandboxPermission } from "@/lib/sandbox/sandbox-url";
 import { deriveToolInputSummary } from "@/lib/segment-summary";
 import { cn } from "@/lib/utils";
 import { insertAppMessageDraft } from "@/stores/composer/app-message-draft-store";
+import { useSurfaceDemand } from "@/stores/tabs/surface-demand";
 import { TouchActionsSheet } from "./touch-actions-sheet";
 
 export interface McpAppRowProps {
@@ -140,10 +140,11 @@ function grantedPermissions(
  */
 export function McpAppRow(props: McpAppRowProps): ReactNode {
   const scope = useChatAttachmentScope();
-  const visible = useTileBodyVisible();
+  // A held tab cycle's preview must not start the app; settling does.
+  const settled = useSurfaceDemand() === "settled";
   const [loaded, setLoaded] = useState(false);
-  if (!loaded && visible && scope !== null) setLoaded(true);
-  if (scope === null || (!visible && !loaded)) return props.fallback;
+  if (!loaded && settled && scope !== null) setLoaded(true);
+  if (scope === null || (!settled && !loaded)) return props.fallback;
   return (
     <LiveMcpApp
       id={props.id}

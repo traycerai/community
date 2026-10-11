@@ -43,6 +43,10 @@ import { PaneVisibilityContext } from "@/components/epic-tabs/pane-visibility-co
 import { blockingLayerClaimed } from "@/components/layout/shell/blocking-layer-claim";
 import { setPhoneLayoutOnly } from "@/lib/mobile-app";
 import {
+  SurfaceDemandContext,
+  type ActiveSurfaceDemand,
+} from "@/stores/tabs/surface-demand";
+import {
   EpicFileRpcContext,
   type EpicFileRpc,
 } from "@/lib/files/epic-file-rpc";
@@ -458,6 +462,51 @@ describe("<McpAppRow /> in a tile body that is not on screen", () => {
       expect(mocks.frame.mounts).toBe(1);
     },
   );
+});
+
+/** A shown, selected tile body whose surface demand a test steers. */
+function DemandBody(props: {
+  readonly demand: ActiveSurfaceDemand;
+  readonly children: ReactNode;
+}): ReactNode {
+  return (
+    <TileBody visibility={TILE_SHOWN}>
+      <SurfaceDemandContext.Provider value={props.demand}>
+        {props.children}
+      </SurfaceDemandContext.Provider>
+    </TileBody>
+  );
+}
+
+describe("<McpAppRow /> in a tile body a held tab cycle is only previewing", () => {
+  it("shows the fallback and starts nothing while previewed, runs once settled, and keeps the live app through a later preview", async () => {
+    const fileRpc = makeFileRpc(HTML_RESPONSE);
+    const tree = rowTree(fileRpc, makeMcpRpc(), SCOPE, STAMP);
+    const settle = () =>
+      act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+    const view = render(<DemandBody demand="preview">{tree}</DemandBody>);
+    await settle();
+    // Shown and selected, yet only passed through.
+    expect(screen.getByTestId("ordinary-tool-row")).toBeTruthy();
+    expect(fileRpc.readFile).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("sandbox-frame")).toBeNull();
+    expect(mocks.frame.mounts).toBe(0);
+
+    view.rerender(<DemandBody demand="settled">{tree}</DemandBody>);
+    const frame = await screen.findByTestId("sandbox-frame");
+    expect(fileRpc.readFile).toHaveBeenCalledTimes(1);
+    expect(mocks.frame.mounts).toBe(1);
+
+    // A running app is not torn down for a later preview.
+    view.rerender(<DemandBody demand="preview">{tree}</DemandBody>);
+    await settle();
+    expect(screen.getByTestId("sandbox-frame")).toBe(frame);
+    expect(fileRpc.readFile).toHaveBeenCalledTimes(1);
+    expect(mocks.frame.mounts).toBe(1);
+  });
 });
 
 // jsdom has no popover; the row's fullscreen surface is one, so the calls are

@@ -45,6 +45,10 @@ import type { SandboxStatus } from "@/lib/sandbox/bridge-host";
 import type { SandboxNetworkPolicy } from "@/lib/sandbox/mcp-csp";
 import { ResolvedThemeContext } from "@/providers/use-resolved-theme";
 import { TILE_KIND_EPIC_FILE } from "@/stores/epics/canvas/tile-kinds";
+import {
+  SurfaceDemandContext,
+  type ActiveSurfaceDemand,
+} from "@/stores/tabs/surface-demand";
 
 const mocks = vi.hoisted(() => ({
   openTile: vi.fn<(intent: TileOpenIntent) => null>(),
@@ -461,6 +465,48 @@ describe("<PageRow /> in a tile body that is not on screen", () => {
       expect(rpc.readFile).toHaveBeenCalledTimes(1);
     },
   );
+});
+
+/** A shown, selected tile body whose surface demand a test steers. */
+function DemandBody(props: {
+  readonly demand: ActiveSurfaceDemand;
+  readonly children: ReactNode;
+}): ReactNode {
+  return (
+    <TileBody visibility={TILE_SHOWN}>
+      <SurfaceDemandContext.Provider value={props.demand}>
+        {props.children}
+      </SurfaceDemandContext.Provider>
+    </TileBody>
+  );
+}
+
+describe("<PageRow /> in a tile body a held tab cycle is only previewing", () => {
+  it("shows the fallback and reads nothing while previewed, loads once settled, and keeps the live page through a later preview", async () => {
+    const rpc = makeRpc(textResponse("open"));
+    const tree = rowTree(rpc, SHOWN, null);
+    const settle = () =>
+      act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+    const view = render(<DemandBody demand="preview">{tree}</DemandBody>);
+    await settle();
+    // Shown and selected, yet only passed through.
+    expect(screen.getByTestId("ordinary-tool-row")).toBeTruthy();
+    expect(rpc.readFile).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("sandbox-frame")).toBeNull();
+
+    view.rerender(<DemandBody demand="settled">{tree}</DemandBody>);
+    const frame = await screen.findByTestId("sandbox-frame");
+    expect(rpc.readFile).toHaveBeenCalledTimes(1);
+
+    // A page that is running is not torn down for a later preview.
+    view.rerender(<DemandBody demand="preview">{tree}</DemandBody>);
+    await settle();
+    expect(screen.getByTestId("sandbox-frame")).toBe(frame);
+    expect(rpc.readFile).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("<PageRow /> when the page cannot be read", () => {

@@ -35,6 +35,10 @@ import {
   type EpicFileRpc,
 } from "@/lib/files/epic-file-rpc";
 import { makeEpicFileTileRef } from "@/stores/epics/canvas/tile-schema/epic-file-tile";
+import {
+  SurfaceDemandContext,
+  type ActiveSurfaceDemand,
+} from "@/stores/tabs/surface-demand";
 
 const HOST_ID = "host-1";
 const OTHER_HOST_ID = "host-2";
@@ -231,6 +235,30 @@ function renderTileInBody(
   };
 }
 
+/** A shown, selected tile body whose surface demand a test steers. */
+function renderTileUnderDemand(
+  path: string,
+  rpc: EpicFileRpc,
+  demand: ActiveSurfaceDemand,
+) {
+  const client = new QueryClient();
+  const body = (current: ActiveSurfaceDemand): ReactNode => (
+    <TileBody visibility={TILE_SHOWN}>
+      <SurfaceDemandContext.Provider value={current}>
+        <QueryClientProvider client={client}>
+          <EpicFileRpcContext.Provider value={rpc}>
+            {tile(path)}
+          </EpicFileRpcContext.Provider>
+        </QueryClientProvider>
+      </SurfaceDemandContext.Provider>
+    </TileBody>
+  );
+  const view = render(body(demand));
+  return {
+    setDemand: (next: ActiveSurfaceDemand): void => view.rerender(body(next)),
+  };
+}
+
 function rangeReads(rpc: EpicFileRpc): number {
   return vi
     .mocked(rpc.readFile)
@@ -305,6 +333,38 @@ describe("<EpicFileTile /> restored in a tile body that is not on screen", () =>
       expect(rpc.fetchFile).not.toHaveBeenCalled();
     },
   );
+});
+
+describe("<EpicFileTile /> restored in a tile body a held tab cycle is only previewing", () => {
+  it("reads nothing and runs no page while previewed, loads once settled, and keeps the live page through a later preview", async () => {
+    const rpc = makeRpc(() => PAGE);
+    const settle = () =>
+      act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+    const body = renderTileUnderDemand(
+      "files/pages/report.html",
+      rpc,
+      "preview",
+    );
+    await settle();
+    // Shown and selected, yet only passed through.
+    expect(rpc.readFile).not.toHaveBeenCalled();
+    expect(rpc.fetchFile).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("sandbox-frame")).toBeNull();
+
+    body.setDemand("settled");
+    const frame = await screen.findByTestId("sandbox-frame");
+    expect(rpc.readFile).toHaveBeenCalledTimes(1);
+
+    // A running page is not torn down and reloaded for a later preview.
+    body.setDemand("preview");
+    await settle();
+    expect(screen.getByTestId("sandbox-frame")).toBe(frame);
+    expect(rpc.readFile).toHaveBeenCalledTimes(1);
+    expect(rpc.fetchFile).not.toHaveBeenCalled();
+  });
 });
 
 describe("<EpicFileTile /> Download", () => {

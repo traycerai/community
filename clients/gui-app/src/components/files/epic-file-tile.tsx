@@ -9,7 +9,6 @@ import { ImageViewer } from "@/components/files/viewers/image-viewer";
 import { PdfViewer } from "@/components/files/viewers/pdf-viewer";
 import { VideoViewer } from "@/components/files/viewers/video-viewer";
 import { useTabHostId } from "@/components/epic-canvas/hooks/use-tab-host-id";
-import { useTileBodyVisible } from "@/components/epic-canvas/hooks/use-tile-body-visible";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -25,6 +24,7 @@ import type { EpicFileAddress } from "@/hooks/files/use-epic-file-text-query";
 import { useClipboardCopy } from "@/hooks/ui/use-clipboard-copy";
 import { epicFileViewer } from "@/lib/files/viewer-registry";
 import type { EpicFileTileRef } from "@/stores/epics/canvas/types";
+import { useSurfaceDemand } from "@/stores/tabs/surface-demand";
 
 interface EpicFileTileProps {
   readonly node: EpicFileTileRef;
@@ -61,11 +61,12 @@ export function EpicFileTile(props: EpicFileTileProps): ReactNode {
     via: node.via,
   };
   const viewer = epicFileViewer(node.path);
-  const visible = useTileBodyVisible();
+  const settled = useSurfaceDemand() === "settled";
   const [pageLoaded, setPageLoaded] = useState(false);
   // Restored retention history is not a page viewed in this window session.
-  // Load it on first show, then keep its running document through tab switches.
-  if (!pageLoaded && visible && viewer.kind === "html") {
+  // Load it on first settled show (a held tab cycle's preview is not one),
+  // then keep its running document through tab switches.
+  if (!pageLoaded && settled && viewer.kind === "html") {
     setPageLoaded(true);
   }
   // The manifest's title names the file where it has one (a page, an app).
@@ -118,7 +119,7 @@ export function EpicFileTile(props: EpicFileTileProps): ReactNode {
             versionNav={versionNav}
             actions={fileActions}
           >
-            {visible || pageLoaded ? (
+            {settled || pageLoaded ? (
               <HtmlViewer
                 // A new version is a new document, with fresh frame state.
                 key={node.sha256}
