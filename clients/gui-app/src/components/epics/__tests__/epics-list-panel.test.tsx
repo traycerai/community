@@ -349,12 +349,37 @@ vi.mock("@/hooks/epic/use-epic-pin-local-home-support", () => ({
   useEpicPinLocalHomeSupported: () => false,
 }));
 
-vi.mock("@/hooks/epic/use-epic-activity-status", () => ({
-  useEpicActivityStatus: (epicId: string | null) =>
-    epicId === null
-      ? "idle"
-      : (testState.activityByEpicId.get(epicId) ?? "idle"),
-}));
+// The real hook is a store subscription, so the mock is too: a mid-test change
+// to `testState.activityByEpicId` goes through `bump`, which notifies the
+// mocked hook's subscribers.
+const activitySeam = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  return {
+    version: 0,
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    bump(): void {
+      this.version += 1;
+      listeners.forEach((listener) => listener());
+    },
+  };
+});
+
+vi.mock("@/hooks/epic/use-epic-activity-status", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useEpicActivityStatus: (epicId: string | null) => {
+      useSyncExternalStore(activitySeam.subscribe, () => activitySeam.version);
+      return epicId === null
+        ? "idle"
+        : (testState.activityByEpicId.get(epicId) ?? "idle");
+    },
+  };
+});
 
 function historyItem(overrides: Partial<HistoryItem>): HistoryItem {
   return {
@@ -2476,18 +2501,11 @@ describe("<EpicsListPanel />", () => {
 
     // Swap the row's leading glyph WITHOUT moving focus: the agent goes
     // idle, so the slot now wraps the provenance dot instead of the
-    // spinner. `useEpicActivityStatus` is mocked here as a plain read of
-    // `testState.activityByEpicId` with no subscription of its own, so
-    // mutating the map alone triggers no re-render - the row must actually
-    // re-render for the swap to reach the DOM. `EpicsListRow` itself reads
-    // `useEpicCanvasStore` (`resolveTabIdForEpic`), so opening this epic's
-    // tab changes that selector's value and forces exactly that re-render,
-    // without moving focus or touching the row's `item` prop.
-    testState.activityByEpicId.delete("epic-from-history");
+    // spinner. The mocked activity hook is notified through its seam, so
+    // nothing but the activity itself changes - no focus move, no new `item`.
     act(() => {
-      useEpicCanvasStore
-        .getState()
-        .openEpicTab("epic-from-history", "Local only epic");
+      testState.activityByEpicId.delete("epic-from-history");
+      activitySeam.bump();
     });
 
     const swappedGlyph = await screen.findByTestId(

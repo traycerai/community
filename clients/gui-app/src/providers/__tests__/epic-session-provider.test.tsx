@@ -34,10 +34,47 @@ import {
 // SEPARATE axis from `id`: the pair (attached: false, id: null) is bootstrap,
 // while (attached: true, id: null) is the real ∅. Defaults to attached so every
 // pre-existing case here reads exactly as it did before that axis existed.
-const hostState = vi.hoisted((): { id: string | null; attached: boolean } => ({
-  id: "host-a",
-  attached: true,
-}));
+//
+// The real hooks behind these two answers are reactive (a selection store), so
+// the mocks are too: assigning either field notifies every mounted reader.
+// `TestEpicSessionTab` mounts its host environment once as a prop-less
+// element, which a compiled parent keeps across `rerender()`, so a re-render
+// no longer carries a moved host down to the hooks that read it.
+const hostStateListeners = vi.hoisted(() => new Set<() => void>());
+const subscribeHostState = vi.hoisted(
+  () =>
+    (listener: () => void): (() => void) => {
+      hostStateListeners.add(listener);
+      return () => {
+        hostStateListeners.delete(listener);
+      };
+    },
+);
+const hostState = vi.hoisted((): { id: string | null; attached: boolean } => {
+  let id: string | null = "host-a";
+  let attached = true;
+  const publish = (): void => {
+    hostStateListeners.forEach((listener) => {
+      listener();
+    });
+  };
+  return {
+    get id(): string | null {
+      return id;
+    },
+    set id(next: string | null) {
+      id = next;
+      publish();
+    },
+    get attached(): boolean {
+      return attached;
+    },
+    set attached(next: boolean) {
+      attached = next;
+      publish();
+    },
+  };
+});
 const authServiceStub = vi.hoisted(() => ({
   revalidateCurrentContext: () => Promise.resolve({ kind: "valid" as const }),
 }));
@@ -133,13 +170,21 @@ vi.mock("@/lib/host/use-durable-stream-transport", async () => {
   };
 });
 
-vi.mock("@/hooks/host/use-effective-host-id", () => ({
-  useEffectiveHostId: () => hostState.id,
-}));
+vi.mock("@/hooks/host/use-effective-host-id", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useEffectiveHostId: () =>
+      useSyncExternalStore(subscribeHostState, () => hostState.id),
+  };
+});
 
-vi.mock("@/hooks/host/use-selection-authority-attached", () => ({
-  useSelectionAuthorityAttached: () => hostState.attached,
-}));
+vi.mock("@/hooks/host/use-selection-authority-attached", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useSelectionAuthorityAttached: () =>
+      useSyncExternalStore(subscribeHostState, () => hostState.attached),
+  };
+});
 
 vi.mock("@/hooks/host/use-host-client-for-host-id", () => ({
   useHostClientForHostId: (hostId: string | null) =>

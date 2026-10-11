@@ -9,14 +9,51 @@ vi.mock("@/components/settings/host-scope/use-scoped-stream-binding", () => ({
 
 // Same boundary as every other Overview suite: mock `useHostScope` and
 // `@/lib/host`'s `useHostBinding` rather than standing up a host runtime.
-const scopeOverrides = vi.hoisted((): { current: Record<string, unknown> } => ({
-  current: {},
-}));
+//
+// Both are reactive in production (a context and a query), so their mocks are
+// too: a mid-test change goes through `set`, which notifies the subscribers
+// the mocked hooks registered. An assignment to `.current` is only for setup
+// BEFORE the first render - React cannot see it.
+interface MockSource<T> {
+  current: T;
+  subscribe: (listener: () => void) => () => void;
+  set: (next: T) => void;
+}
+const { scopeOverrides, hostBindingMock } = vi.hoisted(() => {
+  function createMockSource<T>(initial: T): MockSource<T> {
+    const listeners = new Set<() => void>();
+    const source: MockSource<T> = {
+      current: initial,
+      subscribe: (listener) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+      set: (next) => {
+        source.current = next;
+        listeners.forEach((listener) => listener());
+      },
+    };
+    return source;
+  }
+  return {
+    scopeOverrides: createMockSource<Record<string, unknown>>({}),
+    hostBindingMock: createMockSource<HostBindingMock | null>(null),
+  };
+});
 vi.mock("@/components/settings/host-scope/use-host-scope", async () => {
   const { hostScopeFixture } =
     await import("@/components/settings/host-scope/host-scope-fixture");
+  const { useSyncExternalStore } = await import("react");
   return {
-    useHostScope: () => hostScopeFixture(scopeOverrides.current),
+    useHostScope: () =>
+      hostScopeFixture(
+        useSyncExternalStore(
+          scopeOverrides.subscribe,
+          () => scopeOverrides.current,
+        ),
+      ),
   };
 });
 
@@ -35,12 +72,17 @@ interface HostBindingMock {
     };
   };
 }
-const hostBindingMock = vi.hoisted((): { current: HostBindingMock | null } => ({
-  current: null,
-}));
 vi.mock("@/lib/host", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/host")>();
-  return { ...actual, useHostBinding: () => hostBindingMock.current };
+  const { useSyncExternalStore } = await import("react");
+  return {
+    ...actual,
+    useHostBinding: () =>
+      useSyncExternalStore(
+        hostBindingMock.subscribe,
+        () => hostBindingMock.current,
+      ),
+  };
 });
 
 vi.mock("sonner", () => ({
@@ -81,6 +123,7 @@ vi.mock("@/stores/tabs/use-system-tab-modal", async (importOriginal) => {
 });
 
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -261,26 +304,19 @@ function renderPanel(): RenderResult {
   );
 }
 
-/**
- * Mounts the page and returns a `rerender` that re-reads the mocked scope. A
- * fresh element per call: React skips a subtree handed the SAME element twice,
- * so a reused one would never call `useHostScope()` again.
- */
-function renderPanelPersistent(extra: ReactNode): { rerender: () => void } {
+/** Mounts the page with `extra` rendered beside it, under one query client. */
+function renderPanelPersistent(extra: ReactNode): void {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
   });
-  const runnerHost = makeRunnerHost();
-  const buildTree = (): ReactNode => (
+  render(
     <QueryClientProvider client={queryClient}>
-      <RunnerHostProvider runnerHost={runnerHost}>
+      <RunnerHostProvider runnerHost={makeRunnerHost()}>
         <HostSettingsPanel />
         {extra}
       </RunnerHostProvider>
-    </QueryClientProvider>
+    </QueryClientProvider>,
   );
-  const { rerender } = render(buildTree());
-  return { rerender: () => rerender(buildTree()) };
 }
 
 /** The chat tile's "update this host" link, as a tile renders it. */
@@ -478,14 +514,13 @@ describe("<HostSettingsPanel /> Overview — tabbed shell", () => {
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
     const runnerHost = makeRunnerHost();
-    const makeUi = () => (
+    render(
       <QueryClientProvider client={queryClient}>
         <RunnerHostProvider runnerHost={runnerHost}>
           <HostSettingsPanel />
         </RunnerHostProvider>
-      </QueryClientProvider>
+      </QueryClientProvider>,
     );
-    const view = render(makeUi());
 
     await selectHostOverviewTab("installation");
     await openHostOverviewMenu();
@@ -494,9 +529,10 @@ describe("<HostSettingsPanel /> Overview — tabbed shell", () => {
       await screen.findByRole("button", { name: "Restart host" }),
     ).not.toBeNull();
 
-    hostBindingMock.current = bindingWith(fixtureB.client);
-    scopeOverrides.current = scopeFrom("host-b", fixtureB);
-    view.rerender(makeUi());
+    act(() => {
+      hostBindingMock.set(bindingWith(fixtureB.client));
+      scopeOverrides.set(scopeFrom("host-b", fixtureB));
+    });
 
     expect(activeTabTestId()).toBe("host-overview-tab-installation");
     expect(screen.queryByRole("button", { name: "Restart host" })).toBeNull();
@@ -605,18 +641,19 @@ describe("<HostSettingsPanel /> Overview — tabbed shell", () => {
     recordNegotiatedHostMethods("host-a", ALL_OVERVIEW_METHODS);
     hostBindingMock.current = bindingWith(fixture.client);
     scopeOverrides.current = scopeFrom("host-a", fixture);
-    const panel = renderPanelPersistent(null);
+    renderPanelPersistent(null);
     expect(
       (await screen.findByTestId("host-overview-operation-phase")).textContent,
     ).toBe("Downloading update to v2.1.0");
 
     // Only the scope moves: the client, and so the query key, stay put, and
     // the read the host already answered is retained.
-    scopeOverrides.current = {
-      ...scopeFrom("host-a", fixture),
-      status: "connecting",
-    };
-    panel.rerender();
+    act(() => {
+      scopeOverrides.set({
+        ...scopeFrom("host-a", fixture),
+        status: "connecting",
+      });
+    });
 
     const notices = screen.getByTestId("host-overview-notices");
     await waitFor(() => {

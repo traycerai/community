@@ -1,4 +1,10 @@
-import { useEffect, useLayoutEffect, useRef, type ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   act,
@@ -70,37 +76,68 @@ type ComposerCommit = {
   readonly phase: "mount" | "commit" | "unmount";
 };
 
-const homeMocks = vi.hoisted(() => ({
-  navigate: vi.fn(),
-  openSettings: vi.fn(),
-  systemModalOpen: false,
-  request: vi.fn<(method: string, payload: unknown) => Promise<unknown>>(),
-  getActiveHostId: vi.fn(() => "host-home"),
-  getRequestContextUserId: vi.fn<() => string | null>(() => "user-home"),
-  // The directory's LOCAL host id - the machine typing, deliberately distinct
-  // from `getActiveHostId` (the target host the chat is created on).
-  getLocalHostId: vi.fn<() => string | null>(() => "host-local-typing"),
-  getActiveHost: vi.fn(() => ({
-    hostId: "host-home",
-    label: "Local",
-    kind: "local",
-    websocketUrl: "ws://127.0.0.1:4917/rpc",
-    version: "0.0.0-test",
-    transportDialability: "dialable",
-  })),
-  composerCommits: [] as ComposerCommit[],
-  nextInstanceId: 0,
-  isMobile: false,
-  tabActivity: { visible: true, focused: true },
-  delayComposerRegistration: false,
-  /**
-   * Real appearance hooks/RPCs are out of scope for this suite (they need
-   * their own host-fixture work) - stub the whole child so only its mount
-   * lifecycle is observable, matching how `home-hero`/`landing-composer`
-   * above are already stubbed rather than left real.
-   */
-  appearanceEvents: [] as Array<"mount" | "unmount">,
-}));
+const homeMocks = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  return {
+    navigate: vi.fn(),
+    openSettings: vi.fn(),
+    systemModalOpen: false,
+    request: vi.fn<(method: string, payload: unknown) => Promise<unknown>>(),
+    getActiveHostId: vi.fn(() => "host-home"),
+    getRequestContextUserId: vi.fn<() => string | null>(() => "user-home"),
+    // The directory's LOCAL host id - the machine typing, deliberately distinct
+    // from `getActiveHostId` (the target host the chat is created on).
+    getLocalHostId: vi.fn<() => string | null>(() => "host-local-typing"),
+    getActiveHost: vi.fn(() => ({
+      hostId: "host-home",
+      label: "Local",
+      kind: "local",
+      websocketUrl: "ws://127.0.0.1:4917/rpc",
+      version: "0.0.0-test",
+      transportDialability: "dialable",
+    })),
+    composerCommits: [] as ComposerCommit[],
+    nextInstanceId: 0,
+    isMobile: false,
+    tabActivity: { visible: true, focused: true },
+    delayComposerRegistration: false,
+    /**
+     * Real appearance hooks/RPCs are out of scope for this suite (they need
+     * their own host-fixture work) - stub the whole child so only its mount
+     * lifecycle is observable, matching how `home-hero`/`landing-composer`
+     * above are already stubbed rather than left real.
+     */
+    appearanceEvents: [] as Array<"mount" | "unmount">,
+    // The three inputs below are read by mocked hooks that, in the real app,
+    // are subscriptions (router state, tab activity). A mid-test change reaches
+    // them through `version`, never through a parent re-render a compiled tree
+    // may skip.
+    version: 0,
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    setSystemModalOpen(next: boolean): void {
+      this.systemModalOpen = next;
+      this.version += 1;
+      listeners.forEach((listener) => listener());
+    },
+    setTabActivity(next: { visible: boolean; focused: boolean }): void {
+      this.tabActivity = next;
+      this.version += 1;
+      listeners.forEach((listener) => listener());
+    },
+    setDelayComposerRegistration(next: boolean): void {
+      this.delayComposerRegistration = next;
+      this.version += 1;
+      listeners.forEach((listener) => listener());
+    },
+  };
+});
+
+function useHomeMocksVersion(): number {
+  return useSyncExternalStore(homeMocks.subscribe, () => homeMocks.version);
+}
 
 // Drive the viewport branch directly. jsdom reports a desktop width, so this
 // only makes the default explicit - the phone case flips it per test.
@@ -110,7 +147,10 @@ vi.mock("@/hooks/ui/use-mobile-viewport", () => ({
 }));
 
 vi.mock("@/components/layout/tab-surface-activity-hooks", () => ({
-  useTabSurfaceActivity: () => homeMocks.tabActivity,
+  useTabSurfaceActivity: () => {
+    useHomeMocksVersion();
+    return homeMocks.tabActivity;
+  },
 }));
 
 vi.mock("@tanstack/react-router", () => ({
@@ -121,12 +161,14 @@ vi.mock("@tanstack/react-router", () => ({
     select: (state: {
       location: { search: Record<string, unknown> };
     }) => unknown;
-  }) =>
-    select({
+  }) => {
+    useHomeMocksVersion();
+    return select({
       location: {
         search: homeMocks.systemModalOpen ? { historyOverlay: true } : {},
       },
-    }),
+    });
+  },
 }));
 
 vi.mock("@/lib/host", () => ({
@@ -230,6 +272,7 @@ vi.mock("@/components/home/composer/landing-composer", () => ({
     const activityEnabled = useSurfaceActivity();
     const paneActivationFocusIntent = usePaneActivationFocusIntent();
     const composerRef = useRef<HTMLButtonElement | null>(null);
+    useHomeMocksVersion();
     const delayComposerRegistration = homeMocks.delayComposerRegistration;
     const actions = useLandingComposerActions(useTestPlacementTarget());
     const draftId = props.draftId;
@@ -616,7 +659,7 @@ describe("<HomePage />", () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false, gcTime: 0 } },
     });
-    const { rerender } = render(
+    render(
       <QueryClientProvider client={queryClient}>
         <HomePage />
       </QueryClientProvider>,
@@ -626,12 +669,7 @@ describe("<HomePage />", () => {
       "true",
     );
 
-    homeMocks.systemModalOpen = true;
-    rerender(
-      <QueryClientProvider client={queryClient}>
-        <HomePage />
-      </QueryClientProvider>,
-    );
+    act(() => homeMocks.setSystemModalOpen(true));
     expect(screen.queryByTestId("current-tasks-section")).toBeNull();
     expect(screen.getByTestId("landing-composer").dataset.activityEnabled).toBe(
       "false",
@@ -1027,7 +1065,7 @@ describe("<HomePage />", () => {
       const queryClient = new QueryClient({
         defaultOptions: { queries: { retry: false, gcTime: 0 } },
       });
-      const tree = () => (
+      render(
         <PrimaryFocusCoordinatorProvider>
           <QueryClientProvider client={queryClient}>
             <button type="button" data-testid="other-tab-control">
@@ -1038,16 +1076,14 @@ describe("<HomePage />", () => {
             </PaneActivationFocusIntentContext.Provider>
             <LandingTerminalHost />
           </QueryClientProvider>
-        </PrimaryFocusCoordinatorProvider>
+        </PrimaryFocusCoordinatorProvider>,
       );
-      const view = render(tree());
-      return { queryClient, tree, view };
+      return { queryClient };
     }
 
     it("restores terminal focus through the real landing portal after tab reactivation", async () => {
       seedFocusedLandingTerminal(false);
-      const { queryClient, tree, view } =
-        renderLandingFocusHarness(noPaneFocusIntent);
+      const { queryClient } = renderLandingFocusHarness(noPaneFocusIntent);
       const terminal = await screen.findByTestId("landing-terminal-panel-slot");
       expect(
         screen.getByTestId("landing-draft-surface").contains(terminal),
@@ -1055,12 +1091,10 @@ describe("<HomePage />", () => {
       terminal.focus();
       expect(document.activeElement).toBe(terminal);
 
-      homeMocks.tabActivity = { visible: false, focused: false };
-      view.rerender(tree());
+      act(() => homeMocks.setTabActivity({ visible: false, focused: false }));
       screen.getByTestId("other-tab-control").focus();
 
-      homeMocks.tabActivity = { visible: true, focused: true };
-      view.rerender(tree());
+      act(() => homeMocks.setTabActivity({ visible: true, focused: true }));
 
       expect(document.activeElement).toBe(terminal);
       queryClient.clear();
@@ -1095,13 +1129,11 @@ describe("<HomePage />", () => {
         () => true,
       );
 
-      const { queryClient, tree, view } =
-        renderLandingFocusHarness(noPaneFocusIntent);
+      const { queryClient } = renderLandingFocusHarness(noPaneFocusIntent);
 
       expect(document.activeElement).not.toBe(inactiveComposer);
 
-      homeMocks.delayComposerRegistration = false;
-      view.rerender(tree());
+      act(() => homeMocks.setDelayComposerRegistration(false));
       await waitFor(() => {
         expect(document.activeElement).toBe(
           screen.getByTestId("landing-submit"),
@@ -1143,17 +1175,14 @@ describe("<HomePage />", () => {
 
     it("restores the maximized terminal after a system modal closes", async () => {
       seedFocusedLandingTerminal(true);
-      const { queryClient, tree, view } =
-        renderLandingFocusHarness(noPaneFocusIntent);
+      const { queryClient } = renderLandingFocusHarness(noPaneFocusIntent);
       const terminal = await screen.findByTestId("landing-terminal-panel-slot");
       expect(document.activeElement).toBe(terminal);
 
-      homeMocks.systemModalOpen = true;
-      view.rerender(tree());
+      act(() => homeMocks.setSystemModalOpen(true));
       screen.getByTestId("other-tab-control").focus();
 
-      homeMocks.systemModalOpen = false;
-      view.rerender(tree());
+      act(() => homeMocks.setSystemModalOpen(false));
 
       expect(document.activeElement).toBe(terminal);
       queryClient.clear();
@@ -1166,13 +1195,11 @@ describe("<HomePage />", () => {
         shouldYieldAutoFocus: () => true,
       };
       homeMocks.tabActivity = { visible: true, focused: false };
-      const { queryClient, tree, view } =
-        renderLandingFocusHarness(focusIntent);
+      const { queryClient } = renderLandingFocusHarness(focusIntent);
       const activatingControl = screen.getByTestId("landing-change-twice");
       activatingControl.focus();
 
-      homeMocks.tabActivity = { visible: true, focused: true };
-      view.rerender(tree());
+      act(() => homeMocks.setTabActivity({ visible: true, focused: true }));
 
       expect(document.activeElement).toBe(activatingControl);
       queryClient.clear();
@@ -1317,7 +1344,7 @@ describe("<HomePage />", () => {
           <HomePage />
         </QueryClientProvider>
       );
-      const { rerender } = render(tree());
+      render(tree());
       expect(screen.queryByTestId("appearance-wallpaper-stub")).not.toBeNull();
       expect(homeMocks.appearanceEvents).toEqual(["mount"]);
 
@@ -1325,10 +1352,8 @@ describe("<HomePage />", () => {
 
       // A retained tab going hidden and back must not remount the wallpaper:
       // a remount re-reads the blob and repaints from scratch (visible flash).
-      homeMocks.tabActivity = { visible: false, focused: false };
-      rerender(tree());
-      homeMocks.tabActivity = { visible: true, focused: true };
-      rerender(tree());
+      act(() => homeMocks.setTabActivity({ visible: false, focused: false }));
+      act(() => homeMocks.setTabActivity({ visible: true, focused: true }));
 
       // Attaching a workspace folder re-renders the surface, not the wallpaper.
       act(() => {

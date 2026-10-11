@@ -6,6 +6,7 @@ import {
   screen,
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { useStore } from "zustand";
 import type { Mock } from "vitest";
 import type { Chat } from "@traycer/protocol/persistence/epic/schemas";
 import type { PendingFallback } from "@traycer/protocol/host/agent/gui/subscribe";
@@ -308,7 +309,7 @@ function ChooserHarness({
 }: {
   readonly handle: ChatSessionStoreHandle;
 }) {
-  const pending = handle.store((state) => state.pendingFallback);
+  const pending = useStore(handle.store, (state) => state.pendingFallback);
   if (pending === undefined) return null;
   return (
     <TooltipProvider>

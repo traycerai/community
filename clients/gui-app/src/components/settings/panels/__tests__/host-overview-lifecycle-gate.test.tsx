@@ -8,14 +8,47 @@ vi.mock("@/components/settings/host-scope/use-scoped-stream-binding", () => ({
 
 // Same boundary as the sibling Overview suites: mock `useHostScope` and
 // `@/lib/host`'s `useHostBinding` rather than standing up a host runtime.
-const scopeOverrides = vi.hoisted((): { current: Record<string, unknown> } => ({
-  current: {},
-}));
+//
+// `useHostScope` is reactive in production (a context and a query), so its
+// mock is too: a mid-test change goes through `set`, which notifies the
+// subscribers the mocked hook registered. An assignment to `.current` is only
+// for setup BEFORE the first render - React cannot see it.
+const scopeOverrides = vi.hoisted(
+  (): {
+    current: Record<string, unknown>;
+    subscribe: (listener: () => void) => () => void;
+    set(next: Record<string, unknown>): void;
+  } => {
+    const listeners = new Set<() => void>();
+    return {
+      current: {},
+      subscribe: (listener: () => void): (() => void) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+      set(next: Record<string, unknown>): void {
+        this.current = next;
+        listeners.forEach((listener) => {
+          listener();
+        });
+      },
+    };
+  },
+);
 vi.mock("@/components/settings/host-scope/use-host-scope", async () => {
   const { hostScopeFixture } =
     await import("@/components/settings/host-scope/host-scope-fixture");
+  const { useSyncExternalStore } = await import("react");
   return {
-    useHostScope: () => hostScopeFixture(scopeOverrides.current),
+    useHostScope: () =>
+      hostScopeFixture(
+        useSyncExternalStore(
+          scopeOverrides.subscribe,
+          () => scopeOverrides.current,
+        ),
+      ),
   };
 });
 
@@ -55,8 +88,8 @@ vi.mock("sonner", () => ({
   },
 }));
 
-import type { ReactNode } from "react";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -213,30 +246,13 @@ function renderPanel(hostManagement: IHostManagement | undefined): void {
   );
 }
 
-// Same as `renderPanel`, but keeps the `QueryClient` reachable across a
-// `rerender` so a later mutation of `scopeOverrides.current` (an unusable
-// scope, say) is observed against the SAME cache — the retained-response
-// path this file's (c)/(c2) tests exist to prove can only fire if the query's
-// cached data survives the scope change instead of being torn down with it.
-function renderPanelPersistent(): { rerender: () => void } {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false, gcTime: 0 } },
-  });
-  const runnerHost = makeRunnerHost(undefined);
-  // A fresh element on every call, not a captured/reused one: React bails out
-  // of re-rendering a subtree entirely when the SAME element reference is
-  // passed to `rerender` twice (`current.memoizedProps === pendingProps`), so
-  // reusing one `tree` value here would silently stop `useHostScope()` (and
-  // therefore `scopeOverrides.current`) from ever being re-read.
-  const buildTree = (): ReactNode => (
-    <QueryClientProvider client={client}>
-      <RunnerHostProvider runnerHost={runnerHost}>
-        <HostSettingsPanel />
-      </RunnerHostProvider>
-    </QueryClientProvider>
-  );
-  const { rerender } = render(buildTree());
-  return { rerender: () => rerender(buildTree()) };
+// Same as `renderPanel`, for the tests that change the scope mid-test
+// (`act(() => scopeOverrides.set(...))`, an unusable scope say) and observe it
+// against the SAME mounted panel and cache - the retained-response path this
+// file's (c)/(c2) tests exist to prove can only fire if the query's cached
+// data survives the scope change instead of being torn down with it.
+function renderPanelPersistent(): void {
+  renderPanel(undefined);
 }
 
 function attemptOperation(
@@ -589,7 +605,7 @@ describe("HostOverviewPanel — lifecycle gate matrix (G1)", () => {
     recordNegotiatedHostMethods("host-a", ALL_OVERVIEW_METHODS);
     hostBindingMock.current = bindingWith(fixture.client);
     scopeOverrides.current = scopeFrom("host-a", fixture);
-    const panel = renderPanelPersistent();
+    renderPanelPersistent();
 
     // Healthy AND usable: gate holds, exactly like (a)/(c), and the card
     // reads the LIVE sentence — no "Last seen:" prefix.
@@ -610,11 +626,12 @@ describe("HostOverviewPanel — lifecycle gate matrix (G1)", () => {
     // `@1.3` peer going unreachable would leave it: `client` unchanged so the
     // query key is unchanged and the retained data survives, but
     // `isHostScopeUsable(scope.status)` now reads false.
-    scopeOverrides.current = {
-      ...scopeFrom("host-a", fixture),
-      status: "unreachable",
-    };
-    panel.rerender();
+    act(() => {
+      scopeOverrides.set({
+        ...scopeFrom("host-a", fixture),
+        status: "unreachable",
+      });
+    });
 
     // THE FIX: the retained attempt demotes to "last known" the moment the
     // scope stops being usable, exactly as it does when the READ itself turns
@@ -674,27 +691,30 @@ describe("HostOverviewPanel — lifecycle gate matrix (G1)", () => {
     recordNegotiatedHostMethods("host-a", ALL_OVERVIEW_METHODS);
     hostBindingMock.current = bindingWith(fixture.client);
     scopeOverrides.current = scopeFrom("host-a", fixture);
-    const panel = renderPanelPersistent();
+    renderPanelPersistent();
 
     await screen.findByTestId("host-overview-edit-name");
     expect(await restartMenuAriaDisabled()).not.toBe("true");
     fireEvent.click(screen.getByTestId("host-overview-restart"));
     await screen.findByTestId("confirm-destructive-dialog");
 
-    // Control: rerendering with the scope still usable keeps the dialog
+    // Control: a scope change that leaves it usable keeps the dialog
     // open — otherwise the assertion below would prove nothing about
     // `usable` specifically.
-    panel.rerender();
+    act(() => {
+      scopeOverrides.set(scopeFrom("host-a", fixture));
+    });
     expect(screen.getByTestId("confirm-destructive-dialog")).toBeTruthy();
 
     // THE FIX: the scope turns unusable — same predicate (c2) demotes the
     // operation card on — and the already-open confirmation closes, one
     // commit late with the controls that open it.
-    scopeOverrides.current = {
-      ...scopeFrom("host-a", fixture),
-      status: "unreachable",
-    };
-    panel.rerender();
+    act(() => {
+      scopeOverrides.set({
+        ...scopeFrom("host-a", fixture),
+        status: "unreachable",
+      });
+    });
 
     await waitFor(() => {
       expect(screen.queryByTestId("confirm-destructive-dialog")).toBeNull();

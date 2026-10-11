@@ -322,22 +322,51 @@ let PLACEMENT_TARGET: PlacementTarget = makePlacementTarget(
   "Byhash Host",
 );
 
-vi.mock("@/hooks/host/use-composer-placement", () => ({
-  useEpicConversationPlacement: () => ({
-    pin: {
-      selection: null,
-      honoredSelection: null,
-      setSelection: () => undefined,
-      resolvedHostId: PLACEMENT_TARGET.resolvedHostId,
-      isPinned: false,
-      latchOnFirstUse: () => undefined,
+// The real hook is reactive (a pin store and the host directory), so the mock is
+// too: the reassignment above goes through `bump`, which notifies the mocked
+// hook's subscribers.
+const placementSeam = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  return {
+    version: 0,
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
     },
-    target: PLACEMENT_TARGET,
-    submitTarget: PLACEMENT_TARGET,
-    hostLabelFor: () => PLACEMENT_TARGET.hostLabel,
-    followsEffective: true,
-  }),
-}));
+    bump(): void {
+      this.version += 1;
+      listeners.forEach((listener) => listener());
+    },
+  };
+});
+
+vi.mock("@/hooks/host/use-composer-placement", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useEpicConversationPlacement: () => {
+      useSyncExternalStore(
+        placementSeam.subscribe,
+        () => placementSeam.version,
+      );
+      return {
+        pin: {
+          selection: null,
+          honoredSelection: null,
+          setSelection: () => undefined,
+          resolvedHostId: PLACEMENT_TARGET.resolvedHostId,
+          isPinned: false,
+          latchOnFirstUse: () => undefined,
+        },
+        target: PLACEMENT_TARGET,
+        submitTarget: PLACEMENT_TARGET,
+        hostLabelFor: () => PLACEMENT_TARGET.hostLabel,
+        followsEffective: true,
+      };
+    },
+  };
+});
 
 vi.mock("@/hooks/epic/use-epic-session-host-id", () => ({
   useEpicSessionHostId: () => HOST_ID,
@@ -917,7 +946,7 @@ describe("new-conversation modal: destination race during the by-hash upload", (
       "epic.createChat": { major: 1, minor: 1 },
     });
     imageStoreMocks.getImageBytes.mockResolvedValue(IMAGE_BYTES);
-    const view = renderModal(byHashImageDoc("switch"));
+    renderModal(byHashImageDoc("switch"));
 
     act(() => {
       testState.bodySubmit?.();
@@ -934,7 +963,7 @@ describe("new-conversation modal: destination race during the by-hash upload", (
     // picker is rendered live through the await, which is exactly this move.
     PLACEMENT_TARGET = makePlacementTarget(HOST_ID_B, "Other Host");
     act(() => {
-      view.rerender(<Harness />);
+      placementSeam.bump();
     });
 
     await act(async () => {

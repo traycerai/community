@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  act,
   cleanup,
   render,
   waitFor,
@@ -37,9 +38,27 @@ const toastFromHostError = vi.hoisted(() =>
 const listedSessions = vi.hoisted(() => ({
   value: [] as CanonicalTerminalSessionInfo[],
 }));
-const authorityState = vi.hoisted(() => ({
-  capability: "unknown",
-}));
+// The real authority hook is reactive (a host query), so the mock is too: a
+// mid-test change goes through `change`, which notifies the mocked hook's
+// subscribers. An assignment before the first render needs no notification.
+const authorityState = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  return {
+    capability: "unknown",
+    version: 0,
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    change(mutate: () => void): void {
+      mutate();
+      this.version += 1;
+      listeners.forEach((listener) => listener());
+    },
+  };
+});
 
 vi.mock("@/lib/host-error-toast", () => ({
   toastFromHostError: (error: HostRpcError, fallbackMessage: string) =>
@@ -69,15 +88,24 @@ vi.mock("@/hooks/host/use-host-client-for-host-id", () => ({
   }),
 }));
 
-vi.mock("@/hooks/terminal/use-plain-terminal-authority", () => ({
-  useHostPlainTerminalAuthority: () => ({
-    hostId: HOST_ID,
-    scope: SCOPE,
-    capability: { status: authorityState.capability },
-    canMutate: false,
-    collection: undefined,
-  }),
-}));
+vi.mock("@/hooks/terminal/use-plain-terminal-authority", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useHostPlainTerminalAuthority: () => {
+      useSyncExternalStore(
+        authorityState.subscribe,
+        () => authorityState.version,
+      );
+      return {
+        hostId: HOST_ID,
+        scope: SCOPE,
+        capability: { status: authorityState.capability },
+        canMutate: false,
+        collection: undefined,
+      };
+    },
+  };
+});
 
 vi.mock("@/hooks/terminal/use-plain-terminal-mutations", () => ({
   useHostPlainTerminalMutations: () => ({
@@ -224,8 +252,11 @@ describe("<EpicPlainTerminalCreateOwner /> legacy list refresh", () => {
       return Promise.reject(new Error(`unexpected method ${method}`));
     });
     const setQueryDataSpy = vi.spyOn(queryClient, "setQueryData");
-    authorityState.capability = "legacy";
-    rendered.rerender(<EpicPlainTerminalCreateOwner epicId={EPIC_ID} />);
+    act(() => {
+      authorityState.change(() => {
+        authorityState.capability = "legacy";
+      });
+    });
 
     await waitFor(() =>
       expect(peekEpicTerminalDurableCreate(HOST_ID, terminalId)?.status).toBe(
@@ -274,7 +305,7 @@ describe("<EpicPlainTerminalCreateOwner /> legacy list refresh", () => {
   });
 
   it("does not publish a stale-generation isolated list after purge and reaccept", async () => {
-    const { terminalId, rendered } = await mountPendingLegacyCreate();
+    const { terminalId } = await mountPendingLegacyCreate();
     const isolatedList = Promise.withResolvers<{
       readonly sessions: CanonicalTerminalSessionInfo[];
     }>();
@@ -293,8 +324,11 @@ describe("<EpicPlainTerminalCreateOwner /> legacy list refresh", () => {
       return Promise.reject(new Error(`unexpected method ${method}`));
     });
     const setQueryDataSpy = vi.spyOn(queryClient, "setQueryData");
-    authorityState.capability = "legacy";
-    rendered.rerender(<EpicPlainTerminalCreateOwner epicId={EPIC_ID} />);
+    act(() => {
+      authorityState.change(() => {
+        authorityState.capability = "legacy";
+      });
+    });
     await waitFor(() => expect(isolatedListCount).toBe(1));
 
     purgeEpicTerminalDurableCreatesForEpic(EPIC_ID);
@@ -334,8 +368,7 @@ describe("<EpicPlainTerminalCreateOwner /> legacy list refresh", () => {
   });
 
   it("publishes the create response session without a terminal.list request", async () => {
-    const { terminalId, tabId, instanceId, rendered } =
-      await mountPendingLegacyCreate();
+    const { terminalId, tabId, instanceId } = await mountPendingLegacyCreate();
     closeTerminalTab(tabId, instanceId);
     expect(
       useEpicCanvasStore.getState().canvasByTabId[tabId]?.tilesByInstanceId[
@@ -366,8 +399,11 @@ describe("<EpicPlainTerminalCreateOwner /> legacy list refresh", () => {
       return Promise.reject(new Error(`unexpected method ${method}`));
     });
     const invalidateSpy = vi.spyOn(queryClient, "invalidateQueries");
-    authorityState.capability = "legacy";
-    rendered.rerender(<EpicPlainTerminalCreateOwner epicId={EPIC_ID} />);
+    act(() => {
+      authorityState.change(() => {
+        authorityState.capability = "legacy";
+      });
+    });
 
     await waitFor(() =>
       expect(peekEpicTerminalDurableCreate(HOST_ID, terminalId)).toBeNull(),
@@ -394,7 +430,7 @@ describe("<EpicPlainTerminalCreateOwner /> legacy list refresh", () => {
   });
 
   it("publishes a matching isolated list snapshot once and settles lost response", async () => {
-    const { terminalId, rendered } = await mountPendingLegacyCreate();
+    const { terminalId } = await mountPendingLegacyCreate();
     const discovered = runningSession(terminalId);
     let listCallsAfterCreate = 0;
     hostRequest.mockImplementation((method) => {
@@ -411,8 +447,11 @@ describe("<EpicPlainTerminalCreateOwner /> legacy list refresh", () => {
       return Promise.reject(new Error(`unexpected method ${method}`));
     });
     const setQueryDataSpy = vi.spyOn(queryClient, "setQueryData");
-    authorityState.capability = "legacy";
-    rendered.rerender(<EpicPlainTerminalCreateOwner epicId={EPIC_ID} />);
+    act(() => {
+      authorityState.change(() => {
+        authorityState.capability = "legacy";
+      });
+    });
 
     await waitFor(() =>
       expect(peekEpicTerminalDurableCreate(HOST_ID, terminalId)).toBeNull(),
@@ -437,7 +476,7 @@ describe("<EpicPlainTerminalCreateOwner /> legacy list refresh", () => {
   });
 
   it("fails visibly when the isolated list snapshot does not contain the session", async () => {
-    const { terminalId, rendered } = await mountPendingLegacyCreate();
+    const { terminalId } = await mountPendingLegacyCreate();
     hostRequest.mockImplementation((method) => {
       if (method === "terminal.list") {
         return Promise.resolve({ sessions: [], homeCwd: "/fresh-home" });
@@ -447,8 +486,11 @@ describe("<EpicPlainTerminalCreateOwner /> legacy list refresh", () => {
       }
       return Promise.reject(new Error(`unexpected method ${method}`));
     });
-    authorityState.capability = "legacy";
-    rendered.rerender(<EpicPlainTerminalCreateOwner epicId={EPIC_ID} />);
+    act(() => {
+      authorityState.change(() => {
+        authorityState.capability = "legacy";
+      });
+    });
 
     await waitFor(() =>
       expect(peekEpicTerminalDurableCreate(HOST_ID, terminalId)?.status).toBe(
@@ -482,8 +524,11 @@ describe("<EpicPlainTerminalCreateOwner /> legacy list refresh", () => {
       }
       return Promise.reject(new Error(`unexpected method ${method}`));
     });
-    authorityState.capability = "legacy";
-    rendered.rerender(<EpicPlainTerminalCreateOwner epicId={EPIC_ID} />);
+    act(() => {
+      authorityState.change(() => {
+        authorityState.capability = "legacy";
+      });
+    });
     await waitFor(() =>
       expect(peekEpicTerminalDurableCreate(HOST_ID, terminalId)?.status).toBe(
         "failed",

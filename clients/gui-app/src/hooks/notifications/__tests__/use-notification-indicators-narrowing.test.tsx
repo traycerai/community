@@ -395,7 +395,14 @@ describe("NotificationIndicatorsProvider per-entity narrowing", () => {
       bumpProbe: (tick: number) => void;
     } = { setIndicators: () => undefined, bumpProbe: () => undefined };
 
-    function Suspender(): null {
+    // `indicators` is unused on purpose: a compiled Harness keeps
+    // `<Suspender />` as one element for its whole life, so React would skip
+    // Suspender on the transition and nothing would suspend. A prop that
+    // changes with the transition makes it re-render, which is what throws
+    // the transition's render away.
+    function Suspender(_props: {
+      readonly indicators: SurfaceNotificationIndicators;
+    }): null {
       // Suspends for as long as the gate is shut; the promise never settles.
       if (gate.suspended) use(gate.pending);
       return null;
@@ -424,7 +431,7 @@ describe("NotificationIndicatorsProvider per-entity narrowing", () => {
         <NotificationIndicatorsProvider indicators={indicators}>
           <Probe />
           <Suspense fallback={null}>
-            <Suspender />
+            <Suspender indicators={indicators} />
           </Suspense>
         </NotificationIndicatorsProvider>
       );

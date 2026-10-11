@@ -34,13 +34,19 @@ beforeEach(() => {
 
 afterEach(cleanup);
 
+/**
+ * A changed `markdown` is the unrelated rerender: it reaches the mocked
+ * `TraycerMarkdown` as new children, so the child renders again whether or not
+ * the compiler keeps an element whose inputs are equal.
+ */
 function renderBody(
   components: Record<string, ComponentType<Record<string, unknown>>> | null,
+  markdown: string,
 ) {
   return (
     <AgentReferenceMarkdown
       isStreaming={false}
-      markdown="hello"
+      markdown={markdown}
       proseSize="compact"
       quotable={false}
       components={components}
@@ -50,9 +56,9 @@ function renderBody(
 
 describe("AgentReferenceMarkdown component merging", () => {
   it("keeps one components identity across rerenders with the same override", () => {
-    const view = render(renderBody(OVERRIDE));
-    view.rerender(renderBody(OVERRIDE));
-    view.rerender(renderBody(OVERRIDE));
+    const view = render(renderBody(OVERRIDE, "hello"));
+    view.rerender(renderBody(OVERRIDE, "hello again"));
+    view.rerender(renderBody(OVERRIDE, "hello once more"));
 
     expect(captured.length).toBeGreaterThan(1);
     // A fresh merge per render would invalidate the parse cache of every block
@@ -61,7 +67,7 @@ describe("AgentReferenceMarkdown component merging", () => {
   });
 
   it("still merges the override over the shared set", () => {
-    render(renderBody(OVERRIDE));
+    render(renderBody(OVERRIDE, "hello"));
 
     const merged = captured[0] as Record<string, unknown>;
     expect(merged.a).toBe(OVERRIDE.a);
@@ -70,8 +76,8 @@ describe("AgentReferenceMarkdown component merging", () => {
   });
 
   it("hands chat surfaces the shared constant untouched", () => {
-    const view = render(renderBody(null));
-    view.rerender(renderBody(null));
+    const view = render(renderBody(null, "hello"));
+    view.rerender(renderBody(null, "hello again"));
 
     expect(captured[0]).toBe(captured[1]);
     expect((captured[0] as Record<string, unknown>).a).toBeUndefined();
@@ -81,8 +87,8 @@ describe("AgentReferenceMarkdown component merging", () => {
     const other: Record<string, ComponentType<Record<string, unknown>>> = {
       a: () => <b />,
     };
-    const view = render(renderBody(OVERRIDE));
-    view.rerender(renderBody(other));
+    const view = render(renderBody(OVERRIDE, "hello"));
+    view.rerender(renderBody(other, "hello"));
 
     expect(captured[captured.length - 1]).not.toBe(captured[0]);
   });

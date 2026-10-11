@@ -8,14 +8,47 @@ vi.mock("@/components/settings/host-scope/use-scoped-stream-binding", () => ({
 
 // Same boundary as the sibling Overview suites: mock `useHostScope` and
 // `@/lib/host`'s `useHostBinding` rather than standing up a host runtime.
-const scopeOverrides = vi.hoisted((): { current: Record<string, unknown> } => ({
-  current: {},
-}));
+//
+// `useHostScope` is reactive in production (a context and a query), so its
+// mock is too: a mid-test change goes through `set`, which notifies the
+// subscribers the mocked hook registered. An assignment to `.current` is only
+// for setup BEFORE the first render - React cannot see it.
+const scopeOverrides = vi.hoisted(
+  (): {
+    current: Record<string, unknown>;
+    subscribe: (listener: () => void) => () => void;
+    set(next: Record<string, unknown>): void;
+  } => {
+    const listeners = new Set<() => void>();
+    return {
+      current: {},
+      subscribe: (listener: () => void): (() => void) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+      set(next: Record<string, unknown>): void {
+        this.current = next;
+        listeners.forEach((listener) => {
+          listener();
+        });
+      },
+    };
+  },
+);
 vi.mock("@/components/settings/host-scope/use-host-scope", async () => {
   const { hostScopeFixture } =
     await import("@/components/settings/host-scope/host-scope-fixture");
+  const { useSyncExternalStore } = await import("react");
   return {
-    useHostScope: () => hostScopeFixture(scopeOverrides.current),
+    useHostScope: () =>
+      hostScopeFixture(
+        useSyncExternalStore(
+          scopeOverrides.subscribe,
+          () => scopeOverrides.current,
+        ),
+      ),
   };
 });
 
@@ -55,7 +88,6 @@ vi.mock("sonner", () => ({
   },
 }));
 
-import type { ReactNode } from "react";
 import {
   act,
   cleanup,
@@ -189,27 +221,11 @@ function renderPanel(): QueryClient {
   return queryClient;
 }
 
-// Same `QueryClient`/tree kept alive across a `rerender` - the shape
-// `host-overview-lifecycle-gate.test.tsx`'s `renderPanelPersistent` uses -
-// so a later mutation of `scopeOverrides.current`/`hostBindingMock.current`
-// (a Settings host swap) is observed by the SAME mounted subtree rather than
-// torn down and rebuilt with it. A fresh element on every call, not a
-// captured/reused one: React bails out of re-rendering a subtree entirely
-// when the SAME element reference is passed to `rerender` twice.
-function renderPanelPersistent(): { rerender: () => void } {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false, gcTime: 0 } },
-  });
-  const runnerHost = makeRunnerHost();
-  const buildTree = (): ReactNode => (
-    <QueryClientProvider client={client}>
-      <RunnerHostProvider runnerHost={runnerHost}>
-        <HostSettingsPanel />
-      </RunnerHostProvider>
-    </QueryClientProvider>
-  );
-  const { rerender } = render(buildTree());
-  return { rerender: () => rerender(buildTree()) };
+// Same as `renderPanel`, for the tests that change the scope mid-test
+// (`act(() => scopeOverrides.set(...))`, a Settings host swap say) and observe
+// it on the SAME mounted subtree rather than one torn down and rebuilt with it.
+function renderPanelPersistent(): void {
+  renderPanel();
 }
 
 function attemptOperation(
@@ -1424,7 +1440,7 @@ describe("HostOverviewOperationCard — record-derived parks", () => {
     recordNegotiatedHostMethods("host-a", ALL_OVERVIEW_METHODS);
     hostBindingMock.current = bindingWith(fixture.client);
     scopeOverrides.current = scopeFrom("host-a", fixture);
-    const panel = renderPanelPersistent();
+    renderPanelPersistent();
 
     const card = await screen.findByTestId("host-overview-operation-card");
     expect(card.textContent).toContain(
@@ -1441,11 +1457,12 @@ describe("HostOverviewOperationCard — record-derived parks", () => {
     // it carries the retained phase clause itself — so the qualification
     // this pin is about now shows there instead of on
     // `host-overview-operation-phase`.
-    scopeOverrides.current = {
-      ...scopeFrom("host-a", fixture),
-      status: "unreachable",
-    };
-    panel.rerender();
+    act(() => {
+      scopeOverrides.set({
+        ...scopeFrom("host-a", fixture),
+        status: "unreachable",
+      });
+    });
 
     await waitFor(() => {
       expect(
@@ -1505,15 +1522,16 @@ describe("HostOverviewOperationCard — record-derived parks", () => {
     recordNegotiatedHostMethods("host-a", ALL_OVERVIEW_METHODS);
     hostBindingMock.current = bindingWith(fixture.client);
     scopeOverrides.current = scopeFrom("host-a", fixture);
-    const panel = renderPanelPersistent();
+    renderPanelPersistent();
 
     await screen.findByTestId("host-overview-operation-force-update");
 
-    scopeOverrides.current = {
-      ...scopeFrom("host-a", fixture),
-      status: "unreachable",
-    };
-    panel.rerender();
+    act(() => {
+      scopeOverrides.set({
+        ...scopeFrom("host-a", fixture),
+        status: "unreachable",
+      });
+    });
 
     // The notices strip's `!offline` gate withholds the operation card
     // entirely once the scope is unusable (the offline notice is the
@@ -1573,27 +1591,30 @@ describe("HostOverviewOperationCard — record-derived parks", () => {
     recordNegotiatedHostMethods("host-a", ALL_OVERVIEW_METHODS);
     hostBindingMock.current = bindingWith(fixture.client);
     scopeOverrides.current = scopeFrom("host-a", fixture);
-    const panel = renderPanelPersistent();
+    renderPanelPersistent();
 
     fireEvent.click(
       await screen.findByTestId("host-overview-operation-force-update"),
     );
     await screen.findByTestId("host-busy-force-defer-dialog");
 
-    // Control: rerendering with the scope still usable keeps the dialog
+    // Control: a scope change that leaves it usable keeps the dialog
     // open — otherwise the assertion below would prove nothing about
     // `usable` specifically.
-    panel.rerender();
+    act(() => {
+      scopeOverrides.set(scopeFrom("host-a", fixture));
+    });
     expect(screen.getByTestId("host-busy-force-defer-dialog")).toBeTruthy();
 
     // THE FIX: the scope turns unusable — same predicate the sibling test
     // above demotes the phase sentence and withdraws the control on — and
     // the already-open offer closes, one commit late.
-    scopeOverrides.current = {
-      ...scopeFrom("host-a", fixture),
-      status: "unreachable",
-    };
-    panel.rerender();
+    act(() => {
+      scopeOverrides.set({
+        ...scopeFrom("host-a", fixture),
+        status: "unreachable",
+      });
+    });
 
     await waitFor(() => {
       expect(screen.queryByTestId("host-busy-force-defer-dialog")).toBeNull();
@@ -2444,7 +2465,7 @@ describe("HostOverviewOperationCard — the floor sentence and its affordance", 
       },
     });
     bindFixture(fixture, ALL_OVERVIEW_METHODS);
-    const panel = renderPanelPersistent();
+    renderPanelPersistent();
     await selectHostOverviewTab("updates");
 
     // Healthy first: the substitution is on, and its button is really there.
@@ -2459,11 +2480,12 @@ describe("HostOverviewOperationCard — the floor sentence and its affordance", 
       screen.getByRole("button", { name: "Show installation help" }),
     ).toBeTruthy();
 
-    scopeOverrides.current = {
-      ...scopeFrom("host-a", fixture),
-      status: "unreachable",
-    };
-    panel.rerender();
+    act(() => {
+      scopeOverrides.set({
+        ...scopeFrom("host-a", fixture),
+        status: "unreachable",
+      });
+    });
 
     await waitFor(() => {
       expect(
@@ -2996,7 +3018,9 @@ describe("HostOverviewOperationCard — terminal acknowledgement (Settings)", ()
       scopeOverrides.current = connectedScope;
       return {
         disconnect: () => {
-          scopeOverrides.current = { ...connectedScope, status: "unreachable" };
+          act(() => {
+            scopeOverrides.set({ ...connectedScope, status: "unreachable" });
+          });
         },
       };
     }
@@ -3013,7 +3037,7 @@ describe("HostOverviewOperationCard — terminal acknowledgement (Settings)", ()
       const { disconnect } = bindDisconnectable(
         completeOperation("attempt-retained-dismiss"),
       );
-      const panel = renderPanelPersistent();
+      renderPanelPersistent();
 
       await screen.findByTestId("host-overview-operation-card");
       await waitFor(() => {
@@ -3035,7 +3059,6 @@ describe("HostOverviewOperationCard — terminal acknowledgement (Settings)", ()
       // Going unusable afterward is a no-op for the (already dismissed) card:
       // the offline notice is the tab's only unreachable wording now.
       disconnect();
-      panel.rerender();
       await screen.findByTestId("host-overview-offline-notice");
       expect(screen.queryByTestId("host-overview-operation-card")).toBeNull();
     });
@@ -3044,7 +3067,7 @@ describe("HostOverviewOperationCard — terminal acknowledgement (Settings)", ()
       const { disconnect } = bindDisconnectable(
         completeOperation("attempt-fresh-then-retained"),
       );
-      const panel = renderPanelPersistent();
+      renderPanelPersistent();
 
       await screen.findByTestId("host-overview-operation-card");
       fireEvent.click(
@@ -3057,7 +3080,6 @@ describe("HostOverviewOperationCard — terminal acknowledgement (Settings)", ()
       // Same transition the sibling test above renders "Last seen: …" for
       // when not dismissed; here it must not resurrect a dismissed card.
       disconnect();
-      panel.rerender();
       expect(screen.queryByTestId("host-overview-operation-card")).toBeNull();
     });
 
@@ -3079,7 +3101,7 @@ describe("HostOverviewOperationCard — terminal acknowledgement (Settings)", ()
           liveness: "terminal",
         }),
       );
-      const panel = renderPanelPersistent();
+      renderPanelPersistent();
 
       await screen.findByTestId("host-overview-operation-card");
       await waitFor(() => {
@@ -3098,7 +3120,6 @@ describe("HostOverviewOperationCard — terminal acknowledgement (Settings)", ()
       ).toContain("attempt-retained-failed");
 
       disconnect();
-      panel.rerender();
       await screen.findByTestId("host-overview-offline-notice");
       expect(screen.queryByTestId("host-overview-operation-card")).toBeNull();
     });
@@ -3117,7 +3138,7 @@ describe("HostOverviewOperationCard — terminal acknowledgement (Settings)", ()
       const { disconnect } = bindDisconnectable(
         completeOperation("attempt-deadline"),
       );
-      const panel = renderPanelPersistent();
+      renderPanelPersistent();
 
       await screen.findByTestId("host-overview-operation-card");
 
@@ -3126,7 +3147,6 @@ describe("HostOverviewOperationCard — terminal acknowledgement (Settings)", ()
         HOST_UPDATE_COMPLETE_ACKNOWLEDGE_MS / 2,
       );
       disconnect();
-      panel.rerender();
       await screen.findByTestId("host-overview-offline-notice");
       expect(screen.queryByTestId("host-overview-operation-card")).toBeNull();
       expect(

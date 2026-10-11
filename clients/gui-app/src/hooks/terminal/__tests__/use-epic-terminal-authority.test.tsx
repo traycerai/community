@@ -7,7 +7,7 @@ import {
   vi,
   type Mock,
 } from "vitest";
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { act, cleanup, render, waitFor } from "@testing-library/react";
 import type {
   ImportLegacyPlainTerminalRequest,
   ImportLegacyPlainTerminalResponse,
@@ -43,29 +43,60 @@ const authorityState = vi.hoisted((): AuthorityTestState => ({
   importReset: vi.fn<() => void>(),
 }));
 
-vi.mock("@/hooks/terminal/use-plain-terminal-authority", () => ({
-  useTabPlainTerminalAuthority: (scope: { kind: "epic"; epicId: string }) => ({
-    hostId: "host-1",
-    scope,
-    capability: { status: authorityState.capability },
-    collection: {
-      terminalsByIdentity: Object.fromEntries(
-        Object.entries(authorityState.terminalsById).flatMap(
-          ([terminalId, value]) =>
-            value === undefined
-              ? []
-              : [[JSON.stringify(["host-1", terminalId]), value]],
-        ),
-      ),
-      streamStatus: "open",
-      streamCompatibility: "compatible",
-      streamSnapshotFresh: true,
+// The real authority hook is reactive (a stream and a query), so the mock is
+// too: a mid-test change goes through `act(() => authorityChannel.publish())`.
+// A compiled consumer keeps its element when its props are equal, so a bare
+// `rerender()` no longer carries a change in `authorityState` down.
+const authorityChannel = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  let version = 0;
+  return {
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
     },
-    terminals: Object.values(authorityState.terminalsById),
-    canMutate: authorityState.canMutate,
-    query: {},
-  }),
-}));
+    readVersion: (): number => version,
+    publish(): void {
+      version += 1;
+      listeners.forEach((listener) => listener());
+    },
+  };
+});
+
+vi.mock("@/hooks/terminal/use-plain-terminal-authority", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useTabPlainTerminalAuthority: (scope: { kind: "epic"; epicId: string }) => {
+      useSyncExternalStore(
+        authorityChannel.subscribe,
+        authorityChannel.readVersion,
+      );
+      return {
+        hostId: "host-1",
+        scope,
+        capability: { status: authorityState.capability },
+        collection: {
+          terminalsByIdentity: Object.fromEntries(
+            Object.entries(authorityState.terminalsById).flatMap(
+              ([terminalId, value]) =>
+                value === undefined
+                  ? []
+                  : [[JSON.stringify(["host-1", terminalId]), value]],
+            ),
+          ),
+          streamStatus: "open",
+          streamCompatibility: "compatible",
+          streamSnapshotFresh: true,
+        },
+        terminals: Object.values(authorityState.terminalsById),
+        canMutate: authorityState.canMutate,
+        query: {},
+      };
+    },
+  };
+});
 
 vi.mock("@/hooks/terminal/use-plain-terminal-mutations", () => ({
   useTabPlainTerminalMutations: () => ({
@@ -295,10 +326,14 @@ describe("useEpicTerminalAuthority", () => {
     });
     // A host reconnect: mutability drops and returns, which is a genuine
     // evidence change and re-runs the import automatically.
-    authorityState.canMutate = false;
-    rendered.rerender(<HookHarness instanceId={ref.instanceId} />);
-    authorityState.canMutate = true;
-    rendered.rerender(<HookHarness instanceId={ref.instanceId} />);
+    act(() => {
+      authorityState.canMutate = false;
+      authorityChannel.publish();
+    });
+    act(() => {
+      authorityState.canMutate = true;
+      authorityChannel.publish();
+    });
 
     await waitFor(() => {
       expect(

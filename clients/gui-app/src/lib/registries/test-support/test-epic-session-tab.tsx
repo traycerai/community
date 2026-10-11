@@ -100,6 +100,12 @@ export function TestEpicSessionTab(props: {
   readonly tabId: string;
   readonly children: ReactNode;
 }): ReactNode {
+  // The compiler would keep the prop-less `<TestEpicSessionHookEnvironment />`
+  // as one element, so a suite's re-render would never reach it - and a
+  // re-render is how these suites say "an input moved" (see that component).
+  // Uncompiled, every render of this wrapper renders it again.
+  // use-no-memo: a suite's re-render must reach the hook environment below.
+  "use no memo";
   const { epicId, tabId, children } = props;
   useLayoutEffect(() => {
     openTestEpicTab(tabId, epicId, TEST_EPIC_TAB_NAME);

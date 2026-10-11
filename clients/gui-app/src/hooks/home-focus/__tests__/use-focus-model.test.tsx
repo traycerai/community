@@ -312,13 +312,17 @@ describe("useFocusModel", () => {
       model: null,
       bump: () => undefined,
     };
-    function Suspender(): null {
+    // `tick` is unused on purpose: a compiled Harness keeps `<Suspender />`
+    // as one element for its whole life, so React would skip Suspender on the
+    // transition and nothing would suspend. A changing prop makes every bump
+    // re-render it, which is what throws the transition's render away.
+    function Suspender(_props: { readonly tick: number }): null {
       // Suspends for as long as the gate is shut; the promise never settles.
       if (gate.suspended) use(gate.pending);
       return null;
     }
     function Harness() {
-      const [, setTick] = useState(0);
+      const [tick, setTick] = useState(0);
       const model = useFocusModel();
       // Reads what COMMITTED, never what a render computed.
       useEffect(() => {
@@ -327,7 +331,7 @@ describe("useFocusModel", () => {
       }, [model, setTick]);
       return (
         <Suspense fallback={null}>
-          <Suspender />
+          <Suspender tick={tick} />
         </Suspense>
       );
     }

@@ -35,11 +35,29 @@ const EPIC_ID = "epic-1";
 const HOST_ID = "host-1";
 const SCOPE = { kind: "epic" as const, epicId: EPIC_ID };
 
-const authorityState = vi.hoisted(() => ({
-  capability: "unknown",
-  canMutate: false,
-  collection: undefined as PlainTerminalCollection | undefined,
-}));
+// The real authority hook is reactive (a host query), so the mock is too: a
+// mid-test change goes through `change`, which notifies the mocked hook's
+// subscribers. An assignment before the first render needs no notification.
+const authorityState = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  return {
+    capability: "unknown",
+    canMutate: false,
+    collection: undefined as PlainTerminalCollection | undefined,
+    version: 0,
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    change(mutate: () => void): void {
+      mutate();
+      this.version += 1;
+      listeners.forEach((listener) => listener());
+    },
+  };
+});
 const toastFromHostError = vi.hoisted(() =>
   vi.fn<(error: HostRpcError, fallbackMessage: string) => void>(),
 );
@@ -52,18 +70,27 @@ vi.mock("@/lib/host-error-toast", () => ({
     toastFromHostError(error, fallbackMessage),
 }));
 
-vi.mock("@/hooks/terminal/use-plain-terminal-authority", () => ({
-  useHostPlainTerminalAuthority: () => ({
-    hostId: HOST_ID,
-    scope: SCOPE,
-    capability:
-      authorityState.capability === "capable"
-        ? { status: "capable", schemaVersion: { major: 1, minor: 0 } }
-        : { status: authorityState.capability },
-    canMutate: authorityState.canMutate,
-    collection: authorityState.collection,
-  }),
-}));
+vi.mock("@/hooks/terminal/use-plain-terminal-authority", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useHostPlainTerminalAuthority: () => {
+      useSyncExternalStore(
+        authorityState.subscribe,
+        () => authorityState.version,
+      );
+      return {
+        hostId: HOST_ID,
+        scope: SCOPE,
+        capability:
+          authorityState.capability === "capable"
+            ? { status: "capable", schemaVersion: { major: 1, minor: 0 } }
+            : { status: authorityState.capability },
+        canMutate: authorityState.canMutate,
+        collection: authorityState.collection,
+      };
+    },
+  };
+});
 
 vi.mock("@/hooks/host/use-host-client-for-host-id", () => ({
   useHostClientForHostId: () => ({
@@ -198,9 +225,12 @@ describe("<EpicPlainTerminalCreateOwner />", () => {
       "accepted",
     );
 
-    authorityState.capability = "capable";
-    authorityState.canMutate = true;
-    rendered.rerender(<EpicPlainTerminalCreateOwner epicId={EPIC_ID} />);
+    act(() => {
+      authorityState.change(() => {
+        authorityState.capability = "capable";
+        authorityState.canMutate = true;
+      });
+    });
 
     await waitFor(() =>
       expect(hostCreateCalls("terminal.plain.create")).toHaveLength(1),
@@ -262,9 +292,12 @@ describe("<EpicPlainTerminalCreateOwner />", () => {
     expect(hostCreateCalls("terminal.plain.create")).toEqual([]);
     expect(hostCreateCalls("terminal.create")).toEqual([]);
 
-    authorityState.capability = "legacy";
-    authorityState.canMutate = false;
-    rendered.rerender(<EpicPlainTerminalCreateOwner epicId={EPIC_ID} />);
+    act(() => {
+      authorityState.change(() => {
+        authorityState.capability = "legacy";
+        authorityState.canMutate = false;
+      });
+    });
 
     await waitFor(() =>
       expect(hostCreateCalls("terminal.create")).toHaveLength(1),
@@ -372,16 +405,19 @@ describe("<EpicPlainTerminalCreateOwner />", () => {
 
     authorityState.capability = "capable";
     authorityState.canMutate = true;
-    const rendered = renderOwner();
+    renderOwner();
     expect(peekEpicTerminalDurableCreate(HOST_ID, terminalId)?.status).toBe(
       "failed",
     );
 
-    authorityState.collection = upsertPlainTerminal(
-      emptyPlainTerminalCollection(),
-      runningProjection(terminalId),
-    );
-    rendered.rerender(<EpicPlainTerminalCreateOwner epicId={EPIC_ID} />);
+    act(() => {
+      authorityState.change(() => {
+        authorityState.collection = upsertPlainTerminal(
+          emptyPlainTerminalCollection(),
+          runningProjection(terminalId),
+        );
+      });
+    });
 
     await waitFor(() =>
       expect(peekEpicTerminalDurableCreate(HOST_ID, terminalId)).toBeNull(),

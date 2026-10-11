@@ -363,19 +363,50 @@ describe("composer isolation from per-token dock churn", () => {
     ).toBe("false");
   });
 
-  it("re-renders the composer when only the navigation highlight id changes", () => {
+  it("re-renders the composer region when only the navigation highlight id changes", () => {
+    // The highlight id reaches nothing but the pending interview card, so the
+    // outcome to protect is that card's marker, not a render of the leaf stub.
+    const pending = {
+      blockId: "q1:interview",
+      assistantMessageId: null,
+      questions: [
+        {
+          questionId: "q1",
+          question: "Which path?",
+          header: null,
+          options: [{ label: "Alpha", description: null, preview: null }],
+          multiSelect: false,
+          allowsCustomAnswer: null,
+        },
+      ],
+    };
     const { rerender } = render(
-      <ChatLowerInteractionSurfaces {...props(TURN_IDLE, 0)} />,
+      <ChatLowerInteractionSurfaces
+        {...props(TURN_IDLE, 0)}
+        interview={{ ...INTERVIEW, pending }}
+      />,
     );
-    expect(composerRenderCount).toBe(1);
+    expect(
+      screen
+        .getByTestId("interview-card")
+        .getAttribute("data-navigation-highlighted"),
+    ).toBeNull();
 
     rerender(
       <ChatLowerInteractionSurfaces
         {...props(TURN_IDLE, 0)}
-        interview={{ ...INTERVIEW, highlightedBlockId: "q1:interview" }}
+        interview={{
+          ...INTERVIEW,
+          pending,
+          highlightedBlockId: "q1:interview",
+        }}
       />,
     );
-    expect(composerRenderCount).toBe(2);
+    expect(
+      screen
+        .getByTestId("interview-card")
+        .getAttribute("data-navigation-highlighted"),
+    ).toBe("true");
   });
 
   it("does not re-render the composer when the context usage leaf updates", async () => {

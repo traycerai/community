@@ -17,9 +17,26 @@ import {
  * Controllable open-epic handle: desktop EpicSessionProvider intentionally
  * supplies null during ownership/session acquisition (Ticket-08 cold path).
  */
-const openEpicHandleState = vi.hoisted(() => ({
-  handle: null as { readonly epicId: string } | null,
-}));
+//
+// The real hook reads a context, so the mocks are reactive too: a mid-test
+// resolve goes through `set`, which notifies the mocked hooks' subscribers. An
+// assignment to `.handle` is only for setup BEFORE the first render.
+const openEpicHandleState = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  return {
+    handle: null as { readonly epicId: string } | null,
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    set(next: { readonly epicId: string } | null): void {
+      this.handle = next;
+      listeners.forEach((listener) => listener());
+    },
+  };
+});
 
 const chatRecordsState = vi.hoisted(() => ({
   chats: [{ id: "chat-z" }, { id: "chat-a" }] as ReadonlyArray<{
@@ -44,17 +61,26 @@ vi.mock("@tanstack/react-router", () => ({
   useMatch: () => undefined,
 }));
 
-vi.mock("@/providers/use-open-epic-handle", () => ({
-  useMaybeOpenEpicHandle: () => openEpicHandleState.handle,
-  useOpenEpicHandle: () => {
-    if (openEpicHandleState.handle === null) {
-      throw new Error(
-        "useOpenEpicHandle requires a non-null open epic handle.",
-      );
-    }
-    return openEpicHandleState.handle;
-  },
-}));
+vi.mock("@/providers/use-open-epic-handle", async () => {
+  const { useSyncExternalStore } = await import("react");
+  const useHandle = () =>
+    useSyncExternalStore(
+      openEpicHandleState.subscribe,
+      () => openEpicHandleState.handle,
+    );
+  return {
+    useMaybeOpenEpicHandle: () => useHandle(),
+    useOpenEpicHandle: () => {
+      const handle = useHandle();
+      if (handle === null) {
+        throw new Error(
+          "useOpenEpicHandle requires a non-null open epic handle.",
+        );
+      }
+      return handle;
+    },
+  };
+});
 
 vi.mock("@/lib/epic-selectors", () => ({
   useEpicChatRecords: () => chatRecordsState.chats,
@@ -90,12 +116,17 @@ vi.mock(
   async () => {
     const { BrowserSessionsContext } =
       await import("@/components/epic-canvas/renderers/browser-sessions-context");
+    const { useSyncExternalStore } = await import("react");
     return {
       BrowserSessionsProvider: (props: {
         readonly epicId: string;
         readonly children: ReactNode;
       }) => {
-        const ready = openEpicHandleState.handle !== null;
+        const handle = useSyncExternalStore(
+          openEpicHandleState.subscribe,
+          () => openEpicHandleState.handle,
+        );
+        const ready = handle !== null;
         const value: BrowserSessionsState = {
           hostId: "host-test",
           lifecycle: ready ? "live" : "connecting",
@@ -261,7 +292,7 @@ describe("<EpicSurface />", () => {
   });
 
   it("cold-starts browser sessions with a null open-epic handle, then mounts the ready provider when the handle resolves", () => {
-    const { rerender } = renderEpicSurface("tab-a", "epic-a");
+    renderEpicSurface("tab-a", "epic-a");
 
     // (1) Initial null handle: the real provider remains mounted but has no
     // owner yet, so its one context reports connecting with empty inventory.
@@ -274,15 +305,9 @@ describe("<EpicSurface />", () => {
     ).toBe("connecting");
 
     // (2) Handle resolves: the same provider publishes its ready inventory.
-    readySessionsState.items = [SAMPLE_SESSION];
-    openEpicHandleState.handle = { epicId: "epic-a" };
-
     act(() => {
-      rerender(
-        <TabSurfaceActivityProvider activity={{ visible: true, focused: true }}>
-          <EpicSurface epicId="epic-a" tabId="tab-a" />
-        </TabSurfaceActivityProvider>,
-      );
+      readySessionsState.items = [SAMPLE_SESSION];
+      openEpicHandleState.set({ epicId: "epic-a" });
     });
 
     const provider = screen.getByTestId("browser-sessions-provider");
@@ -297,7 +322,7 @@ describe("<EpicSurface />", () => {
   });
 
   it("keeps the same AgentBrowserPip instance across the null open-epic handle to ready handle transition", () => {
-    const { rerender } = renderEpicSurface("tab-a", "epic-a");
+    renderEpicSurface("tab-a", "epic-a");
 
     const pip = screen.getByTestId("agent-browser-pip");
     const mountId = pip.dataset.mountId;
@@ -305,15 +330,9 @@ describe("<EpicSurface />", () => {
     expect(pipMountState.mounts).toBe(1);
     expect(pipMountState.unmounts).toBe(0);
 
-    readySessionsState.items = [SAMPLE_SESSION];
-    openEpicHandleState.handle = { epicId: "epic-a" };
-
     act(() => {
-      rerender(
-        <TabSurfaceActivityProvider activity={{ visible: true, focused: true }}>
-          <EpicSurface epicId="epic-a" tabId="tab-a" />
-        </TabSurfaceActivityProvider>,
-      );
+      readySessionsState.items = [SAMPLE_SESSION];
+      openEpicHandleState.set({ epicId: "epic-a" });
     });
 
     const pipAfterReady = screen.getByTestId("agent-browser-pip");

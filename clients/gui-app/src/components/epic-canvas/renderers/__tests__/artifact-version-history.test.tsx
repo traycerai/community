@@ -1,5 +1,6 @@
 import { StrictMode, type ReactNode } from "react";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -160,58 +161,82 @@ vi.mock("@/hooks/host/use-host-supports-method", () => ({
   },
 }));
 
-vi.mock("@/hooks/host/use-host-query", () => ({
-  useHostQuery: (args: HostQueryArgs) => {
-    state.queryCalls.push(args);
-    if (args.method === "epic.artifactVersions.list") {
-      return {
-        data: state.historyIsError
-          ? undefined
-          : {
-              entries: state.historyEntries,
-              nextCursor: state.historyNextCursor,
-            },
-        isLoading: false,
-        isError: state.historyIsError,
-        dataUpdatedAt: state.historyDataUpdatedAt,
-        refetch: () => {
-          state.historyRefetchCalls += 1;
-        },
+// The real query is reactive (a cache subscription), so the mock is too: a
+// mid-test change to `state` goes through `bump`, which notifies the mocked
+// hook's subscribers.
+const querySeam = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  return {
+    version: 0,
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
       };
-    }
-    if (args.method === "epic.artifactVersionSettings.get") {
-      return {
-        data: {
-          settings: {
-            enabled: state.settingsEnabled,
-            retentionDays: 30,
-            maxVersionsPerArtifact: 100,
-            maxBytesPerArtifact: 16 * 1024 * 1024,
+    },
+    bump(): void {
+      this.version += 1;
+      listeners.forEach((listener) => listener());
+    },
+  };
+});
+
+vi.mock("@/hooks/host/use-host-query", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useHostQuery: (args: HostQueryArgs) => {
+      useSyncExternalStore(querySeam.subscribe, () => querySeam.version);
+      state.queryCalls.push(args);
+      if (args.method === "epic.artifactVersions.list") {
+        return {
+          data: state.historyIsError
+            ? undefined
+            : {
+                entries: state.historyEntries,
+                nextCursor: state.historyNextCursor,
+              },
+          isLoading: false,
+          isError: state.historyIsError,
+          dataUpdatedAt: state.historyDataUpdatedAt,
+          refetch: () => {
+            state.historyRefetchCalls += 1;
           },
-        },
+        };
+      }
+      if (args.method === "epic.artifactVersionSettings.get") {
+        return {
+          data: {
+            settings: {
+              enabled: state.settingsEnabled,
+              retentionDays: 30,
+              maxVersionsPerArtifact: 100,
+              maxBytesPerArtifact: 16 * 1024 * 1024,
+            },
+          },
+          isLoading: false,
+          isError: false,
+        };
+      }
+      const observationId = args.params.observationId;
+      const blobFailed =
+        typeof observationId === "string" &&
+        state.blobErrorObservationIds.has(observationId);
+      return {
+        data:
+          typeof observationId === "string" && !blobFailed
+            ? state.blobByObservationId.get(observationId)
+            : undefined,
         isLoading: false,
-        isError: false,
+        isError: blobFailed,
+        refetch: () => {
+          if (typeof observationId === "string") {
+            state.blobRefetchCalls.push(observationId);
+          }
+        },
       };
-    }
-    const observationId = args.params.observationId;
-    const blobFailed =
-      typeof observationId === "string" &&
-      state.blobErrorObservationIds.has(observationId);
-    return {
-      data:
-        typeof observationId === "string" && !blobFailed
-          ? state.blobByObservationId.get(observationId)
-          : undefined,
-      isLoading: false,
-      isError: blobFailed,
-      refetch: () => {
-        if (typeof observationId === "string") {
-          state.blobRefetchCalls.push(observationId);
-        }
-      },
-    };
-  },
-}));
+    },
+  };
+});
 
 vi.mock("@/hooks/host/use-host-scoped-mutation", () => ({
   useHostScopedMutationForClient: (_client: null, config: MutationConfig) => {
@@ -430,7 +455,7 @@ describe("<ArtifactVersionHistoryEntryPoint />", () => {
     state.historyEntries = [observation("observation-new", "Newest")];
     state.historyNextCursor = "older-cursor";
     state.olderEntries = [observation("observation-old", "Older")];
-    const result = openHistory();
+    openHistory();
 
     fireEvent.click(
       screen.getByRole("button", { name: "Load older versions" }),
@@ -451,7 +476,9 @@ describe("<ArtifactVersionHistoryEntryPoint />", () => {
     state.historyEntries = [observation("observation-refetched", "Refetched")];
     state.historyNextCursor = null;
     state.historyDataUpdatedAt = 2;
-    result.rerender(historyTree(epicHandle));
+    act(() => {
+      querySeam.bump();
+    });
 
     expect(screen.getByText("Refetched")).toBeTruthy();
     expect(screen.queryByText("Older")).toBeNull();

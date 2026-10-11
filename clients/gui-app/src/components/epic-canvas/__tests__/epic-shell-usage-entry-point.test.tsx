@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import * as Y from "yjs";
@@ -191,10 +191,36 @@ vi.mock("@/hooks/host/use-host-client-for-host-id", () => ({
 // and now reads the session's host instead; with both pinned to `HOST_ID` the
 // two are indistinguishable, and the suite would go on passing against the
 // defect it is meant to hold closed.
-const effectiveHostId = vi.hoisted(() => ({ current: "" }));
-vi.mock("@/hooks/host/use-effective-host-id", () => ({
-  useEffectiveHostId: () => effectiveHostId.current,
-}));
+//
+// The real hook is reactive (a selection store), so the mock is too: a mid-test
+// move goes through `set`, which notifies the mocked hook's subscribers. An
+// assignment to `.current` is only for setup BEFORE the first render.
+const effectiveHostId = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  return {
+    current: "",
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    set(next: string): void {
+      this.current = next;
+      listeners.forEach((listener) => listener());
+    },
+  };
+});
+vi.mock("@/hooks/host/use-effective-host-id", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useEffectiveHostId: () =>
+      useSyncExternalStore(
+        effectiveHostId.subscribe,
+        () => effectiveHostId.current,
+      ),
+  };
+});
 
 // Threw until the stream-factory override was deleted and `EpicSessionProvider`
 // started opening its transport unconditionally; the throw was safe only while
@@ -412,7 +438,7 @@ describe("<EpicShell /> usage entry point - real host RPC round trip", () => {
       },
     });
 
-    const view = renderShell(queryClient);
+    renderShell(queryClient);
 
     controlled.streams()[0].callbacks.onConnectionStatus("open", null, true);
     controlled
@@ -427,16 +453,9 @@ describe("<EpicShell /> usage entry point - real host RPC round trip", () => {
     // element that was never there cannot survive.
     await screen.findByTestId("epic-usage-entry-point");
 
-    effectiveHostId.current = "host-elsewhere";
-    view.rerender(
-      <QueryClientProvider client={queryClient}>
-        <TooltipProvider>
-          <TestEpicSessionTab epicId={EPIC_ID} tabId={TAB_ID}>
-            <EpicShell epicId={EPIC_ID} tabId={TAB_ID} active />
-          </TestEpicSessionTab>
-        </TooltipProvider>
-      </QueryClientProvider>,
-    );
+    act(() => {
+      effectiveHostId.set("host-elsewhere");
+    });
 
     // The replacement really was started and really has not settled - a
     // re-point that never began would leave this passing for the wrong reason.

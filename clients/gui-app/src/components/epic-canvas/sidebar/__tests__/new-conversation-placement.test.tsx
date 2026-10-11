@@ -187,29 +187,57 @@ function editorHandle(): ComposerPromptEditorHandle {
 // placement (dead pin, moved client) without standing up a real fleet. The
 // modal resolves the per-EPIC placement, not the landing composer's
 // window-keyed one - a mock of `useComposerPlacement` here would be stranded.
-vi.mock("@/hooks/host/use-composer-placement", () => ({
-  useEpicConversationPlacement: (input: {
-    readonly epicId: string;
-    readonly overrideHostId: string | null;
-    readonly sessionHostId: string | null;
-  }) => {
-    testState.placementInputs.push(input);
-    return {
-      pin: {
-        selection: null,
-        honoredSelection: null,
-        setSelection: testState.recordPlacement,
-        resolvedHostId: testState.placement.current.resolvedHostId,
-        isPinned: testState.pinIsPinned.current,
-        latchOnFirstUse: () => undefined,
-      },
-      target: testState.placement.current,
-      submitTarget: testState.placement.current,
-      hostLabelFor: () => testState.placement.current.hostLabel,
-      followsEffective: testState.followsEffective.current,
-    };
-  },
-}));
+//
+// The real hook is reactive (a pin store and the host directory), so the mock is
+// too: a mid-test change to `testState.placement` goes through `bump`, which
+// notifies the mocked hook's subscribers.
+const placementSeam = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  return {
+    version: 0,
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    bump(): void {
+      this.version += 1;
+      listeners.forEach((listener) => listener());
+    },
+  };
+});
+
+vi.mock("@/hooks/host/use-composer-placement", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useEpicConversationPlacement: (input: {
+      readonly epicId: string;
+      readonly overrideHostId: string | null;
+      readonly sessionHostId: string | null;
+    }) => {
+      useSyncExternalStore(
+        placementSeam.subscribe,
+        () => placementSeam.version,
+      );
+      testState.placementInputs.push(input);
+      return {
+        pin: {
+          selection: null,
+          honoredSelection: null,
+          setSelection: testState.recordPlacement,
+          resolvedHostId: testState.placement.current.resolvedHostId,
+          isPinned: testState.pinIsPinned.current,
+          latchOnFirstUse: () => undefined,
+        },
+        target: testState.placement.current,
+        submitTarget: testState.placement.current,
+        hostLabelFor: () => testState.placement.current.hostLabel,
+        followsEffective: testState.followsEffective.current,
+      };
+    },
+  };
+});
 
 // The Epic session's host, the modal's DEFAULT placement tier - handed to the
 // (mocked) placement above, so this suite pins that the modal asks for the
@@ -560,7 +588,7 @@ describe("new-conversation modal shares the composer's placement semantics", () 
       isPinned: false,
       namedHostDead: false,
     };
-    const view = renderModal();
+    renderModal();
     act(() => {
       testState.bodySubmit?.();
     });
@@ -578,7 +606,7 @@ describe("new-conversation modal shares the composer's placement semantics", () 
       namedHostDead: false,
     };
     act(() => {
-      view.rerender(<Harness />);
+      placementSeam.bump();
     });
 
     expect(screen.queryByTestId("composer-host-notice")).toBeNull();
@@ -605,7 +633,7 @@ describe("new-conversation modal shares the composer's placement semantics", () 
       isPinned: true,
       namedHostDead: false,
     };
-    const view = renderModal();
+    renderModal();
     act(() => {
       testState.bodySubmit?.();
     });
@@ -613,13 +641,13 @@ describe("new-conversation modal shares the composer's placement semantics", () 
 
     resolveTo("host-c", "Home Mac");
     act(() => {
-      view.rerender(<Harness />);
+      placementSeam.bump();
     });
     expect(screen.queryByTestId("composer-host-notice")).toBeNull();
 
     resolveTo("host-b", "Build Box");
     act(() => {
-      view.rerender(<Harness />);
+      placementSeam.bump();
     });
     expect(screen.queryByTestId("composer-host-notice")).toBeNull();
   });

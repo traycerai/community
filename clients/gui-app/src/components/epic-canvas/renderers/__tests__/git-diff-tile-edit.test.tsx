@@ -129,40 +129,72 @@ vi.mock("@/hooks/host/use-tab-host-client", () => ({
   useTabHostClient: () => null,
 }));
 
-vi.mock("@/hooks/git/use-git-list-changed-files-subscription", () => ({
-  useGitListChangedFilesSubscription: () => ({
-    data: {
-      branch: "main",
-      headSha: "head-1",
-      files: [changedFile(state.stage)],
+// The real hooks are reactive (a subscription and a cache), so the mocks are
+// too: a mid-test change to `state.worktreeOid` / `state.diffPending` goes
+// through `bump`, which notifies the mocked hooks' subscribers.
+const diffSeam = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  return {
+    version: 0,
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
     },
-    error: null,
-    isPending: false,
-    repoState: null,
-    repoMode: "normal",
-    pollStartedAtMs: 1,
-    watcherStatus: null,
-  }),
-}));
+    bump(): void {
+      this.version += 1;
+      listeners.forEach((listener) => listener());
+    },
+  };
+});
 
-vi.mock("@/hooks/git/use-git-get-file-diff-query", () => ({
-  useGitGetFileDiffQuery: () => ({
-    data: state.diffPending
-      ? undefined
-      : {
-          filePath: "src/app.ts",
+vi.mock("@/hooks/git/use-git-list-changed-files-subscription", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useGitListChangedFilesSubscription: () => {
+      useSyncExternalStore(diffSeam.subscribe, () => diffSeam.version);
+      return {
+        data: {
+          branch: "main",
           headSha: "head-1",
-          stagedOid: "index-1",
-          worktreeOid: state.worktreeOid,
-          patch: "diff --git a/src/app.ts b/src/app.ts\n",
-          isTruncated: false,
-          truncatedAfterBytes: null,
-          isBinary: false,
+          files: [changedFile(state.stage)],
         },
-    error: null,
-    isPending: state.diffPending,
-  }),
-}));
+        error: null,
+        isPending: false,
+        repoState: null,
+        repoMode: "normal",
+        pollStartedAtMs: 1,
+        watcherStatus: null,
+      };
+    },
+  };
+});
+
+vi.mock("@/hooks/git/use-git-get-file-diff-query", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useGitGetFileDiffQuery: () => {
+      useSyncExternalStore(diffSeam.subscribe, () => diffSeam.version);
+      return {
+        data: state.diffPending
+          ? undefined
+          : {
+              filePath: "src/app.ts",
+              headSha: "head-1",
+              stagedOid: "index-1",
+              worktreeOid: state.worktreeOid,
+              patch: "diff --git a/src/app.ts b/src/app.ts\n",
+              isTruncated: false,
+              truncatedAfterBytes: null,
+              isBinary: false,
+            },
+        error: null,
+        isPending: state.diffPending,
+      };
+    },
+  };
+});
 
 vi.mock("@/hooks/git/use-git-get-file-contents-query", () => ({
   useGitGetFileContentsQuery: () => ({
@@ -548,7 +580,7 @@ describe("<GitDiffTile /> editing", () => {
   });
 
   it("pins the active comparison and marks real background worktree drift stale", async () => {
-    const rendered = renderTile(NODE, true);
+    renderTile(NODE, true);
     fireEvent.click(screen.getByRole("button", { name: "Click code" }));
     expect(
       await screen.findByRole("button", { name: "Change draft" }),
@@ -556,7 +588,9 @@ describe("<GitDiffTile /> editing", () => {
 
     state.worktreeOid = "worktree-2";
     state.worktreeContent = "const external = true;\n";
-    rendered.rerender(tileElement(NODE, true));
+    act(() => {
+      diffSeam.bump();
+    });
 
     const staleStatus = await screen.findByText("Worktree changed");
     expect(
@@ -581,7 +615,7 @@ describe("<GitDiffTile /> editing", () => {
     vi.useFakeTimers();
     try {
       await act(async () => {
-        rendered.rerender(tileElement(NODE, true));
+        diffSeam.bump();
         // Flush the failed refetch's own microtask chain (real Promise
         // scheduling, independent of the fake macrotask/timer queue) so
         // `scheduleRetry` runs and arms the backoff timer.
@@ -617,7 +651,7 @@ describe("<GitDiffTile /> editing", () => {
   });
 
   it("backs off exponentially across consecutive failures and recovers once the host reconnects", async () => {
-    const rendered = renderTile(NODE, true);
+    renderTile(NODE, true);
     fireEvent.click(screen.getByRole("button", { name: "Click code" }));
     expect(
       await screen.findByRole("button", { name: "Change draft" }),
@@ -636,7 +670,7 @@ describe("<GitDiffTile /> editing", () => {
     try {
       // First failure - schedules a retry at the base delay.
       await act(async () => {
-        rendered.rerender(tileElement(NODE, true));
+        diffSeam.bump();
         await Promise.resolve();
         await Promise.resolve();
       });
@@ -839,7 +873,7 @@ describe("<GitDiffTile /> editing", () => {
   });
 
   it("dedupes the drift refetch across renders while the check is still pending", async () => {
-    const rendered = renderTile(NODE, true);
+    renderTile(NODE, true);
     fireEvent.click(screen.getByRole("button", { name: "Click code" }));
     expect(
       await screen.findByRole("button", { name: "Change draft" }),
@@ -858,8 +892,12 @@ describe("<GitDiffTile /> editing", () => {
     // real one) is a fresh object every render, so without a synchronous
     // per-identity guard each rerender would start another overlapping
     // `git.getFileContents` refetch instead of joining the first attempt.
-    rendered.rerender(tileElement(NODE, true));
-    rendered.rerender(tileElement(NODE, true));
+    act(() => {
+      diffSeam.bump();
+    });
+    act(() => {
+      diffSeam.bump();
+    });
     await Promise.resolve();
 
     expect(state.refetchContents).toHaveBeenCalledTimes(2);

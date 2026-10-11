@@ -45,21 +45,40 @@ import { DEFAULT_PROVIDER_NATIVE_CAPABILITIES } from "@traycer/protocol/host/pro
  * seam under test (closes T2 review P3-1).
  */
 
-const mocks = vi.hoisted(() => ({
-  /** `undefined` = still loading; array = settled providers.list payload. */
-  providers: undefined as ProviderCliState[] | undefined,
-}));
+const mocks = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  return {
+    /** `undefined` = still loading; array = settled providers.list payload. */
+    providers: undefined as ProviderCliState[] | undefined,
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    /** A mid-test change; the real query is reactive, so the mock is too. */
+    set(next: ProviderCliState[] | undefined): void {
+      this.providers = next;
+      listeners.forEach((listener) => listener());
+    },
+  };
+});
 
-vi.mock("@/hooks/providers/use-providers-list-query", () => ({
-  useProvidersListForClient: (
-    _client: unknown,
-    activity: { enabled: boolean },
-  ) => {
-    if (!activity.enabled) return { data: undefined };
-    if (mocks.providers === undefined) return { data: undefined };
-    return { data: { providers: mocks.providers } };
-  },
-}));
+vi.mock("@/hooks/providers/use-providers-list-query", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useProvidersListForClient: (
+      _client: unknown,
+      activity: { enabled: boolean },
+    ) => {
+      const providers = useSyncExternalStore(
+        mocks.subscribe,
+        () => mocks.providers,
+      );
+      if (!activity.enabled) return { data: undefined };
+      if (providers === undefined) return { data: undefined };
+      return { data: { providers } };
+    },
+  };
+});
 
 vi.mock("@/hooks/rate-limits/use-profile-usage-presentation", () => ({
   useProfileUsagePresentation: () => ({
@@ -591,36 +610,32 @@ describe("Landing rate-limit banner durability", () => {
       expect(screen.getByTestId("banner-visible").textContent).toBe("false");
 
       // Material severity change re-arms both surfaces.
-      mocks.providers = [
-        claudeState([
-          profile({
-            profileId: "ambient",
-            kind: "ambient",
-            label: "Terminal account",
-            rateLimitStatus: "near_limit",
-            rateLimitLimitedScopes: null,
-            authenticated: true,
-          }),
-          profile({
-            profileId: "work",
-            kind: "managed",
-            label: "Work",
-            rateLimitStatus: "ok",
-            rateLimitLimitedScopes: null,
-            authenticated: true,
-          }),
-        ]),
-      ];
       // Start from near_limit visible, dismiss, then flip to hard_limit.
-      useRateLimitSwitchPromptDismissalsStore.setState({
-        dismissedKeys: new Set<string>(),
+      act(() => {
+        useRateLimitSwitchPromptDismissalsStore.setState({
+          dismissedKeys: new Set<string>(),
+        });
+        mocks.set([
+          claudeState([
+            profile({
+              profileId: "ambient",
+              kind: "ambient",
+              label: "Terminal account",
+              rateLimitStatus: "near_limit",
+              rateLimitLimitedScopes: null,
+              authenticated: true,
+            }),
+            profile({
+              profileId: "work",
+              kind: "managed",
+              label: "Work",
+              rateLimitStatus: "ok",
+              rateLimitLimitedScopes: null,
+              authenticated: true,
+            }),
+          ]),
+        ]);
       });
-      rerender(
-        <DualSurfaceHarness
-          toolbarStore={toolbarStore}
-          selectedModel={SONNET}
-        />,
-      );
       await macrotaskTick();
       expect(screen.getByTestId("banner-visible").textContent).toBe("true");
       fireEvent.click(
@@ -631,13 +646,7 @@ describe("Landing rate-limit banner durability", () => {
       await macrotaskTick();
       expect(screen.getByTestId("banner-visible").textContent).toBe("false");
 
-      mocks.providers = limitedAmbientAndWork();
-      rerender(
-        <DualSurfaceHarness
-          toolbarStore={toolbarStore}
-          selectedModel={SONNET}
-        />,
-      );
+      act(() => mocks.set(limitedAmbientAndWork()));
       await macrotaskTick();
       expect(screen.getByTestId("banner-visible").textContent).toBe("true");
       expect(screen.getByTestId("chat-banner-visible").textContent).toBe(

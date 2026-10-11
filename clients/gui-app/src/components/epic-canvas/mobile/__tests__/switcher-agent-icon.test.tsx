@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SwitcherAgentIcon } from "@/components/epic-canvas/mobile/switcher-agent-icon";
 import { NotificationIndicatorsProvider } from "@/components/notifications/notification-indicators-provider";
@@ -15,50 +15,79 @@ import type { SurfaceNotificationIndicators } from "@/stores/notifications/notif
 // the TUI badge branch; `tier` is the awareness tier the desktop chat tree
 // reads, so setting it here is what proves the switcher shares that source
 // rather than the coarser working-id set it used to read.
-const state = vi.hoisted(
-  (): {
-    tier: AgentActivityTier | null;
-    gui: string | null;
-    tui: string | null;
-    role: "owner" | "viewer";
-    /** The chat projection's OWN host, i.e. what `useEpicNodeHostId` answers. */
-    ownerHostId: string | null;
-  } => ({
-    tier: null,
-    gui: null,
-    tui: null,
+//
+// The real selectors are store subscriptions, so the activity-tier mocks are
+// reactive too: a mid-test change goes through `change`, which notifies the
+// subscribers they registered. An assignment before the first render needs no
+// notification.
+const state = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  return {
+    tier: null as AgentActivityTier | null,
+    gui: null as string | null,
+    tui: null as string | null,
     role: "owner",
-    ownerHostId: null,
-  }),
-);
-vi.mock("@/lib/epic-selectors", () => ({
-  useEpicActiveAgentIds: () =>
-    state.tier === null ? new Set<string>() : new Set<string>(["n1"]),
-  useEpicAgentActivityTiers: () =>
-    state.tier === null
-      ? new Map<string, AgentActivityTier>()
-      : new Map<string, AgentActivityTier>([["n1", state.tier]]),
-  // TerminalAgentProgressIcon reads the single-agent-id selector rather than
-  // the whole tier map.
-  useEpicAgentActivityTier: (agentId: string) =>
-    state.tier === null || agentId !== "n1" ? undefined : state.tier,
-  // ChatProgressIcon reads the REGISTERED (registry-keyed, non-throwing)
-  // selectors rather than the ambient ones, so a whole-module mock has to
-  // answer those too - same data, addressed by epic id instead of by context.
-  useRegisteredEpicAgentActivityTiers: () =>
-    state.tier === null
-      ? new Map<string, AgentActivityTier>()
-      : new Map<string, AgentActivityTier>([["n1", state.tier]]),
-  useRegisteredEpicAgentActivityTier: (
-    _epicId: string | null,
-    agentId: string,
-  ) => (state.tier === null || agentId !== "n1" ? undefined : state.tier),
-  useEpicChatHarnessId: () => state.gui,
-  useMaybeEpicTuiAgentHarnessId: () => state.tui,
-  useEpicPermissionRole: () => state.role,
-  useRegisteredEpicPermissionRole: () => state.role,
-  useEpicNodeHostId: () => state.ownerHostId,
-}));
+    /** The chat projection's OWN host, i.e. what `useEpicNodeHostId` answers. */
+    ownerHostId: null as string | null,
+    version: 0,
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    change(mutate: () => void): void {
+      mutate();
+      this.version += 1;
+      listeners.forEach((listener) => listener());
+    },
+  };
+});
+vi.mock("@/lib/epic-selectors", async () => {
+  const { useSyncExternalStore } = await import("react");
+  function useStateVersion(): number {
+    return useSyncExternalStore(state.subscribe, () => state.version);
+  }
+  return {
+    useEpicActiveAgentIds: () => {
+      useStateVersion();
+      return state.tier === null ? new Set<string>() : new Set<string>(["n1"]);
+    },
+    useEpicAgentActivityTiers: () => {
+      useStateVersion();
+      return state.tier === null
+        ? new Map<string, AgentActivityTier>()
+        : new Map<string, AgentActivityTier>([["n1", state.tier]]);
+    },
+    // TerminalAgentProgressIcon reads the single-agent-id selector rather than
+    // the whole tier map.
+    useEpicAgentActivityTier: (agentId: string) => {
+      useStateVersion();
+      return state.tier === null || agentId !== "n1" ? undefined : state.tier;
+    },
+    // ChatProgressIcon reads the REGISTERED (registry-keyed, non-throwing)
+    // selectors rather than the ambient ones, so a whole-module mock has to
+    // answer those too - same data, addressed by epic id instead of by context.
+    useRegisteredEpicAgentActivityTiers: () => {
+      useStateVersion();
+      return state.tier === null
+        ? new Map<string, AgentActivityTier>()
+        : new Map<string, AgentActivityTier>([["n1", state.tier]]);
+    },
+    useRegisteredEpicAgentActivityTier: (
+      _epicId: string | null,
+      agentId: string,
+    ) => {
+      useStateVersion();
+      return state.tier === null || agentId !== "n1" ? undefined : state.tier;
+    },
+    useEpicChatHarnessId: () => state.gui,
+    useMaybeEpicTuiAgentHarnessId: () => state.tui,
+    useEpicPermissionRole: () => state.role,
+    useRegisteredEpicPermissionRole: () => state.role,
+    useEpicNodeHostId: () => state.ownerHostId,
+  };
+});
 
 const NO_INDICATORS: HostNotificationsIndicatorStateResponse = {
   epics: {},
@@ -162,11 +191,14 @@ describe("<SwitcherAgentIcon /> live status", () => {
   it("drops the spinner when the agent stops working, with the sheet still open", () => {
     state.tier = "turn";
     state.gui = "claude";
-    const view = render(renderIcon("chat", NO_INDICATORS));
+    render(renderIcon("chat", NO_INDICATORS));
     expect(screen.getByTestId("switcher-agent-activity-n1")).toBeTruthy();
 
-    state.tier = null;
-    view.rerender(renderIcon("chat", NO_INDICATORS));
+    act(() => {
+      state.change(() => {
+        state.tier = null;
+      });
+    });
     expect(screen.queryByTestId("switcher-agent-activity-n1")).toBeNull();
     // Back to the idle identity glyph: every status variant renders a
     // `role="status"` span, so their absence is the idle slot.

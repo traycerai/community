@@ -44,24 +44,48 @@ function pathKey(path: string | null): string {
   return path ?? "<roots>";
 }
 
-vi.mock("@/hooks/workspace/use-workspace-browse-folders-query", () => ({
-  useWorkspaceBrowseFolders: (args: {
-    client: unknown;
-    directoryPath: string | null;
-    enabled: boolean;
-  }) => {
-    lastClient = args.client;
-    if (args.enabled) requestedPaths.push(args.directoryPath);
-    return (
-      queryByPath.get(pathKey(args.directoryPath)) ?? {
-        data: undefined,
-        isPending: true,
-        error: null,
-        refetch: () => Promise.resolve(),
-      }
-    );
-  },
-}));
+// The real query is reactive (a cache subscription), so the fake is too: a
+// mid-test change to `queryByPath` goes through `bump`, which notifies the
+// mocked hook's subscribers. Assignments before the first render need none.
+const browseSeam = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  return {
+    revision: 0,
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    bump(): void {
+      this.revision += 1;
+      listeners.forEach((listener) => listener());
+    },
+  };
+});
+
+vi.mock("@/hooks/workspace/use-workspace-browse-folders-query", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useWorkspaceBrowseFolders: (args: {
+      client: unknown;
+      directoryPath: string | null;
+      enabled: boolean;
+    }) => {
+      useSyncExternalStore(browseSeam.subscribe, () => browseSeam.revision);
+      lastClient = args.client;
+      if (args.enabled) requestedPaths.push(args.directoryPath);
+      return (
+        queryByPath.get(pathKey(args.directoryPath)) ?? {
+          data: undefined,
+          isPending: true,
+          error: null,
+          refetch: () => Promise.resolve(),
+        }
+      );
+    },
+  };
+});
 
 /**
  * `workspace.prepareFolders` conveniences, faked at the same seam as the
@@ -1051,13 +1075,17 @@ describe("<RemoteFolderPickerDialog />", () => {
       error: new Error("Timed out listing this folder"),
       refetch: () => Promise.resolve(),
     });
-    fireEvent.click(screen.getByTestId("remote-folder-picker-test-rerender"));
+    act(() => {
+      browseSeam.bump();
+    });
     expect(screen.getByTestId("remote-folder-picker-error")).toBeTruthy();
 
     // Recovery returns the same data identity. The old aim must stay cleared,
     // so Add submits the navigation-filled directory, not `docs`.
     queryByPath.set(pathKey("/Users/tester/code"), readyLevel(codeListing));
-    fireEvent.click(screen.getByTestId("remote-folder-picker-test-rerender"));
+    act(() => {
+      browseSeam.bump();
+    });
     fireEvent.click(screen.getByTestId("remote-folder-picker-add"));
     await expect(pick).resolves.toEqual({
       kind: "prepare",
@@ -1083,10 +1111,14 @@ describe("<RemoteFolderPickerDialog />", () => {
     await screen.findAllByTestId("remote-folder-picker-row");
     fireEvent.keyDown(pathInput(), { key: "ArrowDown" });
     queryByPath.set(pathKey(null), readyLevel(reordered));
-    fireEvent.click(screen.getByTestId("remote-folder-picker-test-rerender"));
+    act(() => {
+      browseSeam.bump();
+    });
     expect(rowNames()).toEqual(["consulting", "code", "Documents"]);
     queryByPath.set(pathKey(null), readyLevel(HOME_RESPONSE));
-    fireEvent.click(screen.getByTestId("remote-folder-picker-test-rerender"));
+    act(() => {
+      browseSeam.bump();
+    });
     fireEvent.click(screen.getByTestId("remote-folder-picker-add"));
     await expect(pick).resolves.toEqual({
       kind: "prepare",

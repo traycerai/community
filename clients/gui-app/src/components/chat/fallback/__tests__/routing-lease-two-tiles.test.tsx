@@ -7,6 +7,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
+import { useStore } from "zustand";
 import type { Chat } from "@traycer/protocol/persistence/epic/schemas";
 import type { PendingFallback } from "@traycer/protocol/host/agent/gui/subscribe";
 import type { ChatStreamCallbacks } from "@traycer-clients/shared/host-transport/chat-stream-client";
@@ -244,7 +245,7 @@ function emitSnapshot(
 }
 
 function LeaseChooser({ handle }: { readonly handle: ChatSessionStoreHandle }) {
-  const pending = handle.store((state) => state.pendingFallback);
+  const pending = useStore(handle.store, (state) => state.pendingFallback);
   if (pending === undefined) return null;
   return (
     <TooltipProvider>

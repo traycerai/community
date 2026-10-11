@@ -37,6 +37,48 @@ afterEach(() => {
   resetLandingBrowserOpenReservationsForTests();
 });
 
+// ── `useRouter()` without a `<RouterProvider>`, for every jsdom suite ───────
+//
+// Production always has a router; most suites render a hook or a component bare,
+// and TanStack's `useRouter()` then answers null. A source hook only touched
+// the router inside a click handler, so null never mattered. The React
+// Compiler reads `router.navigate` / `router.history` at render time (a
+// property read inside a callback becomes a read of its object), so the same
+// bare render now throws on null at render.
+//
+// ONE stand-in here rather than a `useRouter` mock in every file: it answers the
+// REAL router whenever a provider exists, and an inert one only where there is
+// none. It is deliberately NOT a router - no `state`, no `__store` - so code
+// that asks "is there a usable router?" (`useEpicNestedFocusNavigation` checks
+// the shape and falls back to running `prepare()` directly) keeps taking the
+// no-router branch. Navigation under it goes nowhere; a suite that asserts a
+// navigation provides its own router or its own `vi.mock`, and a file-level
+// `vi.mock("@tanstack/react-router")` replaces this one for that file.
+vi.mock("@tanstack/react-router", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@tanstack/react-router")>();
+  const inertRouter = {
+    navigate: (): Promise<void> => Promise.resolve(),
+    history: {
+      back: (): void => undefined,
+      forward: (): void => undefined,
+      go: (): void => undefined,
+      push: (): void => undefined,
+      replace: (): void => undefined,
+      canGoBack: (): boolean => false,
+      subscribe: (): (() => void) => () => undefined,
+    },
+  };
+  // Declared nullable on purpose: the real hook's type says "always a router",
+  // which is true under a provider and not outside one.
+  const routerOrInert = (router: object | null | undefined): object =>
+    router ?? inertRouter;
+  return {
+    ...actual,
+    useRouter: () => routerOrInert(actual.useRouter({ warn: false })),
+  };
+});
+
 // ── The epic runtime worker, for every jsdom suite ──────────────────────────
 //
 // ONE place, not a `beforeEach` in thirty files. jsdom has no `Worker`, and the

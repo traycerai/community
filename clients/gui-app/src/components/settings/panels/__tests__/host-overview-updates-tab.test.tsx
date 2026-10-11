@@ -13,14 +13,46 @@ vi.mock("@/components/settings/host-scope/use-scoped-stream-binding", () => ({
   useScopedStreamBinding: () => null,
 }));
 
-const scopeOverrides = vi.hoisted((): { current: Record<string, unknown> } => ({
-  current: {},
-}));
+// `useHostScope` is reactive in production (a context and a query), so its
+// mock is too: a mid-test change goes through `set`, which notifies the
+// subscribers the mocked hook registered. An assignment to `.current` is only
+// for setup BEFORE the first render - React cannot see it.
+const scopeOverrides = vi.hoisted(
+  (): {
+    current: Record<string, unknown>;
+    subscribe: (listener: () => void) => () => void;
+    set(next: Record<string, unknown>): void;
+  } => {
+    const listeners = new Set<() => void>();
+    return {
+      current: {},
+      subscribe: (listener: () => void): (() => void) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+      set(next: Record<string, unknown>): void {
+        this.current = next;
+        listeners.forEach((listener) => {
+          listener();
+        });
+      },
+    };
+  },
+);
 vi.mock("@/components/settings/host-scope/use-host-scope", async () => {
   const { hostScopeFixture } =
     await import("@/components/settings/host-scope/host-scope-fixture");
+  const { useSyncExternalStore } = await import("react");
   return {
-    useHostScope: () => hostScopeFixture(scopeOverrides.current),
+    useHostScope: () =>
+      hostScopeFixture(
+        useSyncExternalStore(
+          scopeOverrides.subscribe,
+          () => scopeOverrides.current,
+        ),
+      ),
   };
 });
 
@@ -282,19 +314,20 @@ function panelElement(
 }
 
 /**
- * Renders the panel and returns a `rerender` that replays the SAME element —
- * so a test can mutate `scopeOverrides.current` (a scope flip, e.g. reachable
- * → unreachable) and force the mocked `useHostScope` to be called again, the
+ * Renders the panel for a test that changes the scope mid-test (a scope flip,
+ * e.g. reachable → unreachable) with `act(() => scopeOverrides.set(...))`, the
  * same pattern `host-overview-operation-card.test.tsx`'s
  * `renderPanelPersistent` uses.
  */
-function renderPanelPersistent(): { readonly rerender: () => void } {
-  const client = new QueryClient({
-    defaultOptions: { queries: { retry: false, gcTime: 0 } },
-  });
-  const runnerHost = makeRunnerHost();
-  const { rerender } = render(panelElement(client, runnerHost));
-  return { rerender: () => rerender(panelElement(client, runnerHost)) };
+function renderPanelPersistent(): void {
+  render(
+    panelElement(
+      new QueryClient({
+        defaultOptions: { queries: { retry: false, gcTime: 0 } },
+      }),
+      makeRunnerHost(),
+    ),
+  );
 }
 
 function scopeFrom(
@@ -382,7 +415,7 @@ describe("<HostSettingsPanel /> Overview ▸ Updates tab", () => {
       registryItemFor("host-a", "manual"),
       {},
     );
-    const panel = renderPanelPersistent();
+    renderPanelPersistent();
 
     await selectHostOverviewTab("updates");
     await screen.findByTestId("host-overview-version-picker");
@@ -390,13 +423,13 @@ describe("<HostSettingsPanel /> Overview ▸ Updates tab", () => {
     // The scope stops being usable — the host goes unreachable — with
     // nothing else about the fixture changing, the same shape a negotiated
     // peer dropping connection leaves it in.
-    scopeOverrides.current = scopeFrom(
-      "host-a",
-      fixture,
-      registryItemFor("host-a", "manual"),
-      { status: "unreachable" },
-    );
-    panel.rerender();
+    act(() => {
+      scopeOverrides.set(
+        scopeFrom("host-a", fixture, registryItemFor("host-a", "manual"), {
+          status: "unreachable",
+        }),
+      );
+    });
 
     await waitFor(() => {
       expect(
@@ -1297,7 +1330,7 @@ describe("<HostSettingsPanel /> Overview ▸ Updates tab — a re-check leaves t
       registryItemFor("host-a", "manual"),
       {},
     );
-    const panel = renderPanelPersistent();
+    renderPanelPersistent();
     await selectHostOverviewTab("updates");
 
     const card = await screen.findByTestId("host-overview-answer-card");
@@ -1305,13 +1338,11 @@ describe("<HostSettingsPanel /> Overview ▸ Updates tab — a re-check leaves t
     expect(checksA).toBe(1);
 
     hostBindingMock.current = bindingWith(fixtureB.client);
-    scopeOverrides.current = scopeFrom(
-      "host-b",
-      fixtureB,
-      registryItemFor("host-b", "manual"),
-      {},
-    );
-    panel.rerender();
+    act(() => {
+      scopeOverrides.set(
+        scopeFrom("host-b", fixtureB, registryItemFor("host-b", "manual"), {}),
+      );
+    });
 
     // B's first check is in flight, held: Check now spinning is the sign.
     await waitFor(() => expect(checksB).toBe(1));

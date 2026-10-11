@@ -53,8 +53,32 @@ vi.mock("@/hooks/host/use-host-client-for-host-id", () => ({
 // suite uses for its own resolution hooks: this file is about the dialog's
 // branching given a verdict, not about how the verdict is derived (that is
 // `use-local-host-quit-status.test.ts`'s job).
+//
+// Reactive like the real hook, so a verdict that flips under an open dialog
+// reaches it through a subscription (`act(() => mock.set(next))`).
 const localHostQuitStatusMock = vi.hoisted(
-  (): { current: LocalHostQuitStatus | null } => ({ current: null }),
+  (): {
+    current: LocalHostQuitStatus | null;
+    subscribe: (listener: () => void) => () => void;
+    set(next: LocalHostQuitStatus | null): void;
+  } => {
+    const listeners = new Set<() => void>();
+    return {
+      current: null,
+      subscribe: (listener: () => void): (() => void) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+      set(next: LocalHostQuitStatus | null): void {
+        this.current = next;
+        listeners.forEach((listener) => {
+          listener();
+        });
+      },
+    };
+  },
 );
 vi.mock(
   "@/components/host/use-local-host-quit-status",
@@ -63,9 +87,14 @@ vi.mock(
       await importOriginal<
         typeof import("@/components/host/use-local-host-quit-status")
       >();
+    const { useSyncExternalStore } = await import("react");
     return {
       ...actual,
-      useLocalHostQuitStatus: () => localHostQuitStatusMock.current,
+      useLocalHostQuitStatus: () =>
+        useSyncExternalStore(
+          localHostQuitStatusMock.subscribe,
+          () => localHostQuitStatusMock.current,
+        ),
     };
   },
 );
@@ -98,6 +127,7 @@ import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -970,25 +1000,12 @@ describe("<HostLifecycleSettingsSection /> - the 'none' option and the subscript
       );
     });
 
-    // Flip the mocked verdict, then force a re-render: `pushChange` writes a
-    // fresh lifecycle view into the query cache, which re-renders the whole
-    // settings section (including the still-open dialog), and the dialog
-    // re-reads `useLocalHostQuitStatus()` - i.e. this mock - on every render.
-    localHostQuitStatusMock.current = busyVerdict("host-a");
-    // `view({})` alone is structurally identical to what is already cached,
-    // and TanStack Query's `setQueryData` keeps the SAME reference (no
-    // re-render) for a structurally-equal write - so this bumps `rev` to
-    // force one, without changing the desired mode the dialog cares about.
-    fixture.pushChange(
-      view({
-        desired: {
-          mode: "background",
-          rev: 2,
-          updatedBy: null,
-          updatedAt: null,
-        },
-      }),
-    );
+    // Flip the verdict under the still-open dialog: the dialog's own
+    // `useLocalHostQuitStatus()` subscription carries it, the way the real
+    // hook's does.
+    act(() => {
+      localHostQuitStatusMock.set(busyVerdict("host-a"));
+    });
     await waitFor(() => {
       expect(screen.getByTestId("host-quit-dialog").textContent).toContain(
         HOST_NONE_CONFIRM_TITLE_BUSY,

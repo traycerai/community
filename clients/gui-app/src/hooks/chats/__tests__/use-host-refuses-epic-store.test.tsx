@@ -46,9 +46,13 @@ import { CHAT_STORE_TEST_ENVIRONMENT } from "@/stores/chats/test-support/chat-st
 
 const retry = vi.fn();
 
+// `hostVersion` comes in as an argument, read from `directoryState` by the
+// caller's render callback. A compiled hook would cache a module-variable read
+// made inside it, and the real tile gets the version from a subscription.
 function useCombined(input: {
   readonly hostId: string;
   readonly epicId: string;
+  readonly hostVersion: string | null;
   readonly fatalCloseCode: string | null;
   readonly snapshotLoaded: boolean;
   readonly isLiveSession: boolean;
@@ -56,7 +60,7 @@ function useCombined(input: {
   useRecordHostOlderThanDataRefusal({
     hostId: input.hostId,
     epicId: input.epicId,
-    hostVersion: directoryState.version,
+    hostVersion: input.hostVersion,
     fatalCloseCode: input.fatalCloseCode,
     snapshotLoaded: input.snapshotLoaded,
     isLiveSession: input.isLiveSession,
@@ -123,6 +127,7 @@ describe("useRecordHostOlderThanDataRefusal", () => {
       useCombined({
         hostId: HOST_ID,
         epicId: EPIC_ID,
+        hostVersion: directoryState.version,
         fatalCloseCode: HOST_OLDER_THAN_DATA_FATAL_CODE,
         snapshotLoaded: false,
         isLiveSession: true,
@@ -139,6 +144,7 @@ describe("useRecordHostOlderThanDataRefusal", () => {
       useCombined({
         hostId: HOST_ID,
         epicId: EPIC_ID,
+        hostVersion: directoryState.version,
         fatalCloseCode: "SOME_OTHER_FATAL_CODE",
         snapshotLoaded: false,
         isLiveSession: true,
@@ -159,6 +165,7 @@ describe("useRecordHostOlderThanDataRefusal", () => {
       useCombined({
         hostId: HOST_ID,
         epicId: EPIC_ID,
+        hostVersion: directoryState.version,
         fatalCloseCode: HOST_OLDER_THAN_DATA_FATAL_CODE,
         snapshotLoaded: true,
         isLiveSession: true,
@@ -175,6 +182,7 @@ describe("useRecordHostOlderThanDataRefusal", () => {
       useCombined({
         hostId: HOST_ID,
         epicId: EPIC_ID,
+        hostVersion: directoryState.version,
         fatalCloseCode: HOST_OLDER_THAN_DATA_FATAL_CODE,
         snapshotLoaded: false,
         isLiveSession: true,
@@ -267,6 +275,7 @@ describe("useRecordHostOlderThanDataRefusal", () => {
       useCombined({
         hostId: HOST_ID,
         epicId: EPIC_ID,
+        hostVersion: directoryState.version,
         fatalCloseCode,
         snapshotLoaded: false,
         isLiveSession: true,
@@ -300,6 +309,7 @@ describe("useRecordHostOlderThanDataRefusal", () => {
       useCombined({
         hostId: HOST_ID,
         epicId: EPIC_ID,
+        hostVersion: directoryState.version,
         fatalCloseCode: null,
         snapshotLoaded: true,
         isLiveSession: true,
@@ -338,6 +348,7 @@ describe("useRecordHostOlderThanDataRefusal", () => {
       useCombined({
         hostId: HOST_ID,
         epicId: EPIC_ID,
+        hostVersion: directoryState.version,
         fatalCloseCode: null,
         snapshotLoaded: true,
         isLiveSession: true,
@@ -361,6 +372,7 @@ describe("useRecordHostOlderThanDataRefusal", () => {
       useCombined({
         hostId: HOST_ID,
         epicId: EPIC_ID,
+        hostVersion: directoryState.version,
         fatalCloseCode: null,
         snapshotLoaded: true,
         isLiveSession: false,
@@ -375,6 +387,7 @@ describe("useRecordHostOlderThanDataRefusal", () => {
       useCombined({
         hostId: HOST_ID,
         epicId: EPIC_ID,
+        hostVersion: directoryState.version,
         fatalCloseCode: HOST_OLDER_THAN_DATA_FATAL_CODE,
         snapshotLoaded: false,
         isLiveSession: false,

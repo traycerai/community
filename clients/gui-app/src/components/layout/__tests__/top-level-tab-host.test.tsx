@@ -142,8 +142,14 @@ function releaseHeldTabBodyImport(load: {
 vi.mock("@tanstack/react-router", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("@tanstack/react-router")>();
+  // No `RouterProvider` here, and a file-level mock that spreads the original
+  // module does not get the suite setup's inert `useRouter`. The system-tab
+  // modal hooks read `router.navigate` at render under the React Compiler, so
+  // the null the real hook answers throws.
+  const inertRouter = { navigate: () => Promise.resolve() };
   return {
     ...actual,
+    useRouter: () => inertRouter,
     useRouterState: (options: {
       readonly select?: (state: {
         readonly location: {

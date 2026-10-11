@@ -303,6 +303,51 @@ function bumpArchived(
   };
 }
 
+/**
+ * What {@link RoutingWrapper} provides, set by `createRoutingFixture`.
+ *
+ * The wrapper is declared at module scope and reads this at render. A
+ * component declared INSIDE the fixture function that closes over the
+ * fixture's locals is moved to module scope by the React Compiler, where those
+ * locals do not exist.
+ */
+interface RoutingEnvironment {
+  readonly queryClient: QueryClient;
+  readonly handle: OpenedStoreForTest;
+  readonly sessionSlot: { current: HostClient<HostRpcRegistry> | null };
+  readonly sessionListeners: Set<() => void>;
+}
+
+const routingEnvironment: { current: RoutingEnvironment | null } = {
+  current: null,
+};
+
+function RoutingWrapper(props: { readonly children: ReactNode }): ReactNode {
+  const environment = routingEnvironment.current;
+  if (environment === null) {
+    throw new Error("RoutingWrapper rendered outside a routing fixture");
+  }
+  const { queryClient, handle, sessionSlot, sessionListeners } = environment;
+  const sessionClient = useSyncExternalStore(
+    (listener) => {
+      sessionListeners.add(listener);
+      return () => {
+        sessionListeners.delete(listener);
+      };
+    },
+    () => sessionSlot.current,
+  );
+  return (
+    <QueryClientProvider client={queryClient}>
+      <EpicSessionContext.Provider value={handle}>
+        <EpicSessionHostClientContext.Provider value={sessionClient}>
+          {props.children}
+        </EpicSessionHostClientContext.Provider>
+      </EpicSessionContext.Provider>
+    </QueryClientProvider>
+  );
+}
+
 function createRoutingFixture(): RoutingFixture {
   const queryClient = new QueryClient({
     defaultOptions: {
@@ -468,25 +513,11 @@ function createRoutingFixture(): RoutingFixture {
     return incoming;
   };
 
-  const Wrapper = (props: { readonly children: ReactNode }): ReactNode => {
-    const sessionClient = useSyncExternalStore(
-      (listener) => {
-        sessionListeners.add(listener);
-        return () => {
-          sessionListeners.delete(listener);
-        };
-      },
-      () => sessionSlot.current,
-    );
-    return (
-      <QueryClientProvider client={queryClient}>
-        <EpicSessionContext.Provider value={handle}>
-          <EpicSessionHostClientContext.Provider value={sessionClient}>
-            {props.children}
-          </EpicSessionHostClientContext.Provider>
-        </EpicSessionContext.Provider>
-      </QueryClientProvider>
-    );
+  routingEnvironment.current = {
+    queryClient,
+    handle,
+    sessionSlot,
+    sessionListeners,
   };
 
   const dispose = (): void => {
@@ -494,6 +525,7 @@ function createRoutingFixture(): RoutingFixture {
     handle.store.getState().dispose();
     spine.dispose();
     spineRef.value = null;
+    routingEnvironment.current = null;
   };
 
   return {
@@ -536,7 +568,7 @@ function createRoutingFixture(): RoutingFixture {
     },
     swapSession,
     replaceMountedOnto,
-    wrapper: Wrapper,
+    wrapper: RoutingWrapper,
     dispose,
   };
 }

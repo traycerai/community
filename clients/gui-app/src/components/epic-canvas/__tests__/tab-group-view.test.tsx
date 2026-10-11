@@ -266,14 +266,43 @@ vi.mock("@/lib/registries/chat-session-registry", () => ({
 // ActiveTabBody's published-copy fallback reads reachability + the active host
 // through these two hook seams. Stubbed at the hook boundary (not their query
 // internals) so this provider-less suite can flip a bound host dead per test.
-vi.mock("@/hooks/agent/use-host-reachability", () => ({
-  useHostReachability: (hostId: string) => ({
-    status: testState.unreachableHostIds.has(hostId)
-      ? "unreachable"
-      : "reachable",
-    hostLabel: hostId,
-  }),
-}));
+//
+// The real hook is reactive (a host directory query), so the mock is too: a
+// mid-test change to `unreachableHostIds` goes through `bump`, which notifies
+// the mocked hook's subscribers.
+const reachabilitySeam = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  return {
+    version: 0,
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    bump(): void {
+      this.version += 1;
+      listeners.forEach((listener) => listener());
+    },
+  };
+});
+vi.mock("@/hooks/agent/use-host-reachability", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useHostReachability: (hostId: string) => {
+      useSyncExternalStore(
+        reachabilitySeam.subscribe,
+        () => reachabilitySeam.version,
+      );
+      return {
+        status: testState.unreachableHostIds.has(hostId)
+          ? "unreachable"
+          : "reachable",
+        hostLabel: hostId,
+      };
+    },
+  };
+});
 
 // The host whose PROJECTION the record gate judges refs against - the Epic
 // session's (the canvas host), not the app-wide one this suite used to seed.
@@ -1589,9 +1618,7 @@ describe("<TabGroupView /> published-copy fallback for an unreachable bound host
     testState.unreachableHostIds.add(CHAT.hostId);
     testState.sessionHostId = "host-B";
     seedCanvas([CHAT], CHAT.instanceId);
-    const { container, rerender } = render(
-      groupView([CHAT], CHAT.instanceId, true),
-    );
+    const { container } = render(groupView([CHAT], CHAT.instanceId, true));
 
     await waitFor(() => {
       expect(
@@ -1601,8 +1628,10 @@ describe("<TabGroupView /> published-copy fallback for an unreachable bound host
       ).not.toBeNull();
     });
 
-    testState.unreachableHostIds.delete(CHAT.hostId);
-    rerender(groupView([CHAT], CHAT.instanceId, true));
+    act(() => {
+      testState.unreachableHostIds.delete(CHAT.hostId);
+      reachabilitySeam.bump();
+    });
     await waitFor(() => {
       expect(
         container.querySelector(

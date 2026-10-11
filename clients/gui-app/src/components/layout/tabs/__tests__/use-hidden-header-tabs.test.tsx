@@ -1,3 +1,4 @@
+import { useSyncExternalStore } from "react";
 import {
   act,
   cleanup,
@@ -31,6 +32,18 @@ interface Geometry {
 
 let geometry: Geometry;
 let activeKey: string | null = null;
+const activeKeyListeners = new Set<() => void>();
+
+function subscribeActiveKey(listener: () => void): () => void {
+  activeKeyListeners.add(listener);
+  return () => activeKeyListeners.delete(listener);
+}
+
+/** A mid-test selection change, delivered the way the real tab strip's store would. */
+function setActiveKey(next: string | null): void {
+  activeKey = next;
+  activeKeyListeners.forEach((listener) => listener());
+}
 let resizeObservers: ControllableResizeObserver[] = [];
 /** Every offset the strip wrote to the viewport's `scrollLeft`, in order. */
 let scrollWrites: number[] = [];
@@ -186,6 +199,7 @@ function Harness(props: {
 }) {
   const { setScrollElement, hiddenTabKeys, hasOverflow, revealTab } =
     useHiddenHeaderTabs(props.layout);
+  const active = useSyncExternalStore(subscribeActiveKey, () => activeKey);
   return (
     <div>
       <div ref={setScrollElement} data-testid="viewport">
@@ -195,7 +209,7 @@ function Harness(props: {
             type="button"
             data-header-tab-key={key}
             role="tab"
-            aria-selected={key === activeKey}
+            aria-selected={key === active}
           >
             {key}
           </button>
@@ -580,11 +594,10 @@ describe("useHiddenHeaderTabs", () => {
     it("tracks an aria-selected-only change, so a later shrink reveals the new active tab", async () => {
       geometry.scrollWidth = 400;
       activeKey = "b";
-      const view = await mount("scroll", KEYS);
+      await mount("scroll", KEYS);
       // Both tabs stay visible and no child is added or removed: only the
       // selection attribute moves, which the strip must observe by itself.
-      activeKey = "c";
-      view.rerender(<Harness layout="scroll" keys={KEYS} />);
+      act(() => setActiveKey("c"));
       await settle();
       scrollWrites = [];
       // 'c' spans 200..320; at 250px wide it is clipped ('b' would not be).

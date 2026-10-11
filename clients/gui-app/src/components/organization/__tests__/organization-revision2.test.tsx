@@ -66,7 +66,25 @@ const state = vi.hoisted(() => {
     readonly userId: string;
     readonly displayName: string;
   }> = [];
-  return { command, collaboratorRows, organization };
+  const listeners = new Set<() => void>();
+  return {
+    command,
+    collaboratorRows,
+    organization,
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    // The real view is an immutable snapshot the provider replaces, so a
+    // mid-test change swaps in a new one rather than mutating it in place.
+    publish(patch: Partial<OrganizationView>): void {
+      this.organization = {
+        ...this.organization,
+        view: { ...this.organization.view, ...patch },
+      };
+      listeners.forEach((listener) => listener());
+    },
+  };
 });
 
 const queryClient = new QueryClient({
@@ -84,10 +102,13 @@ function render(ui: ReactNode) {
 vi.mock("@/hooks/organization/organization-context", async (load) => {
   const actual =
     await load<typeof import("@/hooks/organization/organization-context")>();
+  const { useSyncExternalStore } = await import("react");
+  const useSnapshot = () =>
+    useSyncExternalStore(state.subscribe, () => state.organization);
   return {
     ...actual,
-    useOrganization: () => state.organization,
-    useOrganizationTasks: () => state.organization,
+    useOrganization: useSnapshot,
+    useOrganizationTasks: useSnapshot,
   };
 });
 
@@ -432,7 +453,7 @@ describe("organization Revision 2", () => {
       return Promise.resolve();
     });
     const dialog = { kind: "labels" as const, taskId: "task-1", canEdit: true };
-    const rendered = renderDialog(dialog);
+    renderDialog(dialog);
 
     const checkbox = screen.getByRole("checkbox", { name: "Owned" });
     checkbox.focus();
@@ -457,22 +478,21 @@ describe("organization Revision 2", () => {
       expect(document.activeElement).toBe(document.body);
       checkbox.disabled = true;
     }
-    state.organization.view.taskLabels = {
-      "task-1": {
-        labels: [],
-        removed: [
-          {
-            ownerId: "user-1",
-            labelId: "owned",
-            assignmentId: "owned-assignment",
+    act(() =>
+      state.publish({
+        taskLabels: {
+          "task-1": {
+            labels: [],
+            removed: [
+              {
+                ownerId: "user-1",
+                labelId: "owned",
+                assignmentId: "owned-assignment",
+              },
+            ],
           },
-        ],
-      },
-    };
-    rendered.rerender(
-      withQueryClient(
-        <OrganizationDialogHost dialog={dialog} onClose={vi.fn()} />,
-      ),
+        },
+      }),
     );
     const resolveFirst = resolves.at(0);
     if (resolveFirst === undefined)

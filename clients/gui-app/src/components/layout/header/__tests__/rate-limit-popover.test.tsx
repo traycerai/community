@@ -17,6 +17,7 @@ import {
   within,
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { useSyncExternalStore } from "react";
 import {
   DEFAULT_ACCOUNT_CONTEXT,
   type AccountContext,
@@ -150,6 +151,29 @@ const mocks = vi.hoisted<MockState>(() => ({
 }));
 const fetchScope = vi.hoisted(() => ({ hostId: "host-1" }));
 
+// The real provider-limit queries are reactive, so a result that lands
+// mid-test has to reach the mocked hooks below as a notification rather than
+// as a parent re-render a compiled tree may skip.
+const resultsFeed = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  return {
+    version: 0,
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    set(next: MockState["results"]): void {
+      mocks.results = next;
+      this.version += 1;
+      listeners.forEach((listener) => listener());
+    },
+  };
+});
+
+function useResultsFeed(): number {
+  return useSyncExternalStore(resultsFeed.subscribe, () => resultsFeed.version);
+}
+
 // The popover reads which profiles are limited off the status bar's segment
 // model, passively. That hook has its own suite; here it is the seam a case
 // sets to say which profiles the host reported as limited.
@@ -195,7 +219,10 @@ vi.mock("@/hooks/host/use-host-provider-rate-limits-query", () => ({
   useHostProviderRateLimitsQuery: (
     providerId: string,
     profileId: string | null,
-  ) => mocks.results[resultKey(providerId, profileId)] ?? readyResult(null),
+  ) => {
+    useResultsFeed();
+    return mocks.results[resultKey(providerId, profileId)] ?? readyResult(null);
+  },
 }));
 // `RateLimitRefreshAllButton` reads each configured httpFetch provider's
 // query state directly (to fold its `isFetching` into the button's own
@@ -204,14 +231,20 @@ vi.mock("@/hooks/host/use-host-provider-rate-limits-query", () => ({
 // `useHostQueries`) for this - see that hook's own doc comment - so this mock
 // exports both names with equivalent behavior; the extra `mapResponse` field
 // production passes is irrelevant to this fixture-backed double.
-function mockUseHostQueriesImpl(args: {
-  requests: ReadonlyArray<{
+interface MockHostQueriesArgs {
+  readonly requests: ReadonlyArray<{
     params:
       | { providerId: string; profileId: string | null }
       | { accountContext: AccountContext; profileId: null };
   }>;
-  options: { retry: boolean | undefined } | { enabled: boolean } | null;
-}) {
+  readonly options:
+    | { retry: boolean | undefined }
+    | { enabled: boolean }
+    | null;
+}
+
+/** What the last provider-limit queries call asked for, for the cases that pin it. */
+function recordProviderRequests(args: MockHostQueriesArgs): void {
   const providerRequests = args.requests.filter(
     (
       request,
@@ -219,15 +252,19 @@ function mockUseHostQueriesImpl(args: {
       params: { providerId: string; profileId: string | null };
     } => "providerId" in request.params,
   );
-  if (providerRequests.length > 0) {
-    mocks.lastUseHostQueriesOptions =
-      args.options !== null && "retry" in args.options
-        ? { retry: args.options.retry }
-        : null;
-    mocks.lastUseHostQueriesProviderIds = providerRequests.map(
-      (request) => request.params.providerId,
-    );
-  }
+  if (providerRequests.length === 0) return;
+  mocks.lastUseHostQueriesOptions =
+    args.options !== null && "retry" in args.options
+      ? { retry: args.options.retry }
+      : null;
+  mocks.lastUseHostQueriesProviderIds = providerRequests.map(
+    (request) => request.params.providerId,
+  );
+}
+
+function useMockHostQueries(args: MockHostQueriesArgs) {
+  useResultsFeed();
+  recordProviderRequests(args);
   return args.requests.map((request) => {
     if (!("providerId" in request.params)) {
       return {
@@ -247,8 +284,8 @@ function mockUseHostQueriesImpl(args: {
   });
 }
 vi.mock("@/hooks/host/use-host-queries", () => ({
-  useHostQueries: mockUseHostQueriesImpl,
-  useHostQueriesWithResponseMap: mockUseHostQueriesImpl,
+  useHostQueries: useMockHostQueries,
+  useHostQueriesWithResponseMap: useMockHostQueries,
 }));
 vi.mock("@/lib/host", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/host")>();
@@ -2318,26 +2355,6 @@ function coldResult(): QueryResult {
 }
 
 describe("<RateLimitPopover /> Overview progressive reveal", () => {
-  function popoverElement() {
-    return (
-      <QueryClientProvider client={new QueryClient()}>
-        <TooltipProvider>
-          <Popover open>
-            <PopoverTrigger>trigger</PopoverTrigger>
-            <RateLimitPopover
-              side="bottom"
-              align="end"
-              onClose={onClose}
-              profileSelection={mocks.profileSelection}
-              scope={SINGLE_HOST_SCOPE}
-              hasExplicitPick={false}
-            />
-          </Popover>
-        </TooltipProvider>
-      </QueryClientProvider>
-    );
-  }
-
   it("shows one centered loading indicator, no per-provider sections, while nothing has resolved yet", () => {
     mocks.configured = [
       { providerId: "codex", lane: "ephemeralProcess", profiles: undefined },
@@ -2405,14 +2422,15 @@ describe("<RateLimitPopover /> Overview progressive reveal", () => {
       },
     ];
     mocks.results = { codex: coldResult(), "claude-code": coldResult() };
-    const { rerender } = renderPopover();
+    renderPopover();
 
     // Codex resolves first; Claude Code is still in flight.
-    mocks.results = {
-      codex: readyResult(codexReady()),
-      "claude-code": coldResult(),
-    };
-    rerender(popoverElement());
+    act(() =>
+      resultsFeed.set({
+        codex: readyResult(codexReady()),
+        "claude-code": coldResult(),
+      }),
+    );
 
     // The combined loader is gone now that one provider has data...
     expect(screen.queryByText("Fetching usage limits")).toBeNull();
@@ -2429,11 +2447,12 @@ describe("<RateLimitPopover /> Overview progressive reveal", () => {
     ).toContain("hidden");
 
     // Claude Code resolves next - both sections are now visible.
-    mocks.results = {
-      codex: readyResult(codexReady()),
-      "claude-code": readyResult(claudeReady()),
-    };
-    rerender(popoverElement());
+    act(() =>
+      resultsFeed.set({
+        codex: readyResult(codexReady()),
+        "claude-code": readyResult(claudeReady()),
+      }),
+    );
     expect(
       screen.getByText("Claude Code").closest('[class*="gap-4"]')?.className,
     ).not.toContain("hidden");
