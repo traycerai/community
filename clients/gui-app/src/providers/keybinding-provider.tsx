@@ -551,8 +551,15 @@ export function KeybindingProvider(props: KeybindingProviderProps) {
     // closing) can change who owns visible leader badges. Re-resolve a pending
     // or visible session immediately; if its owner disappears, spend the
     // session so a transient owner loss cannot be repaired by a stale timer.
+    //
+    // A held tab cycle is only VALIDATED here, not reset. Every surface a hold
+    // previews registers its own leader scopes as it mounts, so a reset would
+    // settle each preview a beat after showing it: the surface then takes
+    // settled demand (a chat session and its socket) and drops it on the next
+    // repeat. A scope change that also moved the cycle's tabs or focus still
+    // cancels it, through the same check focus changes use.
     const handleScopeChange = () => {
-      resetTabCycle(adapter);
+      validateTabCycle(adapter);
       const session = hintSessionRef.current;
       if (session.status !== "pending" && session.status !== "visible") return;
       if (!hasLeaderOwner(session.modifier)) {

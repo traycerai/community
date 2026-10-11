@@ -28,12 +28,21 @@ export function HostedChatSurfaceContextBridge(props: {
   readonly environment: ReadyTileSurfaceEnvironment;
 }): ReactNode {
   const { environment } = props;
-  const preview = useSurfaceDemandStore(
-    (state) =>
-      state.topLevelPreviewKeys.includes(
-        `epic:${environment.placement.viewTabId}`,
-      ) || state.panePreviewTargets[environment.placement.paneId] !== undefined,
-  );
+  // Settled only while the demand store still names this surface active. The
+  // environment's `topLevelVisible` is published by the slot a commit after a
+  // switch, while the demand keys move in the activation itself, so the
+  // surface a held cycle just left still reads visible for one render. Read as
+  // settled there, its chat would open a session and socket and drop both on
+  // the next commit.
+  const preview = useSurfaceDemandStore((state) => {
+    const key = `epic:${environment.placement.viewTabId}`;
+    return (
+      state.topLevelPreviewKeys.includes(key) ||
+      (state.topLevelActiveKeys !== null &&
+        !state.topLevelActiveKeys.includes(key)) ||
+      state.panePreviewTargets[environment.placement.paneId] !== undefined
+    );
+  });
   const hostId = getEpicSessionHandleHostId(
     environment.services.openEpicHandle,
   );

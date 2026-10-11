@@ -1,5 +1,6 @@
 import { cloudVerdictPreflight } from "@/lib/host/cloud-verdict-preflight";
 import { useAuthStore } from "@/stores/auth/auth-store";
+import { useSurfaceDemand } from "@/stores/tabs/surface-demand";
 import type { HostClient } from "@traycer-clients/shared/host-client/host-client";
 import type { HostRpcRegistry } from "@traycer/protocol/host/index";
 import { createContext, use, useEffect, useId } from "react";
@@ -31,9 +32,16 @@ export function useOrganizationTasks(taskIds: readonly string[]) {
   const register = organization?.register;
   const id = useId();
   const identity = [...new Set(taskIds)].sort().join(",");
+  // A previewed surface reads the view it already has and adds no demand: a
+  // held tab cycle mounts the Start Page's rows on every pass, and each new id
+  // would open an `organization.subscribe` stream that the next step closes.
+  const preview = useSurfaceDemand() === "preview";
   useEffect(
-    () => register?.(id, identity ? identity.split(",") : EMPTY_IDS),
-    [register, id, identity],
+    () =>
+      preview
+        ? undefined
+        : register?.(id, identity ? identity.split(",") : EMPTY_IDS),
+    [register, id, identity, preview],
   );
   return organization;
 }

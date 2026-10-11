@@ -115,9 +115,15 @@ export function OrganizationProvider({
         return next;
       });
   }, []);
+  // Keyed by content: every register call replaces `requests`, and a new
+  // array with the same ids would re-run each chunk's subscribe effect,
+  // closing its stream and dialing a new socket for an unchanged set.
+  const taskIdsKey = [...new Set([...requests.values()].flat())]
+    .sort()
+    .join(",");
   const taskIds = useMemo(
-    () => [...new Set([...requests.values()].flat())].sort(),
-    [requests],
+    () => (taskIdsKey === "" ? [] : taskIdsKey.split(",")),
+    [taskIdsKey],
   );
   const chunks = useMemo(() => {
     const result: string[][] = [];

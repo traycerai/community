@@ -14,6 +14,7 @@ import {
   resolveLeaderOwner,
   type KeybindingRouter,
 } from "@/lib/keybindings/dispatch";
+import { registerLeaderScope } from "@/lib/keybindings/leader-scope";
 import type { KeybindingRouterSource } from "@/lib/keybindings/router-adapter";
 import {
   hasPreviewDemand,
@@ -1629,6 +1630,46 @@ describe("<KeybindingProvider /> held-key tab cycling (header)", () => {
       act(() => fireWindowKeyboardEvent("keyup", headerNextInit));
       expect(useEpicCanvasStore.getState().activeTabId).toBe(afterSecondPress);
       expect(hasPreviewDemand()).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a held preview a preview when a leader scope registers or unregisters mid-hold", () => {
+    const firstTabId = useEpicCanvasStore.getState().openTabOrder[0];
+    renderHeaderCycleProvider(`/epics/e1/${firstTabId}`);
+    vi.useFakeTimers();
+    try {
+      act(() => fireWindowKeyboardEvent("keydown", headerNextInit));
+      act(() =>
+        fireWindowKeyboardEvent("keydown", { ...headerNextInit, repeat: true }),
+      );
+      act(() => {
+        vi.advanceTimersByTime(100);
+      });
+      expect(hasPreviewDemand()).toBe(true);
+      const previewed = useEpicCanvasStore.getState().activeTabId;
+
+      // Every surface a hold previews registers its own leader scopes as it
+      // mounts. That must not settle the preview a beat after it showed.
+      let unregister: (() => void) | undefined;
+      act(() => {
+        unregister = registerLeaderScope({ id: "mid-hold-scope", actions: [] });
+      });
+      expect(hasPreviewDemand()).toBe(true);
+      expect(useEpicCanvasStore.getState().activeTabId).toBe(previewed);
+
+      act(() => {
+        unregister?.();
+      });
+      expect(hasPreviewDemand()).toBe(true);
+      expect(useEpicCanvasStore.getState().activeTabId).toBe(previewed);
+
+      // keyup still settles the previewed target as before.
+      act(() => fireWindowKeyboardEvent("keyup", headerNextInit));
+      expect(hasPreviewDemand()).toBe(false);
+      expect(useEpicCanvasStore.getState().activeTabId).toBe(previewed);
+      expect(topLevelDemand(`epic:${previewed}`)).toBe("settled");
     } finally {
       vi.useRealTimers();
     }

@@ -7,7 +7,7 @@
  * the contexts wired right + isActive mirrors ActiveTabBody".
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { use } from "react";
 import type { ReactNode } from "react";
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
@@ -24,6 +24,13 @@ import { useOpenEpicHandle } from "@/providers/use-open-epic-handle";
 import { BrowserSessionsContext } from "@/components/epic-canvas/renderers/browser-sessions-context";
 import { handleHostIds } from "@/lib/registries/epic-session-registry";
 import { usePanePortalContainer } from "@/components/epic-tabs/pane-visibility-context";
+import {
+  SurfaceDemandContext,
+  setPaneDemand,
+  setTopLevelDemand,
+  useSurfaceDemandStore,
+  type ActiveSurfaceDemand,
+} from "@/stores/tabs/surface-demand";
 import {
   usePaneActivationFocusIntent,
   type PaneActivationFocusIntent,
@@ -57,6 +64,7 @@ interface CaptureState {
   lastOpenEpicHandle: OpenEpicStoreHandle | null;
   lastPanePortalContainer: HTMLElement | null;
   lastPaneActivationFocusIntent: PaneActivationFocusIntent | null;
+  lastSurfaceDemand: ActiveSurfaceDemand | null;
 }
 
 const capture = vi.hoisted((): CaptureState => ({
@@ -68,6 +76,7 @@ const capture = vi.hoisted((): CaptureState => ({
   lastOpenEpicHandle: null,
   lastPanePortalContainer: null,
   lastPaneActivationFocusIntent: null,
+  lastSurfaceDemand: null,
 }));
 
 interface PermissionRoleState {
@@ -144,6 +153,7 @@ vi.mock("@/components/epic-canvas/renderers/tile-render", () => ({
       capture.lastOpenEpicHandle = useOpenEpicHandle();
       capture.lastPanePortalContainer = usePanePortalContainer();
       capture.lastPaneActivationFocusIntent = usePaneActivationFocusIntent();
+      capture.lastSurfaceDemand = use(SurfaceDemandContext);
       return (
         <div
           data-testid="hosted-bridge-probe"
@@ -218,6 +228,7 @@ function resetCapture(): void {
   capture.lastOpenEpicHandle = null;
   capture.lastPanePortalContainer = null;
   capture.lastPaneActivationFocusIntent = null;
+  capture.lastSurfaceDemand = null;
   permissionRole.role = "owner";
 }
 
@@ -227,9 +238,17 @@ describe("HostedChatSurfaceContextBridge", () => {
     handleHostIds.set(OPEN_EPIC_HANDLE, TEST_HOST_ID);
     useEpicCanvasStore.setState(useEpicCanvasStore.getInitialState(), true);
     seedChatTile();
+    useSurfaceDemandStore.setState(
+      useSurfaceDemandStore.getInitialState(),
+      true,
+    );
   });
   afterEach(() => {
     cleanup();
+    useSurfaceDemandStore.setState(
+      useSurfaceDemandStore.getInitialState(),
+      true,
+    );
     useEpicCanvasStore.setState(useEpicCanvasStore.getInitialState(), true);
     handleHostIds.delete(OPEN_EPIC_HANDLE);
     resetCapture();
@@ -345,6 +364,58 @@ describe("HostedChatSurfaceContextBridge", () => {
 
     expect(capture.lastPanePortalContainer).toBe(realPortalHost);
     expect(capture.lastPanePortalContainer).not.toBe(geometryAnchor);
+  });
+
+  it("reads settled demand while no top-level selection is published, or while this surface is the active one", () => {
+    const environment = buildEnvironment({
+      canvasActivity: { tabSelected: true, canvasPaneActive: true },
+    });
+    const { unmount } = render(
+      <HostedChatSurfaceContextBridge environment={environment} />,
+    );
+    expect(capture.lastSurfaceDemand).toBe("settled");
+    unmount();
+
+    act(() => setTopLevelDemand([`epic:${VIEW_TAB_ID}`], "settled"));
+    render(<HostedChatSurfaceContextBridge environment={environment} />);
+    expect(capture.lastSurfaceDemand).toBe("settled");
+  });
+
+  it("reads preview demand for a visible surface the demand store no longer names active", () => {
+    // `topLevelVisible` lags the activation by a commit, so the surface a held
+    // tab cycle just left is still visible here while the demand keys have
+    // already moved on to another surface.
+    const environment = buildEnvironment({
+      canvasActivity: { tabSelected: true, canvasPaneActive: true },
+      presentation: { topLevelVisible: true, topLevelFocused: false },
+    });
+    render(<HostedChatSurfaceContextBridge environment={environment} />);
+    expect(capture.lastSurfaceDemand).toBe("settled");
+
+    act(() => setTopLevelDemand(["epic:other"], "preview"));
+    expect(capture.lastSurfaceDemand).toBe("preview");
+
+    // A settled activation of another surface releases the previews but still
+    // leaves this surface outside the active keys.
+    act(() => setTopLevelDemand(["epic:other"], "settled"));
+    expect(capture.lastSurfaceDemand).toBe("preview");
+
+    act(() => setTopLevelDemand([`epic:${VIEW_TAB_ID}`], "settled"));
+    expect(capture.lastSurfaceDemand).toBe("settled");
+
+    act(() => setTopLevelDemand([`epic:${VIEW_TAB_ID}`], "preview"));
+    expect(capture.lastSurfaceDemand).toBe("preview");
+  });
+
+  it("reads preview demand while its pane has a preview target", () => {
+    const environment = buildEnvironment({
+      canvasActivity: { tabSelected: true, canvasPaneActive: true },
+    });
+    render(<HostedChatSurfaceContextBridge environment={environment} />);
+    expect(capture.lastSurfaceDemand).toBe("settled");
+
+    act(() => setPaneDemand(PANE_ID, INSTANCE_ID, "preview"));
+    expect(capture.lastSurfaceDemand).toBe("preview");
   });
 
   it("renders nothing when the canvas tile is missing from the store", () => {
