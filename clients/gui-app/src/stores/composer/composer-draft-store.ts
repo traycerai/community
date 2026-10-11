@@ -6,7 +6,6 @@ import type { DraftDocument, DraftPublication } from "@traycer/protocol/host";
 import { isJsonContent } from "@/lib/editor/prosemirror-json";
 import { basePersistOptions, persistKey, STORE_KEYS } from "@/lib/persist";
 import { cancelDeferredPersistOnRetarget } from "@/lib/persist/persist-options";
-import { persistNowOrThrow } from "@/lib/persist/deferred-json-storage";
 import {
   legacyComposerDraftId,
   migratedLegacyComposerDraftId,
@@ -359,10 +358,7 @@ export const useComposerDraftStore = create<ComposerDraftStore>()(
           bumpResetEpoch: true,
         });
         // Restorers acknowledge the source after this returns.
-        persistNowOrThrow(
-          useComposerDraftStore.persist.getOptions().name ??
-            persistKey(STORE_KEYS.composerDraft),
-        );
+        composerDraftStorage.persistDraftNowOrThrow(chatId);
         notifyDraftLocalEdit(draftId);
       },
       addBrowserAnnotation: (chatId, record) => {
@@ -424,10 +420,7 @@ export const useComposerDraftStore = create<ComposerDraftStore>()(
           };
         });
         // Failed-send handoffs restore their sidecars before the same ACK.
-        persistNowOrThrow(
-          useComposerDraftStore.persist.getOptions().name ??
-            persistKey(STORE_KEYS.composerDraft),
-        );
+        composerDraftStorage.persistDraftNowOrThrow(chatId);
       },
       clearDraft: (chatId) => {
         // Sidecar first, document second: `replaceDraft` is the broadcast

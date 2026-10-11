@@ -46,9 +46,9 @@ import {
 
 // The adapter is driven through the same `PersistStorage` surface the store's
 // persist middleware uses, over real localStorage. Two adapters over one
-// namespace are two windows; the deferred queue is one module-global slot per
-// name, so a two-window scenario always flushes one window before the other
-// writes.
+// namespace are two windows - but the deferred queue is one module-global slot
+// per name, so a scenario that needs BOTH windows holding queued debt at once
+// opens each in its own module instance (`openIsolatedWindow`).
 const NAME = composerDraftStorageKey("adapter-account");
 
 function draftsState(drafts: ComposerDraftPersistence["drafts"]) {
@@ -240,6 +240,153 @@ describe("composer draft storage: one row per draft", () => {
     expect(hasDeferredJsonWrite(NAME)).toBe(false);
     expect(readDraftRow("chat-other", other)).toBeDefined();
   });
+});
+
+// ── Two windows, each holding queued debt ───────────────────────────────────
+// A real second window has its own deferred queue. Re-importing the adapter
+// after `vi.resetModules()` gives each window its own copy of the queue module,
+// so both can hold a pending write for one row before either flushes.
+
+type DeferredStorage = typeof import("@/lib/persist/deferred-json-storage");
+
+const isolatedQueues: DeferredStorage[] = [];
+const stopListening: Array<() => void> = [];
+
+async function openIsolatedWindow(name: string) {
+  vi.resetModules();
+  const { createComposerDraftStorage: create } =
+    await import("../composer-draft-storage");
+  const queue = await import("@/lib/persist/deferred-json-storage");
+  isolatedQueues.push(queue);
+  const adapter = create();
+  await adapter.getItem(name);
+  return { adapter, queue };
+}
+
+describe("composer draft storage: two windows queueing the same row", () => {
+  const ROW = rowKey("draft", "chat-1", NAME);
+
+  afterEach(() => {
+    for (const stop of stopListening.splice(0)) stop();
+    for (const queue of isolatedQueues.splice(0)) {
+      queue.cancelDeferredJsonWrites();
+    }
+  });
+
+  function shared(overrides: Partial<DraftState>): DraftState {
+    return draftWithFields("shared text", { draftId: "draft-1", ...overrides });
+  }
+
+  /**
+   * Both windows queue a write for chat-1, the other window's flush lands
+   * first, and its storage event reaches window A while A's write is queued.
+   */
+  async function raceToFlush(mine: DraftState, theirs: DraftState) {
+    const a = await openIsolatedWindow(NAME);
+    const b = await openIsolatedWindow(NAME);
+    stopListening.push(a.adapter.listen(() => NAME, vi.fn()));
+
+    void a.adapter.setItem(NAME, draftsState({ "chat-1": mine }));
+    void b.adapter.setItem(NAME, draftsState({ "chat-1": theirs }));
+    expect(a.queue.hasDeferredJsonWrite(NAME)).toBe(true);
+    expect(b.queue.hasDeferredJsonWrite(NAME)).toBe(true);
+
+    b.queue.persistNowOrThrow(NAME);
+    window.dispatchEvent(new StorageEvent("storage", { key: ROW }));
+    return a;
+  }
+
+  it("heals when the other window saved the same user content under different counters and metadata", async () => {
+    const a = await raceToFlush(
+      shared({
+        generation: 4,
+        syncedGeneration: 2,
+        revision: 4,
+        resetEpoch: 1,
+        hostRevision: 7,
+        lastTouchedAt: 9,
+        chatTitle: "mine",
+      }),
+      shared({
+        generation: 1,
+        syncedGeneration: 1,
+        revision: 1,
+        resetEpoch: 0,
+        hostRevision: 0,
+        lastTouchedAt: 1,
+        chatTitle: null,
+      }),
+    );
+
+    expect(() => a.queue.persistNowOrThrow(NAME)).not.toThrow();
+    expect(a.queue.hasDeferredJsonWrite(NAME)).toBe(false);
+    expect(readDraftRow("chat-1", NAME)?.content).toEqual(
+      textDoc("shared text"),
+    );
+
+    // Not stuck behind the stale baseline: the next edit of the row lands.
+    void a.adapter.setItem(
+      NAME,
+      draftsState({
+        "chat-1": draftWithFields("shared text, then more", {
+          draftId: "draft-1",
+          generation: 5,
+        }),
+      }),
+    );
+    expect(() => a.queue.persistNowOrThrow(NAME)).not.toThrow();
+    expect(readDraftRow("chat-1", NAME)?.content).toEqual(
+      textDoc("shared text, then more"),
+    );
+  });
+
+  it("heals when this window's queued paste still carries its base64 and the saved row is its stripped form", async () => {
+    // Storage strips a pending paste's base64 (and drops the caret that sat
+    // among the removed nodes), so the saved row is a projection of the
+    // queued content, not a copy of it.
+    const pasting = draftWithFields("see", {
+      draftId: "draft-1",
+      content: {
+        type: "doc",
+        content: [
+          {
+            type: "paragraph",
+            content: [
+              { type: "text", text: "see" },
+              { type: "imageAttachment", attrs: { b64content: "AAAA" } },
+            ],
+          },
+        ],
+      },
+      selection: { from: 2, to: 2 },
+    });
+    const a = await raceToFlush(
+      { ...pasting, generation: 3 },
+      { ...pasting, generation: 1 },
+    );
+
+    expect(() => a.queue.persistNowOrThrow(NAME)).not.toThrow();
+    expect(a.queue.hasDeferredJsonWrite(NAME)).toBe(false);
+  });
+
+  it.each([
+    ["a different document", draftWithFields("theirs", { draftId: "draft-1" })],
+    [
+      "a different draft identity",
+      draftWithFields("shared text", { draftId: "draft-2" }),
+    ],
+  ])(
+    "stays a conflict when the other window saved %s: the barrier throws, their row stays, the edit is held",
+    async (_case, theirs) => {
+      const a = await raceToFlush(shared({ generation: 4 }), theirs);
+      const theirRow = rawRows(NAME);
+
+      expect(() => a.queue.persistNowOrThrow(NAME)).toThrow();
+
+      expect(rawRows(NAME)).toBe(theirRow);
+      expect(a.queue.hasDeferredJsonWrite(NAME)).toBe(true);
+    },
+  );
 });
 
 describe("composer draft storage: legacy blob migration", () => {
@@ -538,6 +685,60 @@ describe("composer draft store: another window's writes", () => {
     expect(readDraftRow("chat-1", ANON_NAME)?.content).toEqual(
       textDoc("theirs"),
     );
+  });
+
+  describe("with chat-1 stuck on a real conflict", () => {
+    beforeEach(() => {
+      typeAndFlush("chat-1", "mine v1");
+      useComposerDraftStore
+        .getState()
+        .setSnapshot("chat-1", textDoc("mine v2"), null);
+      otherWindowWrites("draft", "chat-1", draftWith("theirs"), ANON_NAME);
+    });
+
+    it.each([
+      [
+        "replaceDraft",
+        () =>
+          useComposerDraftStore
+            .getState()
+            .replaceDraft("chat-2", textDoc("restored"), null),
+      ],
+      [
+        "restoreBrowserAnnotations",
+        () =>
+          useComposerDraftStore
+            .getState()
+            .restoreBrowserAnnotations("chat-2", []),
+      ],
+    ])(
+      "%s on another chat succeeds, and chat-1's conflict is neither resolved nor dropped",
+      (_method, barrier) => {
+        expect(barrier).not.toThrow();
+
+        // The real conflict is intact: their row on disk, my text in memory,
+        // my write still held.
+        expect(readDraftRow("chat-1", ANON_NAME)?.content).toEqual(
+          textDoc("theirs"),
+        );
+        expect(readComposerDraftSnapshot("chat-1").content).toEqual(
+          textDoc("mine v2"),
+        );
+        expect(hasDeferredJsonWrite(ANON_NAME)).toBe(true);
+      },
+    );
+
+    it("replaceDraft on chat-1 itself still throws instead of overwriting their row", () => {
+      expect(() =>
+        useComposerDraftStore
+          .getState()
+          .replaceDraft("chat-1", textDoc("restored"), null),
+      ).toThrow();
+
+      expect(readDraftRow("chat-1", ANON_NAME)?.content).toEqual(
+        textDoc("theirs"),
+      );
+    });
   });
 
   it("a row stuck on a conflict does not stop the other drafts' rows from being saved at pagehide", () => {

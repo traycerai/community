@@ -141,9 +141,24 @@ export function createComposerDraftStorage() {
     return `{"revision":${JSON.stringify(revision)},"value":{${metadata.slice(1, -1)},"content":${encoded.json}}}`;
   }
 
-  function flush(): void {
+  function matchesPersistedValue(local: ChangedRow, saved: unknown): boolean {
+    const encoded: unknown = JSON.parse(encode(local, ""));
+    if (!isRecord(encoded)) return false;
+    const value = encoded.value;
+    if (local.kind === "draft" && isRecord(value) && isRecord(saved)) {
+      return ["draftId", "content", "selection", "browserAnnotations"].every(
+        (field) =>
+          JSON.stringify(value[field]) === JSON.stringify(saved[field]),
+      );
+    }
+    return JSON.stringify(value) === JSON.stringify(saved);
+  }
+
+  function flush(keys: Iterable<string>): void {
     const failures: unknown[] = [];
-    for (const [key, row] of pending) {
+    for (const key of keys) {
+      const row = pending.get(key);
+      if (row === undefined) continue;
       try {
         // localStorage has no atomic CAS across processes. This detects observed
         // conflicts; Web Locks + awaited custody barriers are the upgrade path.
@@ -306,7 +321,7 @@ export function createComposerDraftStorage() {
         previous.pendingSubmittedDraftDeletes,
       );
       previous = value.state;
-      if (pending.size > 0) deferJsonWrite(name, flush);
+      if (pending.size > 0) deferJsonWrite(name, () => flush(pending.keys()));
     },
     removeItem(name) {
       reset(name);
@@ -325,6 +340,11 @@ export function createComposerDraftStorage() {
 
   return {
     ...storage,
+    persistDraftNowOrThrow(chatId: string): void {
+      if (currentName === null) return;
+      flush([composerDraftRowKey(currentName, "draft", chatId)]);
+      if (pending.size === 0) cancelDeferredJsonWrite(currentName);
+    },
     rememberSnapshot(state: ComposerDraftPersistence): void {
       previous = state;
     },
@@ -343,14 +363,20 @@ export function createComposerDraftStorage() {
     ): () => void {
       function applyKey(name: string, key: string): void {
         if (!key.startsWith(composerDraftRowPrefix(name))) return;
-        if (hasDeferredJsonWrite(name) && pending.has(key)) {
+        const row = readRow(key);
+        const local = hasDeferredJsonWrite(name) ? pending.get(key) : undefined;
+        if (local !== undefined) {
+          if (matchesPersistedValue(local, row?.value ?? null)) {
+            if (row === null) baseline.delete(key);
+            else baseline.set(key, row.revision);
+            return;
+          }
           appLogger.debug(
             "[persist] composer draft conflict; retaining local edits",
             {},
           );
           return;
         }
-        const row = readRow(key);
         const parts = key.slice(composerDraftRowPrefix(name).length).split(":");
         if (parts.length !== 2) return;
         const [kind, encodedId] = parts;
