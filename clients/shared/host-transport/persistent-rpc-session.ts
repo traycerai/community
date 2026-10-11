@@ -60,13 +60,16 @@ export class PersistentRpcSession {
   }
 
   get accepting(): boolean {
-    return !this.retired && !this.closed;
+    return (
+      !this.retired &&
+      !this.closed &&
+      this.pending.size < PERSISTENT_RPC_MAX_RUNNING_REQUESTS
+    );
   }
 
   retire(): void {
     this.retired = true;
-    if (this.pending.size === 0)
-      this.fail("Persistent RPC session retired", null);
+    this.armIdleTimer();
   }
 
   receive(frame: HostFrame): void {
@@ -99,10 +102,7 @@ export class PersistentRpcSession {
     canCancelAfterDispatch: (method: string) => boolean,
     beforeSend: () => void,
   ): Session {
-    if (
-      !this.accepting ||
-      this.pending.size >= PERSISTENT_RPC_MAX_RUNNING_REQUESTS
-    ) {
+    if (!this.accepting) {
       throw new RetryableTransportError({
         code: "RPC_ERROR",
         message:
@@ -152,7 +152,12 @@ export class PersistentRpcSession {
     return {
       send: (frame) => {
         if (entry.settled) return;
-        if (frame.kind !== "request" || entry.sent || !this.accepting) {
+        if (
+          frame.kind !== "request" ||
+          entry.sent ||
+          this.retired ||
+          this.closed
+        ) {
           this.settle(
             entry,
             null,
@@ -193,6 +198,7 @@ export class PersistentRpcSession {
               }),
             );
             cancel();
+            this.retire();
           }, timeoutMs);
         }
         return response;
@@ -209,6 +215,7 @@ export class PersistentRpcSession {
           }),
         );
         cancel();
+        this.armIdleTimer();
       },
       close: () => {
         // Sent requests remain counted until the host's terminal receipt,
@@ -273,7 +280,10 @@ export class PersistentRpcSession {
 
   private armIdleTimer(): void {
     this.clearIdleTimer();
-    if (this.closed || this.pending.size > 0) return;
+    if (this.closed) return;
+    for (const pending of this.pending.values()) {
+      if (!pending.settled) return;
+    }
     if (this.retired) {
       this.fail("Persistent RPC session drained", null);
       return;

@@ -364,17 +364,6 @@ function respond(
     error: null,
   });
 }
-/** The host's terminal receipt for a request whose caller already stopped waiting. */
-function receipt(socket: StubWebSocket, frame: ClientRequestFrame): void {
-  socket.fireMessage({
-    kind: "response",
-    requestId: frame.requestId,
-    method: frame.method,
-    schemaVersion: frame.schemaVersion,
-    result: null,
-    error: { code: "RPC_ERROR", message: "Request cancelled" },
-  });
-}
 const fatalUnauthorized: HostFrame = {
   kind: "fatalError",
   details: {
@@ -773,7 +762,7 @@ describe("WsRpcClient persistent local session", () => {
     });
   });
 
-  it("stops a deadline wait without freeing the running slot, and keeps the session for the late receipt", async () => {
+  it("retires the session when a response deadline passes, so the next call dials a fresh one", async () => {
     vi.useFakeTimers();
     const { client, sockets } = harness(registry, DESKTOP);
     const lease = new MutableBearerLease("token-1", "test-user");
@@ -787,26 +776,81 @@ describe("WsRpcClient persistent local session", () => {
       HostTransportFailureError,
     );
     await establish(sockets[0], PERSISTENT_ACK);
-    const frame = requestFrames(sockets[0])[0];
 
     await vi.advanceTimersByTimeAsync(50);
     await rejection;
-    expect(cancelFrames(sockets[0])).toHaveLength(1);
-    expect(sockets[0].closed).toBeNull();
+    // A host that missed a deadline is not trusted with more work, and with
+    // nobody left waiting the socket does not linger for a receipt that may
+    // never come.
+    expect(sockets[0].closed).not.toBeNull();
 
-    receipt(sockets[0], frame);
     const next = client.request(
       "host.echo",
       { message: "next" },
       plain(authority(lease)),
     );
     await settle();
-    expect(sockets).toHaveLength(1);
-    respond(sockets[0], requestFrames(sockets[0])[1], { echoed: "next" });
+    expect(sockets).toHaveLength(2);
+    await establish(sockets[1], PERSISTENT_ACK);
+    respond(sockets[1], requestFrames(sockets[1])[0], { echoed: "next" });
     await expect(next).resolves.toEqual({ echoed: "next" });
   });
 
-  it("keeps cancelled reads counted against the running cap until the host's terminal receipts arrive", async () => {
+  it("keeps a sibling that is still waiting alive through a deadline, then closes without the timed-out call's receipt", async () => {
+    vi.useFakeTimers();
+    const { client, sockets } = harness(registry, DESKTOP);
+    const lease = new MutableBearerLease("token-1", "test-user");
+    await warmSession(client, sockets, lease);
+
+    // Two calls on one session with different deadlines.
+    const slow = client.requestWithResponseTimeout(
+      "host.echo",
+      { message: "slow" },
+      50,
+      plain(readAuthority(lease, undefined)),
+    );
+    const slowRejection = expect(slow).rejects.toBeInstanceOf(
+      HostTransportFailureError,
+    );
+    const sibling = client.requestWithResponseTimeout(
+      "host.echo",
+      { message: "sibling" },
+      5_000,
+      plain(readAuthority(lease, undefined)),
+    );
+    await settle();
+    const [, slowFrame, siblingFrame] = requestFrames(sockets[0]);
+
+    await vi.advanceTimersByTimeAsync(50);
+    await slowRejection;
+    // The sibling is still waiting on this socket: it stays open, and the
+    // host is told to stop the read that timed out.
+    expect(sockets[0].closed).toBeNull();
+    expect(cancelFrames(sockets[0])).toEqual([
+      { kind: "cancel", requestId: slowFrame.requestId },
+    ]);
+
+    // The session takes no new work, so the next call dials its own.
+    const next = client.request(
+      "host.echo",
+      { message: "next" },
+      plain(authority(lease)),
+    );
+    await settle();
+    expect(sockets).toHaveLength(2);
+    expect(requestFrames(sockets[0])).toHaveLength(3);
+    await establish(sockets[1], PERSISTENT_ACK);
+    respond(sockets[1], requestFrames(sockets[1])[0], { echoed: "next" });
+    await expect(next).resolves.toEqual({ echoed: "next" });
+
+    // The sibling finishes undisturbed. The timed-out call's receipt never
+    // arrives, and the retired session still closes.
+    respond(sockets[0], siblingFrame, { echoed: "sibling" });
+    await expect(sibling).resolves.toEqual({ echoed: "sibling" });
+    expect(sockets[0].closed).not.toBeNull();
+  });
+
+  it("dials a fresh session for a call that finds the running cap full, and closes the full one once no caller is waiting on it", async () => {
     const { client, sockets } = harness(registry, DESKTOP);
     const lease = new MutableBearerLease("token-1", "test-user");
     await warmSession(client, sockets, lease);
@@ -834,29 +878,24 @@ describe("WsRpcClient persistent local session", () => {
       expect(outcome).toBeInstanceOf(HostRequestAbortedError);
     expect(cancelFrames(sockets[0])).toHaveLength(MAX_RUNNING_REQUESTS);
 
+    // The caller stopped waiting on every one of these, but the host has not
+    // finished them: they still hold their slots, so the full session is not
+    // offered the next call (it would have reused this socket had the aborts
+    // freed capacity). It dials its own and completes there.
     const over = client.request(
       "host.echo",
       { message: "over" },
       plain(authority(lease)),
     );
-    // Nothing was written, so this refusal is safe to retry as-is.
-    await expect(over).rejects.toBeInstanceOf(RetryableTransportError);
-    await expect(over).rejects.toMatchObject({ replaySafetyFromKey: false });
-    expect(requestFrames(sockets[0])).toHaveLength(MAX_RUNNING_REQUESTS + 1);
-    expect(sockets).toHaveLength(1);
-
-    receipt(sockets[0], frames[0]);
-    const fits = client.request(
-      "host.echo",
-      { message: "fits" },
-      plain(authority(lease)),
-    );
     await settle();
-    expect(requestFrames(sockets[0])).toHaveLength(MAX_RUNNING_REQUESTS + 2);
-    respond(sockets[0], requestFrames(sockets[0])[MAX_RUNNING_REQUESTS + 1], {
-      echoed: "fits",
-    });
-    await expect(fits).resolves.toEqual({ echoed: "fits" });
+    expect(sockets).toHaveLength(2);
+    expect(requestFrames(sockets[0])).toHaveLength(MAX_RUNNING_REQUESTS + 1);
+    // Nobody is waiting on the retired session, so it does not linger for 64
+    // receipts: closing the socket is what ends the host's abandoned work.
+    expect(sockets[0].closed).not.toBeNull();
+    await establish(sockets[1], PERSISTENT_ACK);
+    respond(sockets[1], requestFrames(sockets[1])[0], { echoed: "over" });
+    await expect(over).resolves.toEqual({ echoed: "over" });
   });
 
   it("closes after the idle window and negotiates a new session for the next call", async () => {
