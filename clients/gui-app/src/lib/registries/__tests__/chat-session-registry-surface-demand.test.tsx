@@ -764,6 +764,53 @@ describe("useChatSessionHandle surface demand", () => {
       }
     });
 
+    it("does not re-acquire a hidden prewarmed body when a hold starts, only when the last preview settles", () => {
+      vi.useFakeTimers();
+      try {
+        visibility.paneVisible = true;
+        visibility.tabSelected = false;
+        const { result, rerender } = renderHook(
+          () =>
+            useChatSessionHandle("chat-hold-start", HOST_ID, true, "surface"),
+          { wrapper: QueryWrapper },
+        );
+
+        act(() => {
+          vi.advanceTimersByTime(PREWARM_INTERVAL_MS);
+        });
+        const prewarmedHandle = result.current;
+        if (prewarmedHandle === null) throw new Error("expected a handle");
+
+        const registry = __getChatSessionRegistryForTests();
+        const acquireSpy = vi.spyOn(registry, "acquire");
+        try {
+          // The edge a hold STARTS: the prewarm queue pauses itself, so the
+          // hidden body has nothing to redo.
+          act(() => {
+            setPreviewDemand(true);
+            rerender();
+          });
+          act(() => {
+            vi.advanceTimersByTime(PREWARM_INTERVAL_MS * 4);
+          });
+          expect(acquireSpy).not.toHaveBeenCalled();
+          expect(result.current).toBe(prewarmedHandle);
+
+          // The edge the last preview SETTLES is the one that requeues work a
+          // hold deferred.
+          act(() => {
+            setPreviewDemand(false);
+            rerender();
+          });
+          expect(acquireSpy).toHaveBeenCalledTimes(1);
+        } finally {
+          acquireSpy.mockRestore();
+        }
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("clears a hidden neighbour's retained handle when the registry evicts it under byte pressure, and only requeues on the next repeat-settle edge, not immediately", () => {
       vi.useFakeTimers();
       try {

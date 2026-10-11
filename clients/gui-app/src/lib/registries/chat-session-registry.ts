@@ -317,11 +317,12 @@ export function useChatSessionHandle(
   const prewarmPriority = demand === "startup" || paneVisible;
   const surfaceDemand = useSurfaceDemand();
   const settled = demand === "startup" || surfaceDemand === "settled";
-  const prewarmPaused = useSurfaceDemandStore(
-    (state) =>
-      !visible &&
-      (state.topLevelPreviewKeys.length > 0 ||
-        Object.keys(state.panePreviewTargets).length > 0),
+  // The prewarm queue pauses itself during a hold (`hasPreviewDemand`). A
+  // hidden body re-runs only when a hold SETTLES, which requeues one the byte
+  // budget evicted; re-running on the edge a hold STARTS too re-acquired every
+  // hidden mounted chat for nothing.
+  const settleEpoch = useSurfaceDemandStore((state) =>
+    visible ? 0 : state.settleEpoch,
   );
   const hostEntry = useHostDirectoryEntry(hostId);
   const lease = useHostLease(hostId);
@@ -619,7 +620,7 @@ export function useChatSessionHandle(
     demand,
     visible,
     prewarmPriority,
-    prewarmPaused,
+    settleEpoch,
     surfaceDemand,
     settled,
     openTransport,
