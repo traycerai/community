@@ -98,6 +98,38 @@ let stderrTail: Promise<void> = Promise.resolve();
 // stream a test swaps out is not kept alive by this module.
 const guardedStreams = new WeakSet<NodeJS.WriteStream>();
 
+// Aborted, once, the first time a write to `process.stdout` fails with EPIPE.
+// One controller for the process: a reader that went away does not come back.
+const stdoutReaderClosedController = new AbortController();
+
+/**
+ * Aborts once stdout's reader has closed the pipe (`traycer host logs
+ * --follow | head -20`, an agent harness that stopped reading `traycer
+ * monitor`).
+ *
+ * The guard below keeps that EPIPE from crashing the process, which also
+ * removes the only thing that used to END a command that streams until
+ * interrupted: before the guard, the unhandled error reached the fatal
+ * handler. A streaming command passes this signal into the cleanup path its
+ * own interrupt takes and exits 0. A one-shot command ignores it and
+ * finishes with its own code - a process-wide exit here would cut `host
+ * update` mid-swap over a reader that merely stopped listening.
+ */
+export function stdoutReaderClosed(): AbortSignal {
+  return stdoutReaderClosedController.signal;
+}
+
+function noteWriteError(
+  stream: NodeJS.WriteStream,
+  error: Error | null | undefined,
+): void {
+  if (stream !== process.stdout) return;
+  if (error === null || error === undefined) return;
+  if (!("code" in error) || error.code !== "EPIPE") return;
+  if (stdoutReaderClosedController.signal.aborted) return;
+  stdoutReaderClosedController.abort();
+}
+
 /**
  * Keeps a reader that has gone away from killing the CLI.
  *
@@ -113,15 +145,15 @@ const guardedStreams = new WeakSet<NodeJS.WriteStream>();
  * command installs its own `error` handler on these streams to outlive the
  * closed PTY (`acknowledgeRelocationEntry`), and EventEmitter calls every
  * listener, so this one only rethrows when it is the sole listener left.
- *
- * Attached lazily, on the first write through this module, so a process that
- * never writes pays nothing and one that does pays once per descriptor.
  */
 function ignoreClosedReader(stream: NodeJS.WriteStream): void {
   if (guardedStreams.has(stream)) return;
   guardedStreams.add(stream);
   stream.on("error", (error: NodeJS.ErrnoException) => {
-    if (error.code === "EPIPE") return;
+    if (error.code === "EPIPE") {
+      noteWriteError(stream, error);
+      return;
+    }
     // Another listener has taken responsibility for the error; the stream
     // would not have been unhandled without this one, so do not make it so.
     if (stream.listenerCount("error") > 1) return;
@@ -129,17 +161,34 @@ function ignoreClosedReader(stream: NodeJS.WriteStream): void {
   });
 }
 
+/**
+ * Installs the closed-reader guard on stdout and stderr. Called once at
+ * process entry (`index.ts`, beside the process failure handlers) before any
+ * command runs, NOT on the first write through this module: several writers
+ * bypass this seam - the maintenance-lease protocol frames
+ * (`process.stdout.write`), worktree-delete's relayed output, every
+ * `console.error` / `console.warn` - and a lazily attached guard left each of
+ * them crashing on EPIPE whenever nothing had written through here first.
+ * Idempotent.
+ */
+export function installStdioErrorGuards(): void {
+  ignoreClosedReader(process.stdout);
+  ignoreClosedReader(process.stderr);
+}
+
 function tracked(
   stream: NodeJS.WriteStream,
   chunk: string | Buffer,
   tail: Promise<void>,
 ): Promise<void> {
-  ignoreClosedReader(stream);
   const written = new Promise<void>((resolve) => {
     // The callback fires once the chunk has been handed off, INCLUDING on
     // error (e.g. EPIPE when the reader closed), so this always settles and
     // a failed write cannot wedge the flush.
-    stream.write(chunk, () => resolve());
+    stream.write(chunk, (error) => {
+      noteWriteError(stream, error);
+      resolve();
+    });
   });
   return tail.then(() => written);
 }
@@ -158,11 +207,11 @@ function trackedWithOutcome(
   chunk: string | Buffer,
   tail: Promise<void>,
 ): { readonly settled: Promise<void>; readonly outcome: Promise<boolean> } {
-  ignoreClosedReader(stream);
   const outcome = new Promise<boolean>((resolve) => {
-    stream.write(chunk, (error) =>
-      resolve(error === undefined || error === null),
-    );
+    stream.write(chunk, (error) => {
+      noteWriteError(stream, error);
+      resolve(error === undefined || error === null);
+    });
   });
   const settled = tail.then(() => outcome.then(() => undefined));
   return { settled, outcome };

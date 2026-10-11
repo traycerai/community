@@ -1,4 +1,9 @@
-import { flushStdio, writeStderr, writeStdout } from "../../std-write";
+import {
+  flushStdio,
+  installStdioErrorGuards,
+  writeStderr,
+  writeStdout,
+} from "../../std-write";
 
 // Worker for `std-write-closed-reader.test.ts`. Keeps writing through the
 // REAL `std-write` seam after the parent has closed its end of the pipe, so
@@ -16,6 +21,8 @@ if (stream !== "stdout" && stream !== "stderr") {
     `WORKER_STREAM must be "stdout" or "stderr", got ${String(stream)}`,
   );
 }
+// As `index.ts` does at process entry, before any command writes.
+installStdioErrorGuards();
 const write = stream === "stdout" ? writeStdout : writeStderr;
 const target = stream === "stdout" ? process.stdout : process.stderr;
 

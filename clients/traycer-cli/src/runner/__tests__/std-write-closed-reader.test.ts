@@ -24,11 +24,10 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 // which is where Sentry saw the crash. The worker is bundled with esbuild
 // first because Node cannot resolve its extensionless TypeScript imports.
 
-const WORKER_SOURCE = join(
-  import.meta.dirname,
-  "fixtures",
-  "closed-reader-worker.ts",
-);
+const FIXTURES = join(import.meta.dirname, "fixtures");
+const WORKER_SOURCE = join(FIXTURES, "closed-reader-worker.ts");
+const FOLLOW_WORKER_SOURCE = join(FIXTURES, "follow-reader-worker.ts");
+const BYPASS_WORKER_SOURCE = join(FIXTURES, "bypass-writer-worker.ts");
 
 // Bundling the fixture and spawning node can exceed vitest's default 5s
 // budget on a cold cache.
@@ -53,18 +52,33 @@ interface WorkerOptions {
 
 let bundleDir = "";
 let workerBundle = "";
+let followWorkerBundle = "";
+let bypassWorkerBundle = "";
 
-beforeAll(async () => {
-  bundleDir = await mkdtemp(join(tmpdir(), "std-write-closed-reader-"));
-  workerBundle = join(bundleDir, "closed-reader-worker.mjs");
+async function bundleWorker(source: string, name: string): Promise<string> {
+  const outfile = join(bundleDir, name);
   await build({
-    entryPoints: [WORKER_SOURCE],
-    outfile: workerBundle,
+    entryPoints: [source],
+    outfile,
     bundle: true,
     platform: "node",
     format: "esm",
     logLevel: "silent",
   });
+  return outfile;
+}
+
+beforeAll(async () => {
+  bundleDir = await mkdtemp(join(tmpdir(), "std-write-closed-reader-"));
+  workerBundle = await bundleWorker(WORKER_SOURCE, "closed-reader-worker.mjs");
+  followWorkerBundle = await bundleWorker(
+    FOLLOW_WORKER_SOURCE,
+    "follow-reader-worker.mjs",
+  );
+  bypassWorkerBundle = await bundleWorker(
+    BYPASS_WORKER_SOURCE,
+    "bypass-writer-worker.mjs",
+  );
 }, SPAWN_TIMEOUT_MS);
 
 afterAll(async () => {
@@ -165,6 +179,98 @@ describe("std-write survives a reader that closed the pipe", () => {
       expect(run.signal).toBeNull();
       expect(run.code).toBe(0);
       expect(run.stderr).not.toContain("injected stream error");
+    },
+    SPAWN_TIMEOUT_MS,
+  );
+});
+
+// How long the follow-style worker may outlive its reader before the test
+// gives up on it and kills it; the claim is that it exits well inside this.
+const FOLLOW_KILL_AFTER_MS = 5_000;
+const FOLLOW_EXIT_BUDGET_MS = 3_000;
+
+interface ClosedReaderRun extends WorkerRun {
+  /** From the parent destroying its read end to the child's exit. */
+  readonly msAfterReaderClosed: number;
+  /** The test had to kill the worker: it was still running. */
+  readonly killed: boolean;
+}
+
+/**
+ * Spawns `bundle`, destroys the parent's read end of the worker's stdout on
+ * the first line, and waits for the worker to exit - killing it once it has
+ * outlived its reader by `FOLLOW_KILL_AFTER_MS`.
+ */
+function runWithStdoutReaderClosed(bundle: string): Promise<ClosedReaderRun> {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [bundle], {
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (text: string) => {
+      stderr += text;
+    });
+
+    let readerClosedAt: number | null = null;
+    let killed = false;
+    let killTimer: NodeJS.Timeout | null = null;
+    child.stdout.once("data", () => {
+      child.stdout.destroy();
+      readerClosedAt = Date.now();
+      killTimer = setTimeout(() => {
+        killed = true;
+        child.kill("SIGKILL");
+      }, FOLLOW_KILL_AFTER_MS);
+    });
+
+    child.once("close", (code, signal) => {
+      if (killTimer !== null) clearTimeout(killTimer);
+      resolve({
+        code,
+        signal,
+        stderr,
+        killed,
+        msAfterReaderClosed:
+          readerClosedAt === null ? -1 : Date.now() - readerClosedAt,
+      });
+    });
+  });
+}
+
+describe("a closed stdout reader ends a streaming command", () => {
+  it(
+    "a follow-style stream exits 0 once its stdout reader is gone",
+    async () => {
+      // `traycer host logs --follow | head -20`: with the EPIPE absorbed,
+      // nothing used to end the follow but a signal, so it polled and wrote
+      // into a dead pipe for ever. `stdoutReaderClosed()` is what it ends on.
+      const run = await runWithStdoutReaderClosed(followWorkerBundle);
+
+      expect(run.killed).toBe(false);
+      expect(run.signal).toBeNull();
+      expect(run.code).toBe(0);
+      expect(run.msAfterReaderClosed).toBeGreaterThanOrEqual(0);
+      expect(run.msAfterReaderClosed).toBeLessThan(FOLLOW_EXIT_BUDGET_MS);
+    },
+    SPAWN_TIMEOUT_MS,
+  );
+
+  it(
+    "a writer that bypasses std-write survives a closed reader once the entry guards are installed",
+    async () => {
+      // The maintenance-lease protocol frames and worktree-delete's relayed
+      // output write with bare `process.stdout.write`; nothing goes through
+      // `std-write`, so a guard attached on the first write through it never
+      // existed for them.
+      const run = await runWithStdoutReaderClosed(bypassWorkerBundle);
+
+      expect(run.killed).toBe(false);
+      expect(run.signal).toBeNull();
+      expect(run.stderr).not.toContain("Unhandled 'error' event");
+      expect(run.code).toBe(0);
     },
     SPAWN_TIMEOUT_MS,
   );
