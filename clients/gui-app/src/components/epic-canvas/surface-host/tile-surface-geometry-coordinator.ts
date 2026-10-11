@@ -228,11 +228,44 @@ export interface StripGeometrySnapshot {
     readonly right: ReadonlyArray<string>;
   };
   readonly hasOverflow: boolean;
+  /** Where the strip is scrolled to, and the furthest it goes. */
+  readonly offset: number;
+  readonly maxOffset: number;
+  /** The strip's sticky section headers, in document order. */
+  readonly sections: ReadonlyArray<StripSection>;
 }
 
-interface StripBounds {
+/**
+ * A sticky section header (`data-strip-section-row`) as the strip draws it
+ * now, along the axis, from the strip's leading edge. A stuck header's box
+ * moves with every scroll, so these are read again on each one, in the same
+ * read phase as everything else here.
+ */
+export interface StripSection {
+  readonly id: string;
   readonly start: number;
   readonly end: number;
+  /** The end of the row before the header: where the header sits in the flow. */
+  readonly precedingEnd: number | null;
+}
+
+const STRIP_SECTION_SELECTOR = "[data-strip-section-row]";
+const NO_SECTIONS: ReadonlyArray<StripSection> = [];
+
+/**
+ * A strip member's box in the strip's content coordinates, which a scroll does
+ * not move. A member with no extent (a slot still opening, a hidden frame) is
+ * kept for its position and never revealed or listed as clipped.
+ */
+export interface StripBounds {
+  readonly start: number;
+  readonly end: number;
+  readonly crossStart: number;
+  readonly crossEnd: number;
+}
+
+function laidOut(bounds: StripBounds | undefined): StripBounds | undefined {
+  return bounds !== undefined && bounds.end > bounds.start ? bounds : undefined;
 }
 
 interface StripRegistration {
@@ -245,6 +278,8 @@ interface StripRegistration {
   dirty: boolean;
   reveal: boolean;
   offset: number;
+  /** The furthest the scroller goes; a write past it is clamped by the browser. */
+  maxOffset: number;
   extent: number;
   /** The scroller's `scroll-padding` along the axis: room a reveal keeps
    * clear (the sectioned side strip's sticky header and bottom fade). */
@@ -253,6 +288,8 @@ interface StripRegistration {
   overflow: boolean;
   selected: HTMLElement | null;
   selectedVisible: boolean;
+  sections: ReadonlyArray<StripSection>;
+  sectionsStale: boolean;
 }
 
 const stripRegistrations = new Map<HTMLElement, StripRegistration>();
@@ -271,33 +308,52 @@ function readStripMeasurements(): Array<() => void> {
   return Array.from(stripRegistrations.values(), readStripMeasurement);
 }
 
+/**
+ * The strip's children that take part in its layout. An overlay drawn inside
+ * the scroller (`data-strip-overlay`, the selection traveller) is out of flow
+ * and resizes on every frame it animates; observing it would re-read the
+ * whole strip each of those frames.
+ */
+function stripMembers(element: HTMLElement): HTMLElement[] {
+  return Array.from(element.children).filter(
+    (child): child is HTMLElement =>
+      child instanceof HTMLElement && child.dataset.stripOverlay === undefined,
+  );
+}
+
 function refreshStripBounds(strip: StripRegistration): void {
   const { element, axis, bounds } = strip;
   const viewport = element.getBoundingClientRect();
+  const viewExtent = axis.mainExtent(viewport);
+  // A shrink that clips the selection is revealed, whoever asked for the read.
+  if (strip.selectedVisible && viewExtent < strip.extent) strip.reveal = true;
   strip.offset = axis.scrollOffset(element);
-  strip.extent = axis.mainExtent(viewport);
+  strip.extent = viewExtent;
+  const crossShift =
+    (axis.id === "x" ? element.scrollTop : element.scrollLeft) -
+    axis.crossStart(viewport);
   const padding = axis.scrollPadding(getComputedStyle(element));
   strip.padStart = padding.start;
   strip.padEnd = padding.end;
-  let availableExtent =
+  const clientExtent =
     axis.id === "x" ? element.clientWidth : element.clientHeight;
+  const scrollExtent =
+    axis.id === "x" ? element.scrollWidth : element.scrollHeight;
+  strip.maxOffset = Math.max(0, scrollExtent - clientExtent);
+  let availableExtent = clientExtent;
   for (const control of element.parentElement?.querySelectorAll<HTMLElement>(
     "[data-hidden-tabs-control]",
   ) ?? []) {
     availableExtent +=
       axis.id === "x" ? control.offsetWidth : control.offsetHeight;
   }
-  strip.overflow =
-    (axis.id === "x" ? element.scrollWidth : element.scrollHeight) >
-    availableExtent + 1;
+  strip.overflow = scrollExtent > availableExtent + 1;
   bounds.clear();
   // Include whole split frames for reveal, and their members for edge menus.
   const nodes = new Set<HTMLElement>(
     element.querySelectorAll<HTMLElement>(STRIP_TAB_SELECTOR),
   );
-  for (const child of element.children) {
-    if (child instanceof HTMLElement) nodes.add(child);
-  }
+  for (const child of stripMembers(element)) nodes.add(child);
   for (const node of nodes) {
     const tileFrame = node.closest<HTMLElement>("[data-tile-item-id]");
     const rect = readHeaderStripLayoutRect(node, axis);
@@ -313,11 +369,40 @@ function refreshStripBounds(strip: StripRegistration): void {
         (axis.mainExtent(frameRect) - extent) / 2 -
         readTranslate(tileFrame, axis);
     }
-    if (extent <= 0) continue;
     const contentStart = start - axis.mainStart(viewport) + strip.offset;
-    bounds.set(node, { start: contentStart, end: contentStart + extent });
+    bounds.set(node, {
+      start: contentStart,
+      end: contentStart + Math.max(0, extent),
+      crossStart: rect.crossStart + crossShift,
+      crossEnd: rect.crossEnd + crossShift,
+    });
   }
   strip.dirty = false;
+  strip.sectionsStale = true;
+}
+
+function readStripSections(strip: StripRegistration): void {
+  const { element, axis } = strip;
+  strip.sectionsStale = false;
+  const rows = element.querySelectorAll<HTMLElement>(STRIP_SECTION_SELECTOR);
+  if (rows.length === 0) {
+    strip.sections = NO_SECTIONS;
+    return;
+  }
+  const origin = axis.mainStart(element.getBoundingClientRect());
+  strip.sections = Array.from(rows, (row) => {
+    const rect = row.getBoundingClientRect();
+    const preceding = row.previousElementSibling;
+    return {
+      id: row.dataset.stripSectionRow ?? "",
+      start: axis.mainStart(rect) - origin,
+      end: axis.mainEnd(rect) - origin,
+      precedingEnd:
+        preceding === null
+          ? null
+          : axis.mainEnd(preceding.getBoundingClientRect()) - origin,
+    };
+  });
 }
 
 function selectedStripBounds(
@@ -329,7 +414,8 @@ function selectedStripBounds(
   while (member !== null && member.parentElement !== strip.element) {
     member = member.parentElement;
   }
-  const memberBounds = member === null ? undefined : strip.bounds.get(member);
+  const memberBounds =
+    member === null ? undefined : laidOut(strip.bounds.get(member));
   // A split wider than the viewport cannot be revealed whole. Keep its
   // selected half visible instead of scrolling that half behind the start edge.
   if (
@@ -339,26 +425,33 @@ function selectedStripBounds(
   ) {
     return memberBounds;
   }
-  return strip.bounds.get(selected);
+  return laidOut(strip.bounds.get(selected));
+}
+
+/** The one reveal rule: where the strip settles for `selectedBounds`. */
+function settledOffset(
+  strip: StripRegistration,
+  selected: HTMLElement | null,
+  selectedBounds: StripBounds | undefined,
+): number {
+  const dnd = useEpicDndStore.getState();
+  return (strip.reveal || selected !== strip.selected) &&
+    dnd.activeHeaderTab === null &&
+    dnd.activeSource === null
+    ? revealedOffset(strip, selectedBounds)
+    : strip.offset;
 }
 
 function readStripMeasurement(strip: StripRegistration): () => void {
   const { element, bounds } = strip;
-  const previousExtent = strip.extent;
   if (strip.dirty) refreshStripBounds(strip);
+  if (strip.sectionsStale) readStripSections(strip);
+  const { sections, maxOffset } = strip;
   const selected = element.querySelector<HTMLElement>('[aria-selected="true"]');
-  const reveal =
-    strip.reveal ||
-    selected !== strip.selected ||
-    (strip.selectedVisible && strip.extent < previousExtent);
+  const selectedBounds = selectedStripBounds(strip, selected);
+  const nextOffset = settledOffset(strip, selected, selectedBounds);
   strip.reveal = false;
   strip.selected = selected;
-  const selectedBounds = selectedStripBounds(strip, selected);
-  const dnd = useEpicDndStore.getState();
-  const nextOffset =
-    reveal && dnd.activeHeaderTab === null && dnd.activeSource === null
-      ? revealedOffset(strip, selectedBounds)
-      : strip.offset;
   strip.selectedVisible =
     selectedBounds !== undefined &&
     selectedBounds.start >= nextOffset + strip.padStart - 1 &&
@@ -368,7 +461,7 @@ function readStripMeasurement(strip: StripRegistration): () => void {
   if (strip.overflow) {
     for (const [node, rect] of bounds) {
       const key = node.dataset.headerTabKey;
-      if (key === undefined) continue;
+      if (key === undefined || rect.end <= rect.start) continue;
       if (rect.start < nextOffset - 1) left.push(key);
       if (rect.end > nextOffset + strip.extent + 1) right.push(key);
     }
@@ -379,6 +472,9 @@ function readStripMeasurement(strip: StripRegistration): () => void {
     strip.onChange({
       hiddenTabKeys: { left, right },
       hasOverflow: strip.overflow,
+      offset: nextOffset,
+      maxOffset,
+      sections,
     });
   };
 }
@@ -391,9 +487,12 @@ function revealedOffset(
   // Kept clear of the scroll-padding, as `revealMemberAlongAxis` is.
   const start = bounds.start - strip.padStart;
   const end = bounds.end + strip.padEnd;
+  // Clamped as the browser clamps the write, so the cached offset is the one
+  // the strip is really at: no scroll event corrects it when nothing moved.
   if (end > strip.offset + strip.extent + 1)
-    return Math.max(0, end - strip.extent);
-  if (start < strip.offset - 1) return Math.max(0, start);
+    return Math.min(strip.maxOffset, Math.max(0, end - strip.extent));
+  if (start < strip.offset - 1)
+    return Math.min(strip.maxOffset, Math.max(0, start));
   return strip.offset;
 }
 
@@ -415,7 +514,7 @@ export function registerTabStripGeometry(
   const observeChildren = (): void => {
     const next = new Set<Element>([
       element,
-      ...element.children,
+      ...stripMembers(element),
       ...element.querySelectorAll(STRIP_TAB_SELECTOR),
     ]);
     if (element.parentElement !== null) next.add(element.parentElement);
@@ -434,9 +533,13 @@ export function registerTabStripGeometry(
   };
   const onScroll = (): void => {
     strip.offset = axis.scrollOffset(element);
+    strip.sectionsStale = true;
     scheduleStrips();
   };
   const mutations = new MutationObserver((records) => {
+    // Any row added or removed can move a section header across an edge.
+    if (records.some((record) => record.type === "childList"))
+      strip.sectionsStale = true;
     if (
       records.some((record) =>
         record.type === "attributes"
@@ -474,12 +577,15 @@ export function registerTabStripGeometry(
     dirty: true,
     reveal: true,
     offset: 0,
+    maxOffset: 0,
     extent: 0,
     padStart: 0,
     padEnd: 0,
     overflow: false,
     selected: null,
     selectedVisible: false,
+    sections: NO_SECTIONS,
+    sectionsStale: true,
   };
   stripRegistrations.set(element, strip);
   mutations.observe(element, {
@@ -506,10 +612,60 @@ export function revealStripTab(element: HTMLElement, key: string): void {
   const strip = stripRegistrations.get(element);
   if (strip === undefined) return;
   for (const [node, bounds] of strip.bounds) {
-    if (node.dataset.headerTabKey !== key) continue;
+    if (node.dataset.headerTabKey !== key || bounds.end <= bounds.start)
+      continue;
     writeStripOffset(strip, revealedOffset(strip, bounds));
     node.focus({ preventScroll: true });
     scheduleStrips();
     break;
   }
+}
+
+/**
+ * The strip's registration with boxes that can answer for `member`. The
+ * observers keep them current, so this reads nothing in the usual case; a
+ * member they have not reported yet (a tab added in this commit) costs one
+ * read phase over the whole strip, however many callers ask in that commit.
+ */
+function measuredStrip(
+  element: HTMLElement,
+  member: HTMLElement | null,
+): StripRegistration | null {
+  const strip = stripRegistrations.get(element);
+  if (strip === undefined) return null;
+  if (strip.dirty || (member !== null && !strip.bounds.has(member)))
+    refreshStripBounds(strip);
+  return strip;
+}
+
+/** A member's box from the strip's cache; `null` outside a registered strip. */
+export function readStripMemberBounds(
+  element: HTMLElement,
+  member: HTMLElement,
+): StripBounds | null {
+  return measuredStrip(element, member)?.bounds.get(member) ?? null;
+}
+
+export interface StripView {
+  readonly offset: number;
+  readonly extent: number;
+}
+
+/**
+ * The scroll offset the strip's next measurement settles on, and its extent.
+ * A selection made in this commit is revealed a frame later; a caller that
+ * plans now against where the strip will be asks here, through the same rule.
+ */
+export function readSettledStripView(element: HTMLElement): StripView | null {
+  const selected = element.querySelector<HTMLElement>('[aria-selected="true"]');
+  const strip = measuredStrip(element, selected);
+  if (strip === null) return null;
+  return {
+    offset: settledOffset(
+      strip,
+      selected,
+      selectedStripBounds(strip, selected),
+    ),
+    extent: strip.extent,
+  };
 }

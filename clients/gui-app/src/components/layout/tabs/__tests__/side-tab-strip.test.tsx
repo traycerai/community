@@ -653,10 +653,14 @@ interface RevealShim {
  * jsdom has no layout: the scroller shows 0..300 on y, every row (and its
  * member, the scroller's own child holding it) sits at a fixed box by tab
  * test id - selected or not, as in a real layout - and `scrollTop` keeps what
- * is written. The reveal's decision is not shimmed.
+ * is written. The scroller's scrollable extent is its last row's bottom plus
+ * `paddingBottom`, so the furthest it scrolls is that less the 300px it
+ * shows: a reveal past that is clamped, as a browser clamps the write. The
+ * reveal's decision is not shimmed.
  */
 function installRevealGeometry(
   rowBoxes: Readonly<Record<string, { top: number; bottom: number }>>,
+  paddingBottom: number,
 ): RevealShim {
   const realRect = Object.getOwnPropertyDescriptor(
     HTMLElement.prototype,
@@ -665,6 +669,14 @@ function installRevealGeometry(
   const realScrollTop = Object.getOwnPropertyDescriptor(
     Element.prototype,
     "scrollTop",
+  );
+  const realScrollHeight = Object.getOwnPropertyDescriptor(
+    Element.prototype,
+    "scrollHeight",
+  );
+  const realClientHeight = Object.getOwnPropertyDescriptor(
+    Element.prototype,
+    "clientHeight",
   );
   const isScroller = (node: Element | null): boolean =>
     node !== null && node.hasAttribute("data-layout-passive-members");
@@ -694,10 +706,36 @@ function installRevealGeometry(
       scrolled = value;
     },
   });
+  const lastBottom = Math.max(
+    0,
+    ...Object.values(rowBoxes).map((box) => box.bottom),
+  );
+  Object.defineProperty(Element.prototype, "scrollHeight", {
+    configurable: true,
+    get(this: Element) {
+      return isScroller(this) ? lastBottom + paddingBottom : 0;
+    },
+  });
+  Object.defineProperty(Element.prototype, "clientHeight", {
+    configurable: true,
+    get(this: Element) {
+      return isScroller(this) ? 300 : 0;
+    },
+  });
   return {
     scrolled: () => scrolled,
     scrollerReads: () => scrollerReads,
     restore: () => {
+      for (const [name, real] of [
+        ["scrollHeight", realScrollHeight],
+        ["clientHeight", realClientHeight],
+      ] as const) {
+        if (real === undefined) {
+          Reflect.deleteProperty(Element.prototype, name);
+        } else {
+          Object.defineProperty(Element.prototype, name, real);
+        }
+      }
       // jsdom defines the method on `Element`, so without an own descriptor
       // the override is the one own property to remove.
       if (realRect === undefined) {
@@ -903,10 +941,13 @@ describe("<SideTabStrip />", () => {
   it("scrolls a row that becomes active while clipped into view", async () => {
     const refs = openEpicTabs(["Alpha", "Beta"]);
     // Beta's row sits 100px past the scroller's 300px bottom edge.
-    const geometry = installRevealGeometry({
-      "tab-epic-e-alpha": { top: 0, bottom: 32 },
-      "tab-epic-e-beta": { top: 368, bottom: 400 },
-    });
+    const geometry = installRevealGeometry(
+      {
+        "tab-epic-e-alpha": { top: 0, bottom: 32 },
+        "tab-epic-e-beta": { top: 368, bottom: 400 },
+      },
+      0,
+    );
     try {
       // An earlier render may leave a coordinator frame pending.
       resetTileSurfaceGeometryCoordinatorForTesting();
@@ -939,10 +980,15 @@ describe("<SideTabStrip />", () => {
     // the bottom fade; the coordinator's reveal must land past that padding,
     // as `revealMemberAlongAxis` does, not flush with the edge beneath it.
     const refs = openEpicTabs(["Alpha", "Beta"]);
-    const geometry = installRevealGeometry({
-      "tab-epic-e-alpha": { top: 0, bottom: 32 },
-      "tab-epic-e-beta": { top: 368, bottom: 400 },
-    });
+    // The list's own bottom padding is part of its scrollable extent, so the
+    // 120px the reveal asks for is within what the scroller can scroll.
+    const geometry = installRevealGeometry(
+      {
+        "tab-epic-e-alpha": { top: 0, bottom: 32 },
+        "tab-epic-e-beta": { top: 368, bottom: 400 },
+      },
+      20,
+    );
     const padding = document.createElement("style");
     padding.textContent =
       '[data-testid="header-tab-strip-scroll"] { scroll-padding-bottom: 20px; }';
@@ -2091,6 +2137,214 @@ describe("<SideTabStrip />", () => {
     function header(section: string): HTMLElement {
       return screen.getByTestId(`side-strip-section-${section}`);
     }
+
+    describe("section scroll state", () => {
+      const SCROLLER_TEST_ID = "header-tab-strip-scroll";
+
+      function scroller(): HTMLElement {
+        return screen.getByTestId(SCROLLER_TEST_ID);
+      }
+
+      function isScroller(node: unknown): boolean {
+        return (
+          node instanceof HTMLElement &&
+          node.dataset.testid === SCROLLER_TEST_ID
+        );
+      }
+
+      /** The section header rows (the sticky boxes holding the buttons). */
+      function sectionRows(): ReadonlyArray<HTMLElement> {
+        return Array.from(
+          scroller().querySelectorAll<HTMLElement>("[data-strip-section-row]"),
+        );
+      }
+
+      /** One animation frame, after any frame already scheduled. */
+      async function nextFrame(): Promise<void> {
+        await act(async () => {
+          await new Promise<void>((resolve) => {
+            requestAnimationFrame(() => {
+              resolve();
+            });
+          });
+        });
+      }
+
+      /** Reads of each section header row's box, per row, since `clear()`. */
+      function countSectionRowReads(): {
+        readonly perRow: () => ReadonlyArray<number>;
+        readonly total: () => number;
+        readonly clear: () => void;
+      } {
+        const reads = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect");
+        return {
+          perRow: () =>
+            sectionRows().map(
+              (row) =>
+                reads.mock.contexts.filter((context) => context === row).length,
+            ),
+          total: () => reads.mock.calls.length,
+          clear: () => {
+            reads.mockClear();
+          },
+        };
+      }
+
+      afterEach(() => {
+        vi.restoreAllMocks();
+        vi.unstubAllGlobals();
+        resetTileSurfaceGeometryCoordinatorForTesting();
+      });
+
+      it("adds no observer or scroll listener of its own to the scroller", async () => {
+        resetTileSurfaceGeometryCoordinatorForTesting();
+        const resizeTargets: Element[] = [];
+        const mutationTargets: Node[] = [];
+        class RecordingResizeObserver implements ResizeObserver {
+          observe(target: Element): void {
+            resizeTargets.push(target);
+          }
+          unobserve(): void {}
+          disconnect(): void {}
+        }
+        class RecordingMutationObserver extends MutationObserver {
+          override observe(
+            target: Node,
+            options: MutationObserverInit | undefined,
+          ): void {
+            mutationTargets.push(target);
+            super.observe(target, options);
+          }
+        }
+        vi.stubGlobal("ResizeObserver", RecordingResizeObserver);
+        vi.stubGlobal("MutationObserver", RecordingMutationObserver);
+        // Called through: the spy only records who listened for what.
+        const addListener = vi.spyOn(EventTarget.prototype, "addEventListener");
+
+        openSectionedTasks();
+        await renderStrip("/elsewhere", LEFT_STRIP);
+        const scrollListenerTargets = addListener.mock.calls.flatMap(
+          ([type], call) =>
+            type === "scroll" ? [addListener.mock.contexts[call]] : [],
+        );
+
+        // One each: the geometry coordinator's. The section scroll reads its
+        // snapshots and watches nothing itself.
+        const list = scroller();
+        expect(resizeTargets.filter((target) => target === list)).toHaveLength(
+          1,
+        );
+        expect(
+          mutationTargets.filter((target) => target === list),
+        ).toHaveLength(1);
+        expect(
+          scrollListenerTargets.filter((target) => isScroller(target)),
+        ).toHaveLength(1);
+      });
+
+      it("reads each section header once per frame however many scroll events arrive in it", async () => {
+        openSectionedTasks();
+        const reads = countSectionRowReads();
+        await renderStrip("/elsewhere", LEFT_STRIP);
+        // The strip's first measurement has run, headers included.
+        await waitFor(() => {
+          expect(reads.perRow().every((count) => count > 0)).toBe(true);
+        });
+        await nextFrame();
+        expect(sectionRows().length).toBeGreaterThanOrEqual(3);
+        reads.clear();
+
+        for (let event = 0; event < 5; event += 1) {
+          fireEvent.scroll(scroller());
+        }
+        await nextFrame();
+
+        expect(reads.perRow()).toEqual(sectionRows().map(() => 1));
+      });
+
+      it("reads no box on scroll when the list has no section headers", async () => {
+        setSideStripView("layered");
+        openEpicTabs(["Alpha", "Beta"]);
+        await renderStrip("/elsewhere", LEFT_STRIP);
+        expect(sectionRows()).toHaveLength(0);
+        await nextFrame();
+        const reads = countSectionRowReads();
+        reads.clear();
+
+        for (let event = 0; event < 5; event += 1) {
+          fireEvent.scroll(scroller());
+        }
+        await nextFrame();
+
+        expect(reads.total()).toBe(0);
+      });
+
+      it("holds the chip on the stuck header once Needs you has scrolled out above", async () => {
+        openSectionedTasks();
+        await renderStrip("/elsewhere", LEFT_STRIP);
+        const list = scroller();
+        // The list is scrolled 80px of its 600px range. Needs you and To
+        // review are both stuck on the top edge; the row before To review
+        // ended 10px above it, so Needs you's tasks are out of view.
+        let scrolledTo = 0;
+        Object.defineProperties(list, {
+          scrollTop: {
+            configurable: true,
+            get: () => scrolledTo,
+            set: (value: number) => {
+              scrolledTo = value;
+            },
+          },
+          scrollHeight: { configurable: true, value: 900 },
+          clientHeight: { configurable: true, value: 300 },
+        });
+        const headerBoxes: Readonly<
+          Record<string, { top: number; bottom: number }>
+        > = {
+          "needs-you": { top: 0, bottom: 28 },
+          "to-review": { top: 0, bottom: 28 },
+          working: { top: 200, bottom: 228 },
+          idle: { top: 400, bottom: 428 },
+        };
+        const precedingBottoms: Readonly<Record<string, number>> = {
+          "to-review": -10,
+          working: 200,
+          idle: 400,
+        };
+        const sectionOf = (node: Element | null): string | null =>
+          node?.getAttribute("data-strip-section-row") ?? null;
+        vi.spyOn(
+          HTMLElement.prototype,
+          "getBoundingClientRect",
+        ).mockImplementation(function (this: HTMLElement): DOMRect {
+          if (this === list) return new DOMRect(0, 0, 200, 300);
+          const own = sectionOf(this);
+          if (own !== null) {
+            const box = headerBoxes[own];
+            return new DOMRect(0, box.top, 200, box.bottom - box.top);
+          }
+          const next = sectionOf(this.nextElementSibling);
+          if (next !== null && this.parentElement === list) {
+            const bottom = precedingBottoms[next];
+            return new DOMRect(0, bottom - 30, 200, 30);
+          }
+          return new DOMRect(0, 0, 0, 0);
+        });
+        expect(screen.queryByTestId("side-strip-needs-you-chip")).toBeNull();
+
+        scrolledTo = 80;
+        fireEvent.scroll(list);
+
+        await waitFor(() => {
+          const chip = screen.getByTestId("side-strip-needs-you-chip");
+          expect(
+            chip
+              .closest("[data-strip-section-row]")
+              ?.getAttribute("data-strip-section-row"),
+          ).toBe("to-review");
+        });
+      });
+    });
 
     it("lists the tasks under Needs you, To review, Working and Idle, each section in the tab order", async () => {
       openSectionedTasks();

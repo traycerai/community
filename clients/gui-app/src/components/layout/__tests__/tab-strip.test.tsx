@@ -853,10 +853,47 @@ function installRevealGeometry(
       scrolled = value;
     },
   });
+  // The scroller's scrollable width is its last member's right edge, and it
+  // shows 200 of it: the furthest it scrolls is the difference, and a reveal
+  // past that is clamped as a browser clamps the write.
+  const lastRight = Math.max(
+    0,
+    ...Object.values(boxes).map((memberBox) => memberBox.right),
+  );
+  const realScrollWidth = Object.getOwnPropertyDescriptor(
+    Element.prototype,
+    "scrollWidth",
+  );
+  const realClientWidth = Object.getOwnPropertyDescriptor(
+    Element.prototype,
+    "clientWidth",
+  );
+  Object.defineProperty(Element.prototype, "scrollWidth", {
+    configurable: true,
+    get(this: Element) {
+      return isScroller(this) ? lastRight : 0;
+    },
+  });
+  Object.defineProperty(Element.prototype, "clientWidth", {
+    configurable: true,
+    get(this: Element) {
+      return isScroller(this) ? 200 : 0;
+    },
+  });
   return {
     scrolled: () => scrolled,
     scrollerReads: () => scrollerReads,
     restore: () => {
+      for (const [name, real] of [
+        ["scrollWidth", realScrollWidth],
+        ["clientWidth", realClientWidth],
+      ] as const) {
+        if (real === undefined) {
+          Reflect.deleteProperty(Element.prototype, name);
+        } else {
+          Object.defineProperty(Element.prototype, name, real);
+        }
+      }
       if (realRect === undefined) {
         Reflect.deleteProperty(HTMLElement.prototype, "getBoundingClientRect");
       } else {

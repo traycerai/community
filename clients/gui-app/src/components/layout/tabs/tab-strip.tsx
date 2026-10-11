@@ -138,6 +138,7 @@ function TabStripBody() {
     activeItemId,
     itemCount: headerItemIds.length,
     extraRef: setScrollExtras,
+    onGeometry: null,
   });
   // The reveal has not scrolled yet when this plans: the travel judges the
   // slide against the offset that reveal will settle on.

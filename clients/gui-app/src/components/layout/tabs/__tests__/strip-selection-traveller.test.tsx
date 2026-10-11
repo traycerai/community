@@ -13,10 +13,11 @@
  * them all, and animation frames the test steps by hand, so a flight stays in
  * the air for as long as a test needs it.
  */
-import { useRef, type ReactNode } from "react";
+import { useCallback, useRef, type ReactNode } from "react";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { useEpicDndStore } from "@/components/epic-canvas/dnd/dnd-store";
+import { resetTileSurfaceGeometryCoordinatorForTesting } from "@/components/epic-canvas/surface-host/tile-surface-geometry-coordinator";
 import {
   useLandingPaneAnchorStore,
   type LandingPanelCoverage,
@@ -29,6 +30,7 @@ import type { TabRef } from "@/stores/tabs/types";
 import { SheetJoinBridge, SheetJoinScope } from "../sheet-join";
 import { useSelectionTravel } from "../strip-selection-travel";
 import { StripSelectionTraveller } from "../strip-selection-traveller";
+import { useHiddenHeaderTabs } from "../use-hidden-header-tabs";
 
 const SLOT_WIDTH = 100;
 const SLOT_HEIGHT = 36;
@@ -61,13 +63,29 @@ function measure(this: HTMLElement): DOMRect {
     : new DOMRect(Number(index) * SLOT_WIDTH, 0, SLOT_WIDTH, SLOT_HEIGHT);
 }
 
-/** The strip's scroller, its traveller and its bridge, with the real travel hook. */
+/**
+ * The strip's scroller, its traveller and its bridge, with the real travel
+ * hook. The scroller registers with the tab-strip geometry coordinator through
+ * `useHiddenHeaderTabs`, as the header strip does, so the travel reads the
+ * boxes the coordinator holds. `markSelection` paints the selection on the
+ * slots as tabs do (`aria-selected`, a tab key), which the coordinator
+ * observes: a change of it is a selection change the strip reacts to.
+ */
 function Strip(props: {
   readonly items: ReadonlyArray<StripItem>;
   readonly activeItemId: string;
+  readonly markSelection: boolean;
 }): ReactNode {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   const travellerRef = useRef<HTMLSpanElement | null>(null);
+  const { setScrollElement } = useHiddenHeaderTabs("scroll");
+  const setScroller = useCallback(
+    (node: HTMLDivElement | null): void => {
+      scrollerRef.current = node;
+      setScrollElement(node);
+    },
+    [setScrollElement],
+  );
   useSelectionTravel({
     scrollerRef,
     travellerRef,
@@ -76,19 +94,42 @@ function Strip(props: {
   });
   return (
     <SheetJoinScope>
-      <div ref={scrollerRef} data-strip-axis="x" data-strip-edge="top">
+      <div ref={setScroller} data-strip-axis="x" data-strip-edge="top">
         <StripSelectionTraveller ref={travellerRef} />
-        {props.items.map((item, index) => (
-          <div
-            key={item.id}
-            data-strip-item-id={item.id}
-            data-slot-index={index}
-          />
-        ))}
+        {props.items.map((item, index) =>
+          props.markSelection ? (
+            <div
+              key={item.id}
+              role="tab"
+              aria-selected={item.id === props.activeItemId}
+              data-header-tab-key={item.id}
+              data-strip-item-id={item.id}
+              data-slot-index={index}
+            />
+          ) : (
+            <div
+              key={item.id}
+              data-strip-item-id={item.id}
+              data-slot-index={index}
+            />
+          ),
+        )}
       </div>
       <SheetJoinBridge edge="top" />
     </SheetJoinScope>
   );
+}
+
+/**
+ * Runs the one animation frame the coordinator scheduled for the strip's first
+ * measurement, then forgets it, so the frames counted afterwards are the
+ * travel's own.
+ */
+function drainFirstMeasurement(): void {
+  const frame = pendingFrame;
+  pendingFrame = null;
+  if (frame !== null) act(() => frame(performance.now()));
+  framesRequested = 0;
 }
 
 /** The strip's items opened as tabs and the first of them active, not yet rendered. */
@@ -126,10 +167,19 @@ function startSlideTo(
   items: ReadonlyArray<StripItem>,
   destination: StripItem,
 ): { readonly rerender: (activeItemId: string) => void } {
-  const view = render(<Strip items={items} activeItemId={items[0].id} />);
+  const view = render(
+    <Strip items={items} activeItemId={items[0].id} markSelection={false} />,
+  );
+  drainFirstMeasurement();
   const rerender = (activeItemId: string): void => {
     act(() => {
-      view.rerender(<Strip items={items} activeItemId={activeItemId} />);
+      view.rerender(
+        <Strip
+          items={items}
+          activeItemId={activeItemId}
+          markSelection={false}
+        />,
+      );
     });
   };
   rerender(destination.id);
@@ -205,6 +255,7 @@ beforeEach(() => {
 afterEach(() => {
   // Unmounting the strip lands any flight still in the air.
   cleanup();
+  resetTileSurfaceGeometryCoordinatorForTesting();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
   useEpicDndStore.getState().dragEnded();
@@ -331,10 +382,156 @@ describe("the sliding selection box follows its destination's pane live", () => 
     const items = seedStrip([TASK_A, draft]);
     publish(draft.id, "full");
 
-    render(<Strip items={items} activeItemId={items[0].id} />);
+    render(
+      <Strip items={items} activeItemId={items[0].id} markSelection={false} />,
+    );
+    drainFirstMeasurement();
 
     expect(framesRequested).toBe(0);
     expect(traveller().hidden).toBe(true);
     expect(traveller().hasAttribute("data-join-pane")).toBe(false);
+  });
+});
+
+/**
+ * A queue of animation frames, for a strip whose slots carry the selection:
+ * the coordinator then schedules frames of its own beside the travel's, which
+ * the single-slot stand-in above would let overwrite each other.
+ */
+function installFrameQueue(): {
+  readonly step: () => void;
+  readonly drain: () => void;
+} {
+  const queue = new Map<number, FrameRequestCallback>();
+  let nextId = 0;
+  vi.stubGlobal(
+    "requestAnimationFrame",
+    (callback: FrameRequestCallback): number => {
+      nextId += 1;
+      queue.set(nextId, callback);
+      return nextId;
+    },
+  );
+  vi.stubGlobal("cancelAnimationFrame", (id: number): void => {
+    queue.delete(id);
+  });
+  let now = performance.now();
+  const step = (): void => {
+    const callbacks = [...queue.values()];
+    queue.clear();
+    now += FRAME_MS;
+    act(() => {
+      for (const callback of callbacks) callback(now);
+    });
+  };
+  return {
+    step,
+    drain: () => {
+      for (let frame = 0; frame < MAX_FRAMES && queue.size > 0; frame += 1) {
+        step();
+      }
+    },
+  };
+}
+
+describe("the selection travel measures nothing of its own", () => {
+  const STRIP_REFS: ReadonlyArray<TabRef> = [
+    { kind: "epic", id: "tab-a" },
+    { kind: "epic", id: "tab-b" },
+    { kind: "epic", id: "tab-c" },
+    { kind: "epic", id: "tab-d" },
+    { kind: "epic", id: "tab-e" },
+  ];
+
+  /** Every read of layout the strip's own code could make while it slides. */
+  function installLayoutReadCounters(scroller: HTMLElement): {
+    readonly rects: () => number;
+    readonly scrollerReads: () => number;
+    readonly clear: () => void;
+  } {
+    // Already spied by `beforeEach`; asking again returns that same spy.
+    const rectReads = vi.spyOn(HTMLElement.prototype, "getBoundingClientRect");
+    const scrollLeftReads = vi.spyOn(Element.prototype, "scrollLeft", "get");
+    const clientWidthReads = vi.spyOn(
+      HTMLElement.prototype,
+      "clientWidth",
+      "get",
+    );
+    const onScroller = (contexts: ReadonlyArray<unknown>): number =>
+      contexts.filter((context) => context === scroller).length;
+    return {
+      rects: () => rectReads.mock.calls.length,
+      scrollerReads: () =>
+        onScroller(scrollLeftReads.mock.contexts) +
+        onScroller(clientWidthReads.mock.contexts),
+      clear: () => {
+        rectReads.mockClear();
+        scrollLeftReads.mockClear();
+        clientWidthReads.mockClear();
+      },
+    };
+  }
+
+  it("reads no rect, scroll offset or width through a held cycle of selection changes, and still lands on the destination", () => {
+    const items = seedStrip(STRIP_REFS.slice(0, 3));
+    const frames = installFrameQueue();
+    const view = render(
+      <Strip items={items} activeItemId={items[0].id} markSelection />,
+    );
+    // The strip's first measurement, which is the only one it makes.
+    frames.drain();
+    const scroller = traveller().parentElement;
+    if (scroller === null) throw new Error("the traveller has no scroller");
+    const reads = installLayoutReadCounters(scroller);
+    reads.clear();
+
+    // A held cycle: the next change arrives while the slide is still in the air.
+    const route = [1, 2, 1, 2, 0];
+    for (const index of route) {
+      act(() => {
+        view.rerender(
+          <Strip items={items} activeItemId={items[index].id} markSelection />,
+        );
+      });
+      expect(traveller().hidden).toBe(false);
+      frames.step();
+    }
+    frames.drain();
+
+    expect(reads.rects()).toBe(0);
+    expect(reads.scrollerReads()).toBe(0);
+    // The slide landed on the first slot's box, inset by 2px on each side.
+    expect(traveller().hidden).toBe(true);
+    expect(Number.parseFloat(traveller().style.left)).toBeCloseTo(2, 0);
+    expect(Number.parseFloat(traveller().style.width)).toBeCloseTo(
+      SLOT_WIDTH - 4,
+      0,
+    );
+  });
+
+  it("makes one whole-strip read phase for a tab added and selected in the same commit", () => {
+    const items = seedStrip(STRIP_REFS);
+    const before = items.slice(0, 4);
+    const frames = installFrameQueue();
+    const view = render(
+      <Strip items={before} activeItemId={before[0].id} markSelection />,
+    );
+    frames.drain();
+    const scroller = traveller().parentElement;
+    if (scroller === null) throw new Error("the traveller has no scroller");
+    const reads = installLayoutReadCounters(scroller);
+    reads.clear();
+
+    // The new tab has no cached box, so its destination box forces a read;
+    // that read refreshes the strip once, and every box after it is cached.
+    act(() => {
+      view.rerender(
+        <Strip items={items} activeItemId={items[4].id} markSelection />,
+      );
+    });
+
+    // The scroller's own box plus one box for each of the strip's members.
+    expect(reads.rects()).toBe(1 + items.length);
+    expect(traveller().hidden).toBe(false);
   });
 });

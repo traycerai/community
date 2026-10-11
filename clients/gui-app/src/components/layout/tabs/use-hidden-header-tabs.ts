@@ -10,11 +10,12 @@ import {
 
 export function useHiddenHeaderTabs(layout: TaskTabLayout) {
   const [element, setElement] = useState<HTMLDivElement | null>(null);
-  const [{ hiddenTabKeys, hasOverflow }, setHiddenTabs] =
-    useState<StripGeometrySnapshot>({
-      hiddenTabKeys: { left: [], right: [] },
-      hasOverflow: false,
-    });
+  const [{ hiddenTabKeys, hasOverflow }, setHiddenTabs] = useState<
+    Pick<StripGeometrySnapshot, "hiddenTabKeys" | "hasOverflow">
+  >({
+    hiddenTabKeys: { left: [], right: [] },
+    hasOverflow: false,
+  });
   useLayoutEffect(() => {
     if (element === null) return;
     return registerTabStripGeometry(element, HORIZONTAL_STRIP_AXIS, (next) => {

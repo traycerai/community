@@ -578,7 +578,8 @@ describe("tab strip geometry (cached bounds)", () => {
 
   it("lists the tabs clipped past each edge from one measurement pass", () => {
     register();
-    expect(latest()).toEqual({
+    // Only the clipped-tab fields: the snapshot carries other facts too.
+    expect(latest()).toMatchObject({
       hiddenTabKeys: { left: [], right: ["d"] },
       hasOverflow: true,
     });
@@ -611,7 +612,7 @@ describe("tab strip geometry (cached bounds)", () => {
     model.scrollWidth = 380;
     triggerResizeObserverCallbacks();
     expect(rectReads).toBeGreaterThan(0);
-    expect(latest()).toEqual({
+    expect(latest()).toMatchObject({
       hiddenTabKeys: { left: [], right: [] },
       hasOverflow: false,
     });
@@ -804,6 +805,63 @@ describe("tab strip geometry (cached bounds)", () => {
     rectReads = 0;
     revealStripTab(strip, "t");
     expect(model.scrollLeft).toBe(100);
+    expect(rectReads).toBe(0);
+  });
+
+  it("clamps a reveal past the scroll range, caches the offset it really reached, and writes nothing on an identical second reveal", async () => {
+    const last = addTab("e", { left: 560, right: 700 });
+    // 600 of scrollable width in a 400 viewport: the strip goes no further
+    // than 200, and a browser clamps a write past that.
+    model.scrollWidth = 600;
+    const writes: number[] = [];
+    Object.defineProperty(strip, "scrollLeft", {
+      configurable: true,
+      get: () => model.scrollLeft,
+      set: (value: number) => {
+        writes.push(value);
+        model.scrollLeft = Math.min(value, model.scrollWidth - 400);
+      },
+    });
+    register();
+    expect(writes).toEqual([]);
+
+    // Showing 'e' (ending at 700) would take 300; the furthest is 200.
+    last.setAttribute("aria-selected", "true");
+    await settle();
+    expect(writes).toEqual([200]);
+
+    // The same reveal again moves nothing.
+    invalidateTabStripGeometry(strip);
+    flushFrames();
+    expect(writes).toEqual([200]);
+
+    // And the cache holds where the strip IS: 'c' (220..340) is in view from
+    // 200, so selecting it scrolls nothing. A cache that kept the 300 that was
+    // asked for would think it clipped on the left and scroll back to 220.
+    last.setAttribute("aria-selected", "false");
+    tabOf("c").setAttribute("aria-selected", "true");
+    await settle();
+    expect(writes).toEqual([200]);
+  });
+
+  it("neither observes nor re-reads for an overlay child that resizes", () => {
+    // The sliding selection box lives inside the scroller, out of flow, and is
+    // resized on every frame of a slide: it is not strip geometry.
+    const overlay = document.createElement("span");
+    overlay.dataset.stripOverlay = "";
+    overlay.getBoundingClientRect = () => {
+      rectReads += 1;
+      return fakeRect({ left: 0, top: 0, width: 10, height: 10 });
+    };
+    strip.appendChild(overlay);
+    register();
+    const observer = controllableInstances[0];
+    expect(observer.observed.has(overlay)).toBe(false);
+    rectReads = 0;
+
+    observer.callback([resizeObserverEntryFor(overlay)], observer);
+    flushFrames();
+
     expect(rectReads).toBe(0);
   });
 

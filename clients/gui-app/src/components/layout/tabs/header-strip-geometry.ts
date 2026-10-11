@@ -33,6 +33,9 @@ interface HeaderStripLayoutRect {
   readonly start: number;
   readonly end: number;
   readonly extent: number;
+  /** Across the axis, as rendered: a drag displaces a frame along it only. */
+  readonly crossStart: number;
+  readonly crossEnd: number;
 }
 
 /**
@@ -69,6 +72,8 @@ export function readHeaderStripLayoutRect(
     start: axis.mainStart(rect) - translate,
     end: axis.mainEnd(rect) - translate,
     extent: axis.mainExtent(rect),
+    crossStart: axis.crossStart(rect),
+    crossEnd: axis.crossEnd(rect),
   };
 }
 

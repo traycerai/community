@@ -2,6 +2,11 @@ import { useReducedMotion } from "motion/react";
 import { useLayoutEffect, useRef, type RefObject } from "react";
 import { create } from "zustand";
 import { useEpicDndStore } from "@/components/epic-canvas/dnd/dnd-store";
+import {
+  readSettledStripView,
+  readStripMemberBounds,
+  type StripView,
+} from "@/components/epic-canvas/surface-host/tile-surface-geometry-coordinator";
 import { cssEscape } from "@/lib/dom/css-escape";
 import {
   flattenStripItemRefs,
@@ -138,15 +143,20 @@ function frameOf(scroller: HTMLElement, itemId: string): HTMLElement | null {
   );
 }
 
-/** The item's joined box, in the scroller's content coordinates. */
-function boxOf(scroller: HTMLElement, frame: HTMLElement): BoxRect {
-  const box = frame.getBoundingClientRect();
-  const view = scroller.getBoundingClientRect();
+/**
+ * The item's joined box, in the scroller's content coordinates. Taken from the
+ * tab-strip geometry coordinator, which already holds every member's box, so a
+ * selection change and each frame of a slide measure nothing of their own.
+ * `null` when the strip is not registered there.
+ */
+function boxOf(scroller: HTMLElement, frame: HTMLElement): BoxRect | null {
+  const bounds = readStripMemberBounds(scroller, frame);
+  if (bounds === null) return null;
   return {
-    left: box.left - view.left + scroller.scrollLeft + BOX_INSET_PX,
-    top: box.top - view.top + scroller.scrollTop + BOX_INSET_PX,
-    width: Math.max(0, box.width - BOX_INSET_PX * 2),
-    height: Math.max(0, box.height - BOX_INSET_PX * 2),
+    left: bounds.start + BOX_INSET_PX,
+    top: bounds.crossStart + BOX_INSET_PX,
+    width: Math.max(0, bounds.end - bounds.start - BOX_INSET_PX * 2),
+    height: Math.max(0, bounds.crossEnd - bounds.crossStart - BOX_INSET_PX * 2),
   };
 }
 
@@ -157,33 +167,11 @@ function joinIsDrawn(): boolean {
   );
 }
 
-function isWhollyInView(
-  scroller: HTMLElement,
-  scrollLeft: number,
-  box: BoxRect,
-): boolean {
+function isWhollyInView(view: StripView, box: BoxRect): boolean {
   return (
-    box.left >= scrollLeft - SETTLED_PX &&
-    box.left + box.width <= scrollLeft + scroller.clientWidth + SETTLED_PX
+    box.left >= view.offset - SETTLED_PX &&
+    box.left + box.width <= view.offset + view.extent + SETTLED_PX
   );
-}
-
-/**
- * The scroll offset the strip settles on once it reveals the destination.
- * The reveal is the tab-strip geometry coordinator's (`revealedOffset`), on
- * the frame AFTER this commit, so a plan made now reads where the strip will
- * be rather than where it is. Same rule, applied to the member's outer box
- * (`boxOf` insets it); a member wider than the strip is not revealed whole.
- */
-function revealedScrollLeft(scroller: HTMLElement, to: BoxRect): number {
-  const offset = scroller.scrollLeft;
-  const extent = scroller.clientWidth;
-  const start = to.left - BOX_INSET_PX;
-  const end = to.left + to.width + BOX_INSET_PX;
-  if (end - start > extent) return offset;
-  if (end > offset + extent + 1) return Math.max(0, end - extent);
-  if (start < offset - 1) return Math.max(0, start);
-  return offset;
 }
 
 /**
@@ -298,15 +286,18 @@ function planTravel(input: {
   const destinationFrame = frameOf(scroller, activeItemId);
   if (destinationFrame === null) return null;
   const to = boxOf(scroller, destinationFrame);
-  const scrollLeft = revealedScrollLeft(scroller, to);
-  if (!isWhollyInView(scroller, scrollLeft, to)) return null;
+  // The strip reveals the destination on the frame AFTER this commit, so the
+  // plan is judged against where the strip will be, by the coordinator's own
+  // reveal rule, rather than where it is.
+  const view = readSettledStripView(scroller);
+  if (to === null || view === null || !isWhollyInView(view, to)) return null;
   // A turn starts wherever the traveller is now, which a quick run of
   // switches on a scrolled strip can have left out of view.
   const from =
     flight === null
       ? sourceBox(scroller, previous, input.closed)
       : flightBox(flight, to);
-  if (from === null || !isWhollyInView(scroller, scrollLeft, from)) return null;
+  if (from === null || !isWhollyInView(view, from)) return null;
   return { itemId: activeItemId, from: flight === null ? from : null, to };
 }
 
@@ -332,15 +323,18 @@ function fly(input: {
   placeTraveller(traveller, route.from.left, route.from.width, route.to);
   const tick = (now: number) => {
     const frame = frameOf(scroller, flight.itemId);
+    // Re-read every frame: a reopened slot is still opening, and the
+    // traveller lands on it as it grows.
+    const target = frame === null ? null : boxOf(scroller, frame);
     // A drag owns the strip's geometry, and its overlay carries the join.
-    if (frame === null || useEpicDndStore.getState().activeHeaderTab !== null) {
+    if (
+      target === null ||
+      useEpicDndStore.getState().activeHeaderTab !== null
+    ) {
       onLanded();
       land(flight, false);
       return;
     }
-    // Re-measured every frame: a reopened slot is still opening, and the
-    // traveller lands on it as it grows.
-    const target = boxOf(scroller, frame);
     const seconds = Math.min(MAX_FRAME_S, (now - flight.lastTime) / 1000);
     flight.lastTime = now;
     stepSpring(flight.left, target.left, seconds);
@@ -368,7 +362,7 @@ function fly(input: {
  * Plans in the commit that changes the selection. The strip's reveal lands
  * on the next frame (the tab-strip geometry coordinator), so the plan judges
  * the slide against the offset that reveal will settle on
- * (`revealedScrollLeft`); every box it measures is in content coordinates,
+ * (`readSettledStripView`); every box it uses is in content coordinates,
  * which a scroll does not move.
  */
 export function useSelectionTravel(input: {
@@ -412,8 +406,8 @@ export function useSelectionTravel(input: {
         )
           return;
         const frame = frameOf(scroller, active);
-        if (frame === null) return;
-        const box = boxOf(scroller, frame);
+        const box = frame === null ? null : boxOf(scroller, frame);
+        if (box === null) return;
         const flight = flightRef.current;
         closedBoxRef.current = {
           itemId: active,

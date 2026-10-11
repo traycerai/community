@@ -11,7 +11,10 @@ import {
   revealMemberAlongAxis,
   type StripAxis,
 } from "@/components/epic-canvas/dnd/strip-axis";
-import { registerTabStripGeometry } from "@/components/epic-canvas/surface-host/tile-surface-geometry-coordinator";
+import {
+  registerTabStripGeometry,
+  type StripGeometrySnapshot,
+} from "@/components/epic-canvas/surface-host/tile-surface-geometry-coordinator";
 import { runHeaderStripCommitHandoff } from "./header-strip-commit-handoff";
 import { readTranslate } from "./header-strip-geometry";
 import {
@@ -19,6 +22,8 @@ import {
   HEADER_TAB_TRAILING_SLOT_DROP_ID,
   type HeaderTabSlotDropData,
 } from "./header-tab-dnd";
+
+function noGeometry(): void {}
 
 /**
  * The DOM mechanics every tab strip's scroller shares, along the strip's own
@@ -31,8 +36,14 @@ export function useStripScroller(input: {
   readonly activeItemId: string | null;
   readonly itemCount: number;
   readonly extraRef: ((node: HTMLDivElement | null) => void) | null;
+  /**
+   * Takes the vertical strip's geometry snapshot on every measurement (the
+   * side strip's section scroll). Must keep its identity: a new one registers
+   * the strip again.
+   */
+  readonly onGeometry: ((snapshot: StripGeometrySnapshot) => void) | null;
 }): (node: HTMLDivElement | null) => void {
-  const { axis, itemCount, extraRef } = input;
+  const { axis, itemCount, extraRef, onGeometry } = input;
   // Parent layout effects run AFTER every child's, so by here every strip item
   // has registered and published its current target. Driving the re-base from
   // this one boundary is what makes it reach EVERY item whose baseline moved -
@@ -49,8 +60,8 @@ export function useStripScroller(input: {
     // `extraRef`: the side strip takes an `extraRef` of its own (its section
     // scroll) and still needs its reveal from here.
     if (element === null || axis.id === "x") return;
-    return registerTabStripGeometry(element, axis, () => {});
-  }, [axis]);
+    return registerTabStripGeometry(element, axis, onGeometry ?? noGeometry);
+  }, [axis, onGeometry]);
   // Trailing slot: the strip's empty space after the last item accepts drops
   // at index `itemCount` (both reorder and tear-off).
   const trailingSlotData = useMemo<HeaderTabSlotDropData>(
