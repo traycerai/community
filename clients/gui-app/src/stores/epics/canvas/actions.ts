@@ -947,6 +947,24 @@ export function activatePaneTab(
   return { ...state, root, activePaneId: paneId };
 }
 
+/**
+ * Records a previewed pane tab as activated, in place: the pane already
+ * shows it, so only its activation history moves. Leaves `activePaneId`
+ * alone - the cancellation that calls this can come from focus having moved.
+ */
+export function settlePaneTabPreview(
+  state: EpicCanvasState,
+  paneId: string,
+  tabId: string,
+): EpicCanvasState {
+  if (state.root === null) return state;
+  const root = replacePane(state.root, paneId, (pane) =>
+    pane.activeTabId === tabId ? recordPaneActivation(pane, tabId) : pane,
+  );
+  if (root === state.root) return state;
+  return { ...state, root };
+}
+
 /** Set the globally-active pane without changing its active tab. */
 export function setActivePane(
   state: EpicCanvasState,

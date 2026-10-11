@@ -565,6 +565,9 @@ interface TabCycleSession {
   targetId: string;
   frame: number | null;
   timer: number | null;
+  /** Ends the hold once OS key repeat stops; see `armTabCycleIdle`. */
+  idle: number | null;
+  lastRepeatAt: number | null;
 }
 
 const tabCycles = new WeakMap<KeybindingRouter, TabCycleSession>();
@@ -625,7 +628,15 @@ function readTabCycle(
   if (pane === null || pane.tabInstanceIds.length === 0) return null;
   return {
     scope: `${tab.tabId}:${pane.id}`,
-    cancelPreview: (id) => cancelPanePreview(pane.id, id),
+    // A cancelled preview the pane still shows becomes a real activation:
+    // without the history record its body is the first one dropped from
+    // retention, and it reloads on the next return.
+    cancelPreview: (id) => {
+      useEpicCanvasStore
+        .getState()
+        .settleTileTabPreview(tab.tabId, pane.id, id);
+      cancelPanePreview(pane.id, id);
+    },
     ids: pane.tabInstanceIds,
     activeId: pane.activeTabId,
     commit: (id, preview) => {
@@ -668,6 +679,8 @@ export function resetTabCycle(router: KeybindingRouter): void {
   const session = tabCycles.get(router);
   if (session === undefined) return;
   clearTabCycleTimers(session);
+  if (session.idle !== null) window.clearTimeout(session.idle);
+  session.idle = null;
   tabCycles.delete(router);
   if (repeatingTabCycles.has(session)) {
     const snapshot = readTabCycle(router, session.kind);
@@ -710,6 +723,45 @@ export function flushTabCycle(router: KeybindingRouter): void {
   snapshot.commit(session.targetId, repeatingTabCycles.has(session));
 }
 
+// A hold normally ends on keyup. macOS withholds the keyup of a non-modifier
+// key pressed with Cmd (both default chords use Cmd), so releasing `]` with
+// Cmd still down would leave the hold previewing until Cmd is released. Key
+// repeat is the other evidence: it stops when the key does. The window is
+// three measured repeat gaps (two late repeats under a blocked main thread
+// are not a release), floored at 150 ms (above 3 x 33 ms, the default repeat
+// period, plus a frame) and capped at 2 s (above macOS's slowest repeat stop,
+// 1.8 s). Before a gap is measured - the first repeat of every session - the
+// window IS the cap. A shorter guess would fire between slow repeats, and the
+// reset that settles also ends the session, so the next repeat would start
+// unmeasured again: at a 900 ms cadence every repeat would settle. The cost
+// of the cap is only that a hold of a single repeat with no keyup settles 2 s
+// late; from the second repeat on the window is measured.
+const TAB_CYCLE_IDLE_MIN_MS = 150;
+const TAB_CYCLE_IDLE_MAX_MS = 2000;
+const TAB_CYCLE_IDLE_FIRST_MS = TAB_CYCLE_IDLE_MAX_MS;
+
+function armTabCycleIdle(
+  router: KeybindingRouter,
+  session: TabCycleSession,
+): void {
+  const now = Date.now();
+  const gap = session.lastRepeatAt === null ? null : now - session.lastRepeatAt;
+  session.lastRepeatAt = now;
+  if (session.idle !== null) window.clearTimeout(session.idle);
+  const delay =
+    gap === null
+      ? TAB_CYCLE_IDLE_FIRST_MS
+      : Math.min(
+          TAB_CYCLE_IDLE_MAX_MS,
+          Math.max(TAB_CYCLE_IDLE_MIN_MS, gap * 3),
+        );
+  session.idle = window.setTimeout(() => {
+    if (tabCycles.get(router) !== session) return;
+    flushTabCycle(router);
+    resetTabCycle(router);
+  }, delay);
+}
+
 function moveTabCycle(
   router: KeybindingRouter,
   kind: TabCycleKind,
@@ -742,11 +794,14 @@ function moveTabCycle(
     targetId,
     frame: null,
     timer: null,
+    idle: null,
+    lastRepeatAt: null,
   };
   session.targetId = targetId;
   tabCycles.set(router, session);
   if (repeat) {
     repeatingTabCycles.add(session);
+    armTabCycleIdle(router, session);
   }
   if (!repeat) {
     flushTabCycle(router);

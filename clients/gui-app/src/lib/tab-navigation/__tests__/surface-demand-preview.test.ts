@@ -19,7 +19,12 @@ import {
   getTabNavigationDiagnostics,
   tabNavigationController,
 } from "@/lib/tab-navigation";
-import { epicPathname } from "@/lib/routes";
+import { draftPathname, epicPathname } from "@/lib/routes";
+import {
+  draftTabIntent,
+  openEpicFromListIntent,
+} from "@/lib/tab-navigation/intents";
+import { applyRouteBookkeeping } from "@/lib/tab-navigation/route-bookkeeping";
 import {
   __resetTabSyncCoordinatorForTesting,
   installTabSyncCoordinator,
@@ -294,5 +299,116 @@ describe("tab activation demand", () => {
     expect(focusedRefKey()).toBe(tabRefKey(c.ref));
     expect(topLevelDemand(tabRefKey(c.ref))).toBe("preview");
     expect(nav.calls).toHaveLength(1);
+  });
+  it("a committed draft swap ends the preview hold, so the new route's bookkeeping commit is not repaired back to the draft", () => {
+    const t = openEpic("epic-t");
+    const draftId = useLandingDraftStore.getState().createDraft(null);
+    const draftRef: TabRef = { kind: "draft", id: draftId };
+    const layout = {
+      version: 2 as const,
+      items: [
+        {
+          kind: "tab" as const,
+          id: tabItemId(draftRef),
+          ref: draftRef,
+        },
+        { kind: "tab" as const, id: tabItemId(t.ref), ref: t.ref },
+      ],
+      activeItemId: tabItemId(draftRef),
+      systemTabs: { history: null, settings: null },
+    };
+    useTabsStore.setState({ ...layout, stripOrder: flattenLayoutRefs(layout) });
+    const nav = makeControlledNavigate();
+    // The empty draft is the committed origin the hold started from.
+    tabNavigationController.observeLocation(
+      {
+        pathname: draftPathname(draftId),
+        state: { key: "origin", __TSR_key: "origin", __TSR_index: 0 },
+        search: undefined,
+      },
+      "PUSH",
+      nav.navigate,
+    );
+
+    // A held cycle previews T and comes back to the draft, then the open-epic
+    // swap settles over it (the swap places the epic in the draft's slot, so
+    // the draft must be the focused one for the new tab to end up focused).
+    expect(
+      activateTabIntent(nav.navigate, intentFor(t, "preview"), undefined),
+    ).toBe(true);
+    expect(
+      activateTabIntent(
+        nav.navigate,
+        { ...draftTabIntent(draftId), demand: "preview" },
+        undefined,
+      ),
+    ).toBe(true);
+    expect(focusedRefKey()).toBe(tabRefKey(draftRef));
+    expect(
+      activateTabIntent(
+        nav.navigate,
+        openEpicFromListIntent({
+          epicId: "epic-swapped-in",
+          focus: undefined,
+          name: "Swapped in",
+          replaceEmptyDraftId: draftId,
+        }),
+        undefined,
+      ),
+    ).toBe(true);
+    expect(nav.calls).toHaveLength(1);
+
+    const swapState = committedState(nav.calls[0]);
+    const swapTabId = useEpicCanvasStore
+      .getState()
+      .resolveTabIdForEpic("epic-swapped-in");
+    // The swap places its tab only when the router acknowledges the entry.
+    expect(swapTabId).toBeNull();
+    const envelope = swapState["__traycerTabNavigation"];
+    if (
+      typeof envelope !== "object" ||
+      envelope === null ||
+      !("destination" in envelope)
+    ) {
+      throw new Error("expected the swap navigation to carry an envelope");
+    }
+    const destination = envelope.destination;
+    if (
+      typeof destination !== "object" ||
+      destination === null ||
+      !("refKey" in destination) ||
+      typeof destination.refKey !== "string"
+    ) {
+      throw new Error("expected a tab destination on the swap envelope");
+    }
+    const swappedTabId = destination.refKey.slice("epic:".length);
+    const swappedPath = epicPathname({
+      epicId: "epic-swapped-in",
+      tabId: swappedTabId,
+    });
+    tabNavigationController.observeLocation(
+      { pathname: swappedPath, state: swapState, search: undefined },
+      "REPLACE",
+      nav.navigate,
+    );
+    expect(
+      useLandingDraftStore.getState().drafts.some((d) => d.id === draftId),
+    ).toBe(false);
+    const repairsBefore = getTabNavigationDiagnostics().repairCount;
+    const callsBefore = nav.calls.length;
+
+    // The new route records its tile focus: same-tab bookkeeping.
+    tabNavigationController.observeLocation(
+      {
+        pathname: swappedPath,
+        state: committedState(applyRouteBookkeeping({})),
+        search: undefined,
+      },
+      "REPLACE",
+      nav.navigate,
+    );
+
+    expect(getTabNavigationDiagnostics().repairCount).toBe(repairsBefore);
+    expect(nav.calls).toHaveLength(callsBefore);
   });
 });

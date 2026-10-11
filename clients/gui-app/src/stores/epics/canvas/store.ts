@@ -103,6 +103,7 @@ import {
   setActivePane,
   setActiveTab as setActiveTileTabCanvas,
   activatePaneTab,
+  settlePaneTabPreview,
   splitPaneAtEdge,
   splitPaneEmpty,
   toggleGitDiffBundleFileCollapsed,
@@ -648,6 +649,12 @@ export interface EpicCanvasStore {
     paneId: string,
     tileTabId: string,
     demand: ActiveSurfaceDemand,
+  ) => void;
+  /** Settles a cancelled pane preview the pane is still showing. */
+  settleTileTabPreview: (
+    tabId: string,
+    paneId: string,
+    tileTabId: string,
   ) => void;
   setActiveTilePane: (tabId: string, paneId: string) => void;
   prepareSetActiveTilePaneFocusTarget: (
@@ -2344,6 +2351,14 @@ export const useEpicCanvasStore = create<EpicCanvasStore>()(
             ),
           );
           if (demand === "settled") setPaneDemand(paneId, tileTabId, demand);
+        },
+
+        settleTileTabPreview: (tabId, paneId, tileTabId) => {
+          set((state) =>
+            updateTabCanvas(state, tabId, (current) =>
+              settlePaneTabPreview(current, paneId, tileTabId),
+            ),
+          );
         },
 
         setActiveTilePane: (tabId, paneId) => {

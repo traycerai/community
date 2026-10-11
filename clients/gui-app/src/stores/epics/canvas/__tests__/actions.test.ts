@@ -23,6 +23,7 @@ import {
   resizeSplit,
   setActivePane,
   setActiveTab,
+  settlePaneTabPreview,
   splitPaneAtEdge,
   splitPaneEmpty,
   rebindPendingBrowserTile,
@@ -1138,6 +1139,80 @@ describe("activatePaneTab (demand)", () => {
     expect(
       activatePaneTab(state, "missing-pane", SPEC_B.instanceId, "settled"),
     ).toBe(state);
+  });
+});
+
+describe("settlePaneTabPreview", () => {
+  function previewedSecondTab(): { state: EpicCanvasState; paneId: string } {
+    let state = openPinned(createEmptyCanvas(), SPEC_A);
+    state = openPinned(state, SPEC_B);
+    state = openPinned(state, SPEC_C);
+    const paneId = rootPane(state).id;
+    state = activatePaneTab(state, paneId, SPEC_A.instanceId, "settled");
+    state = activatePaneTab(state, paneId, SPEC_B.instanceId, "preview");
+    return { state, paneId };
+  }
+
+  it("records the tab the pane is showing as the latest activation, in place", () => {
+    const { state, paneId } = previewedSecondTab();
+    expect(paneById(state, paneId).activationHistory[0]).toBe(
+      SPEC_A.instanceId,
+    );
+
+    const next = settlePaneTabPreview(state, paneId, SPEC_B.instanceId);
+
+    const pane = paneById(next, paneId);
+    expect(pane.activeTabId).toBe(SPEC_B.instanceId);
+    expect(pane.activationHistory[0]).toBe(SPEC_B.instanceId);
+    expect(next.root).not.toBe(state.root);
+  });
+
+  it("leaves the globally active pane alone, since a cancellation can arrive after focus moved", () => {
+    const { state: previewed, paneId } = previewedSecondTab();
+    let state = splitPaneAtEdge(previewed, paneId, "right", {
+      kind: "node",
+      node: CHAT_A,
+    });
+    const otherPaneId = collectPanes(state.root).find(
+      (pane) => pane.id !== paneId,
+    )?.id;
+    if (otherPaneId === undefined) throw new Error("expected a second pane");
+    state = setActivePane(state, otherPaneId);
+
+    const next = settlePaneTabPreview(state, paneId, SPEC_B.instanceId);
+
+    expect(paneById(next, paneId).activationHistory[0]).toBe(SPEC_B.instanceId);
+    expect(next.activePaneId).toBe(otherPaneId);
+  });
+
+  it("returns the same state when the pane no longer shows that tab, or the tab or pane is gone", () => {
+    const { state, paneId } = previewedSecondTab();
+    // The pane moved on to C, so B's cancelled preview has nothing to record.
+    const movedOn = activatePaneTab(
+      state,
+      paneId,
+      SPEC_C.instanceId,
+      "preview",
+    );
+    expect(settlePaneTabPreview(movedOn, paneId, SPEC_B.instanceId)).toBe(
+      movedOn,
+    );
+    expect(settlePaneTabPreview(state, paneId, "missing")).toBe(state);
+    expect(settlePaneTabPreview(state, "missing-pane", SPEC_B.instanceId)).toBe(
+      state,
+    );
+    expect(
+      settlePaneTabPreview(createEmptyCanvas(), paneId, SPEC_B.instanceId),
+    ).toEqual(createEmptyCanvas());
+  });
+
+  it("returns the same state once the shown tab is already the latest activation", () => {
+    const { state, paneId } = previewedSecondTab();
+    const settled = settlePaneTabPreview(state, paneId, SPEC_B.instanceId);
+
+    expect(settlePaneTabPreview(settled, paneId, SPEC_B.instanceId)).toBe(
+      settled,
+    );
   });
 });
 

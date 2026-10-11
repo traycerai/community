@@ -959,6 +959,9 @@ export class TabNavigationController {
     if (demand === "settled" && requestedIntent.kind === "open-epic") {
       const prepared = this.prepareDraftSwap(requestedIntent, layoutBefore);
       if (prepared !== null) {
+        // A committed swap ends any preview hold, like the settled tail below:
+        // a stale origin would steer the next bookkeeping repair back to it.
+        this.previewOrigin = null;
         this.issuePreparedSwap(navigate, requestedIntent, prepared, options);
         return true;
       }

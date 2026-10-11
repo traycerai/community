@@ -1113,6 +1113,213 @@ describe("dispatchKeydownAction tab-cycle repeat coalescing", () => {
     }
   });
 
+  function openCyclingPane(epicId: string): {
+    readonly tabId: string;
+    readonly paneId: string;
+    readonly router: KeybindingRouter;
+    readonly historyOf: () => ReadonlyArray<string>;
+    readonly expectedAfter: (steps: number) => string;
+  } {
+    const tabId = useEpicCanvasStore.getState().openEpicTab(epicId, epicId);
+    ["p1", "p2", "p3", "p4"].forEach((id) => {
+      useEpicCanvasStore.getState().openTileInTab(tabId, {
+        id,
+        instanceId: `${id}-instance`,
+        type: "spec",
+        name: id,
+        hostId: "host-a",
+      });
+    });
+    const { router } = buildRouter(`/epics/${epicId}/${tabId}`);
+    const paneId =
+      useEpicCanvasStore.getState().canvasByTabId[tabId]?.activePaneId;
+    if (paneId === undefined || paneId === null) {
+      throw new Error("expected an active pane");
+    }
+    const historyOf = (): ReadonlyArray<string> => {
+      const canvas = useEpicCanvasStore.getState().canvasByTabId[tabId];
+      const pane =
+        canvas === undefined ? null : findPaneById(canvas.root, paneId);
+      return pane?.activationHistory ?? [];
+    };
+    const start = paneState(tabId);
+    if (start.activeId === null) throw new Error("expected an active pane tab");
+    const startIndex = start.ids.indexOf(start.activeId);
+    return {
+      tabId,
+      paneId,
+      router,
+      historyOf,
+      expectedAfter: (steps) => start.ids[(startIndex + steps) % 4],
+    };
+  }
+
+  describe("a held cycle whose key release never arrives", () => {
+    // macOS withholds the keyup of a non-modifier key pressed with Cmd, so a
+    // hold ends on the repeat stream going quiet instead.
+    const REPEAT_GAP_MS = 33;
+
+    function holdUntilPreviewing(epicId: string) {
+      const pane = openCyclingPane(epicId);
+      // Press, then two repeats one OS repeat period apart; the frame flush
+      // is what turns the cursor into a visible preview.
+      expect(dispatchKeydownAction("tab.next", pane.router, false)).toBe(true);
+      expect(dispatchKeydownAction("tab.next", pane.router, true)).toBe(true);
+      vi.advanceTimersByTime(REPEAT_GAP_MS);
+      expect(dispatchKeydownAction("tab.next", pane.router, true)).toBe(true);
+      flushTabCycle(pane.router);
+      expect(paneState(pane.tabId).activeId).toBe(pane.expectedAfter(3));
+      expect(paneDemand(pane.paneId)).toBe("preview");
+      return pane;
+    }
+
+    it("settles the previewed tab once repeats stop for longer than three measured repeat gaps, floored at 150ms", () => {
+      vi.useFakeTimers();
+      try {
+        const pane = holdUntilPreviewing("epic-idle-settle");
+
+        // Inside the window: 3 x 33ms floors at 150ms, so 140ms is still a hold.
+        vi.advanceTimersByTime(140);
+        expect(paneDemand(pane.paneId)).toBe("preview");
+        expect(hasPreviewDemand()).toBe(true);
+
+        // Past it: the quiet repeat stream is the release.
+        vi.advanceTimersByTime(11);
+        expect(paneDemand(pane.paneId)).toBe("settled");
+        expect(hasPreviewDemand()).toBe(false);
+        expect(paneState(pane.tabId).activeId).toBe(pane.expectedAfter(3));
+        expect(pane.historyOf()[0]).toBe(pane.expectedAfter(3));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("keeps previewing when a repeat lands inside the window, and re-measures the window from that gap", () => {
+      vi.useFakeTimers();
+      try {
+        const pane = holdUntilPreviewing("epic-idle-keeps-previewing");
+
+        // A slow repeat (140ms) still inside the 150ms window: no settle.
+        vi.advanceTimersByTime(140);
+        expect(dispatchKeydownAction("tab.next", pane.router, true)).toBe(true);
+        flushTabCycle(pane.router);
+        expect(paneState(pane.tabId).activeId).toBe(pane.expectedAfter(4));
+        expect(paneDemand(pane.paneId)).toBe("preview");
+
+        // The window now follows the 140ms gap (3 x 140ms = 420ms), so the
+        // time that settled the earlier cycle does not settle this one.
+        vi.advanceTimersByTime(300);
+        expect(paneDemand(pane.paneId)).toBe("preview");
+
+        vi.advanceTimersByTime(121);
+        expect(paneDemand(pane.paneId)).toBe("settled");
+        expect(pane.historyOf()[0]).toBe(pane.expectedAfter(4));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("waits the full 2s cap for the first repeat's gap to be measured", () => {
+      vi.useFakeTimers();
+      try {
+        const pane = openCyclingPane("epic-idle-first-repeat");
+        expect(dispatchKeydownAction("tab.next", pane.router, false)).toBe(
+          true,
+        );
+        expect(dispatchKeydownAction("tab.next", pane.router, true)).toBe(true);
+        flushTabCycle(pane.router);
+        expect(paneDemand(pane.paneId)).toBe("preview");
+
+        vi.advanceTimersByTime(1990);
+        expect(paneDemand(pane.paneId)).toBe("preview");
+        vi.advanceTimersByTime(11);
+        expect(paneDemand(pane.paneId)).toBe("settled");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("keeps one session through a slow 900ms repeat cadence, settling only after the 2s cap once repeats stop", () => {
+      vi.useFakeTimers();
+      try {
+        const pane = openCyclingPane("epic-idle-slow-cadence");
+        const SLOW_REPEAT_GAP_MS = 900;
+        expect(dispatchKeydownAction("tab.next", pane.router, false)).toBe(
+          true,
+        );
+        expect(paneState(pane.tabId).activeId).toBe(pane.expectedAfter(1));
+        const historyAfterPress = pane.historyOf();
+
+        // Four repeats, each one a full OS repeat period of 900ms apart. The
+        // first window is unmeasured, so it must outlast the gap: a shorter one
+        // fires between repeats and ends the session, and the next repeat then
+        // starts a new one with no measured gap, settling every single repeat.
+        for (let repeat = 1; repeat <= 4; repeat += 1) {
+          if (repeat > 1) {
+            vi.advanceTimersByTime(SLOW_REPEAT_GAP_MS - 1);
+            // Right before the next repeat: still the same hold.
+            expect(paneDemand(pane.paneId)).toBe("preview");
+            vi.advanceTimersByTime(1);
+          }
+          expect(dispatchKeydownAction("tab.next", pane.router, true)).toBe(
+            true,
+          );
+          flushTabCycle(pane.router);
+          // The cursor keeps advancing from where the hold left it, a preview
+          // that records nothing, never a fresh session from the committed tab.
+          expect(paneState(pane.tabId).activeId).toBe(
+            pane.expectedAfter(1 + repeat),
+          );
+          expect(paneDemand(pane.paneId)).toBe("preview");
+          expect(pane.historyOf()).toEqual(historyAfterPress);
+        }
+
+        // Repeats stop. Three measured gaps would be 2.7s, capped at 2s.
+        vi.advanceTimersByTime(1990);
+        expect(paneDemand(pane.paneId)).toBe("preview");
+        expect(pane.historyOf()).toEqual(historyAfterPress);
+        vi.advanceTimersByTime(11);
+        expect(paneDemand(pane.paneId)).toBe("settled");
+        expect(hasPreviewDemand()).toBe(false);
+        expect(paneState(pane.tabId).activeId).toBe(pane.expectedAfter(5));
+        expect(pane.historyOf()[0]).toBe(pane.expectedAfter(5));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  it("records a cancelled pane preview as an activation, so the tab the pane still shows keeps its retention", () => {
+    const pane = openCyclingPane("epic-cancelled-preview");
+    const activePaneBefore =
+      useEpicCanvasStore.getState().canvasByTabId[pane.tabId]?.activePaneId;
+
+    expect(dispatchKeydownAction("tab.next", pane.router, false)).toBe(true);
+    expect(dispatchKeydownAction("tab.next", pane.router, true)).toBe(true);
+    flushTabCycle(pane.router);
+    const previewed = pane.expectedAfter(2);
+    expect(paneState(pane.tabId).activeId).toBe(previewed);
+    expect(paneDemand(pane.paneId)).toBe("preview");
+    // A preview records nothing: the press's tab is the latest activation.
+    expect(pane.historyOf()[0]).toBe(pane.expectedAfter(1));
+
+    // A tile the cursor is not on closes mid-hold: a real membership change.
+    const closing = pane.expectedAfter(3);
+    useEpicCanvasStore
+      .getState()
+      .closeCanvasTab(pane.tabId, pane.paneId, closing);
+    expect(paneState(pane.tabId).ids).not.toContain(closing);
+
+    resetTabCycle(pane.router);
+
+    expect(paneDemand(pane.paneId)).toBe("settled");
+    expect(paneState(pane.tabId).activeId).toBe(previewed);
+    expect(pane.historyOf()[0]).toBe(previewed);
+    expect(
+      useEpicCanvasStore.getState().canvasByTabId[pane.tabId]?.activePaneId,
+    ).toBe(activePaneBefore);
+  });
+
   it("invalidates a held repeat when a pane tile actually closes mid-hold (not this dispatch), instead of committing a stale target", () => {
     const tabId = useEpicCanvasStore
       .getState()
