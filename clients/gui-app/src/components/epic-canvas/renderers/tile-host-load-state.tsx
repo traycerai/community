@@ -1,3 +1,5 @@
+import { useSurfaceDemand } from "@/stores/tabs/surface-demand";
+import { SurfacePreviewShell } from "@/components/layout/surface-preview-shell";
 import type { ReactNode } from "react";
 import {
   useBoundedHostLoad,
@@ -58,9 +60,11 @@ export interface TileHostLoadStateProps {
 }
 
 export function TileHostLoadState(props: TileHostLoadStateProps): ReactNode {
+  const demand = useSurfaceDemand();
   const noun = tileLoadNoun(props.subject);
   const pending =
     props.load.kind === "loading" || props.load.kind === "connecting";
+  if (pending && demand !== "settled") return <SurfacePreviewShell />;
 
   return (
     <div
@@ -124,14 +128,22 @@ export function TileHostLoadState(props: TileHostLoadStateProps): ReactNode {
  * replacing it with a sentence would be a downgrade for the common case. Past
  * the budget - or the moment the lease says dead - it gives way to words.
  */
-export function BoundedTileLoad(props: {
+type BoundedTileLoadProps = {
   readonly hostId: string;
   readonly subject: TileLoadSubject;
   readonly onRetry: (() => void) | null;
   readonly testId: string;
   /** The surface's existing in-budget placeholder. */
   readonly fallback: ReactNode;
-}): ReactNode {
+};
+
+export function BoundedTileLoad(props: BoundedTileLoadProps): ReactNode {
+  const demand = useSurfaceDemand();
+  if (demand !== "settled") return <SurfacePreviewShell />;
+  return <SettledBoundedTileLoad {...props} />;
+}
+
+function SettledBoundedTileLoad(props: BoundedTileLoadProps): ReactNode {
   const reachability = useHostReachability(props.hostId);
   const load = useBoundedHostLoad({
     hostId: props.hostId,
