@@ -1058,6 +1058,52 @@ describe("StableTileSurfaceHost geometry retention while hidden (confirmed scrol
     observeSpy.mockRestore();
     slot.remove();
   });
+
+  it("re-measures a slot whose cached box is zero on re-show, so a pane switched back from display:none does not lay its body out at zero width", () => {
+    seedOneChat();
+    const slot = document.createElement("div");
+    document.body.appendChild(slot);
+    stubElementRect(slot, { left: 10, top: 20, width: 300, height: 200 });
+
+    render(<StableTileSurfaceHost renderRecordBody={() => null} />);
+    act(() => {
+      publishWithAnchor("chat-1", slot, {
+        topLevelVisible: true,
+        topLevelFocused: false,
+      });
+    });
+    const record = screen.getByTestId("stable-tile-surface-record-chat-1");
+    expect(record.style.width).toBe("300px");
+
+    act(() => {
+      publishWithAnchor("chat-1", slot, {
+        topLevelVisible: false,
+        topLevelFocused: false,
+      });
+    });
+    // Hidden under a display:none ancestor, the slot reports 0x0 and the
+    // coordinator caches it; the record keeps its last painted box.
+    act(() => {
+      stubElementRect(slot, { left: 0, top: 0, width: 0, height: 0 });
+      triggerResizeObserverCallbacks();
+    });
+    expect(record.style.width).toBe("300px");
+
+    // The ancestor is shown again, but no observer batch has been delivered
+    // yet: the re-show must read the slot rather than replay the cached zero.
+    stubElementRect(slot, { left: 10, top: 20, width: 300, height: 200 });
+    act(() => {
+      publishWithAnchor("chat-1", slot, {
+        topLevelVisible: true,
+        topLevelFocused: false,
+      });
+    });
+
+    expect(record.style.width).toBe("300px");
+    expect(record.style.height).toBe("200px");
+    expect(record.style.transform).toBe("translate(10px, 20px)");
+    slot.remove();
+  });
 });
 
 function fakeDomRect(rect: {

@@ -129,12 +129,28 @@ export function remeasureTileSurfaceGeometry(): void {
   applyAllRegisteredRects();
 }
 
-/** Reveal changes presentation, not layout. RO/topology owns invalidation. */
+/**
+ * Reveal changes presentation, not layout. RO/topology owns invalidation.
+ * A zero cached box is the one exception: a slot under a `display:none`
+ * ancestor caches 0x0, so reveal reads it once rather than laying the hosted
+ * body out at zero width on every switch back. A slot still zero (a collapsed
+ * pane) is applied as before. `onRect` directly, not `applyRect`: an
+ * unchanged 0x0 must still reach a record that was showing a stale box.
+ */
 export function refreshTileSurfaceGeometrySlot(key: string): void {
   const registration = slotRegistrations.get(key);
-  if (registration !== undefined && registration.lastRect !== null) {
-    registration.onRect(registration.lastRect);
+  if (registration === undefined || registration.lastRect === null) return;
+  const cached = registration.lastRect;
+  if ((cached.width > 0 && cached.height > 0) || hostRegistration === null) {
+    registration.onRect(cached);
+    return;
   }
+  const rect = measureRect(
+    registration,
+    hostRegistration.element.getBoundingClientRect(),
+  );
+  registration.lastRect = rect;
+  registration.onRect(rect);
 }
 
 /**
