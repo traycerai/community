@@ -58,6 +58,10 @@ import { pointerEvent } from "@/components/epic-canvas/canvas/__tests__/test-poi
 import { setSystemTabModalApi } from "@/stores/tabs/system-tab-modal-bridge";
 import type { SystemTabModalApi } from "@/stores/tabs/use-system-tab-modal";
 import { useTabsStore } from "@/stores/tabs/store";
+import {
+  SurfaceDemandContext,
+  type ActiveSurfaceDemand,
+} from "@/stores/tabs/surface-demand";
 import type { StripItem, TabStripItem } from "@/stores/tabs/layout";
 import { useThemeLibraryStore } from "@/stores/settings/theme-library-store";
 
@@ -2376,6 +2380,61 @@ describe("<LandingTerminalPanel />", () => {
     // reads the same one.
     await waitFor(() => {
       expect(mocks.browserStreamHostIds).toEqual(["host-a"]);
+    });
+  });
+
+  it("watches no browser host while the Start Page is only previewed by a held tab cycle, and takes its streams when it settles", async () => {
+    mocks.activeHostId = "host-a";
+    mocks.clientActiveHostId = "host-a";
+    mocks.primaryWorkspacePath = "/workspace/project";
+    mocks.probeData = emptyList("/Users/dev");
+    mocks.freshProbeData = mocks.probeData;
+    useLandingPanelStore.getState().addTab({
+      kind: "browser",
+      instanceId: "browser-a",
+      hostId: "host-a",
+      sessionId: "session-a",
+      tabId: "tab-a",
+      name: "a.example",
+      titleSource: "default",
+    });
+    useLandingPanelStore.getState().addTab({
+      kind: "browser",
+      instanceId: "browser-b",
+      hostId: "host-b",
+      sessionId: "session-b",
+      tabId: "tab-b",
+      name: "b.example",
+      titleSource: "default",
+    });
+    useLandingPanelStore.getState().setPanelOpen(TEST_LANDING_PAGE_ID, true);
+    const underDemand = (demand: ActiveSurfaceDemand): ReactNode => (
+      <SurfaceDemandContext.Provider value={demand}>
+        {panelUi()}
+      </SurfaceDemandContext.Provider>
+    );
+    const view = render(underDemand("preview"));
+
+    // On screen with the panel open, yet only previewed: the step the cursor is
+    // about to leave must not cost the window a stream.
+    await waitFor(() => {
+      expect(screen.getByTestId("landing-terminal-panel")).toBeTruthy();
+    });
+    expect(mocks.browserStreamHostIds).toEqual([]);
+
+    view.rerender(underDemand("settled"));
+
+    await waitFor(() => {
+      expect([...mocks.browserStreamHostIds].sort()).toEqual([
+        "host-a",
+        "host-b",
+      ]);
+    });
+
+    view.rerender(underDemand("preview"));
+
+    await waitFor(() => {
+      expect(mocks.browserStreamHostIds).toEqual([]);
     });
   });
 

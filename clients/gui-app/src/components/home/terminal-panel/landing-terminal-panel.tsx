@@ -100,6 +100,7 @@ import {
   type LandingBrowserViewModel,
 } from "./landing-browser-presentation";
 import { usePaneVisible } from "@/components/epic-tabs/pane-visibility-context";
+import { useSurfaceDemand } from "@/stores/tabs/surface-demand";
 import { screencastRoleForShell } from "@/lib/browser-view/sessions/use-screencast-session";
 import { useRunnerHostOrNull } from "@/providers/use-runner-host";
 import {
@@ -701,7 +702,12 @@ export function LandingTerminalPanel(): ReactNode {
   // activation - it stays mounted behind a backgrounded header tab so the
   // terminals beside it keep their PTYs - so "mounted" says nothing about
   // whether anything of it is being looked at.
-  const paneVisible = usePaneVisible();
+  // A held header cycle previews the Start Page for one step at a time: on
+  // screen, but not settled. Watching from a preview opens a browser stream
+  // that the next step closes, so a preview watches nothing beyond its pending
+  // opens and the stream is taken once the page settles.
+  const surfaceDemand = useSurfaceDemand();
+  const paneVisible = usePaneVisible() && surfaceDemand !== "preview";
   // A browser stream is a socket, a relay attach, a desktop identity
   // attestation and a whole contributed-set replay, and the desktop caps a
   // window at `MAX_STREAMS_PER_WINDOW` of them, refusing whichever is asked

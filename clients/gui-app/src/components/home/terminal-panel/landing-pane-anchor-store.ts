@@ -1,6 +1,7 @@
 import { useLayoutEffect } from "react";
 import { create } from "zustand";
 import type { PaneSurfaceActivity } from "@/components/epic-tabs/pane-visibility-context";
+import type { ActiveSurfaceDemand } from "@/stores/tabs/surface-demand";
 
 /**
  * The pane context an anchor sits in, captured at the anchor's React position
@@ -8,6 +9,11 @@ import type { PaneSurfaceActivity } from "@/components/epic-tabs/pane-visibility
  */
 export interface LandingPanePresentation {
   readonly activity: PaneSurfaceActivity;
+  /**
+   * The pane's surface demand, published in the same snapshot as `activity`
+   * so the panel never reads a visible pane with a stale demand.
+   */
+  readonly demand: ActiveSurfaceDemand;
   readonly portalContainer: HTMLElement | null;
   readonly isPaneFocusedNow: () => boolean;
 }
@@ -84,6 +90,7 @@ export const useLandingPaneAnchorStore = create<LandingPaneAnchorState>()(
           current !== undefined &&
           current.activity.visible === presentation.activity.visible &&
           current.activity.focused === presentation.activity.focused &&
+          current.demand === presentation.demand &&
           current.portalContainer === presentation.portalContainer &&
           current.isPaneFocusedNow === presentation.isPaneFocusedNow
         ) {

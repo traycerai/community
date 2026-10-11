@@ -10,6 +10,10 @@ import {
   selectLandingTerminalSurfaceActive,
 } from "../landing-terminal-surface-binding";
 import { SurfacePresentationBoundary } from "@/components/layout/surface-presentation-boundary";
+import {
+  SurfaceDemandContext,
+  type ActiveSurfaceDemand,
+} from "@/stores/tabs/surface-demand";
 import { useTabsStore } from "@/stores/tabs/store";
 import type {
   SplitSideName,
@@ -40,12 +44,14 @@ vi.mock(
 vi.mock("@/components/home/terminal-panel/landing-terminal-panel", async () => {
   const { usePaneFocused, usePaneVisible } =
     await import("@/components/epic-tabs/pane-visibility-context");
+  const { useSurfaceDemand } = await import("@/stores/tabs/surface-demand");
   return {
     LandingTerminalPanel: () => (
       <div
         data-testid="landing-terminal-panel-body"
         data-pane-focused={usePaneFocused() ? "true" : "false"}
         data-pane-visible={usePaneVisible() ? "true" : "false"}
+        data-surface-demand={useSurfaceDemand() ?? "none"}
       />
     ),
   };
@@ -263,6 +269,49 @@ describe("<LandingTerminalHost /> pane projection", () => {
     // has to arrive at the same node (or the terminals were rebuilt anyway).
     expect(panelBody().dataset.paneVisible).toBe("true");
     expect(panelBody().dataset.paneFocused).toBe("true");
+    expect(panelBody()).toBe(body);
+  });
+});
+
+describe("<LandingTerminalHost /> surface demand projection", () => {
+  function panelBody(): HTMLElement {
+    return screen.getByTestId("landing-terminal-panel-body");
+  }
+
+  function hostedUnder(demand: ActiveSurfaceDemand) {
+    return (
+      <>
+        <SurfacePresentationBoundary visible focused>
+          <SurfaceDemandContext.Provider value={demand}>
+            <LandingTerminalPaneAnchor draftId="draft-a" />
+          </SurfaceDemandContext.Provider>
+        </SurfacePresentationBoundary>
+        <LandingTerminalHost />
+      </>
+    );
+  }
+
+  it("gives the portaled panel the demand its anchor sits under, not the app-global settled default", () => {
+    seedLayout([DRAFT_TAB, EPIC_TAB], DRAFT_TAB.id);
+    // A held header cycle previews the Start Page. The panel is portaled out
+    // from under that context, so without the projection it would read the
+    // `settled` default and open a browser stream for a step about to be left.
+    render(hostedUnder("preview"));
+
+    expect(panelBody().dataset.surfaceDemand).toBe("preview");
+  });
+
+  it("follows the demand from preview to settled without remounting the panel", () => {
+    seedLayout([DRAFT_TAB, EPIC_TAB], DRAFT_TAB.id);
+    const view = render(hostedUnder("preview"));
+    const body = panelBody();
+    expect(body.dataset.surfaceDemand).toBe("preview");
+
+    act(() => {
+      view.rerender(hostedUnder("settled"));
+    });
+
+    expect(panelBody().dataset.surfaceDemand).toBe("settled");
     expect(panelBody()).toBe(body);
   });
 });
