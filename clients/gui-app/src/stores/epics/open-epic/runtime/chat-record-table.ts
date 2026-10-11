@@ -340,8 +340,16 @@ export function createChatRecordTable(
         );
         return next.allIds.length === 0 ? EMPTY_CHATS_SLICE : next;
       },
+      /**
+       * Pending creations do not disable this. The rows handed here were held
+       * before and after the write, so each already shadows its own stand-in,
+       * and a stand-in for another chat is not this write's to move. Whatever
+       * can add or drop a VISIBLE stand-in takes the full build on its own: a
+       * row arriving or leaving is a membership change, and registering,
+       * clearing and retracting a creation each force one.
+       */
       updateSlice: (previous, changedRows, currentUserId) => {
-        if (currentUserId === null || pendingCreations.size > 0) return null;
+        if (currentUserId === null) return null;
         const changed = chatRecordsSlice(changedRows);
         return replaceSliceRows(previous, changed, chatProjectionsEq);
       },

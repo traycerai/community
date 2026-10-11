@@ -280,3 +280,161 @@ describe("chat record table - work scales with the rows a write changed", () => 
     expect(table.current().byId.shared.title).toBe("A renamed");
   });
 });
+
+describe("chat record table - pending creations do not disable the incremental path", () => {
+  it("a shadowed stand-in leaves a rename of another chat projecting one row", () => {
+    const { table } = seededTable();
+    // `chat-5` is already held, so its stand-in sits behind the real row.
+    table.beginPendingCreation({
+      chatId: "chat-5",
+      hostId: "host-1",
+      parentChatId: null,
+      title: "",
+      ownerUserId: OWNER,
+    });
+    const before = table.current();
+    projected.rows = 0;
+
+    const publication = table.applyDelta(renameDelta(3, 2));
+    if (publication === null) throw new Error("expected a publication");
+    const after = publication.chatRecords;
+
+    expect(projected.rows).toBe(1);
+    expect(after.allIds).toBe(before.allIds);
+    expect(after.byId["chat-3"].title).toBe("Renamed 3");
+    for (let i = 0; i < HELD; i += 1) {
+      if (i === 3) continue;
+      expect(after.byId[`chat-${i}`]).toBe(before.byId[`chat-${i}`]);
+    }
+    expect(changedTableIds(before.byId, after.byId)).toEqual(
+      new Set(["chat-3"]),
+    );
+  });
+
+  it("a visible stand-in is carried through a rename of a held chat by reference", () => {
+    const { table } = seededTable();
+    const registered = table.beginPendingCreation({
+      chatId: "pending-1",
+      hostId: "host-1",
+      parentChatId: null,
+      title: "",
+      ownerUserId: OWNER,
+    });
+    if (registered === null) throw new Error("expected the stand-in row");
+    const before = registered.chatRecords;
+    projected.rows = 0;
+
+    const publication = table.applyDelta(renameDelta(3, 2));
+    if (publication === null) throw new Error("expected a publication");
+    const after = publication.chatRecords;
+
+    expect(projected.rows).toBe(1);
+    expect(after.byId["pending-1"]).toBe(before.byId["pending-1"]);
+    expect(after.allIds).toContain("pending-1");
+    expect(after.allIds).toBe(before.allIds);
+    expect(after.byId["chat-3"].title).toBe("Renamed 3");
+  });
+
+  it("equals a full rebuild after every step of a stand-in's lifecycle", () => {
+    let viewer: string | null = OWNER;
+    const table = createChatRecordTable({
+      getCurrentUserId: () => viewer,
+      onBeforePublish: () => undefined,
+      now: () => 0,
+    });
+    // `republishForCurrentUser` forces the full build and yields `null` only
+    // when that build equals the slice already held, so a `null` here says the
+    // table as it stands IS what a full rebuild would publish. The count is
+    // what keeps this honest: `null` means the step took the full build, and a
+    // number is the rows an incremental step is allowed to have projected.
+    const step = (write: () => unknown, projectedRows: number | null) => {
+      projected.rows = 0;
+      write();
+      if (projectedRows !== null) expect(projected.rows).toBe(projectedRows);
+      expect(table.republishForCurrentUser()).toBeNull();
+    };
+    const pending = (chatId: string) => ({
+      chatId,
+      hostId: "host-1",
+      parentChatId: null,
+      title: "",
+      ownerUserId: OWNER,
+    });
+
+    step(
+      () =>
+        table.applyRecords(
+          Array.from({ length: HELD }, (_, i) => record(i, {})),
+          null,
+        ),
+      null,
+    );
+
+    step(() => table.beginPendingCreation(pending("new-1")), null);
+    expect(table.current().allIds).toContain("new-1");
+
+    step(
+      () =>
+        table.applyTouches([
+          { id: "chat-1", ownerUserId: OWNER, updatedAt: 99, revision: 2 },
+        ]),
+      1,
+    );
+    expect(table.current().byId["chat-1"].updatedAt).toBe(99);
+
+    step(() => table.applyDelta(renameDelta(2, 2)), 1);
+
+    // The real record retires the visible stand-in.
+    step(
+      () =>
+        table.applyDelta({
+          kind: "upsert",
+          epicId: EPIC_ID,
+          record: record(0, { chatId: "new-1", title: "Created", revision: 1 }),
+        }),
+      null,
+    );
+    expect(table.current().byId["new-1"].title).toBe("Created");
+
+    // A stand-in registered behind a row that is already held.
+    step(() => table.beginPendingCreation(pending("chat-7")), null);
+    step(() => table.applyDelta(renameDelta(4, 2)), 1);
+    step(() => table.applyDelta(renameDelta(7, 2)), 1);
+    expect(table.current().byId["chat-7"].title).toBe("Renamed 7");
+
+    step(
+      () =>
+        table.applyDelta({
+          kind: "remove",
+          epicId: EPIC_ID,
+          chatId: "chat-9",
+          reason: "deleted",
+        }),
+      null,
+    );
+    expect(table.current().allIds).not.toContain("chat-9");
+
+    step(() => table.beginPendingCreation(pending("new-2")), null);
+    expect(table.current().allIds).toContain("new-2");
+    step(() => table.clearPendingCreation("new-2"), null);
+    expect(table.current().allIds).not.toContain("new-2");
+
+    // Another viewer: the slice rebuilds for them, and a write for the first
+    // user's row publishes nothing and projects nothing.
+    viewer = "user-b";
+    step(() => table.republishForCurrentUser(), null);
+    expect(table.current().allIds).toEqual([]);
+    step(() => table.applyDelta(renameDelta(11, 2)), 0);
+
+    viewer = OWNER;
+    step(() => table.republishForCurrentUser(), null);
+    const { byId, allIds } = table.current();
+    expect(allIds).not.toContain("chat-9");
+    expect(byId["chat-2"].title).toBe("Renamed 2");
+    expect(byId["chat-4"].title).toBe("Renamed 4");
+    expect(byId["chat-7"].title).toBe("Renamed 7");
+    expect(byId["chat-11"].title).toBe("Renamed 11");
+    expect(byId["chat-1"].updatedAt).toBe(99);
+    expect(byId["new-1"].title).toBe("Created");
+  });
+});

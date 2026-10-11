@@ -16,10 +16,32 @@ import type {
   TerminalAgentsSlice,
 } from "../types";
 import { EMPTY_PROJECTED_SLICES, EMPTY_TERMINAL_AGENTS_SLICE } from "../types";
-import { EMPTY_PENDING_OVERLAY } from "../pending-metadata-overlay";
+import type {
+  EpicRawProjectionSources,
+  ProjectionInputs,
+} from "../projection-helpers";
+import {
+  EMPTY_PENDING_OVERLAY,
+  type PendingMetadataMutation,
+  type PendingMetadataOverlay,
+} from "../pending-metadata-overlay";
 import { changedTableIds } from "../runtime/projection-table-changes";
+import { epicStateSubscribeServerFrameSchemaV11 } from "@traycer/protocol/host/epic/state-subscribe";
+import type { EpicStateRow } from "@traycer-clients/shared/epic-lanes";
+import {
+  EPIC_META_ROW_ID,
+  EPIC_STATE_LANE_ID,
+  ROLE_CLAIMS_ROW_ID,
+  artifactRowId,
+} from "@traycer-clients/shared/epic-lanes";
+import type { RecordRow } from "@traycer-clients/shared/replica-runtime";
+import {
+  createEpicLaneStateReplica,
+  laneRawProjectionSources,
+} from "../runtime/epic-lane-state-replica";
 
-const collected = vi.hoisted(() => ({ rows: 0 }));
+/** `rows`: tree inputs collected; `composed`: full compositions run. */
+const collected = vi.hoisted(() => ({ rows: 0, composed: 0 }));
 
 vi.mock("../projection-helpers", async (importOriginal) => {
   const original =
@@ -34,6 +56,14 @@ vi.mock("../projection-helpers", async (importOriginal) => {
       collected.rows +=
         artifacts.allIds.length + chats.allIds.length + tuiAgents.allIds.length;
       return original.collectRawTreeRecords(artifacts, chats, tuiAgents);
+    },
+    composeEpicProjection: (
+      raw: EpicRawProjectionSources,
+      currentUserId: string | null,
+      inputs: ProjectionInputs,
+    ) => {
+      collected.composed += 1;
+      return original.composeEpicProjection(raw, currentUserId, inputs);
     },
   };
 });
@@ -88,7 +118,10 @@ function seedRecords(): ChatRecordSummaryV11[] {
   ];
 }
 
-function setup() {
+function harness(
+  readRaw: () => EpicRawProjectionSources,
+  overlay: PendingMetadataOverlay,
+) {
   const table = createChatRecordTable({
     getCurrentUserId: () => OWNER,
     onBeforePublish: () => undefined,
@@ -99,18 +132,10 @@ function setup() {
     EMPTY_PROJECTED_SLICES,
     () => undefined,
   );
-  const raw = {
-    artifacts: EMPTY_PROJECTED_SLICES.artifacts,
-    deletedArtifacts: EMPTY_PROJECTED_SLICES.deletedArtifacts,
-    docChats: EMPTY_PROJECTED_SLICES.docChats,
-    docTuiAgents: EMPTY_PROJECTED_SLICES.docTuiAgents,
-    epicHeader: EMPTY_PROJECTED_SLICES.epic,
-    roleClaims: [],
-  };
   const inputs = () => ({
     chatRecords: table.current(),
     tuiAgentRecords: EMPTY_TERMINAL_AGENTS_SLICE,
-    pendingOverlay: EMPTY_PENDING_OVERLAY,
+    pendingOverlay: overlay,
     reportDeadMutations: () => undefined,
     docArm: RECORD_PLANE_COVERS_BOTH,
   });
@@ -119,12 +144,31 @@ function setup() {
     getChatRecords: () => table.current(),
     getTuiAgentRecords: () => EMPTY_TERMINAL_AGENTS_SLICE,
     getDocArm: () => RECORD_PLANE_COVERS_BOTH,
-    getPendingOverlay: () => EMPTY_PENDING_OVERLAY,
+    getPendingOverlay: () => overlay,
     onDeadMutations: () => undefined,
   });
-  projector.attachLaneSources(() => raw, sink);
-  const oracle = () => composeEpicProjection(raw, OWNER, inputs());
+  projector.attachLaneSources(readRaw, sink);
+  // The attach above composed once; a test counts what comes after it. The
+  // oracle composes too, so a test reads `collected.composed` BEFORE calling it.
+  collected.composed = 0;
+  const oracle = () => composeEpicProjection(readRaw(), OWNER, inputs());
   return { table, sink, projector, oracle };
+}
+
+function setupWithOverlay(overlay: PendingMetadataOverlay) {
+  const raw = {
+    artifacts: EMPTY_PROJECTED_SLICES.artifacts,
+    deletedArtifacts: EMPTY_PROJECTED_SLICES.deletedArtifacts,
+    docChats: EMPTY_PROJECTED_SLICES.docChats,
+    docTuiAgents: EMPTY_PROJECTED_SLICES.docTuiAgents,
+    epicHeader: EMPTY_PROJECTED_SLICES.epic,
+    roleClaims: [],
+  };
+  return harness(() => raw, overlay);
+}
+
+function setup() {
+  return setupWithOverlay(EMPTY_PENDING_OVERLAY);
 }
 
 function upsert(chatId: string, overrides: Partial<ChatRecordSummaryV11>) {
@@ -141,6 +185,7 @@ function upsert(chatId: string, overrides: Partial<ChatRecordSummaryV11>) {
 
 beforeEach(() => {
   collected.rows = 0;
+  collected.composed = 0;
 });
 
 describe("projector.projectChanges - record-plane changes rebuild only what changed", () => {
@@ -234,6 +279,217 @@ describe("projector.projectChanges - record-plane changes rebuild only what chan
 
     expect(collected.rows).toBe(0);
     expect(after.tree.nodeById.c0).toBeUndefined();
+    expect(after).toEqual(oracle());
+  });
+});
+
+const LANE_EPOCH = "epoch-lane";
+
+/** A live artifact lane row, built through the real wire schema. */
+function artifactLaneRow(
+  id: string,
+  title: string,
+  revision: number,
+): RecordRow<EpicStateRow> {
+  const frame = epicStateSubscribeServerFrameSchemaV11.parse({
+    kind: "snapshot",
+    hasBinaryPayload: false,
+    authorityEpoch: LANE_EPOCH,
+    basis: "cold",
+    position: 0,
+    reconciledWithCloud: true,
+    artifactRecords: [
+      {
+        kind: "spec",
+        id,
+        folderName: `${id}-folder`,
+        title,
+        createdAt: 1,
+        updatedAt: 2,
+        createdManually: true,
+        parentId: null,
+        revision,
+      },
+    ],
+    deletedArtifacts: [],
+    commentThreads: [],
+    roleClaims: { revision: 1, claims: [] },
+    epicMeta: { revision: 1, meta: { title: "Epic", updatedAt: 10 } },
+  });
+  if (frame.kind !== "snapshot") throw new Error("expected a snapshot frame");
+  const record = frame.artifactRecords[0];
+  return {
+    rowId: artifactRowId(id),
+    revision,
+    row: { kind: "artifact", record },
+  };
+}
+
+function laneMetaRow(
+  title: string,
+  updatedAt: number,
+  revision: number,
+): RecordRow<EpicStateRow> {
+  return {
+    rowId: EPIC_META_ROW_ID,
+    revision,
+    row: { kind: "epic-meta", meta: { title, updatedAt } },
+  };
+}
+
+/** The projector fed by a REAL lane replica, seeded and fully projected once. */
+function setupLane() {
+  const replica = createEpicLaneStateReplica({
+    getCurrentUserId: () => OWNER,
+    isDisposed: () => false,
+    onChanged: () => undefined,
+  });
+  const lane = harness(
+    () => laneRawProjectionSources(replica.slices()),
+    EMPTY_PENDING_OVERLAY,
+  );
+  replica.apply({
+    kind: "record-snapshot",
+    watermark: {
+      authorityEpoch: LANE_EPOCH,
+      lane: EPIC_STATE_LANE_ID,
+      position: 1,
+    },
+    rows: [
+      artifactLaneRow("lane-a", "Lane A", 1),
+      artifactLaneRow("lane-b", "Lane B", 1),
+      artifactLaneRow("lane-c", "Lane C", 1),
+      {
+        rowId: ROLE_CLAIMS_ROW_ID,
+        revision: 1,
+        row: { kind: "role-claims", claims: [] },
+      },
+      laneMetaRow("Lane epic", 10, 1),
+    ],
+    trust: "reconciled-with-cloud",
+    cause: "initial",
+  });
+  lane.projector.projectFull();
+  collected.composed = 0;
+  collected.rows = 0;
+  const before = lane.sink.read();
+  const send = (position: number, row: RecordRow<EpicStateRow>) =>
+    replica.apply({
+      kind: "record-transaction",
+      cursor: {
+        authorityEpoch: LANE_EPOCH,
+        lane: EPIC_STATE_LANE_ID,
+        position,
+      },
+      changes: [{ kind: "upsert", row }],
+      barrier: null,
+    });
+  return { ...lane, before, send };
+}
+
+describe("projector.projectChanges - lane rows and pending creations", () => {
+  it("a header change composes nothing and keeps the tree and artifacts by reference", () => {
+    const { projector, oracle, before, send } = setupLane();
+    expect(before.tree.nodeById["lane-a"]).toBeDefined();
+
+    send(2, laneMetaRow("Renamed lane epic", 30, 2));
+    const after = projector.projectChanges();
+
+    expect(collected.composed).toBe(0);
+    expect(after.epic).toEqual({ title: "Renamed lane epic", updatedAt: 30 });
+    expect(after.tree).toBe(before.tree);
+    expect(after.artifacts).toBe(before.artifacts);
+    expect(after).toEqual(oracle());
+  });
+
+  it("an artifact rename composes nothing and touches that one tree row", () => {
+    const { projector, oracle, before, send } = setupLane();
+
+    send(2, artifactLaneRow("lane-b", "Lane B renamed", 2));
+    const after = projector.projectChanges();
+
+    expect(collected.composed).toBe(0);
+    expect(after.artifacts.byId["lane-b"].title).toBe("Lane B renamed");
+    expect(changedTableIds(before.tree.nodeById, after.tree.nodeById)).toEqual(
+      new Set(["lane-b"]),
+    );
+    expect(after.tree.nodeById["lane-a"]).toBe(before.tree.nodeById["lane-a"]);
+    expect(after).toEqual(oracle());
+  });
+
+  it("a role-claim change takes the full composition once and equals it", () => {
+    const { projector, oracle, send } = setupLane();
+
+    send(2, {
+      rowId: ROLE_CLAIMS_ROW_ID,
+      revision: 2,
+      row: {
+        kind: "role-claims",
+        claims: [
+          {
+            claimId: "6f1c7a52-62f1-4d0e-9a53-0b2e5f1c9d11",
+            agentId: "c1",
+            userId: OWNER,
+            role: "Planner",
+            scope: "Auth",
+            claimedAt: 5,
+          },
+        ],
+      },
+    });
+    const after = projector.projectChanges();
+
+    expect(collected.composed).toBe(1);
+    expect(after).toEqual(oracle());
+  });
+
+  it("a shadowed pending creation does not send a title edit to the full composition", () => {
+    const { table, projector, oracle } = setup();
+    // `c3` is already held, so its stand-in sits behind the real row.
+    table.beginPendingCreation({
+      chatId: "c3",
+      hostId: "host-1",
+      parentChatId: "p1",
+      title: "",
+      ownerUserId: OWNER,
+    });
+    projector.projectChanges();
+    collected.rows = 0;
+    collected.composed = 0;
+
+    table.applyDelta(upsert("c0", { title: "Renamed 0", revision: 2 }));
+    const after = projector.projectChanges();
+
+    expect(collected.composed).toBe(0);
+    expect(collected.rows).toBe(1);
+    expect(after).toEqual(oracle());
+  });
+
+  it("a pending metadata overlay forces the full composition, and shows the overlay", () => {
+    const overlay: PendingMetadataOverlay = new Map<
+      string,
+      PendingMetadataMutation
+    >([
+      [
+        "req-1",
+        {
+          kind: "rename",
+          requestId: "req-1",
+          nodeId: "c5",
+          title: "Optimistic",
+          baseline: "Title c5",
+          landed: false,
+        },
+      ],
+    ]);
+    const { table, projector, oracle } = setupWithOverlay(overlay);
+
+    table.applyDelta(upsert("c0", { title: "Renamed 0", revision: 2 }));
+    const after = projector.projectChanges();
+
+    expect(collected.composed).toBe(1);
+    expect(after.chats.byId.c5.title).toBe("Optimistic");
+    expect(after.chats.byId.c0.title).toBe("Renamed 0");
     expect(after).toEqual(oracle());
   });
 });

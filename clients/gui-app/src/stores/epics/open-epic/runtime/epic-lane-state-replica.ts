@@ -483,6 +483,101 @@ function buildLaneSlices(rows: readonly HeldLaneRow[]): EpicLaneStateSlices {
   };
 }
 
+type CommentThreadRow = Extract<
+  EpicStateRow,
+  { kind: "comment-thread" }
+>["record"];
+
+/** `null` when the thread moved artifacts: regrouping is the full build's. */
+function replaceCommentThread(
+  previous: CommentThreadsSlice,
+  before: CommentThreadRow,
+  next: CommentThreadRow,
+): CommentThreadsSlice | null {
+  if (
+    before.artifactId !== next.artifactId ||
+    !Object.hasOwn(previous.byArtifactId, next.artifactId)
+  )
+    return null;
+  const held = previous.byArtifactId[next.artifactId];
+  const index = held.indexOf(before);
+  if (index === -1) return null;
+  return {
+    byArtifactId: {
+      ...previous.byArtifactId,
+      [next.artifactId]: held.with(index, next),
+    },
+  };
+}
+
+/**
+ * One changed row, applied to the one population it belongs to, so a header
+ * touch or a download tick leaves every artifact and thread reference alone.
+ * Artifact rows are returned to the caller, which replaces them as a set.
+ *
+ * `null` asks for the full build. Claims and tombstones always do: the epic
+ * projection composes in full on either (`needsFullProjection`), so a patch
+ * here would save nothing.
+ */
+function updateLanePopulation(
+  previous: EpicLaneStateSlices,
+  before: EpicStateRow,
+  row: EpicStateRow,
+): EpicLaneStateSlices | null {
+  if (row.kind === "epic-meta" && before.kind === "epic-meta") {
+    const { title, updatedAt } = row.meta;
+    return title === previous.epicHeader.title &&
+      updatedAt === previous.epicHeader.updatedAt
+      ? previous
+      : { ...previous, epicHeader: { title, updatedAt } };
+  }
+  if (row.kind === "files" && before.kind === "files") {
+    const files: FilesSlice = { served: true, records: row.files };
+    return filesSliceEq(previous.files, files)
+      ? previous
+      : { ...previous, files };
+  }
+  if (row.kind === "comment-thread" && before.kind === "comment-thread") {
+    const commentThreads = replaceCommentThread(
+      previous.commentThreads,
+      before.record,
+      row.record,
+    );
+    return commentThreads === null ? null : { ...previous, commentThreads };
+  }
+  return null;
+}
+
+/** Existing rows only (same row id before and after); see `updateSlice`. */
+function updateLaneSlices(
+  previous: EpicLaneStateSlices,
+  changedRows: readonly HeldLaneRow[],
+  previousRows: readonly HeldLaneRow[],
+): EpicLaneStateSlices | null {
+  let next = previous;
+  const artifactRows: HeldLaneRow[] = [];
+  for (const [index, held] of changedRows.entries()) {
+    const before = previousRows[index].row;
+    if (held.row.kind === "artifact") {
+      if (before.kind !== "artifact" || held.row.record.id !== before.record.id)
+        return null;
+      artifactRows.push(held);
+      continue;
+    }
+    const updated = updateLanePopulation(next, before, held.row);
+    if (updated === null) return null;
+    next = updated;
+  }
+  if (artifactRows.length === 0) return next;
+  const artifacts = replaceSliceRows(
+    next.artifacts,
+    buildLaneSlices(artifactRows).artifacts,
+    artifactProjectionsEq,
+  );
+  if (artifacts === null) return null;
+  return artifacts === next.artifacts ? next : { ...next, artifacts };
+}
+
 /**
  * This head's populations, in the shape the shared composition consumes.
  *
@@ -548,30 +643,8 @@ export function createEpicLaneStateReplica(
          */
         recency: null,
         buildSlice: (visibleRows) => buildLaneSlices(visibleRows),
-        updateSlice: (previous, changedRows, _currentUserId, previousRows) => {
-          // Claims and thread regrouping can change visibility/membership.
-          if (
-            changedRows.some((held, index) => {
-              const before = previousRows[index].row;
-              return (
-                held.row.kind !== "artifact" ||
-                before.kind !== "artifact" ||
-                held.row.record.id !== before.record.id
-              );
-            })
-          )
-            return null;
-          const changed = buildLaneSlices(changedRows);
-          const artifacts = replaceSliceRows(
-            previous.artifacts,
-            changed.artifacts,
-            artifactProjectionsEq,
-          );
-          if (artifacts === null) return null;
-          return artifacts === previous.artifacts
-            ? previous
-            : { ...previous, artifacts };
-        },
+        updateSlice: (previous, changedRows, _currentUserId, previousRows) =>
+          updateLaneSlices(previous, changedRows, previousRows),
         slicesEq: laneSlicesEq,
         emptySlice: EMPTY_LANE_STATE_SLICES,
       },
