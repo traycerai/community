@@ -11,7 +11,11 @@ import {
   type RenderResult,
 } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  QueryClient,
+  QueryClientProvider,
+  type QueryKey,
+} from "@tanstack/react-query";
 import { HostClient } from "@traycer-clients/shared/host-client/host-client";
 import { mockLocalHostEntry } from "@traycer-clients/shared/host-client/mock/mock-host-directory";
 import { MockHostMessenger } from "@traycer-clients/shared/host-client/mock/mock-host-messenger";
@@ -2605,6 +2609,51 @@ describe("WorktreesList delete flow", () => {
       queryKey: hostQueryKeys.methodScope("host-b", "git.getCapabilities"),
       predicate: ANY_PREDICATE,
     });
+  });
+
+  it("re-probes git capabilities for a directory inside the deleted worktree, leaving a similarly named sibling, an unrelated worktree and another host alone", () => {
+    const queryClient = new QueryClient();
+    renderList({
+      hostId: "host-a",
+      queryClient,
+      worktrees: WORKTREES,
+      enrichedByPath: undefined,
+      erroredPaths: undefined,
+      seededPaths: undefined,
+      onVisiblePathsChange: undefined,
+      taskTitlesByEpicId: undefined,
+    });
+    const capabilities = (hostId: string, runningDir: string) =>
+      hostQueryKeys.method<HostRpcRegistry, "git.getCapabilities">(
+        hostId,
+        "git.getCapabilities",
+        { hostId, runningDir, ignoreWhitespace: false },
+      );
+    const seeded = {
+      root: capabilities("host-a", "/wt/clean"),
+      // A panel rooted in a subfolder of the worktree that is being deleted.
+      nested: capabilities("host-a", "/wt/clean/packages/app"),
+      // Shares the deleted path as a prefix without being inside it.
+      lookalike: capabilities("host-a", "/wt/clean-other"),
+      unrelated: capabilities("host-a", "/wt/dirty"),
+      otherHost: capabilities("host-b", "/wt/clean/packages/app"),
+    };
+    for (const key of Object.values(seeded)) {
+      queryClient.setQueryData(key, { available: true });
+    }
+
+    confirmDelete("feat-clean");
+    act(() => {
+      streamMock.callbacks?.onComplete(true);
+    });
+
+    const invalidated = (key: QueryKey): boolean | undefined =>
+      queryClient.getQueryState(key)?.isInvalidated;
+    expect(invalidated(seeded.root)).toBe(true);
+    expect(invalidated(seeded.nested)).toBe(true);
+    expect(invalidated(seeded.lookalike)).toBe(false);
+    expect(invalidated(seeded.unrelated)).toBe(false);
+    expect(invalidated(seeded.otherHost)).toBe(false);
   });
 
   it("backgrounds a running delete: hides the panel and marks the row as deleting", () => {

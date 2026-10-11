@@ -112,7 +112,7 @@ import { useRefreshSpinner } from "@/hooks/use-refresh-spinner";
 import { useRelativeTimestamp } from "@/lib/relative-time";
 import { useWorktreeTaskTitles } from "./use-worktree-task-titles";
 import { invalidateWorktreeListingAndBindingCaches } from "@/hooks/worktree/invalidations";
-import { worktreePathMatcher } from "@/lib/worktree/worktree-path-match";
+import { worktreeDirectoryMatcher } from "@/lib/worktree/worktree-path-match";
 import {
   backgroundForegroundWorktreeDeleteForHost,
   clearSettledWorktreeDeleteSuccessesForHostIfQuiescent,
@@ -4071,7 +4071,7 @@ function invalidateWorktreeDeleteCaches(
   worktreePaths: readonly string[],
 ): void {
   invalidateWorktreeListingAndBindingCaches(queryClient, hostId, worktreePaths);
-  const isRemoved = worktreePathMatcher(new Set(worktreePaths));
+  const isRemoved = worktreeDirectoryMatcher(new Set(worktreePaths));
   // A deleted worktree's directory is gone, so its cached `git.getCapabilities`
   // (5-min staleTime) would otherwise keep reporting the stale `available: true`
   // and strand the git panel. Force a re-probe so the gate sees the repo is
