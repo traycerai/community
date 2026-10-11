@@ -3,7 +3,7 @@ import os from "node:os";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
-import { reactCompiler } from "./vite/react-compiler";
+import { reactCompiler } from "./vite/react-compiler.ts";
 
 const availableParallelism =
   typeof os.availableParallelism === "function"
