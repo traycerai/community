@@ -4,8 +4,10 @@ import { join } from "node:path";
 import {
   callHostRpc,
   callHostRpcFastFail,
+  callHostRpcWithDispatch,
   canonicalResponseSchemaFor,
   parseCanonicalHostResponse,
+  PLAIN_DISPATCH,
   toAgentCliError,
 } from "../host-rpc";
 import { resolveHostAuth } from "../host-auth";
@@ -508,6 +510,31 @@ describe("callHostRpc", () => {
 });
 
 const COMMANDS_DIR = join(__dirname, "..", "..", "commands");
+
+describe("callHostRpcWithDispatch abort", () => {
+  it("ends a call whose request is already on the wire when the caller's signal aborts, and releases the store", async () => {
+    // The shared transport does not act on an abort once a request was sent
+    // unless the authority opts in, and the CLI's never does: a request that
+    // never answers stays pending whatever the signal says.
+    requestMock.mockReturnValue(new Promise(() => undefined));
+    const controller = new AbortController();
+    const outcome = callHostRpcWithDispatch(
+      METHOD,
+      { epicId: "e", senderAgentId: "agent-1", scope: "user" },
+      { ...PLAIN_DISPATCH, signal: controller.signal },
+    ).then(
+      () => null,
+      (error: unknown) => error,
+    );
+    await vi.waitFor(() => expect(requestMock).toHaveBeenCalledTimes(1));
+
+    controller.abort();
+
+    // The call settles with a failure rather than waiting out the host.
+    expect(await outcome).toBeInstanceOf(Error);
+    expect(fakeStore.dispose).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("canonicalResponseSchemaFor", () => {
   it("returns exactly the registry's latest contract response schema for a spread of methods", () => {

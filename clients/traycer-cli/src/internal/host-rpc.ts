@@ -326,7 +326,11 @@ async function requestAtEndpoint<Method extends keyof HostRpcRegistry & string>(
   );
 
   const callLifetime = new AbortController();
-  const abortWithCaller = (): void => callLifetime.abort("cli-call-aborted");
+  const aborted = Promise.withResolvers<never>();
+  const abortWithCaller = (): void => {
+    callLifetime.abort("cli-call-aborted");
+    aborted.reject(new DOMException("Host RPC call aborted", "AbortError"));
+  };
   if (dispatch.signal !== null) {
     if (dispatch.signal.aborted) abortWithCaller();
     else dispatch.signal.addEventListener("abort", abortWithCaller);
@@ -347,15 +351,16 @@ async function requestAtEndpoint<Method extends keyof HostRpcRegistry & string>(
     requiredHostMethodVersion: dispatch.requiredHostMethodVersion,
   };
   try {
-    const response =
+    const request =
       dispatch.responseTimeoutMs === null
-        ? await messenger.request(method, params, options)
-        : await messenger.requestWithResponseTimeout(
+        ? messenger.request(method, params, options)
+        : messenger.requestWithResponseTimeout(
             method,
             params,
             dispatch.responseTimeoutMs,
             options,
           );
+    const response = await Promise.race([request, aborted.promise]);
     logger.debug("Host RPC completed", {
       environment: config.environment,
       method,
