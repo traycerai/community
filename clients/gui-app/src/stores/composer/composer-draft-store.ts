@@ -6,6 +6,7 @@ import type { DraftDocument, DraftPublication } from "@traycer/protocol/host";
 import { isJsonContent } from "@/lib/editor/prosemirror-json";
 import { basePersistOptions, persistKey, STORE_KEYS } from "@/lib/persist";
 import { cancelDeferredPersistOnRetarget } from "@/lib/persist/persist-options";
+import { flushDeferredJsonWrite } from "@/lib/persist/deferred-json-storage";
 import {
   legacyComposerDraftId,
   migratedLegacyComposerDraftId,
@@ -779,12 +780,8 @@ function retargetComposerDraftAccount(): void {
   if (accountId === draftAccountId) return;
   const name = composerDraftStorageKey(accountId);
   const previousAccountId = draftAccountId;
+  flushDeferredJsonWrite(composerDraftStorageKey(previousAccountId));
   draftAccountId = accountId;
-  try {
-    if (accountId === null) useComposerDraftStore.persist.clearStorage();
-  } catch {
-    appLogger.warn("[persist] composer draft scope clear failed", {});
-  }
   useComposerDraftStore.persist.setOptions({ name });
   // Hydration/migration can fail (quota, denied storage, malformed rows).
   // Nothing from the outgoing account may survive that failure in memory.

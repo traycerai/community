@@ -1029,16 +1029,6 @@ describe("composer draft store: account scope", () => {
     vi.advanceTimersByTime(DEBOUNCE_MS);
   }
 
-  function allStoredText(): string {
-    let text = "";
-    for (let index = 0; index < window.localStorage.length; index += 1) {
-      const key = window.localStorage.key(index);
-      if (key !== null)
-        text += `${key}=${window.localStorage.getItem(key) ?? ""}\n`;
-    }
-    return text;
-  }
-
   it("the first account to sign in adopts the anonymous drafts into its own namespace", () => {
     type("chat-1", "typed before signing in");
 
@@ -1054,24 +1044,80 @@ describe("composer draft store: account scope", () => {
     );
   });
 
-  it("sign-out removes the account's rows and its queued edits, so the next account finds no trace of them", () => {
+  it("sign-out clears this window's memory but leaves the account's draft and delete-fence rows on disk, shows the next account none of them, and restores them on return", () => {
+    const fence = { hostId: "host-a", retract: true };
+    seedRow(
+      "delete",
+      "draft-9",
+      { value: fence, revision: "seed-delete" },
+      ACCOUNT_A,
+    );
     signIn("account-a");
-    type("chat-1", "SECRET-flushed");
-    useComposerDraftStore
-      .getState()
-      .setSnapshot("chat-2", textDoc("SECRET-queued"), null);
+    expect(
+      useComposerDraftStore.getState().pendingSubmittedDraftDeletes,
+    ).toEqual({ "draft-9": fence });
+    type("chat-1", "A's kept draft");
 
     signOut();
     vi.advanceTimersByTime(DEBOUNCE_MS * 2);
 
+    // Memory is clear, and nothing was deleted behind it.
     expect(useComposerDraftStore.persist.getOptions().name).toBe(ANON_NAME);
     expect(useComposerDraftStore.getState().drafts).toEqual({});
-    expect(rowKeys(ACCOUNT_A)).toEqual([]);
+    expect(
+      useComposerDraftStore.getState().pendingSubmittedDraftDeletes,
+    ).toEqual({});
+    expect(readDraftRow("chat-1", ACCOUNT_A)?.content).toEqual(
+      textDoc("A's kept draft"),
+    );
+    expect(readStoredRow("delete", "draft-9", ACCOUNT_A)?.value).toEqual(fence);
 
+    // Another account sees none of it, and its own edits stay its own.
     signIn("account-b");
     expect(useComposerDraftStore.getState().drafts).toEqual({});
-    expect(allStoredText()).not.toContain("SECRET");
+    expect(
+      useComposerDraftStore.getState().pendingSubmittedDraftDeletes,
+    ).toEqual({});
+    expect(rowKeys(ACCOUNT_B)).toEqual([]);
+    type("chat-b", "B's draft");
+
+    // The first account returns to exactly what it left.
+    signIn("account-a");
+    expect(Object.keys(useComposerDraftStore.getState().drafts)).toEqual([
+      "chat-1",
+    ]);
+    expect(readComposerDraftSnapshot("chat-1").content).toEqual(
+      textDoc("A's kept draft"),
+    );
+    expect(
+      useComposerDraftStore.getState().pendingSubmittedDraftDeletes,
+    ).toEqual({ "draft-9": fence });
   });
+
+  it.each([
+    ["signs out", () => signOut()],
+    ["switches straight to another account", () => signIn("account-b")],
+  ])(
+    "an edit still inside the debounce window when the account %s is saved under the account it was typed in",
+    (_how, leave) => {
+      signIn("account-a");
+      type("chat-1", "flushed");
+      // Typed, and the debounce has not fired yet.
+      useComposerDraftStore
+        .getState()
+        .setSnapshot("chat-1", textDoc("last words"), null);
+
+      leave();
+      vi.advanceTimersByTime(DEBOUNCE_MS * 2);
+
+      expect(readDraftRow("chat-1", ACCOUNT_A)?.content).toEqual(
+        textDoc("last words"),
+      );
+      expect(rowKeys(ANON_NAME)).toEqual([]);
+      expect(rowKeys(ACCOUNT_B)).toEqual([]);
+      expect(useComposerDraftStore.getState().drafts).toEqual({});
+    },
+  );
 
   it("switching straight from one account to another shows none of the first's drafts and leaves its rows for its return", () => {
     signIn("account-a");
@@ -1088,7 +1134,7 @@ describe("composer draft store: account scope", () => {
     );
   });
 
-  it("an in-flight sign-in or a failed attempt keeps the current account's drafts; only a retired session removes them", () => {
+  it("an in-flight sign-in or a failed attempt keeps the current account's drafts; a retired session clears memory but leaves the account's rows", () => {
     signIn("account-a");
     type("chat-1", "kept");
 
@@ -1110,16 +1156,17 @@ describe("composer draft store: account scope", () => {
 
     signOut();
     expect(useComposerDraftStore.getState().drafts).toEqual({});
-    expect(rowKeys(ACCOUNT_A)).toEqual([]);
+    expect(readDraftRow("chat-1", ACCOUNT_A)?.content).toEqual(textDoc("kept"));
   });
 
-  it("an interrupted anonymous-to-account copy still shows every draft to that account, and signing out removes the claimed anonymous source too", () => {
-    type("chat-1", "SECRET-one");
-    type("chat-2", "SECRET-two");
-    type("chat-3", "SECRET-three");
+  it("an interrupted anonymous-to-account copy still shows every draft to that account; signing out keeps the claim, no other account adopts the source, and the claimant's return completes it", () => {
+    type("chat-1", "one");
+    type("chat-2", "two");
+    type("chat-3", "three");
     const quota = failWritesWhere(
       (key) => key === rowKey("draft", "chat-2", ACCOUNT_A),
     );
+    const claimKey = `${ANON_NAME}:adopted-by`;
 
     signIn("account-a");
     quota.mockRestore();
@@ -1130,12 +1177,25 @@ describe("composer draft store: account scope", () => {
 
     signOut();
 
+    // Memory is clear; the unfinished source and its claim are untouched.
     expect(useComposerDraftStore.getState().drafts).toEqual({});
-    expect(rowKeys(ANON_NAME)).toEqual([]);
-    expect(rowKeys(ACCOUNT_A)).toEqual([]);
+    expect(rowKeys(ANON_NAME)).toHaveLength(3);
+    expect(window.localStorage.getItem(claimKey)).toBe(ACCOUNT_A);
+
+    // Another account neither adopts the claimed source nor sees it.
     signIn("account-b");
     expect(useComposerDraftStore.getState().drafts).toEqual({});
     expect(rowKeys(ACCOUNT_B)).toEqual([]);
-    expect(allStoredText()).not.toContain("SECRET");
+    expect(rowKeys(ANON_NAME)).toHaveLength(3);
+    expect(window.localStorage.getItem(claimKey)).toBe(ACCOUNT_A);
+
+    // The claimant picks the copy back up and finishes it.
+    signIn("account-a");
+    expect(Object.keys(useComposerDraftStore.getState().drafts).sort()).toEqual(
+      ["chat-1", "chat-2", "chat-3"],
+    );
+    expect(rowKeys(ANON_NAME)).toEqual([]);
+    expect(window.localStorage.getItem(claimKey)).toBeNull();
+    expect(rowKeys(ACCOUNT_A)).toHaveLength(3);
   });
 });
