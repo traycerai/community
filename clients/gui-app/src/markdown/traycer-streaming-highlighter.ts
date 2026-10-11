@@ -152,6 +152,14 @@ class TraycerStreamingHighlighter implements StreamingHighlighter {
   }
 
   highlight(code: string, lang: string): HighlightOutput | null {
+    return this.highlightForBlock(code, lang, false);
+  }
+
+  highlightForBlock(
+    code: string,
+    lang: string,
+    isStreaming: boolean,
+  ): HighlightOutput | null {
     this.ensureBoot();
     if (lang.length === 0) return null;
     if (code.length > MAX_HIGHLIGHT_CHARS) return null;
@@ -176,9 +184,9 @@ class TraycerStreamingHighlighter implements StreamingHighlighter {
         weight: html.length,
       };
     };
-    // Small blocks keep the existing synchronous path. A cold large block
-    // paints its same-sized plain <pre> before tokenization and markup parsing.
-    if (code.length < 4096) return render();
+    // Tailmark already throttles streaming blocks; returning null on that tick
+    // would replace their current highlight with plain text.
+    if (isStreaming || code.length < 4096) return render();
     const blockKey = `${lang}\0${contentFingerprint(code)}`;
     const key = `${theme}\0${blockKey}`;
     const existing = this.deferred.get(key);
@@ -285,17 +293,41 @@ export function getTraycerStreamingHighlighter(): StreamingHighlighter {
 }
 
 /** Tailmark's subscription is the lifetime of one mounted code block. */
+export interface TraycerBlockHighlighter extends StreamingHighlighter {
+  readonly inactive: StreamingHighlighter;
+}
+
 export function createTraycerBlockHighlighter(
   code: string,
   lang: string,
-): StreamingHighlighter {
+  isStreaming: boolean,
+): TraycerBlockHighlighter {
+  let lastNode: ReactNode | null = null;
   return {
-    highlight: () => traycerStreamingHighlighter.highlight(code, lang),
-    getCached: () => traycerStreamingHighlighter.getCached(code, lang),
+    highlight: () => {
+      const output = traycerStreamingHighlighter.highlightForBlock(
+        code,
+        lang,
+        isStreaming,
+      );
+      if (output !== null) lastNode = output.node;
+      return output;
+    },
+    getCached: () => {
+      const node = traycerStreamingHighlighter.getCached(code, lang);
+      if (node !== null) lastNode = node;
+      return node;
+    },
     setCached: (_code, _lang, output) =>
       traycerStreamingHighlighter.setCached(code, lang, output),
     subscribe: (onReadyChange) =>
       traycerStreamingHighlighter.subscribeBlock(code, lang, onReadyChange),
+    inactive: {
+      highlight: () => null,
+      getCached: () => lastNode,
+      setCached: () => {},
+      subscribe: () => () => {},
+    },
   };
 }
 

@@ -1,7 +1,7 @@
 import { Check, Copy } from "lucide-react";
 import { useTileBodyVisible } from "@/components/epic-canvas/hooks/use-tile-body-visible";
 import { useCallback, useMemo, type ReactNode } from "react";
-import { useThrottledHighlight } from "@tailmark/react";
+import { useIsMarkdownStreaming, useThrottledHighlight } from "@tailmark/react";
 import { useClipboardCopy } from "@/hooks/ui/use-clipboard-copy";
 import { cn } from "@/lib/utils";
 import { extractText } from "./extract-react-node-text";
@@ -53,16 +53,18 @@ function FencedCodeBlock({
   containerClassName: string | undefined;
 }) {
   const visible = useTileBodyVisible();
+  const isStreaming = useIsMarkdownStreaming();
   const highlighter = useMemo(
-    () => createTraycerBlockHighlighter(code, language),
-    [code, language],
+    () => createTraycerBlockHighlighter(code, language, isStreaming),
+    [code, language, isStreaming],
   );
   // Empty fence info stays unhighlighted (plain path) but still quoteable.
   const highlightLang = language.length > 0 ? language : null;
+  const blockHighlighter = visible ? highlighter : highlighter.inactive;
   const highlightedNodes = useThrottledHighlight(
     code,
     highlightLang ?? "text",
-    highlightLang === null || !visible ? null : highlighter,
+    highlightLang === null ? null : blockHighlighter,
   );
 
   const { copied, copy } = useClipboardCopy({

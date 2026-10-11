@@ -19,7 +19,10 @@ import {
   useThrottledHighlight,
   type StreamingHighlighter,
 } from "@tailmark/react";
+import type { ReactNode } from "react";
 import type { Components } from "react-markdown";
+import { TabBodySelectedContext } from "@/components/epic-canvas/canvas/tab-body-selected-context";
+import { PaneVisibilityContext } from "@/components/epic-tabs/pane-visibility-context";
 import { CodeBlock, PreBlock } from "@/markdown/components/code-block";
 import * as shikiHighlighter from "@/markdown/shiki-highlighter";
 import {
@@ -149,7 +152,7 @@ describe("Traycer StreamingHighlighter adapter - deferred large blocks (block-ow
     const codeToHtml = vi.spyOn(core, "codeToHtml");
     const bigCode = bigCodeFixture("settle");
     expect(bigCode.length).toBeGreaterThanOrEqual(4096);
-    const block = createTraycerBlockHighlighter(bigCode, "ts");
+    const block = createTraycerBlockHighlighter(bigCode, "ts", false);
 
     const onReadyChange = vi.fn();
     const unsubscribe = block.subscribe(onReadyChange);
@@ -197,7 +200,7 @@ describe("Traycer StreamingHighlighter adapter - deferred large blocks (block-ow
     const core = await getOrCreateHighlighter();
     const codeToHtml = vi.spyOn(core, "codeToHtml");
     const bigCode = bigCodeFixture("unowned");
-    const block = createTraycerBlockHighlighter(bigCode, "ts");
+    const block = createTraycerBlockHighlighter(bigCode, "ts", false);
 
     expect(block.highlight(bigCode, "ts")).toBeNull();
     // Give a not-actually-scheduled idle/timeout callback a chance to prove
@@ -211,7 +214,7 @@ describe("Traycer StreamingHighlighter adapter - deferred large blocks (block-ow
     const core = await getOrCreateHighlighter();
     const codeToHtml = vi.spyOn(core, "codeToHtml");
     const bigCode = bigCodeFixture("solo-cancel");
-    const block = createTraycerBlockHighlighter(bigCode, "ts");
+    const block = createTraycerBlockHighlighter(bigCode, "ts", false);
 
     const unsubscribe = block.subscribe(vi.fn());
     expect(block.highlight(bigCode, "ts")).toBeNull();
@@ -228,8 +231,8 @@ describe("Traycer StreamingHighlighter adapter - deferred large blocks (block-ow
     const bigCode = bigCodeFixture("shared-survive");
     // Two independently-mounted adapters for the SAME source+lang - the
     // realistic shape of two CodeBlock instances rendering identical code.
-    const blockA = createTraycerBlockHighlighter(bigCode, "ts");
-    const blockB = createTraycerBlockHighlighter(bigCode, "ts");
+    const blockA = createTraycerBlockHighlighter(bigCode, "ts", false);
+    const blockB = createTraycerBlockHighlighter(bigCode, "ts", false);
 
     const unsubA = blockA.subscribe(vi.fn());
     const unsubB = blockB.subscribe(vi.fn());
@@ -347,6 +350,162 @@ describe("real StreamingMarkdown + CodeBlock (streaming throttle integration)", 
         false,
       );
 
+      unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+// A fence's highlighted body is the only element carrying this class; the
+// plain fallback is a bare <pre>.
+const HIGHLIGHTED_BODY = ".traycer-md-shiki";
+
+const markdownComponents = {
+  code: CodeBlock as Components["code"],
+  pre: PreBlock as Components["pre"],
+};
+
+function tsFence(code: string): string {
+  return "```ts\n" + code + "\n```";
+}
+
+describe("CodeBlock under a streaming message that grows past the large-block threshold", () => {
+  it("stays highlighted on every Tailmark throttle tick, and ends on the final text", async () => {
+    await waitForReady();
+    const row = (tag: string): string =>
+      `const streamedTickFixture_${tag} = 1;\n`;
+    const small = row("SMALL").repeat(40);
+    const medium = row("MEDIUM").repeat(130);
+    const finalMarker = "streamedTickFixture_FINAL";
+    const large = row("FINAL").repeat(220);
+    expect(small.length).toBeLessThan(4096);
+    expect(medium.length).toBeGreaterThanOrEqual(4096);
+
+    vi.useFakeTimers();
+    try {
+      const streaming = (code: string): ReactNode => (
+        <StreamingMarkdown isStreaming components={markdownComponents}>
+          {tsFence(code)}
+        </StreamingMarkdown>
+      );
+      const { container, rerender, unmount } = render(streaming(small));
+      const highlighted = (): Element | null =>
+        container.querySelector(HIGHLIGHTED_BODY);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(400);
+      });
+      expect(highlighted()).not.toBeNull();
+
+      for (const code of [medium, large]) {
+        rerender(streaming(code));
+        // One tick: long enough for Tailmark's throttle to run on this
+        // source, short of the extra retry a deferred completion would earn.
+        // A block that goes plain at the tick and only recovers at that retry
+        // flickers on every token.
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(50);
+        });
+        expect(highlighted()).not.toBeNull();
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(400);
+        });
+      }
+
+      expect(highlighted()?.textContent).toContain(finalMarker);
+      unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+function TileBody(props: {
+  readonly visible: boolean;
+  readonly children: ReactNode;
+}): ReactNode {
+  return (
+    <PaneVisibilityContext.Provider value={props.visible}>
+      <TabBodySelectedContext.Provider value>
+        {props.children}
+      </TabBodySelectedContext.Provider>
+    </PaneVisibilityContext.Provider>
+  );
+}
+
+describe("CodeBlock while its tile body is hidden", () => {
+  function settled(code: string, visible: boolean): ReactNode {
+    return (
+      <TileBody visible={visible}>
+        <StreamingMarkdown isStreaming={false} components={markdownComponents}>
+          {tsFence(code)}
+        </StreamingMarkdown>
+      </TileBody>
+    );
+  }
+
+  it("keeps an already highlighted block's DOM through a hide, and tokenizes nothing when it is shown again", async () => {
+    await waitForReady();
+    const core = await getOrCreateHighlighter();
+    const code = "const hideShowFixture = 1;\nconst second = 2;";
+    const { container, rerender } = render(settled(code, true));
+    await waitFor(() => {
+      expect(container.querySelector(HIGHLIGHTED_BODY)).not.toBeNull();
+    });
+    const body = container.querySelector(HIGHLIGHTED_BODY);
+    const codeToHtml = vi.spyOn(core, "codeToHtml");
+
+    rerender(settled(code, false));
+    // Hidden is not "plain": the block a reader left is the block still there.
+    expect(container.querySelector(HIGHLIGHTED_BODY)).toBe(body);
+
+    rerender(settled(code, true));
+    expect(container.querySelector(HIGHLIGHTED_BODY)).toBe(body);
+    expect(codeToHtml).not.toHaveBeenCalled();
+  });
+
+  it("does no tokenization for a large cold block that mounts hidden, and highlights it once shown", async () => {
+    await waitForReady();
+    const core = await getOrCreateHighlighter();
+    const codeToHtml = vi.spyOn(core, "codeToHtml");
+    const bigCode = bigCodeFixture("hidden-cold");
+
+    vi.useFakeTimers();
+    try {
+      const { container, rerender, unmount } = render(settled(bigCode, false));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+      expect(codeToHtml).not.toHaveBeenCalled();
+      expect(container.querySelector(HIGHLIGHTED_BODY)).toBeNull();
+
+      rerender(settled(bigCode, true));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+      expect(codeToHtml).toHaveBeenCalled();
+      expect(container.querySelector(HIGHLIGHTED_BODY)).not.toBeNull();
+      unmount();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels a large block's queued tokenization when its tile is hidden before the work runs", async () => {
+    await waitForReady();
+    const core = await getOrCreateHighlighter();
+    const codeToHtml = vi.spyOn(core, "codeToHtml");
+    const bigCode = bigCodeFixture("hide-before-idle");
+
+    vi.useFakeTimers();
+    try {
+      // Visible: the block's work is queued for idle time, not yet run.
+      const { rerender, unmount } = render(settled(bigCode, true));
+      rerender(settled(bigCode, false));
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+      expect(codeToHtml).not.toHaveBeenCalled();
       unmount();
     } finally {
       vi.useRealTimers();
