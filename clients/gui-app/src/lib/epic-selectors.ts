@@ -879,12 +879,12 @@ export function useEpicTitle(): string {
 export function useRegisteredEpicTitle(epicId: string | null): string | null {
   const registry = getOpenEpicRegistry();
   const handle = useSyncExternalStore(
-    (listener) => registry.subscribe(listener),
+    subscribeToOpenEpicRegistry,
     () => (epicId === null ? null : registry.peek(epicId)),
     () => null,
   );
   return useSyncExternalStore(
-    (listener) => handle?.store.subscribe(listener) ?? noopSubscribe,
+    handle?.store.subscribe ?? noopSubscribe,
     () => liveEpicTitleFromHandle(handle),
     () => null,
   );
@@ -895,12 +895,12 @@ export function useRegisteredEpicPermissionRole(
 ): PermissionRole | null {
   const registry = getOpenEpicRegistry();
   const handle = useSyncExternalStore(
-    (listener) => registry.subscribe(listener),
+    subscribeToOpenEpicRegistry,
     () => (epicId === null ? null : registry.peek(epicId)),
     () => null,
   );
   return useSyncExternalStore(
-    (listener) => handle?.store.subscribe(listener) ?? noopSubscribe,
+    handle?.store.subscribe ?? noopSubscribe,
     () => liveEpicPermissionRoleFromHandle(handle),
     () => null,
   );
@@ -923,12 +923,12 @@ export function useRegisteredEpicPermissionRole(
 export function useRegisteredEpicLocalHome(epicId: string | null): boolean {
   const registry = getOpenEpicRegistry();
   const handle = useSyncExternalStore(
-    (listener) => registry.subscribe(listener),
+    subscribeToOpenEpicRegistry,
     () => (epicId === null ? null : registry.peek(epicId)),
     () => null,
   );
   return useSyncExternalStore(
-    (listener) => handle?.store.subscribe(listener) ?? noopSubscribe,
+    handle?.store.subscribe ?? noopSubscribe,
     () => isLocalHomedEpicHandle(handle),
     () => false,
   );
@@ -939,17 +939,17 @@ export function useRegisteredEpicTitleGenerating(
 ): boolean {
   const registry = getOpenEpicRegistry();
   const handle = useSyncExternalStore(
-    (listener) => registry.subscribe(listener),
+    subscribeToOpenEpicRegistry,
     () => (epicId === null ? null : registry.peek(epicId)),
     () => null,
   );
   const currentTitle = useSyncExternalStore(
-    (listener) => handle?.store.subscribe(listener) ?? noopSubscribe,
+    handle?.store.subscribe ?? noopSubscribe,
     () => liveEpicTitleFromHandle(handle),
     () => null,
   );
   const currentUpdatedAt = useSyncExternalStore(
-    (listener) => handle?.store.subscribe(listener) ?? noopSubscribe,
+    handle?.store.subscribe ?? noopSubscribe,
     () => liveEpicUpdatedAtFromHandle(handle),
     () => null,
   );
@@ -969,6 +969,16 @@ export function useRegisteredEpicTitleGenerating(
 
 function noopSubscribe(): () => void {
   return noopUnsubscribe;
+}
+
+/**
+ * The `subscribe` every registered-epic hook hands `useSyncExternalStore`. It
+ * must keep its identity: React drops and re-adds the listener whenever the
+ * function it is given changes, which an inline one does on every render. A
+ * handle's own `store.subscribe` is passed as it is for the same reason.
+ */
+function subscribeToOpenEpicRegistry(listener: () => void): () => void {
+  return getOpenEpicRegistry().subscribe(listener);
 }
 
 function noopUnsubscribe(): void {}
@@ -1295,7 +1305,7 @@ function archivedNodeIdsSnapshot(
 export function useMaybeEpicArchivedNodeIds(): readonly string[] {
   const handle = useMaybeOpenEpicHandle();
   return useSyncExternalStore(
-    (listener) => handle?.store.subscribe(listener) ?? noopSubscribe,
+    handle?.store.subscribe ?? noopSubscribe,
     () => archivedNodeIdsSnapshot(handle),
     () => EMPTY_TREE_ID_ARRAY,
   );
@@ -1473,12 +1483,12 @@ export function useRegisteredEpicLiveArtifactTitle(
 ): string | null {
   const registry = getOpenEpicRegistry();
   const handle = useSyncExternalStore(
-    (listener) => registry.subscribe(listener),
+    subscribeToOpenEpicRegistry,
     () => registry.peek(epicId),
     () => null,
   );
   return useSyncExternalStore(
-    (listener) => handle?.store.subscribe(listener) ?? noopSubscribe,
+    handle?.store.subscribe ?? noopSubscribe,
     () => liveArtifactTitleFromHandle(handle, artifactId),
     () => null,
   );
@@ -1621,7 +1631,7 @@ function agentUpdatedAtFromHandle(
 export function useRegisteredEpicSessionHostId(epicId: string): string | null {
   const registry = getOpenEpicRegistry();
   const handle = useSyncExternalStore(
-    (listener) => registry.subscribe(listener),
+    subscribeToOpenEpicRegistry,
     () => registry.peek(epicId),
     () => null,
   );
@@ -2239,12 +2249,12 @@ export function useRegisteredEpicLiveAgentIds(
 ): ReadonlySet<string> | null {
   const registry = getOpenEpicRegistry();
   const handle = useSyncExternalStore(
-    (listener) => registry.subscribe(listener),
+    subscribeToOpenEpicRegistry,
     () => (epicId === null ? null : registry.peek(epicId)),
     () => null,
   );
   return useSyncExternalStore(
-    (listener) => handle?.store.subscribe(listener) ?? noopSubscribe,
+    handle?.store.subscribe ?? noopSubscribe,
     () => liveAgentIdsSnapshot(handle),
     () => null,
   );
@@ -2300,7 +2310,7 @@ export function useEpicTreeIndex(): TreeSlice {
 export function useMaybeEpicTreeIndex(): TreeSlice {
   const handle = useMaybeOpenEpicHandle();
   return useSyncExternalStore(
-    (listener) => handle?.store.subscribe(listener) ?? noopSubscribe,
+    handle?.store.subscribe ?? noopSubscribe,
     () => (handle === null ? EMPTY_TREE_SLICE : handle.store.getState().tree),
     () => EMPTY_TREE_SLICE,
   );
@@ -2724,12 +2734,12 @@ export function useRegisteredEpicNodeArchived(
 ): boolean {
   const registry = getOpenEpicRegistry();
   const handle = useSyncExternalStore(
-    (listener) => registry.subscribe(listener),
+    subscribeToOpenEpicRegistry,
     () => registry.peek(epicId),
     () => null,
   );
   return useSyncExternalStore(
-    (listener) => handle?.store.subscribe(listener) ?? noopSubscribe,
+    handle?.store.subscribe ?? noopSubscribe,
     () => liveEpicNodeArchivedFromHandle(handle, nodeId),
     () => false,
   );
@@ -2812,7 +2822,7 @@ export function useMaybeEpicTuiAgentHarnessId(
 ): TuiHarnessId | null {
   const handle = useMaybeOpenEpicHandle();
   return useSyncExternalStore(
-    (listener) => handle?.store.subscribe(listener) ?? noopSubscribe,
+    handle?.store.subscribe ?? noopSubscribe,
     () => {
       if (handle === null) return null;
       const s = handle.store.getState();
