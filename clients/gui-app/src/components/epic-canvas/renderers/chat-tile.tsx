@@ -1839,7 +1839,10 @@ function useChatTileSessionViewModel(
   const currentUserId = profile?.userId ?? null;
   // The `/btw` side chat's create, on this tab's own host client: the fork is
   // bound to the source's host for life, like the source itself.
-  const createSideChat = useEpicCreateChatForHost();
+  // Only the stable `mutate`: the mutation result is a new object every
+  // render, and holding it in the side-chat callback's deps rebuilt the
+  // composer props, re-rendering the whole composer on every tile render.
+  const { mutate: createSideChat } = useEpicCreateChatForHost();
   const localSnapshotClearMarker = useLocalSnapshotClearStore((store) =>
     localSnapshotsClearedAt(
       store.clearedAtByScope,
@@ -2801,7 +2804,7 @@ function useChatTileSessionViewModel(
         ),
         placement: sideChatPlacementForTile(viewTabId, node.id),
         createChat: (request, callbacks) =>
-          createSideChat.mutate(request, {
+          createSideChat(request, {
             ...callbacks,
             onSuccess: (result) => {
               // Consume the captured queue edit only after the fork exists;
