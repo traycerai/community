@@ -617,6 +617,87 @@ describe("CodeBlock hidden and shown again while its message streams", () => {
   );
 });
 
+describe("CodeBlock when its streamed message completes", () => {
+  // Once a mounted block has shown highlighted code it never goes back to the
+  // plain form while its settled highlight (deferred for a large block) is
+  // still on its way: the reader keeps the highlighted prefix, then sees the
+  // final text highlighted. The plain form is a frame with no highlighted span.
+  const row = (index: number): string =>
+    `const completionFixture_${index} = ${index};\n`;
+  const rowsOf = (count: number): string =>
+    Array.from({ length: count }, (_, index) => row(index)).join("");
+  const STREAMED_ROWS = 140;
+  // Final source carries extra characters the streamed prefix did not have.
+  const FINAL_ROWS = 150;
+
+  it.each([
+    { name: "while its tile is visible", hideAtCompletion: false },
+    { name: "while its tile is hidden, then shown", hideAtCompletion: true },
+  ])(
+    "never renders the block plain between the streamed prefix and the final highlight $name",
+    async ({ hideAtCompletion }) => {
+      await waitForReady();
+      expect(rowsOf(STREAMED_ROWS).length).toBeGreaterThanOrEqual(4096);
+
+      vi.useFakeTimers();
+      try {
+        const message = (
+          rows: number,
+          streaming: boolean,
+          visible: boolean,
+        ): ReactNode => (
+          <TileBody visible={visible}>
+            <StreamingMarkdown
+              isStreaming={streaming}
+              components={markdownComponents}
+            >
+              {tsFence(rowsOf(rows))}
+            </StreamingMarkdown>
+          </TileBody>
+        );
+        const { container, rerender, unmount } = render(
+          message(STREAMED_ROWS, true, true),
+        );
+        const highlightedSpans = (): number =>
+          container.querySelectorAll(`${HIGHLIGHTED_BODY} span`).length;
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(600);
+        });
+        expect(highlightedSpans()).toBeGreaterThan(0);
+
+        if (hideAtCompletion) {
+          // The message completes while the tile is hidden: the settled pass
+          // runs with nothing to highlight against.
+          rerender(message(FINAL_ROWS, false, false));
+          await act(async () => {
+            await vi.advanceTimersByTimeAsync(200);
+          });
+          expect(highlightedSpans()).toBeGreaterThan(0);
+        }
+        rerender(message(FINAL_ROWS, false, true));
+
+        // The frame the completion commits, and every frame until the final
+        // highlight lands.
+        expect(highlightedSpans()).toBeGreaterThan(0);
+        for (let frame = 0; frame < 60; frame += 1) {
+          await act(async () => {
+            await vi.advanceTimersByTimeAsync(16);
+          });
+          expect(highlightedSpans()).toBeGreaterThan(0);
+        }
+
+        // It does catch up: the highlighted block carries the final text.
+        expect(
+          container.querySelector(HIGHLIGHTED_BODY)?.textContent,
+        ).toContain(`completionFixture_${FINAL_ROWS - 1}`);
+        unmount();
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+});
+
 describe("Shiki markup rendered through trusted markup", () => {
   it("maps tabindex to React's tabIndex, so rendering it raises no invalid-property warning", async () => {
     await waitForReady();

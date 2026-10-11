@@ -54,7 +54,7 @@ function FencedCodeBlock({
 }) {
   const visible = useTileBodyVisible();
   const isStreaming = useIsMarkdownStreaming();
-  // Hidden stream updates rebuild the adapter, but keep its displayed prefix.
+  // Keep the displayed prefix across hidden updates and deferred completion.
   const lastHighlight = useMemo<{ node: ReactNode | null }>(
     () => ({ node: null }),
     [],
@@ -72,6 +72,7 @@ function FencedCodeBlock({
     highlightLang ?? "text",
     highlightLang === null ? null : blockHighlighter,
   );
+  const displayedHighlight = highlightedNodes ?? lastHighlight.node;
 
   const { copied, copy } = useClipboardCopy({
     resetMs: 2000,
@@ -125,8 +126,8 @@ function FencedCodeBlock({
       </div>
 
       <div className="overflow-x-auto px-3.5 py-3 font-mono text-code">
-        {highlightedNodes !== null ? (
-          <div className="traycer-md-shiki">{highlightedNodes}</div>
+        {displayedHighlight !== null ? (
+          <div className="traycer-md-shiki">{displayedHighlight}</div>
         ) : (
           <pre className="m-0 bg-transparent p-0">
             <code className="font-mono text-code text-foreground">{code}</code>
