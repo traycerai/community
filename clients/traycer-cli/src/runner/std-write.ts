@@ -94,11 +94,40 @@ export function writeStdoutSync(chunk: Buffer): void {
 let stdoutTail: Promise<void> = Promise.resolve();
 let stderrTail: Promise<void> = Promise.resolve();
 
+// Streams that already carry the `error` listener below. A WeakSet so a
+// stream a test swaps out is not kept alive by this module.
+const guardedStreams = new WeakSet<NodeJS.WriteStream>();
+
+/**
+ * Keeps a reader that has gone away from killing the CLI.
+ *
+ * The write callbacks below settle on EPIPE, but the stream ALSO emits
+ * `error`, and an `error` event with no listener is thrown as an uncaught
+ * exception: `traycer ... | head -1`, or a desktop that stopped reading the
+ * child, crashed the CLI with exit 1 and a fatal Sentry event
+ * (TRAYCER-CLI-25) over a closed pipe that is not a CLI fault. Only EPIPE is
+ * absorbed - a listener's presence would otherwise swallow every other stream
+ * error too, so anything else is rethrown to reach the uncaught-exception
+ * path exactly as it did before the listener existed.
+ *
+ * Attached lazily, on the first write through this module, so a process that
+ * never writes pays nothing and one that does pays once per descriptor.
+ */
+function ignoreClosedReader(stream: NodeJS.WriteStream): void {
+  if (guardedStreams.has(stream)) return;
+  guardedStreams.add(stream);
+  stream.on("error", (error: NodeJS.ErrnoException) => {
+    if (error.code === "EPIPE") return;
+    throw error;
+  });
+}
+
 function tracked(
   stream: NodeJS.WriteStream,
   chunk: string | Buffer,
   tail: Promise<void>,
 ): Promise<void> {
+  ignoreClosedReader(stream);
   const written = new Promise<void>((resolve) => {
     // The callback fires once the chunk has been handed off, INCLUDING on
     // error (e.g. EPIPE when the reader closed), so this always settles and
@@ -122,6 +151,7 @@ function trackedWithOutcome(
   chunk: string | Buffer,
   tail: Promise<void>,
 ): { readonly settled: Promise<void>; readonly outcome: Promise<boolean> } {
+  ignoreClosedReader(stream);
   const outcome = new Promise<boolean>((resolve) => {
     stream.write(chunk, (error) =>
       resolve(error === undefined || error === null),
