@@ -31,7 +31,7 @@ import {
   type RequestOfMethod,
   type ResponseOfMethod,
 } from "./host-messenger";
-import { dialPriorityForMethod } from "./dial-priority";
+import { dialPriorityForMethod, type DialPriority } from "./dial-priority";
 import type {
   IWebSocketFactory,
   WebSocketCloseEvent,
@@ -61,6 +61,10 @@ import {
 } from "@traycer/protocol/framework/index";
 import type { TimerHandle } from "./timer-handle";
 import { recordNegotiatedHostManifest } from "./negotiated-manifest-registry";
+import {
+  hostOffersPersistentUnary,
+  recordPersistentUnarySupport,
+} from "./persistent-unary-hosts";
 import { resolveUnavailableMethodDegrade } from "./unavailable-method-degrade";
 import { PersistentRpcSession } from "./persistent-rpc-session";
 
@@ -293,6 +297,14 @@ export class WsRpcClient<
     OpenFrameBearerSource,
     Map<string, NegotiatedRpcConnection>
   >();
+  /**
+   * The cold handshake that later callers for the same endpoint may wait on,
+   * scoped like `connections`. See the wait in `acquireConnection`.
+   */
+  private readonly coldDials = new WeakMap<
+    OpenFrameBearerSource,
+    Map<string, ColdDial>
+  >();
 
   constructor(options: WsRpcClientOptions<Registry>) {
     this.registry = options.registry;
@@ -346,11 +358,14 @@ export class WsRpcClient<
       });
     }
 
-    const connection = await this.acquireConnection(
-      authority,
-      requestId,
-      method,
-    );
+    let connection = await this.acquireConnection(authority, requestId, method);
+    // A session is handed out while it has room, but the slot is only taken
+    // below. A burst handed the same session in one tick can fill it in
+    // between, so the callers beyond the cap look again - and dial the next
+    // session - rather than ask a full one for one more.
+    while (connection.persistent !== null && !connection.persistent.accepting) {
+      connection = await this.acquireConnection(authority, requestId, method);
+    }
     const session =
       connection.persistent === null
         ? connection.session
@@ -523,6 +538,15 @@ export class WsRpcClient<
       byEndpoint = new Map();
       this.connections.set(authority.bearer, byEndpoint);
     }
+    let dialing = this.coldDials.get(authority.bearer);
+    if (dialing === undefined) {
+      dialing = new Map();
+      this.coldDials.set(authority.bearer, dialing);
+    }
+    const priority = dialPriorityForMethod(method);
+    // Set once a dial this call waited on ended with the host answering and no
+    // session to share. From then on this call dials for itself.
+    let dialsForItself = false;
     for (;;) {
       throwIfAuthorityAborted(authority, requestId, method);
       const token = extractBearerOrThrowRpcError(
@@ -543,63 +567,150 @@ export class WsRpcClient<
         byEndpoint.delete(key);
         cached.persistent?.retire();
       }
-      // Until a capable ack arrives, each call owns its dial, priority and abort.
-      // In particular an old host must never serialize callers behind a probe.
-      const cache = byEndpoint;
-      let connection: NegotiatedRpcConnection | undefined;
-      connection = await this.connect(
-        authority,
-        requestId,
-        method,
-        token,
-        () => {
-          if (cache.get(key) === connection) cache.delete(key);
-        },
-      );
-      let authorityChanged: boolean;
-      try {
-        throwIfAuthorityAborted(authority, requestId, method);
-        const currentToken = extractBearerOrThrowRpcError(
-          authority.bearer,
-          requestId,
-          method,
+      // A host KNOWN to offer the capability gets one handshake for a cold
+      // burst. A Chromium renderer connects one WebSocket per address at a
+      // time and holds that lock about 10 ms after each handshake, so N cold
+      // dials finish N * ~12 ms apart and only then converge on one session.
+      // Waiting for the dial already in flight is faster for every caller
+      // after the first, and opens one socket instead of N.
+      //
+      // Four things a waiter must never inherit from the call it waits on:
+      // a lower priority (an interactive call does not queue behind a
+      // background dial), its abort (the wait ends on this caller's own
+      // signal, and an aborted dialer only hands the dial on), a chain of
+      // timeouts (a transport failure of the shared dial fails every waiter at
+      // that moment, exactly as their own dials would have failed), and a
+      // queue behind a host that answers without a session to share (each
+      // waiter then dials for itself at once, as it would have before).
+      const inFlight = dialing.get(key);
+      if (
+        !dialsForItself &&
+        inFlight !== undefined &&
+        inFlight.token === token &&
+        inFlight.verdict === verdict &&
+        !outranksDial(priority, inFlight.priority) &&
+        hostOffersPersistentUnary(authority.endpoint.hostId)
+      ) {
+        const outcome = await settledOrAborted(
+          inFlight.settled,
+          authority.abortSignal,
         );
-        authorityChanged =
-          currentToken !== connection.token ||
-          authority.cloudAuthorized?.() !== connection.verdict;
         throwIfAuthorityAborted(authority, requestId, method);
-      } catch (error) {
-        if (connection.persistent !== null) connection.persistent.retire();
-        else if (authority.abortSignal.aborted) connection.session.abort();
-        else connection.session.close(1000, "authority unavailable");
-        throwIfAuthorityAborted(authority, requestId, method);
-        throw error;
-      }
-      if (authorityChanged) {
-        if (connection.persistent === null)
-          connection.session.close(1000, "authority changed");
-        else connection.persistent.retire();
+        if (outcome !== null && outcome.kind === "transport-failed") {
+          // Pre-send by construction: this call never had a socket.
+          throw new RetryableTransportError({
+            code: "RPC_ERROR",
+            message: `Shared RPC handshake failed: ${outcome.message}`,
+            requestId,
+            method,
+            fatalDetails: null,
+            replaySafetyFromKey: false,
+          });
+        }
+        dialsForItself = outcome !== null && outcome.kind === "host-answered";
         continue;
       }
-      const established = cache.get(key);
-      if (connection.persistent === null) {
-        cache.delete(key);
-        established?.persistent?.retire();
-      } else if (
-        established !== undefined &&
-        established.token === connection.token &&
-        established.verdict === connection.verdict &&
-        established.persistent?.accepting === true
+      // Until a host is known capable, each call owns its dial, priority and
+      // abort. In particular an old host must never serialize callers behind a
+      // probe.
+      const cache = byEndpoint;
+      const pending = dialing;
+      const own = openColdDial(token, verdict, priority);
+      const registered = pending.get(key);
+      if (
+        registered === undefined ||
+        registered.token !== token ||
+        registered.verdict !== verdict ||
+        outranksDial(priority, registered.priority)
       ) {
-        // Concurrent cold dials converge only after each receives its own ack.
-        connection.persistent.retire();
-        return established;
-      } else {
-        established?.persistent?.retire();
-        if (!connection.persistent.accepting) continue;
-        cache.set(key, connection);
+        pending.set(key, own.dial);
       }
-      return connection;
+      let outcome: ColdDialOutcome = COLD_DIAL_LOOK_AGAIN;
+      try {
+        let connection: NegotiatedRpcConnection | undefined;
+        connection = await this.connect(
+          authority,
+          requestId,
+          method,
+          token,
+          () => {
+            if (cache.get(key) === connection) cache.delete(key);
+          },
+        );
+        let authorityChanged: boolean;
+        try {
+          throwIfAuthorityAborted(authority, requestId, method);
+          const currentToken = extractBearerOrThrowRpcError(
+            authority.bearer,
+            requestId,
+            method,
+          );
+          authorityChanged =
+            currentToken !== connection.token ||
+            authority.cloudAuthorized?.() !== connection.verdict;
+          throwIfAuthorityAborted(authority, requestId, method);
+        } catch (error) {
+          if (connection.persistent !== null) connection.persistent.retire();
+          else if (authority.abortSignal.aborted) connection.session.abort();
+          else connection.session.close(1000, "authority unavailable");
+          throwIfAuthorityAborted(authority, requestId, method);
+          throw error;
+        }
+        if (authorityChanged) {
+          if (connection.persistent === null)
+            connection.session.close(1000, "authority changed");
+          else connection.persistent.retire();
+          continue;
+        }
+        const established = cache.get(key);
+        if (connection.persistent === null) {
+          cache.delete(key);
+          established?.persistent?.retire();
+        } else if (
+          established !== undefined &&
+          established.token === connection.token &&
+          established.verdict === connection.verdict &&
+          established.persistent?.accepting === true
+        ) {
+          // Dials that were already in flight when the first ack landed (an
+          // unknown host, or one that outranked the registered dial) converge
+          // here, after their own ack: the session that is already carrying
+          // calls stays, and this spare one drains.
+          connection.persistent.retire();
+          return established;
+        } else {
+          established?.persistent?.retire();
+          if (!connection.persistent.accepting) continue;
+          cache.set(key, connection);
+        }
+        return connection;
+      } catch (error) {
+        // Only a failure of the transport itself is shared with the waiters:
+        // a retryable error that carries no host verdict. An abort is this
+        // caller's own decision, so the dial is handed on. Anything else is
+        // the host answering - a fatal, retryable or not, or a frame it should
+        // not have sent - so each waiter asks for itself and gets its own
+        // answer, with its own details.
+        if (
+          error instanceof RetryableTransportError &&
+          error.fatalDetails === null
+        ) {
+          outcome = { kind: "transport-failed", message: error.message };
+          // A host that fails a dial has to prove the capability again. The
+          // selection authority confirms a death from three failed dials, one
+          // per attempt, so the retries that follow must each be an attempt:
+          // sharing them too would stretch a dead host's confirmation from one
+          // retry round to three.
+          recordPersistentUnarySupport(authority.endpoint.hostId, false);
+        } else if (!(error instanceof HostRequestAbortedError)) {
+          outcome = COLD_DIAL_HOST_ANSWERED;
+        }
+        throw error;
+      } finally {
+        // After the cache write above, so a woken waiter finds the session.
+        if (pending.get(key) === own.dial) pending.delete(key);
+        own.settle(outcome);
+      }
     }
   }
 
@@ -683,6 +794,9 @@ export class WsRpcClient<
         ack.capabilities?.includes(UNARY_CAPABILITY_PERSISTENT_SESSION) === true
           ? session.promote(onClosed)
           : null;
+      // What the next cold burst reads: only an ack that actually yielded a
+      // shared session counts, and any other ack withdraws it.
+      recordPersistentUnarySupport(selected.hostId, persistent !== null);
       return { session, persistent, ack, manifest, compat, token, verdict };
     } catch (error) {
       session.close(1000, "handshake failed");
@@ -1298,6 +1412,70 @@ interface NegotiatedRpcConnection {
   readonly compat: CompatibilityCheckResult;
   readonly token: string;
   readonly verdict: boolean | undefined;
+}
+
+/**
+ * What a cold handshake tells the calls that waited on it.
+ *
+ * - `look-again`: it left a session to reuse, its caller gave the dial up (an
+ *   abort, a changed authority), or the ack was a legacy one, which has
+ *   already withdrawn the host from the memo. The waiter reuses the session,
+ *   waits on the next dial, or dials.
+ * - `host-answered`: the host answered with a verdict in place of the ack.
+ *   The host is alive and still in the memo, so each waiter dials for itself
+ *   now and none of them queues behind another.
+ * - `transport-failed`: the handshake itself failed. Every waiter fails with it.
+ */
+type ColdDialOutcome =
+  | { readonly kind: "look-again" }
+  | { readonly kind: "host-answered" }
+  | { readonly kind: "transport-failed"; readonly message: string };
+
+const COLD_DIAL_LOOK_AGAIN: ColdDialOutcome = { kind: "look-again" };
+const COLD_DIAL_HOST_ANSWERED: ColdDialOutcome = { kind: "host-answered" };
+
+/** One cold handshake in flight, as the callers that may wait on it see it. */
+interface ColdDial {
+  readonly token: string;
+  readonly verdict: boolean | undefined;
+  readonly priority: DialPriority;
+  /** Resolves once the handshake has ended, however it ended. Never rejects. */
+  readonly settled: Promise<ColdDialOutcome>;
+}
+
+function openColdDial(
+  token: string,
+  verdict: boolean | undefined,
+  priority: DialPriority,
+): { readonly dial: ColdDial; readonly settle: (o: ColdDialOutcome) => void } {
+  let settle: (outcome: ColdDialOutcome) => void = () => undefined;
+  const settled = new Promise<ColdDialOutcome>((resolve) => {
+    settle = resolve;
+  });
+  return { dial: { token, verdict, priority, settled }, settle };
+}
+
+/** Whether a caller at `mine` must not wait behind a dial made at `theirs`. */
+function outranksDial(mine: DialPriority, theirs: DialPriority): boolean {
+  return mine === "interactive" && theirs === "background";
+}
+
+/** The dial's outcome, or `null` when this caller's own signal aborted first. */
+function settledOrAborted(
+  settled: Promise<ColdDialOutcome>,
+  signal: AbortSignal,
+): Promise<ColdDialOutcome | null> {
+  if (signal.aborted) {
+    return Promise.resolve(null);
+  }
+  return new Promise<ColdDialOutcome | null>((resolve) => {
+    const onAbort = (): void => resolve(null);
+    signal.addEventListener("abort", onAbort, { once: true });
+    void settled.then((outcome) => {
+      signal.removeEventListener("abort", onAbort);
+      resolve(outcome);
+    });
+  });
 }
 
 /**

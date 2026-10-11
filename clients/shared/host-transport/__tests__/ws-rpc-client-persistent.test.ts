@@ -51,6 +51,10 @@ import type {
 import type { DialPriority } from "../dial-priority";
 import { WsRpcClient } from "../ws-rpc-client";
 import { resetNegotiatedManifests } from "../negotiated-manifest-registry";
+import {
+  installPersistentUnaryHostStore,
+  resetPersistentUnaryHosts,
+} from "../persistent-unary-hosts";
 import { createAuthAwareMessenger } from "../auth-aware-messenger";
 import { createRetryingMessenger } from "../retrying-messenger";
 import { TEST_CLIENT_IDENTITY } from "@traycer-clients/shared/test-fixtures/client-identity";
@@ -333,6 +337,42 @@ async function warmSession(
   respond(sockets[0], requestFrames(sockets[0])[0], { echoed: "WARM" });
   await warm;
 }
+/**
+ * A host whose persistent support the client has already seen, with no session
+ * left to reuse: the next call has to dial. `answered` holds the warm-up
+ * request, so `answerAll` leaves it alone.
+ */
+async function coldKnownHost() {
+  const built = harness(registry, DESKTOP);
+  const lease = new MutableBearerLease("token-1", "test-user");
+  await warmSession(built.client, built.sockets, lease);
+  built.sockets[0].fireClose();
+  await settle();
+  const answered = new Set(
+    requestFrames(built.sockets[0]).map((frame) => frame.requestId),
+  );
+  return { ...built, lease, answered };
+}
+/** Reads a call's outcome without awaiting it, so a call still waiting reads as not settled. */
+function track(call: Promise<unknown>): {
+  settled: boolean;
+  error: unknown;
+} {
+  const state: { settled: boolean; error: unknown } = {
+    settled: false,
+    error: null,
+  };
+  void call.then(
+    () => {
+      state.settled = true;
+    },
+    (error: unknown) => {
+      state.settled = true;
+      state.error = error;
+    },
+  );
+  return state;
+}
 /** Answers every request frame not answered yet, whichever socket carries it. */
 function answerAll(
   sockets: readonly StubWebSocket[],
@@ -399,6 +439,7 @@ describe("WsRpcClient persistent local session", () => {
   afterEach(() => {
     vi.useRealTimers();
     resetNegotiatedManifests();
+    resetPersistentUnaryHosts();
   });
 
   it("reuses a negotiated session for a burst and later calls, and answers correlated calls out of order", async () => {
@@ -463,6 +504,11 @@ describe("WsRpcClient persistent local session", () => {
     await establish(sockets[0], PERSISTENT_ACK);
     await establish(sockets[1], PERSISTENT_ACK);
     await settle();
+    // The first ack wins: both requests ride its session, and the second
+    // handshake's socket is retired unused.
+    expect(requestFrames(sockets[0])).toHaveLength(2);
+    expect(requestFrames(sockets[1])).toEqual([]);
+    expect(sockets[1].closed).not.toBeNull();
     const answered = new Set<string>();
     answerAll(sockets, answered);
     await settle();
@@ -471,6 +517,627 @@ describe("WsRpcClient persistent local session", () => {
     await expect(background).resolves.toEqual({ ready: true });
     await expect(interactive).resolves.toEqual({ echoed: "ok" });
     expect(answered.size).toBe(2);
+    expect(sockets[0].closed).toBeNull();
+  });
+
+  describe("cold burst", () => {
+    const burst = (
+      client: WsRpcClient<typeof registry>,
+      lease: MutableBearerLease,
+      size: number,
+    ): Promise<{ echoed: string }>[] =>
+      Array.from({ length: size }, (_, index) =>
+        client.request(
+          "host.echo",
+          { message: `m${index}` },
+          plain(authority(lease)),
+        ),
+      );
+
+    it("shares one handshake among a burst against a host already known to be capable", async () => {
+      const { client, sockets, lease, answered } = await coldKnownHost();
+
+      const calls = burst(client, lease, 8);
+      await settle();
+      // Warm socket plus ONE new dial, not one per call.
+      expect(sockets).toHaveLength(2);
+      sockets[1].fireOpen();
+      await settle();
+      expect(sockets).toHaveLength(2);
+      expect(openFrames(sockets)).toHaveLength(2);
+      expect(requestFrames(sockets[1])).toEqual([]);
+
+      sockets[1].fireMessage(PERSISTENT_ACK);
+      await settle();
+      expect(requestFrames(sockets[1])).toHaveLength(8);
+      expect(sockets).toHaveLength(2);
+      answerAll(sockets, answered);
+
+      expect(await Promise.all(calls)).toEqual(
+        Array.from({ length: 8 }, () => ({ echoed: "ok" })),
+      );
+      expect(sockets).toHaveLength(2);
+    });
+
+    it("shares one handshake among the first burst of a page when the host was recorded by an earlier page", async () => {
+      installPersistentUnaryHostStore({
+        read: () => [mockLocalHostEntry.hostId],
+        write: () => undefined,
+      });
+      const { client, sockets } = harness(registry, DESKTOP);
+      const lease = new MutableBearerLease("token-1", "test-user");
+
+      const calls = burst(client, lease, 8);
+      await settle();
+      expect(sockets).toHaveLength(1);
+
+      await establish(sockets[0], PERSISTENT_ACK);
+      expect(sockets).toHaveLength(1);
+      expect(requestFrames(sockets[0])).toHaveLength(8);
+      answerAll(sockets, new Set<string>());
+
+      expect(await Promise.all(calls)).toEqual(
+        Array.from({ length: 8 }, () => ({ echoed: "ok" })),
+      );
+      expect(openFrames(sockets)).toHaveLength(1);
+    });
+
+    it("falls back to a one-shot socket per waiter when the recorded host answers without the capability, and forgets the host", async () => {
+      const written: string[][] = [];
+      installPersistentUnaryHostStore({
+        read: () => [mockLocalHostEntry.hostId],
+        write: (hostIds) => {
+          written.push([...hostIds]);
+        },
+      });
+      const { client, sockets } = harness(registry, DESKTOP);
+      const lease = new MutableBearerLease("token-1", "test-user");
+
+      const calls = burst(client, lease, 3);
+      await settle();
+      expect(sockets).toHaveLength(1);
+
+      await establish(sockets[0], LEGACY_ACK);
+      // The dialing call completes one-shot here; each waiter dials its own.
+      expect(sockets).toHaveLength(3);
+      expect(requestFrames(sockets[0])).toHaveLength(1);
+      await establish(sockets[1], LEGACY_ACK);
+      await establish(sockets[2], LEGACY_ACK);
+      expect(sockets.map((socket) => requestFrames(socket).length)).toEqual([
+        1, 1, 1,
+      ]);
+      expect(sockets).toHaveLength(3);
+      answerAll(sockets, new Set<string>());
+
+      expect(await Promise.all(calls)).toEqual([
+        { echoed: "ok" },
+        { echoed: "ok" },
+        { echoed: "ok" },
+      ]);
+      expect(sockets.map((socket) => socket.closed?.code)).toEqual([
+        1000, 1000, 1000,
+      ]);
+      expect(written[written.length - 1]).toEqual([]);
+
+      // The next overlapping pair is a first contact again: a socket each, at once.
+      const pair = burst(client, lease, 2);
+      await settle();
+      expect(sockets).toHaveLength(5);
+      await establish(sockets[3], LEGACY_ACK);
+      await establish(sockets[4], LEGACY_ACK);
+      answerAll(sockets, new Set<string>(["req-1", "req-2", "req-3"]));
+      await Promise.all(pair);
+    });
+
+    it("never makes an interactive call wait behind a background dial, and sends late callers over the interactive session", async () => {
+      const { client, sockets, priorities, lease, answered } =
+        await coldKnownHost();
+
+      const first = client.request("host.status", {}, plain(authority(lease)));
+      await settle();
+      const interactive = client.request(
+        "host.echo",
+        { message: "i" },
+        plain(authority(lease)),
+      );
+      await settle();
+      expect(sockets).toHaveLength(3);
+      expect(priorities.slice(1)).toEqual(["background", "interactive"]);
+
+      const lateStatus = client.request(
+        "host.status",
+        {},
+        plain(authority(lease)),
+      );
+      const lateEcho = client.request(
+        "host.echo",
+        { message: "late" },
+        plain(authority(lease)),
+      );
+      await settle();
+      expect(sockets).toHaveLength(3);
+
+      await establish(sockets[2], PERSISTENT_ACK);
+      expect(
+        requestFrames(sockets[2])
+          .map((frame) => frame.method)
+          .sort(),
+      ).toEqual(["host.echo", "host.echo", "host.status"]);
+      expect(requestFrames(sockets[1])).toEqual([]);
+
+      // The slower background handshake lands last: its caller moves over too.
+      await establish(sockets[1], PERSISTENT_ACK);
+      expect(
+        requestFrames(sockets[2])
+          .map((frame) => frame.method)
+          .sort(),
+      ).toEqual(["host.echo", "host.echo", "host.status", "host.status"]);
+      expect(requestFrames(sockets[1])).toEqual([]);
+      expect(sockets[1].closed).not.toBeNull();
+      expect(sockets).toHaveLength(3);
+      answerAll(sockets, answered);
+
+      expect(
+        await Promise.all([first, interactive, lateStatus, lateEcho]),
+      ).toEqual([
+        { ready: true },
+        { echoed: "ok" },
+        { ready: true },
+        { echoed: "ok" },
+      ]);
+    });
+
+    it("lets a waiter abort alone without disturbing the shared dial or the other callers", async () => {
+      const { client, sockets, lease, answered } = await coldKnownHost();
+      const aborting = new AbortController();
+
+      const kept = client.request(
+        "host.echo",
+        { message: "kept" },
+        plain(authority(lease)),
+      );
+      const leaving = track(
+        client.request(
+          "host.echo",
+          { message: "leaving" },
+          plain(
+            authorityWith(lease, {
+              verdict: undefined,
+              cancel: undefined,
+              controller: aborting,
+            }),
+          ),
+        ),
+      );
+      await settle();
+      expect(sockets).toHaveLength(2);
+
+      aborting.abort();
+      await settle();
+      expect(leaving.settled).toBe(true);
+      expect(leaving.error).toBeInstanceOf(HostRequestAbortedError);
+      expect(sockets[1].closed).toBeNull();
+
+      await establish(sockets[1], PERSISTENT_ACK);
+      expect(requestFrames(sockets[1]).map((frame) => frame.params)).toEqual([
+        { message: "kept" },
+      ]);
+      answerAll(sockets, answered);
+      await expect(kept).resolves.toEqual({ echoed: "ok" });
+      expect(sockets).toHaveLength(2);
+    });
+
+    it("rejects every waiter at once, retryably and without dialing, when the shared dial closes before it opens", async () => {
+      const { client, sockets, lease } = await coldKnownHost();
+
+      const calls = burst(client, lease, 3).map(track);
+      await settle();
+      expect(sockets).toHaveLength(2);
+
+      sockets[1].fireClose();
+      await settle();
+
+      expect(calls.map((call) => call.settled)).toEqual([true, true, true]);
+      for (const call of calls)
+        expect(call.error).toBeInstanceOf(RetryableTransportError);
+      expect(sockets).toHaveLength(2);
+    });
+
+    it("hands the dial to one waiter when the dialing call aborts, and the other waiters wait on that one", async () => {
+      const { client, sockets, lease, answered } = await coldKnownHost();
+      const dialer = new AbortController();
+
+      const aborted = track(
+        client.request(
+          "host.echo",
+          { message: "dialer" },
+          plain(
+            authorityWith(lease, {
+              verdict: undefined,
+              cancel: undefined,
+              controller: dialer,
+            }),
+          ),
+        ),
+      );
+      const second = client.request(
+        "host.echo",
+        { message: "second" },
+        plain(authority(lease)),
+      );
+      const third = client.request(
+        "host.echo",
+        { message: "third" },
+        plain(authority(lease)),
+      );
+      await settle();
+      expect(sockets).toHaveLength(2);
+
+      dialer.abort();
+      await settle();
+      expect(aborted.settled).toBe(true);
+      expect(aborted.error).toBeInstanceOf(HostRequestAbortedError);
+      expect(sockets[1].closed).not.toBeNull();
+      // Exactly one waiter took over the dial.
+      expect(sockets).toHaveLength(3);
+
+      await establish(sockets[2], PERSISTENT_ACK);
+      expect(sockets).toHaveLength(3);
+      expect(requestFrames(sockets[2])).toHaveLength(2);
+      expect(requestFrames(sockets[2]).map((frame) => frame.params)).toEqual(
+        expect.arrayContaining([{ message: "second" }, { message: "third" }]),
+      );
+      expect(requestFrames(sockets[1])).toEqual([]);
+      answerAll(sockets, answered);
+
+      await expect(second).resolves.toEqual({ echoed: "ok" });
+      await expect(third).resolves.toEqual({ echoed: "ok" });
+    });
+
+    it("does not make a call with a different token wait for a dial made under another token", async () => {
+      const { client, sockets, lease, answered } = await coldKnownHost();
+
+      const first = client.request(
+        "host.echo",
+        { message: "old" },
+        plain(authority(lease)),
+      );
+      await settle();
+      expect(sockets).toHaveLength(2);
+
+      lease.rotate("token-2");
+      const second = client.request(
+        "host.echo",
+        { message: "new" },
+        plain(authority(lease)),
+      );
+      await settle();
+      expect(sockets).toHaveLength(3);
+
+      sockets[1].fireOpen();
+      sockets[2].fireOpen();
+      await settle();
+      expect(openFrames([sockets[1]])[0]).toMatchObject({ token: "token-1" });
+      expect(openFrames([sockets[2]])[0]).toMatchObject({ token: "token-2" });
+
+      await establish(sockets[2], PERSISTENT_ACK);
+      sockets[1].fireMessage(PERSISTENT_ACK);
+      await settle();
+      answerAll(sockets, answered);
+      await expect(second).resolves.toEqual({ echoed: "ok" });
+      await expect(first).resolves.toEqual({ echoed: "ok" });
+    });
+
+    it("sends every waiter to its own dial at once when the dialing call gets a host verdict", async () => {
+      const { client, sockets, lease, answered } = await coldKnownHost();
+
+      const calls = burst(client, lease, 3);
+      const states = calls.map(track);
+      await settle();
+      expect(sockets).toHaveLength(2);
+
+      sockets[1].fireOpen();
+      await settle();
+      sockets[1].fireMessage(fatalUnauthorized);
+      await settle();
+
+      // The host answered: its verdict belongs to the dialing call alone.
+      expect(states[0].settled).toBe(true);
+      expect(states[0].error).toBeInstanceOf(HostRpcError);
+      expect(states[0].error).not.toBeInstanceOf(RetryableTransportError);
+      expect(states[0].error).toMatchObject({ code: "UNAUTHORIZED" });
+      // Both waiters dialed for themselves at once, neither behind the other.
+      expect(sockets).toHaveLength(4);
+      expect(states.map((state) => state.settled)).toEqual([
+        true,
+        false,
+        false,
+      ]);
+
+      await establish(sockets[2], PERSISTENT_ACK);
+      await establish(sockets[3], PERSISTENT_ACK);
+      expect(
+        requestFrames(sockets[2]).length + requestFrames(sockets[3]).length,
+      ).toBe(2);
+      answerAll(sockets, answered);
+
+      await expect(calls[1]).resolves.toEqual({ echoed: "ok" });
+      await expect(calls[2]).resolves.toEqual({ echoed: "ok" });
+      expect(sockets).toHaveLength(4);
+    });
+
+    it("still treats the host as capable after host verdicts, so the next burst shares one handshake", async () => {
+      const { client, sockets, lease, answered } = await coldKnownHost();
+
+      const dialer = track(
+        client.request(
+          "host.echo",
+          { message: "dialer" },
+          plain(authority(lease)),
+        ),
+      );
+      const waiter = track(
+        client.request(
+          "host.echo",
+          { message: "waiter" },
+          plain(authority(lease)),
+        ),
+      );
+      await settle();
+      expect(sockets).toHaveLength(2);
+      sockets[1].fireOpen();
+      await settle();
+      sockets[1].fireMessage(fatalUnauthorized);
+      await settle();
+      expect(dialer.error).toMatchObject({ code: "UNAUTHORIZED" });
+
+      // The waiter dialed its own socket and gets a verdict too: no capable
+      // ack has been seen since, so only the verdicts could have changed what
+      // the client believes about this host.
+      expect(sockets).toHaveLength(3);
+      sockets[2].fireOpen();
+      await settle();
+      sockets[2].fireMessage(fatalUnauthorized);
+      await settle();
+      expect(waiter.error).toMatchObject({ code: "UNAUTHORIZED" });
+
+      const pair = burst(client, lease, 2);
+      await settle();
+      expect(sockets).toHaveLength(4);
+      await establish(sockets[3], PERSISTENT_ACK);
+      expect(requestFrames(sockets[3])).toHaveLength(2);
+      expect(sockets).toHaveLength(4);
+      answerAll(sockets, answered);
+      expect(await Promise.all(pair)).toEqual([
+        { echoed: "ok" },
+        { echoed: "ok" },
+      ]);
+    });
+
+    it("treats a retryable host fatal in place of the ack as a verdict, so each waiter still dials its own socket", async () => {
+      const { client, sockets, lease, answered } = await coldKnownHost();
+      const details = {
+        code: "HOST_NOT_READY",
+        reason: "Host is not ready",
+        incompatibleMethods: null,
+        upgradeGuidance: null,
+        retryable: true,
+      };
+
+      const calls = burst(client, lease, 3);
+      const states = calls.map(track);
+      await settle();
+      expect(sockets).toHaveLength(2);
+
+      sockets[1].fireOpen();
+      await settle();
+      sockets[1].fireMessage({ kind: "fatalError", details });
+      await settle();
+
+      expect(states[0].settled).toBe(true);
+      expect(states[0].error).toBeInstanceOf(RetryableTransportError);
+      expect(states[0].error).toMatchObject({ fatalDetails: details });
+      // Socket count and the waiters' outcomes in one value, so a failure shows both.
+      expect({
+        sockets: sockets.length,
+        waiters: states.slice(1).map((state) => ({
+          settled: state.settled,
+          error: state.error,
+        })),
+      }).toEqual({
+        sockets: 4,
+        waiters: [
+          { settled: false, error: null },
+          { settled: false, error: null },
+        ],
+      });
+
+      await establish(sockets[2], PERSISTENT_ACK);
+      await establish(sockets[3], PERSISTENT_ACK);
+      expect(
+        requestFrames(sockets[2]).length + requestFrames(sockets[3]).length,
+      ).toBe(2);
+      answerAll(sockets, answered);
+      await expect(calls[1]).resolves.toEqual({ echoed: "ok" });
+      await expect(calls[2]).resolves.toEqual({ echoed: "ok" });
+      expect(sockets).toHaveLength(4);
+    });
+
+    it("rejects every waiter retryably in the step the shared dial times out, without a further socket", async () => {
+      vi.useFakeTimers();
+      const { client, sockets, lease } = await coldKnownHost();
+
+      const states = burst(client, lease, 3).map(track);
+      await settle();
+      expect(sockets).toHaveLength(2);
+      expect(states.map((state) => state.settled)).toEqual([
+        false,
+        false,
+        false,
+      ]);
+
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(states.map((state) => state.settled)).toEqual([true, true, true]);
+      for (const state of states)
+        expect(state.error).toBeInstanceOf(RetryableTransportError);
+      expect(sockets).toHaveLength(2);
+    });
+
+    it("rejects every waiter retryably in the step the shared handshake gets no ack in time, without a further socket", async () => {
+      vi.useFakeTimers();
+      const { client, sockets, lease } = await coldKnownHost();
+
+      const states = burst(client, lease, 3).map(track);
+      await settle();
+      sockets[1].fireOpen();
+      await settle();
+      expect(sockets).toHaveLength(2);
+      expect(states.map((state) => state.settled)).toEqual([
+        false,
+        false,
+        false,
+      ]);
+
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      expect(states.map((state) => state.settled)).toEqual([true, true, true]);
+      for (const state of states)
+        expect(state.error).toBeInstanceOf(RetryableTransportError);
+      expect(sockets).toHaveLength(2);
+    });
+
+    it("does not make a call with a different cloud verdict wait for a dial made under another verdict", async () => {
+      const { client, sockets, lease, answered } = await coldKnownHost();
+      const allowed = authorityWith(lease, {
+        verdict: { value: true },
+        cancel: undefined,
+        controller: undefined,
+      });
+      const denied = authorityWith(lease, {
+        verdict: { value: false },
+        cancel: undefined,
+        controller: undefined,
+      });
+
+      const first = client.request(
+        "host.echo",
+        { message: "a" },
+        plain(allowed),
+      );
+      await settle();
+      expect(sockets).toHaveLength(2);
+      const second = client.request(
+        "host.echo",
+        { message: "d" },
+        plain(denied),
+      );
+      await settle();
+      expect(sockets).toHaveLength(3);
+
+      sockets[1].fireOpen();
+      sockets[2].fireOpen();
+      await settle();
+      expect(openFrames([sockets[1]])[0]).toMatchObject({
+        cloudAuthorized: true,
+      });
+      expect(openFrames([sockets[2]])[0]).toMatchObject({
+        cloudAuthorized: false,
+      });
+
+      sockets[1].fireMessage(PERSISTENT_ACK);
+      await settle();
+      answerAll(sockets, answered);
+      await expect(first).resolves.toEqual({ echoed: "ok" });
+      sockets[2].fireMessage(PERSISTENT_ACK);
+      await settle();
+      answerAll(sockets, answered);
+      await expect(second).resolves.toEqual({ echoed: "ok" });
+      expect(sockets).toHaveLength(3);
+    });
+
+    it("still wakes the waiters of a dial whose registration a later interactive dial replaced", async () => {
+      const { client, sockets, priorities, lease, answered } =
+        await coldKnownHost();
+
+      const a = client.request("host.status", {}, plain(authority(lease)));
+      await settle();
+      const b = client.request("host.status", {}, plain(authority(lease)));
+      await settle();
+      expect(sockets).toHaveLength(2);
+      const c = client.request(
+        "host.echo",
+        { message: "c" },
+        plain(authority(lease)),
+      );
+      await settle();
+      expect(sockets).toHaveLength(3);
+      expect(priorities.slice(1)).toEqual(["background", "interactive"]);
+
+      await establish(sockets[1], PERSISTENT_ACK);
+      expect(requestFrames(sockets[1]).map((frame) => frame.method)).toEqual([
+        "host.status",
+        "host.status",
+      ]);
+      expect(sockets).toHaveLength(3);
+
+      await establish(sockets[2], PERSISTENT_ACK);
+      expect(
+        requestFrames(sockets[1]).length + requestFrames(sockets[2]).length,
+      ).toBe(3);
+      expect(sockets).toHaveLength(3);
+      answerAll(sockets, answered);
+
+      expect(await Promise.all([a, b, c])).toEqual([
+        { ready: true },
+        { ready: true },
+        { echoed: "ok" },
+      ]);
+    });
+
+    it("makes the host prove itself again after the shared dial fails at transport level, until a capable ack", async () => {
+      const written: string[][] = [];
+      installPersistentUnaryHostStore({
+        read: () => [mockLocalHostEntry.hostId],
+        write: (hostIds) => {
+          written.push([...hostIds]);
+        },
+      });
+      const { client, sockets } = harness(registry, DESKTOP);
+      const lease = new MutableBearerLease("token-1", "test-user");
+
+      const failed = burst(client, lease, 3).map(track);
+      await settle();
+      expect(sockets).toHaveLength(1);
+
+      sockets[0].fireClose();
+      await settle();
+      expect(failed.map((state) => state.settled)).toEqual([true, true, true]);
+      for (const state of failed)
+        expect(state.error).toBeInstanceOf(RetryableTransportError);
+      expect(sockets).toHaveLength(1);
+
+      // The failure is evidence against the host, not a verdict from it: the
+      // memo no longer vouches for it.
+      expect(written[written.length - 1]).toEqual([]);
+      const pair = burst(client, lease, 2);
+      await settle();
+      expect(sockets).toHaveLength(3);
+
+      await establish(sockets[1], PERSISTENT_ACK);
+      await establish(sockets[2], PERSISTENT_ACK);
+      expect(
+        requestFrames(sockets[1]).length + requestFrames(sockets[2]).length,
+      ).toBe(2);
+      expect(sockets).toHaveLength(3);
+      answerAll(sockets, new Set<string>());
+      expect(await Promise.all(pair)).toEqual([
+        { echoed: "ok" },
+        { echoed: "ok" },
+      ]);
+
+      expect(written[written.length - 1]).toEqual([mockLocalHostEntry.hostId]);
+    });
   });
 
   it("falls back to a socket per call when the host does not acknowledge the capability", async () => {
@@ -936,6 +1603,79 @@ describe("WsRpcClient persistent local session", () => {
     await establish(sockets[1], PERSISTENT_ACK);
     respond(sockets[1], requestFrames(sockets[1])[0], { echoed: "over" });
     await expect(over).resolves.toEqual({ echoed: "over" });
+  });
+
+  describe("a burst larger than the running cap", () => {
+    const OVER_CAP = 6;
+    const overlapping = (
+      client: WsRpcClient<typeof registry>,
+      lease: MutableBearerLease,
+    ): Promise<{ echoed: string }>[] =>
+      Array.from({ length: MAX_RUNNING_REQUESTS + OVER_CAP }, (_, index) =>
+        client.request(
+          "host.echo",
+          { message: `m${index}` },
+          plain(authority(lease)),
+        ),
+      );
+    const rejected = (states: readonly { error: unknown }[]): unknown[] =>
+      states.map((state) => state.error).filter((error) => error !== null);
+    const allAnswered = Array.from(
+      { length: MAX_RUNNING_REQUESTS + OVER_CAP },
+      () => ({ echoed: "ok" }),
+    );
+
+    it("sends the calls beyond the cap of a warm session over one new socket, and rejects none", async () => {
+      const { client, sockets } = harness(registry, DESKTOP);
+      const lease = new MutableBearerLease("token-1", "test-user");
+      await warmSession(client, sockets, lease);
+      const answered = new Set(
+        requestFrames(sockets[0]).map((frame) => frame.requestId),
+      );
+
+      const calls = overlapping(client, lease);
+      const states = calls.map(track);
+      await settle();
+
+      expect(rejected(states)).toEqual([]);
+      expect(requestFrames(sockets[0])).toHaveLength(1 + MAX_RUNNING_REQUESTS);
+      expect(sockets).toHaveLength(2);
+      expect(requestFrames(sockets[1])).toEqual([]);
+
+      await establish(sockets[1], PERSISTENT_ACK);
+      expect(rejected(states)).toEqual([]);
+      expect(sockets).toHaveLength(2);
+      expect(requestFrames(sockets[1])).toHaveLength(OVER_CAP);
+      answerAll(sockets, answered);
+
+      expect(await Promise.all(calls)).toEqual(allAnswered);
+      expect(sockets).toHaveLength(2);
+    });
+
+    it("fills the first session of a cold known host to the cap, then sends the rest over one more socket, and rejects none", async () => {
+      const { client, sockets, lease, answered } = await coldKnownHost();
+
+      const calls = overlapping(client, lease);
+      const states = calls.map(track);
+      await settle();
+      expect(rejected(states)).toEqual([]);
+      expect(sockets).toHaveLength(2);
+
+      await establish(sockets[1], PERSISTENT_ACK);
+      expect(rejected(states)).toEqual([]);
+      expect(requestFrames(sockets[1])).toHaveLength(MAX_RUNNING_REQUESTS);
+      expect(sockets).toHaveLength(3);
+      expect(requestFrames(sockets[2])).toEqual([]);
+
+      await establish(sockets[2], PERSISTENT_ACK);
+      expect(rejected(states)).toEqual([]);
+      expect(requestFrames(sockets[2])).toHaveLength(OVER_CAP);
+      expect(sockets).toHaveLength(3);
+      answerAll(sockets, answered);
+
+      expect(await Promise.all(calls)).toEqual(allAnswered);
+      expect(sockets).toHaveLength(3);
+    });
   });
 
   it("closes after the idle window and negotiates a new session for the next call", async () => {
