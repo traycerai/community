@@ -54,7 +54,7 @@ function queueIndicatorInvalidation(
   if (pending !== undefined) {
     pending.all ||= entities === null;
     pending.entities.push(...(entities ?? []));
-    pending.canceller = canceller;
+    pending.canceller = canceller ?? pending.canceller;
     return;
   }
   const entry: PendingInvalidation = {
@@ -66,32 +66,34 @@ function queueIndicatorInvalidation(
   const owner = hosts;
   queueMicrotask(() => {
     void (async () => {
-      do {
-        if (pendingInvalidations.get(queryClient) !== owner) return;
-        const all = entry.all;
-        const changed = entry.entities;
-        entry.all = false;
-        entry.entities = [];
-        await invalidateMatchingNotificationIndicators(
-          queryClient,
-          {
-            queryKey: notificationsQueryKeys.indicatorScope(hostId),
-            predicate: (query) =>
-              all ||
-              changed.some((entity) =>
-                notificationsQueryKeys.isIndicatorQueryForEntity(
-                  query.queryKey,
-                  entity,
+      try {
+        do {
+          if (pendingInvalidations.get(queryClient) !== owner) return;
+          const all = entry.all;
+          const changed = entry.entities;
+          entry.all = false;
+          entry.entities = [];
+          await invalidateMatchingNotificationIndicators(
+            queryClient,
+            {
+              queryKey: notificationsQueryKeys.indicatorScope(hostId),
+              predicate: (query) =>
+                all ||
+                changed.some((entity) =>
+                  notificationsQueryKeys.isIndicatorQueryForEntity(
+                    query.queryKey,
+                    entity,
+                  ),
                 ),
-              ),
-          },
-          entry.canceller,
-        );
-        // Changes arriving during a read need a fresh successor, not a join to its stale answer.
-      } while (owner.get(hostId)?.all || entry.entities.length > 0);
-    })().finally(() => {
-      if (owner.get(hostId) === entry) owner.delete(hostId);
-    });
+            },
+            entry.canceller,
+          );
+          // Changes arriving during a read need a fresh successor, not a join to its stale answer.
+        } while (owner.get(hostId)?.all || entry.entities.length > 0);
+      } finally {
+        if (owner.get(hostId) === entry) owner.delete(hostId);
+      }
+    })();
   });
 }
 

@@ -3,7 +3,7 @@ import {
   QueryObserver,
   type QueryKey,
 } from "@tanstack/react-query";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { hostQueryKeys } from "@/lib/query-keys/host-query-keys";
 import {
   invalidateProviderFamilyQueries,
@@ -62,6 +62,14 @@ async function watchSettled(key: QueryKey): Promise<Watched> {
 
 async function flush(): Promise<void> {
   for (let hop = 0; hop < 20; hop += 1) await Promise.resolve();
+}
+
+function afterMicrotasks(count: number, run: () => void): void {
+  if (count <= 0) {
+    run();
+    return;
+  }
+  queueMicrotask(() => afterMicrotasks(count - 1, run));
 }
 
 function refresh(providerIds: ReadonlyArray<string | null>): void {
@@ -191,6 +199,46 @@ describe("invalidateProviderFamilyQueries", () => {
     expect(classic.reads).toHaveLength(2);
     for (const other of untouched) expect(other.reads).toHaveLength(1);
   });
+
+  // A change raised just after a refresh settled must not be lost to the
+  // refresh's own bookkeeping. Where in the microtask queue that change lands
+  // is not something a caller controls, so every offset must end the same way:
+  // one more read.
+  it.each([0, 1, 2, 3, 4, 5, 6])(
+    "reads again for a change raised %i microtasks after its refresh settled",
+    async (offset) => {
+      queryClient = new QueryClient();
+      const skills = await watchSettled(
+        providersNativeQueryKeys.skillsList("h1", CODEX),
+      );
+      const invalidate = queryClient.invalidateQueries.bind(queryClient);
+      let raised = false;
+      vi.spyOn(queryClient, "invalidateQueries").mockImplementation(
+        (...args) => {
+          const answered = invalidate(...args);
+          if (!raised) {
+            raised = true;
+            // Registered ahead of the refresh loop's own continuation.
+            void answered.then(() => {
+              afterMicrotasks(offset, () => refresh(["codex"]));
+            });
+          }
+          return answered;
+        },
+      );
+
+      refresh(["codex"]);
+      await flush();
+      expect(skills.reads).toHaveLength(2);
+      skills.reads[1]();
+      await flush();
+
+      expect(skills.reads).toHaveLength(3);
+      skills.reads[2]();
+      await flush();
+      expect(skills.reads).toHaveLength(3);
+    },
+  );
 
   it("does not revive a query removed before the refresh ran", async () => {
     queryClient = new QueryClient();

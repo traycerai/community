@@ -144,18 +144,21 @@ export function invalidateProviderFamilyQueries(
     const owner = pending;
     queueMicrotask(() => {
       void (async () => {
-        do {
-          entry.dirty = false;
-          // Do not revive a removed/replaced query (logout or an authoritative write).
-          if (queryClient.getQueryCache().get(query.queryHash) !== query)
-            return;
-          const filters = { queryKey: query.queryKey, exact: true };
-          await queryClient.cancelQueries(filters);
-          await queryClient.invalidateQueries(filters);
-        } while (owner.get(query.queryHash)?.dirty);
-      })().finally(() => {
-        if (owner.get(query.queryHash) === entry) owner.delete(query.queryHash);
-      });
+        try {
+          do {
+            entry.dirty = false;
+            // Do not revive a removed/replaced query (logout or an authoritative write).
+            if (queryClient.getQueryCache().get(query.queryHash) !== query)
+              return;
+            const filters = { queryKey: query.queryKey, exact: true };
+            await queryClient.cancelQueries(filters);
+            await queryClient.invalidateQueries(filters);
+          } while (owner.get(query.queryHash)?.dirty);
+        } finally {
+          if (owner.get(query.queryHash) === entry)
+            owner.delete(query.queryHash);
+        }
+      })();
     });
   }
 }

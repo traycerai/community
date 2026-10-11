@@ -102,6 +102,14 @@ async function flush(): Promise<void> {
   for (let hop = 0; hop < 20; hop += 1) await Promise.resolve();
 }
 
+function afterMicrotasks(count: number, run: () => void): void {
+  if (count <= 0) {
+    run();
+    return;
+  }
+  queueMicrotask(() => afterMicrotasks(count - 1, run));
+}
+
 /** One mounted indicator query whose every request stays pending until settled. */
 function mountIndicatorQuery() {
   const queryClient = new QueryClient({
@@ -358,6 +366,98 @@ describe("notification indicator cache invalidation", () => {
     // Once the successor settles nothing is left dirty.
     await flush();
     expect(requests).toHaveLength(3);
+  });
+
+  // A change raised just after a pass finished must not be lost to the pass's
+  // own bookkeeping. Where in the microtask queue it lands is not something a
+  // caller controls, so every offset must end the same way: the change's
+  // surface is invalidated.
+  it.each([0, 1, 2, 3, 4, 5, 6, 7])(
+    "invalidates a change raised %i microtasks after the previous pass's last invalidation settled",
+    async (offset) => {
+      const queryClient = new QueryClient();
+      const first = indicatorKey({
+        hostId: "host-a",
+        userId: "user-a",
+        epicIds: ["epic-a"],
+        chatIds: ["chat-a"],
+      });
+      const later = indicatorKey({
+        hostId: "host-a",
+        userId: "user-a",
+        epicIds: ["epic-b"],
+        chatIds: ["chat-b"],
+      });
+      queryClient.setQueryData(first, { epics: {}, chats: {} });
+      queryClient.setQueryData(later, { epics: {}, chats: {} });
+      const invalidate = queryClient.invalidateQueries.bind(queryClient);
+      let raised = false;
+      vi.spyOn(queryClient, "invalidateQueries").mockImplementation(
+        (...args) => {
+          const answered = invalidate(...args);
+          if (!raised) {
+            raised = true;
+            // Registered ahead of the pass's own continuation.
+            void answered.then(() => {
+              afterMicrotasks(offset, () => {
+                invalidateNotificationIndicatorsForEntities(
+                  queryClient,
+                  "host-a",
+                  [{ epicId: "epic-b", chatId: "chat-b" }],
+                  null,
+                );
+              });
+            });
+          }
+          return answered;
+        },
+      );
+
+      invalidateNotificationIndicatorsForEntities(
+        queryClient,
+        "host-a",
+        [{ epicId: "epic-a", chatId: "chat-a" }],
+        null,
+      );
+      await flush();
+      await flush();
+
+      expect(queryClient.getQueryState(first)?.isInvalidated).toBe(true);
+      expect(queryClient.getQueryState(later)?.isInvalidated).toBe(true);
+    },
+  );
+
+  it("keeps an earlier raiser's cancellation authority when a later raiser in the same tick brings none", async () => {
+    const { queryClient, client, requests } = mountIndicatorQuery();
+    await waitFor(() => expect(requests).toHaveLength(1));
+    // The real client's own cancellation, wrapped to record its calls: the
+    // read in flight is genuinely cancelled and the refetch is a fresh request.
+    // (A requester resolves its methods through a proxy on every read, so
+    // `vi.spyOn(client, ...)` would not be the function the cache calls.)
+    const cancelActiveRead = vi.fn(client.cancelActiveRead.bind(client));
+    const entity = { epicId: "epic-a", chatId: "chat-a" };
+
+    act(() => {
+      invalidateNotificationIndicatorsForEntities(
+        queryClient,
+        mockLocalHostEntry.hostId,
+        [entity],
+        { cancelActiveRead },
+      );
+      invalidateNotificationIndicatorsForEntities(
+        queryClient,
+        mockLocalHostEntry.hostId,
+        [entity],
+        null,
+      );
+    });
+    await waitFor(() => expect(requests).toHaveLength(2));
+
+    // The read in flight is told to stop on the host, not only dropped here.
+    expect(cancelActiveRead).toHaveBeenCalledWith(
+      "host.notifications.indicatorState",
+      { epicIds: ["epic-a"], chatIds: ["chat-a"] },
+    );
   });
 
   it("drops a pending invalidation when the indicator caches are cleared", async () => {
