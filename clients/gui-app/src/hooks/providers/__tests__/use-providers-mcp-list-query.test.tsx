@@ -118,6 +118,33 @@ describe("useProvidersMcpList pending-poll gating", () => {
     expect(queryMocks.refetch).toHaveBeenCalledTimes(2);
   });
 
+  it("backs off only up to a 5 second ceiling, so a late OAuth completion shows within one ceiling", async () => {
+    vi.useFakeTimers();
+    renderPolling();
+    // Every read settles at once; the next poll is armed after it.
+    const settle = async (): Promise<void> => {
+      for (let hop = 0; hop < 5; hop += 1) await Promise.resolve();
+    };
+
+    // 800ms, then doubling: 1.6s, 3.2s, and the next is held at the ceiling.
+    for (const delay of [800, 1_600, 3_200, 5_000]) {
+      vi.advanceTimersByTime(delay);
+      await settle();
+    }
+    expect(queryMocks.refetch).toHaveBeenCalledTimes(4);
+
+    // At the ceiling the cadence stays one poll per 5s, however long the flow
+    // has been pending.
+    for (let poll = 0; poll < 3; poll += 1) {
+      vi.advanceTimersByTime(4_999);
+      await settle();
+      expect(queryMocks.refetch).toHaveBeenCalledTimes(4 + poll);
+      vi.advanceTimersByTime(1);
+      await settle();
+      expect(queryMocks.refetch).toHaveBeenCalledTimes(5 + poll);
+    }
+  });
+
   it("does not overlap the next poll while a read is unresolved, backs off once it settles, and disarms when pollWhilePending turns off", async () => {
     vi.useFakeTimers();
     const refetchDeferred: { resolve: (() => void) | null } = {
@@ -153,7 +180,8 @@ describe("useProvidersMcpList pending-poll gating", () => {
     expect(queryMocks.refetch).toHaveBeenCalledTimes(1);
 
     // The first read is still unresolved: the next schedule only runs once
-    // this one settles, so waiting out even the full 30s cap fires nothing.
+    // this one settles, so waiting out far more than the 5s ceiling fires
+    // nothing.
     vi.advanceTimersByTime(30_000);
     expect(queryMocks.refetch).toHaveBeenCalledTimes(1);
 

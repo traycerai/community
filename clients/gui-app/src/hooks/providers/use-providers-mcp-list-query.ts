@@ -84,7 +84,7 @@ export function useProvidersMcpList(args: {
       // Join slow reads; only schedule the next poll after this one settles.
       await refetch({ cancelRefetch: false });
       refreshing = false;
-      delay = Math.min(delay * 2, 30_000);
+      delay = Math.min(delay * 2, 5_000);
       schedule();
     };
     const unsubscribe = subscribeDocumentVisibility(() => {
