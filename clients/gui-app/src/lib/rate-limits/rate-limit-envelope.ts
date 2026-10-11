@@ -174,7 +174,7 @@ function subscribeConvergenceOnSettle(
   queryClient: QueryClient,
   owed: Set<string>,
 ): void {
-  queryClient.getQueryCache().subscribe((event) => {
+  const unsubscribe = queryClient.getQueryCache().subscribe((event) => {
     if (event.type !== "updated" && event.type !== "removed") return;
     for (const hostId of owed) {
       const rateLimitReads = hostQueryKeys.methodScope(
@@ -183,6 +183,10 @@ function subscribeConvergenceOnSettle(
       );
       if (queryClient.isFetching({ queryKey: rateLimitReads }) > 0) continue;
       owed.delete(hostId);
+      if (owed.size === 0) {
+        unsubscribe();
+        owedConvergence.delete(queryClient);
+      }
       invalidateProviderFamilyQueries(
         queryClient,
         hostId,

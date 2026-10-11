@@ -721,4 +721,27 @@ describe("mapResponseToProviderRateLimitEnvelope providers.list convergence", ()
 
     expect(classic).toHaveLength(2);
   });
+
+  it("holds its query-cache listener only while a convergence is owed, and arms it again for a later burst", async () => {
+    const queryClient = new QueryClient();
+    const cache = queryClient.getQueryCache();
+    const classic = await watchSettled(queryClient, CLASSIC_KEY);
+    expect(cache.hasListeners()).toBe(false);
+
+    await fetchResolved(queryClient, GOOD);
+    await flush();
+    // The host's last read settled and the list converged: nothing is owed,
+    // so nothing may keep listening to every query event for the page's life.
+    expect(classic).toHaveLength(2);
+    expect(cache.hasListeners()).toBe(false);
+
+    // The refresh that convergence started answers; a later, settled burst
+    // then owes a convergence again and gets one.
+    classic[1]();
+    await flush();
+    await fetchResolved(queryClient, CODEX_GOOD);
+    await flush();
+    expect(classic).toHaveLength(3);
+    expect(cache.hasListeners()).toBe(false);
+  });
 });
