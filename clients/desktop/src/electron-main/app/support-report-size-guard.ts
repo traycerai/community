@@ -14,23 +14,34 @@ import type { Attachment, Event, EventHint } from "@sentry/core";
  *
  * Why an event processor and not `beforeSend`: core applies `beforeSend` to
  * error events only (`type === undefined`); a `type: "feedback"` event never
- * reaches it. Global event processors run inside `prepareEvent`, before
- * `sendEvent` reads `hint.attachments` to build the envelope, so one hook can
- * both trim the event and add an attachment to the same hint.
+ * reaches it. Event processors run inside `prepareEvent`, before `sendEvent`
+ * reads `hint.attachments` to build the envelope, so one hook can both trim
+ * the event and add an attachment to the same hint.
  *
  * Order of trimming, re-measuring after each step and stopping as soon as
  * the event fits:
  *
  * 1. The report text (`contexts.feedback.message`) above its keep size moves
- *    into a `report-text.txt` attachment in full; the message keeps its head
- *    plus one marker line. Attachments have their own 200 MiB limit and are
- *    not part of the event size, so the reporter's text is never discarded.
+ *    into a `report-text.txt` attachment; the message keeps its head plus one
+ *    marker line. Attachments are not part of the event size (Relay allows
+ *    200 MiB per attachment and per envelope), so the reporter's text is not
+ *    discarded; the attachment is capped at {@link REPORT_TEXT_ATTACHMENT_MAX_BYTES}
+ *    so it can never be the item that matters either.
  * 2. Breadcrumbs are dropped (the report carries both log tails as
  *    attachments anyway).
- * 3. This app's own contexts are dropped largest first.
+ * 3. Every context except `feedback` is a candidate, dropped largest first.
+ *    The list is not enumerated by name on purpose: `support.ts` adds
+ *    `layer0`, `processMetrics`, `appMetrics`, `errorCause` and `registry`,
+ *    the SDK adds `os`, `device`, `app`, `runtime`, `electron`, and a name the
+ *    guard did not know about is exactly how an oversize event would get
+ *    through. `errorCause` carries an error's message and stack unbounded, so
+ *    it is the one that matters in practice; the SDK's contexts are a few
+ *    hundred bytes and are only ever reached after everything larger is gone.
  *
- * What was trimmed is recorded as a bounded tag so a reader of the Sentry
- * item knows the shape is not the full one.
+ * After step 3 what remains is the message head (at most the keep size plus
+ * a marker), the tags and the SDK's own fields, so the result is bounded by
+ * construction. What was trimmed is recorded as a bounded tag so a reader of
+ * the Sentry item knows the shape is not the full one.
  */
 
 /** Headroom under Relay's 1 MiB for normalization and the envelope header. */
@@ -39,20 +50,26 @@ export const FEEDBACK_EVENT_BUDGET_BYTES = 768 * 1024;
 /** How much of an oversize report text stays inline in the message. */
 export const FEEDBACK_MESSAGE_KEEP_BYTES = 32 * 1024;
 
+/**
+ * Cap on the `report-text.txt` attachment. Report text is typed or pasted
+ * into one textarea with no length limit; this keeps the attachment far
+ * inside Relay's 200 MiB limits and inside the headroom of
+ * `TOTAL_ATTACHMENT_BUDGET_BYTES`'s neighbours (`image-attachment-guards.ts`).
+ */
+export const REPORT_TEXT_ATTACHMENT_MAX_BYTES = 4 * 1024 * 1024;
+
 export const REPORT_TEXT_ATTACHMENT_FILENAME = "report-text.txt";
 
-/** `support.ts`'s own contexts, in the order they are dropped. */
-const OWN_CONTEXTS_LARGEST_FIRST = [
-  "layer0",
-  "appMetrics",
-  "processMetrics",
-] as const;
+/** Never dropped: it is the report. */
+const FEEDBACK_CONTEXT = "feedback";
 
 /** Bounded, so it can ride as a Sentry tag. */
 export type FeedbackTrim =
   | "message"
   | "breadcrumbs"
+  | "contexts"
   | "message+breadcrumbs"
+  | "message+contexts"
   | "breadcrumbs+contexts"
   | "message+breadcrumbs+contexts";
 
@@ -63,15 +80,18 @@ export interface BoundFeedbackEventResult {
   /** `null` when the event already fit and was returned as given. */
   readonly trimmed: FeedbackTrim | null;
   readonly originalBytes: number;
+  /** Serialized size of `event` as returned. */
   readonly sentBytes: number;
+  /** Names of the contexts step 3 dropped, largest first. */
+  readonly droppedContexts: readonly string[];
 }
 
-function serializedBytes(event: Event): number {
-  return Buffer.byteLength(JSON.stringify(event), "utf8");
+function serializedBytes(value: unknown): number {
+  return Buffer.byteLength(JSON.stringify(value), "utf8");
 }
 
 function feedbackMessageOf(event: Event): string | null {
-  const feedback = event.contexts?.feedback;
+  const feedback = event.contexts?.[FEEDBACK_CONTEXT];
   const message =
     feedback !== undefined && feedback !== null
       ? (feedback as { message?: unknown }).message
@@ -101,18 +121,68 @@ function trimName(
   breadcrumbs: boolean,
   contexts: boolean,
 ): FeedbackTrim | null {
-  if (contexts) {
-    return message ? "message+breadcrumbs+contexts" : "breadcrumbs+contexts";
+  const parts: string[] = [];
+  if (message) parts.push("message");
+  if (breadcrumbs) parts.push("breadcrumbs");
+  if (contexts) parts.push("contexts");
+  const joined = parts.join("+");
+  return FEEDBACK_TRIMS.find((trim) => trim === joined) ?? null;
+}
+
+const FEEDBACK_TRIMS: readonly FeedbackTrim[] = [
+  "message",
+  "breadcrumbs",
+  "contexts",
+  "message+breadcrumbs",
+  "message+contexts",
+  "breadcrumbs+contexts",
+  "message+breadcrumbs+contexts",
+];
+
+/** Name of the largest context other than `feedback`, or `null` if none. */
+function largestDroppableContext(contexts: Event["contexts"]): string | null {
+  if (contexts === undefined) return null;
+  let largest: string | null = null;
+  let largestBytes = -1;
+  for (const [name, value] of Object.entries(contexts)) {
+    if (name === FEEDBACK_CONTEXT) continue;
+    const bytes = serializedBytes(value);
+    if (bytes > largestBytes) {
+      largest = name;
+      largestBytes = bytes;
+    }
   }
-  if (breadcrumbs) return message ? "message+breadcrumbs" : "breadcrumbs";
-  return message ? "message" : null;
+  return largest;
+}
+
+function withReportSize(
+  event: Event,
+  trimmed: FeedbackTrim,
+  originalBytes: number,
+  sentBytes: number,
+  droppedContexts: readonly string[],
+): Event {
+  return {
+    ...event,
+    tags: { ...event.tags, [REPORT_TRIMMED_TAG]: trimmed },
+    contexts: {
+      ...event.contexts,
+      reportSize: {
+        originalBytes,
+        sentBytes,
+        ...(droppedContexts.length === 0
+          ? {}
+          : { droppedContexts: droppedContexts.join(",") }),
+      },
+    },
+  };
 }
 
 /**
  * Bounds a `feedback` event to {@link FEEDBACK_EVENT_BUDGET_BYTES}. The input
- * event is not mutated; `hint.attachments` is extended in place when the
- * report text is moved out, because the SDK reads attachments from this same
- * hint object when it builds the envelope.
+ * event is not mutated; `hint.attachments` is replaced with an extended copy
+ * when the report text is moved out, because the SDK reads attachments from
+ * this same hint object when it builds the envelope.
  *
  * Any other event type is returned as given.
  */
@@ -125,34 +195,48 @@ export function boundFeedbackEvent(
     event.type !== "feedback" ||
     originalBytes <= FEEDBACK_EVENT_BUDGET_BYTES
   ) {
-    return { event, trimmed: null, originalBytes, sentBytes: originalBytes };
+    return {
+      event,
+      trimmed: null,
+      originalBytes,
+      sentBytes: originalBytes,
+      droppedContexts: [],
+    };
   }
 
   let bounded: Event = { ...event };
   let sentBytes = originalBytes;
   let messageMoved = false;
   let breadcrumbsDropped = false;
-  let contextsDropped = false;
+  const droppedContexts: string[] = [];
 
   const message = feedbackMessageOf(bounded);
   if (
     message !== null &&
     Buffer.byteLength(message, "utf8") > FEEDBACK_MESSAGE_KEEP_BYTES
   ) {
+    const messageBytes = Buffer.byteLength(message, "utf8");
+    const attached =
+      messageBytes > REPORT_TEXT_ATTACHMENT_MAX_BYTES
+        ? headOfText(message, REPORT_TEXT_ATTACHMENT_MAX_BYTES)
+        : message;
     const attachment: Attachment = {
       filename: REPORT_TEXT_ATTACHMENT_FILENAME,
-      data: message,
+      data: attached,
       contentType: "text/plain",
     };
     hint.attachments = [...(hint.attachments ?? []), attachment];
     const head = headOfText(message, FEEDBACK_MESSAGE_KEEP_BYTES);
-    const marker = `[Report text continues in the attachment ${REPORT_TEXT_ATTACHMENT_FILENAME} (${message.length} characters in total).]`;
+    const marker =
+      attached === message
+        ? `[Report text continues in the attachment ${REPORT_TEXT_ATTACHMENT_FILENAME} (${messageBytes} bytes in total).]`
+        : `[Report text continues in the attachment ${REPORT_TEXT_ATTACHMENT_FILENAME}, which holds the first ${Buffer.byteLength(attached, "utf8")} of ${messageBytes} bytes.]`;
     bounded = {
       ...bounded,
       contexts: {
         ...bounded.contexts,
-        feedback: {
-          ...bounded.contexts?.feedback,
+        [FEEDBACK_CONTEXT]: {
+          ...bounded.contexts?.[FEEDBACK_CONTEXT],
           message: `${head}\n\n${marker}`,
         },
       },
@@ -171,26 +255,42 @@ export function boundFeedbackEvent(
     sentBytes = serializedBytes(bounded);
   }
 
-  for (const name of OWN_CONTEXTS_LARGEST_FIRST) {
-    if (sentBytes <= FEEDBACK_EVENT_BUDGET_BYTES) break;
-    if (bounded.contexts === undefined || !(name in bounded.contexts)) continue;
+  while (sentBytes > FEEDBACK_EVENT_BUDGET_BYTES) {
+    const name = largestDroppableContext(bounded.contexts);
+    if (name === null || bounded.contexts === undefined) break;
     const { [name]: _dropped, ...rest } = bounded.contexts;
     bounded = { ...bounded, contexts: rest };
-    contextsDropped = true;
+    droppedContexts.push(name);
     sentBytes = serializedBytes(bounded);
   }
 
-  const trimmed = trimName(messageMoved, breadcrumbsDropped, contextsDropped);
+  const trimmed = trimName(
+    messageMoved,
+    breadcrumbsDropped,
+    droppedContexts.length > 0,
+  );
   if (trimmed !== null) {
-    bounded = {
-      ...bounded,
-      tags: { ...bounded.tags, [REPORT_TRIMMED_TAG]: trimmed },
-      contexts: {
-        ...bounded.contexts,
-        reportSize: { originalBytes, sentBytes },
-      },
-    };
+    // Two passes so `reportSize.sentBytes` names the size of the event as
+    // returned, metadata included: the first measures the event with the
+    // metadata on it, the second writes that number in (it can only differ
+    // from the first in the width of the number itself).
+    const withMeta = serializedBytes(
+      withReportSize(
+        bounded,
+        trimmed,
+        originalBytes,
+        sentBytes,
+        droppedContexts,
+      ),
+    );
+    bounded = withReportSize(
+      bounded,
+      trimmed,
+      originalBytes,
+      withMeta,
+      droppedContexts,
+    );
     sentBytes = serializedBytes(bounded);
   }
-  return { event: bounded, trimmed, originalBytes, sentBytes };
+  return { event: bounded, trimmed, originalBytes, sentBytes, droppedContexts };
 }

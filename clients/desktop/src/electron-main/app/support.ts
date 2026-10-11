@@ -86,9 +86,8 @@ const SENTRY_FLUSH_TIMEOUT_MS = 10_000;
 // this app's Sentry init samples or filters feedback events - the size guard
 // in `support-report-size-guard.ts` trims a report, never drops it) case
 // where the hook never fires at all despite `flush` saying the queue is
-// empty; in the
-// normal case the hook resolves within a handful of microtasks, nowhere near
-// this window.
+// empty; in the normal case the hook resolves within a handful of
+// microtasks, nowhere near this window.
 const SEND_OUTCOME_GRACE_MS = 500;
 // A draft's frozen evidence is dropped explicitly on cancel/replacement; this
 // is only a backstop against a lost discard message (e.g. a window force-
