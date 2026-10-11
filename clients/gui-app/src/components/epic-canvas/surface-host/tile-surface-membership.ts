@@ -122,7 +122,9 @@ function retainedChatCandidates(
           tileFor: (instanceId) => tiles[instanceId],
         })
       : node.children.flatMap((child) => retainedChatCandidates(child, tiles));
-  retainedCandidates.set(node, { tiles, instanceIds, demand });
+  if (node.kind === "pane") {
+    retainedCandidates.set(node, { tiles, instanceIds, demand });
+  }
   return instanceIds;
 }
 

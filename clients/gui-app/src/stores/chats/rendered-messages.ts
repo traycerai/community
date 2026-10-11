@@ -21,10 +21,6 @@ import { steeredMessageIdsFromEvents } from "@traycer/protocol/persistence/chat-
 // transcript's skeleton, and this is where those ordinals get drawn - so a
 // second, locally-written `a.createdAt - b.createdAt` here would be a silent
 // way for the two sides to disagree about which row an ordinal names.
-// The ONE comparator. The host numbers rows with it to build the windowed
-// transcript's skeleton, and this is where those ordinals get drawn - so a
-// second, locally-written `a.createdAt - b.createdAt` here would be a silent
-// way for the two sides to disagree about which row an ordinal names.
 import {
   autoJudgeNoticeRowSource,
   autoJudgeUnattendedDenialRowSource,
@@ -37,16 +33,7 @@ import {
 // accumulate into ONE rendered turn). Shared rather than local because the
 // host's fork-boundary derivation groups by the same key, and a chat must not
 // change where it forks depending on which side computed it.
-// Identity of the assistant turn a record contributes to (records sharing a key
-// accumulate into ONE rendered turn). Shared rather than local because the
-// host's fork-boundary derivation groups by the same key, and a chat must not
-// change where it forks depending on which side computed it.
 import { assistantTurnKey } from "@traycer/protocol/persistence/chat-transcript/fork-boundary";
-// The row ENUMERATION - which rows a chat has, and in what order. The host
-// numbers ordinals from these exact functions, so every decision that changes a
-// row's existence, id, or position is consumed from here rather than restated:
-// the steer split, the trailing-boundary rule, steered-user suppression, the
-// stopped-turn fold, and every row id.
 // The row ENUMERATION - which rows a chat has, and in what order. The host
 // numbers ordinals from these exact functions, so every decision that changes a
 // row's existence, id, or position is consumed from here rather than restated:

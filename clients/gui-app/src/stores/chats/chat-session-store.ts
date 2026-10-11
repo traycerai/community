@@ -193,9 +193,6 @@ import {
 // Runtime import, and cycle-free: `setup-card-rows` reaches
 // `setup-card-segment` only through `import type`, which is erased, and nothing
 // in its graph imports this store back.
-// Runtime import, and cycle-free: `setup-card-rows` reaches
-// `setup-card-segment` only through `import type`, which is erased, and nothing
-// in its graph imports this store back.
 import {
   buildSetupCardRows,
   type SetupCardRow,
