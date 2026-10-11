@@ -1,8 +1,9 @@
 import { createElement, type ReactNode } from "react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { renderHook } from "@testing-library/react";
 import {
   SurfaceDemandContext,
+  useSurfaceDemandStore,
   type ActiveSurfaceDemand,
 } from "@/stores/tabs/surface-demand";
 import {
@@ -120,6 +121,11 @@ function renderMounted(initial: HookProps) {
     },
   };
 }
+
+// Pane preview targets are process-global store state.
+afterEach(() => {
+  useSurfaceDemandStore.setState(useSurfaceDemandStore.getInitialState(), true);
+});
 
 describe("useMountedPaneTabs", () => {
   it("mounts a newly active tab in the same render and keeps recent tabs up to the cap", () => {
@@ -448,37 +454,31 @@ describe("useMountedPaneTabs", () => {
       { demand: "settled", mounted: true },
       { demand: "preview", mounted: false },
     ] as const)(
-      "mounts the shown page tab only when its surface is $demand",
+      "mounts the shown page tab only when its own pane is $demand",
       ({ demand, mounted }) => {
         const page = epicFileTab(1, "html");
         const spec = specTab(1);
-        const wrapper = ({
-          children,
-        }: {
-          readonly children: ReactNode;
-        }): ReactNode =>
-          createElement(
-            SurfaceDemandContext,
-            { value: demand satisfies ActiveSurfaceDemand },
-            children,
-          );
-        // The page is shown but not yet activated: a held tab cycle's preview.
-        const { result } = renderHook(
-          () =>
-            useMountedPaneTabs({
+        // A held pane cycle: the pane already shows the page, whose
+        // activation is not recorded until the hold settles.
+        if (demand === "preview") {
+          useSurfaceDemandStore.setState({
+            panePreviewTargets: { "pane-1": page.instanceId },
+          });
+        }
+        const { result } = renderHook(() =>
+          useMountedPaneTabs({
+            activeTabId: page.instanceId,
+            pane: {
+              kind: "pane",
+              id: "pane-1",
+              tabInstanceIds: [page.instanceId, spec.instanceId],
               activeTabId: page.instanceId,
-              pane: {
-                kind: "pane",
-                id: "pane-1",
-                tabInstanceIds: [page.instanceId, spec.instanceId],
-                activeTabId: spec.instanceId,
-                previewTabId: null,
-                activationHistory: [spec.instanceId],
-              },
-              tabs: [page, spec],
-              paneVisible: true,
-            }),
-          { wrapper },
+              previewTabId: null,
+              activationHistory: [spec.instanceId],
+            },
+            tabs: [page, spec],
+            paneVisible: true,
+          }),
         );
 
         expect(result.current.has(page.instanceId)).toBe(mounted);
@@ -499,4 +499,49 @@ describe("useMountedPaneTabs", () => {
       expect(result.current.has("inst-file-1")).toBe(false);
     });
   });
+});
+
+describe("useMountedPaneTabs retention under a top-level preview", () => {
+  // `tile-surface-membership.ts` retains from THIS pane's preview only. A held
+  // HEADER cycle previews the whole surface without any pane target, and the
+  // membership keeps an active body with no activation record: this hook must
+  // keep the same one, or it is a member with no slot.
+  it.each([
+    { label: "chat", tab: chatTab(1) },
+    { label: "page", tab: epicFileTab(1, "html") },
+  ])(
+    "an active $label with no activation record stays retained while only the top-level surface is previewed",
+    ({ tab }) => {
+      const spec = specTab(1);
+      const wrapper = ({
+        children,
+      }: {
+        readonly children: ReactNode;
+      }): ReactNode =>
+        createElement(
+          SurfaceDemandContext,
+          { value: "preview" satisfies ActiveSurfaceDemand },
+          children,
+        );
+      const { result } = renderHook(
+        () =>
+          useMountedPaneTabs({
+            activeTabId: tab.instanceId,
+            pane: {
+              kind: "pane",
+              id: "pane-1",
+              tabInstanceIds: [tab.instanceId, spec.instanceId],
+              activeTabId: tab.instanceId,
+              previewTabId: null,
+              activationHistory: [],
+            },
+            tabs: [tab, spec],
+            paneVisible: true,
+          }),
+        { wrapper },
+      );
+
+      expect(result.current.has(tab.instanceId)).toBe(true);
+    },
+  );
 });

@@ -195,6 +195,12 @@ export function useMountedPaneTabs(
     (state) => state.panePreviewTargets[pane.id] !== undefined,
   );
   const demand = parentDemand === "preview" || preview ? "preview" : "settled";
+  // Retention reads THIS pane's preview only, the same input
+  // `tile-surface-membership.ts` uses. Folding in the top-level preview made
+  // the two disagree on a previewed header tab: a member with no slot, and a
+  // page with no activation record unmounted. Loading under a header preview
+  // is gated where the body loads (the settled first-show latches).
+  const retentionDemand = preview ? "preview" : "settled";
 
   // Terminals are pinned; chats and pages are retained by their own policies
   // below; everything else competes for LRU slots.
@@ -233,11 +239,11 @@ export function useMountedPaneTabs(
         retainedPaneChatInstanceIds({
           pane,
           cap: RETAINED_PANE_CHAT_CAP,
-          demand,
+          demand: retentionDemand,
           tileFor: (instanceId) => tileByInstanceId.get(instanceId),
         }),
       ),
-    [pane, tileByInstanceId, demand],
+    [pane, tileByInstanceId, retentionDemand],
   );
 
   // A previewed active tab is not retained: mounting a page loads it (its
@@ -247,11 +253,11 @@ export function useMountedPaneTabs(
   const retainedPageIds = useMemo(
     () =>
       retainedPanePageInstanceIds(
-        demand === "settled" ? activeTabId : null,
+        retentionDemand === "settled" ? activeTabId : null,
         pane.activationHistory,
         tileByInstanceId,
       ),
-    [activeTabId, demand, pane.activationHistory, tileByInstanceId],
+    [activeTabId, retentionDemand, pane.activationHistory, tileByInstanceId],
   );
 
   const [committedLru, setCommittedLru] =
