@@ -39,13 +39,24 @@ import type { Attachment, Event, EventHint } from "@sentry/core";
  *    hundred bytes and are only ever reached after everything larger is gone.
  *
  * After step 3 what remains is the message head (at most the keep size plus
- * a marker), the tags and the SDK's own fields, so the result is bounded by
- * construction. What was trimmed is recorded as a bounded tag so a reader of
- * the Sentry item knows the shape is not the full one.
+ * a marker), the tags, `contexts.feedback`'s name and email, and the SDK's
+ * own fields: bounded given today's producers (every tag the report sets is
+ * a short hash or version, nothing in this app sets `extra` or `user`), not
+ * trimmed by the guard. The steps run against the budget less a reserve for
+ * the metadata they add, so the returned event is under the budget whenever
+ * step 3 reached it. What was trimmed is recorded as a bounded tag so a
+ * reader of the Sentry item knows the shape is not the full one.
  */
 
 /** Headroom under Relay's 1 MiB for normalization and the envelope header. */
 export const FEEDBACK_EVENT_BUDGET_BYTES = 768 * 1024;
+
+/**
+ * What the trimming steps aim for: the budget less room for the
+ * `reportTrimmed` tag and `reportSize` context they add afterwards, so an
+ * event that lands just under the budget does not end up just over it.
+ */
+const TRIM_TARGET_BYTES = FEEDBACK_EVENT_BUDGET_BYTES - 1024;
 
 /** How much of an oversize report text stays inline in the message. */
 export const FEEDBACK_MESSAGE_KEEP_BYTES = 32 * 1024;
@@ -87,7 +98,8 @@ export interface BoundFeedbackEventResult {
 }
 
 function serializedBytes(value: unknown): number {
-  return Buffer.byteLength(JSON.stringify(value), "utf8");
+  // `JSON.stringify(undefined)` is `undefined`, which `byteLength` rejects.
+  return Buffer.byteLength(JSON.stringify(value) ?? "", "utf8");
 }
 
 function feedbackMessageOf(event: Event): string | null {
@@ -100,16 +112,27 @@ function feedbackMessageOf(event: Event): string | null {
 }
 
 /**
- * The first `keepBytes` of `text`, cut back to the last line break (or, when
- * the kept head has none, the last space) so the inline head ends on a
- * boundary a reader expects. A multi-byte character split by the byte cut is
- * dropped with the tail rather than left as U+FFFD.
+ * The first `keepBytes` of `text` with every character kept whole: a
+ * multi-byte character split by the byte cut is dropped with the tail rather
+ * than left as U+FFFD. Nothing else about the cut is adjusted, so a text that
+ * is one long line keeps (almost) all of its first `keepBytes`.
  */
-export function headOfText(text: string, keepBytes: number): string {
+export function headOfBytes(text: string, keepBytes: number): string {
   const bytes = Buffer.from(text, "utf8");
   if (bytes.byteLength <= keepBytes) return text;
-  let head = bytes.subarray(0, keepBytes).toString("utf8");
-  if (head.endsWith("�")) head = head.slice(0, -1);
+  const head = bytes.subarray(0, keepBytes).toString("utf8");
+  return head.endsWith("�") ? head.slice(0, -1) : head;
+}
+
+/**
+ * {@link headOfBytes}, cut back to the last line break (or, when the kept
+ * head has none, the last space) so an inline head ends on a boundary a
+ * reader expects. Not for the attachment: a pasted one-line blob would keep
+ * only the lines before it.
+ */
+export function headOfText(text: string, keepBytes: number): string {
+  const head = headOfBytes(text, keepBytes);
+  if (head === text) return text;
   const lastBreak = head.lastIndexOf("\n");
   if (lastBreak > 0) return head.slice(0, lastBreak);
   const lastSpace = head.lastIndexOf(" ");
@@ -218,7 +241,7 @@ export function boundFeedbackEvent(
     const messageBytes = Buffer.byteLength(message, "utf8");
     const attached =
       messageBytes > REPORT_TEXT_ATTACHMENT_MAX_BYTES
-        ? headOfText(message, REPORT_TEXT_ATTACHMENT_MAX_BYTES)
+        ? headOfBytes(message, REPORT_TEXT_ATTACHMENT_MAX_BYTES)
         : message;
     const attachment: Attachment = {
       filename: REPORT_TEXT_ATTACHMENT_FILENAME,
@@ -245,17 +268,14 @@ export function boundFeedbackEvent(
     sentBytes = serializedBytes(bounded);
   }
 
-  if (
-    sentBytes > FEEDBACK_EVENT_BUDGET_BYTES &&
-    bounded.breadcrumbs !== undefined
-  ) {
+  if (sentBytes > TRIM_TARGET_BYTES && bounded.breadcrumbs !== undefined) {
     const { breadcrumbs: _dropped, ...withoutBreadcrumbs } = bounded;
     bounded = withoutBreadcrumbs;
     breadcrumbsDropped = true;
     sentBytes = serializedBytes(bounded);
   }
 
-  while (sentBytes > FEEDBACK_EVENT_BUDGET_BYTES) {
+  while (sentBytes > TRIM_TARGET_BYTES) {
     const name = largestDroppableContext(bounded.contexts);
     if (name === null || bounded.contexts === undefined) break;
     const { [name]: _dropped, ...rest } = bounded.contexts;

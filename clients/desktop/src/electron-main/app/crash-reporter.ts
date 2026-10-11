@@ -52,8 +52,10 @@ function installSupportReportSizeGuard(): void {
         });
       }
       if (bounded.sentBytes > FEEDBACK_EVENT_BUDGET_BYTES) {
-        // Unreachable by construction (see the guard's module comment); if it
-        // ever prints, Relay is about to discard this report after the 2xx.
+        // Only when something the guard does not trim (a tag, `extra`,
+        // `user`) is large: see the guard's module comment. The budget is
+        // 256 KiB under Relay's limit, so this is a warning sign, not yet a
+        // discard; it is logged so the next too_large has a trail.
         log.error("[support] report still over the event size budget", {
           reportId,
           sentBytes: bounded.sentBytes,

@@ -4,6 +4,7 @@ import {
   boundFeedbackEvent,
   FEEDBACK_EVENT_BUDGET_BYTES,
   FEEDBACK_MESSAGE_KEEP_BYTES,
+  headOfBytes,
   headOfText,
   REPORT_TEXT_ATTACHMENT_FILENAME,
   REPORT_TEXT_ATTACHMENT_MAX_BYTES,
@@ -232,6 +233,64 @@ describe("boundFeedbackEvent", () => {
     expect(hint.attachments?.[0]?.data).toBe(text);
   });
 
+  it("keeps the first 4 MiB of a one-line blob in the attachment, not just the lines before it", () => {
+    // Round 2 of #2467: the attachment cut must not snap to a line break.
+    const header = "Type: bug\n\nWhat they were trying to do:\n";
+    const blob = '{"k":"v"}'.repeat(600_000); // about 5.7 MiB, one line
+    const text = header + blob;
+    const hint: EventHint = { attachments: [] };
+    boundFeedbackEvent(feedbackEvent(text, {}), hint);
+
+    const attached = hint.attachments?.[0]?.data;
+    if (typeof attached !== "string") {
+      throw new Error("expected the report text to be attached as a string");
+    }
+    const attachedBytes = Buffer.byteLength(attached, "utf8");
+    expect(attachedBytes).toBeGreaterThan(
+      REPORT_TEXT_ATTACHMENT_MAX_BYTES - 16,
+    );
+    expect(attachedBytes).toBeLessThanOrEqual(REPORT_TEXT_ATTACHMENT_MAX_BYTES);
+    expect(text.startsWith(attached)).toBe(true);
+  });
+
+  it("stays under budget when a step lands just under it and the metadata is added", () => {
+    // Build an event that, once its breadcrumbs are gone, sits 40 bytes under
+    // the budget: the trim tag and reportSize context must not push it over.
+    const probe = feedbackEvent("short", {
+      contexts: { feedback: { message: "short" }, layer0: { evidence: "" } },
+    });
+    const pad = FEEDBACK_EVENT_BUDGET_BYTES - 40 - bytes(probe);
+    const event = feedbackEvent("short", {
+      breadcrumbs: bigBreadcrumbs(64 * 1024),
+      contexts: {
+        feedback: { message: "short" },
+        layer0: { evidence: "e".repeat(pad) },
+      },
+    });
+    const { breadcrumbs: _b, ...withoutBreadcrumbs } = event;
+    expect(bytes(withoutBreadcrumbs)).toBe(FEEDBACK_EVENT_BUDGET_BYTES - 40);
+    const result = boundFeedbackEvent(event, { attachments: [] });
+
+    expect(result.event.breadcrumbs).toBeUndefined();
+    expect(result.sentBytes).toBeLessThanOrEqual(FEEDBACK_EVENT_BUDGET_BYTES);
+    expect(bytes(result.event)).toBe(result.sentBytes);
+    expect(result.event.tags?.[REPORT_TRIMMED_TAG]).toBeDefined();
+  });
+
+  it("measures an undefined context as empty instead of throwing", () => {
+    const event = feedbackEvent("short", {
+      breadcrumbs: bigBreadcrumbs(MIB),
+      contexts: {
+        feedback: { message: "short" },
+        weird: undefined,
+        big: { blob: "b".repeat(MIB) },
+      },
+    });
+    const result = boundFeedbackEvent(event, { attachments: [] });
+    expect(result.sentBytes).toBeLessThanOrEqual(FEEDBACK_EVENT_BUDGET_BYTES);
+    expect(result.droppedContexts).toEqual(["big"]);
+  });
+
   it("leaves a non-feedback event alone whatever its size", () => {
     const event: Event = {
       type: undefined,
@@ -243,6 +302,15 @@ describe("boundFeedbackEvent", () => {
     expect(result.event).toBe(event);
     expect(result.trimmed).toBeNull();
     expect(hint.attachments).toBeUndefined();
+  });
+});
+
+describe("headOfBytes", () => {
+  it("cuts by bytes only and keeps a split character whole", () => {
+    expect(headOfBytes("one two three", 9)).toBe("one two t");
+    expect(headOfBytes("aéé", 4)).toBe("aé");
+    expect(headOfBytes("a😀😀b", 6)).toBe("a😀");
+    expect(headOfBytes("short", 100)).toBe("short");
   });
 });
 
