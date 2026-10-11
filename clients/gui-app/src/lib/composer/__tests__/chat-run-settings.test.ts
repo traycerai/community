@@ -21,7 +21,7 @@ import {
  */
 function model(
   metadata: Record<string, unknown>,
-  overrides: Partial<ModelOption> | undefined = undefined,
+  overrides: Partial<ModelOption> | undefined,
 ): ModelOption {
   return {
     harnessId: "codex",
@@ -140,12 +140,14 @@ describe("chat run settings", () => {
   it("detects image-capable model metadata and harness capabilities", () => {
     expect(
       modelSupportsImageAttachments(
-        model({ inputModalities: ["text", "image"] }),
+        model({ inputModalities: ["text", "image"] }, undefined),
       ),
     ).toBe(true);
-    expect(modelSupportsImageAttachments(model({ supportsImages: true }))).toBe(
-      true,
-    );
+    expect(
+      modelSupportsImageAttachments(
+        model({ supportsImages: true }, undefined),
+      ),
+    ).toBe(true);
 
     // K3 models on kimi, hermes, and omp harnesses support image attachments
     const kimiK3 = model({}, { harnessId: "kimi", slug: "k3-256k" });
@@ -164,7 +166,9 @@ describe("chat run settings", () => {
     expect(modelSupportsImageAttachments(kimiTextOnly)).toBe(false);
 
     // Unrelated generic models are text-only by default
-    expect(selectedModelRejectsImageAttachments(model({}))).toBe(true);
+    expect(selectedModelRejectsImageAttachments(model({}, undefined))).toBe(
+      true,
+    );
     expect(selectedModelRejectsImageAttachments(null)).toBe(false);
   });
 
