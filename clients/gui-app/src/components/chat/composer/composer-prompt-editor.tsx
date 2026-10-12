@@ -59,7 +59,10 @@ import type {
   ImageAttachmentRewrite,
 } from "./editor/extensions/image-attachment-extension";
 import type { ComposerPickerStore } from "./picker/composer-picker-store";
-import { bumpComposerDraftGeneration } from "@/lib/composer/composer-draft-generation";
+import {
+  bumpComposerDraftGeneration,
+  composerDraftGeneration,
+} from "@/lib/composer/composer-draft-generation";
 import { changedComposerImages } from "./composer-image-changes";
 
 const composerEditorIncarnations = new WeakMap<
@@ -98,6 +101,12 @@ export interface ComposerPromptEditorHandle {
   readonly getJSON: () => JsonContent;
   readonly isEmpty: () => boolean;
   readonly clear: () => void;
+  /**
+   * Which draft the editor holds: bumped by `clear` (an accepted send) and
+   * by a content replacement, so work started against one draft can tell it
+   * has been superseded (`composer-draft-generation.ts`).
+   */
+  readonly draftGeneration: () => number;
   /**
    * Replace the document and notify the owner via the normal `onDocumentChange`
    * signal (a real editor-level document mutation). The landing and new-
@@ -540,6 +549,11 @@ function ComposerPromptEditorImpl(props: ComposerPromptEditorProps) {
     return editor.isEmpty;
   }, [editor]);
 
+  const draftGeneration = useCallback(
+    () => (editor === null ? 0 : composerDraftGeneration(editor)),
+    [editor],
+  );
+
   const clear = useCallback(() => {
     if (editor === null) return;
     // Whatever async work was filling THIS draft (a cross-host tab screenshot
@@ -736,6 +750,7 @@ function ComposerPromptEditorImpl(props: ComposerPromptEditorProps) {
       getJSON,
       isEmpty,
       clear,
+      draftGeneration,
       setContent,
       syncContent,
       insertImageAttachments,
@@ -750,6 +765,7 @@ function ComposerPromptEditorImpl(props: ComposerPromptEditorProps) {
       beginPathInsertion,
       clear,
       dismissActiveSuggestion,
+      draftGeneration,
       focus,
       focusAtEnd,
       getEditorIncarnation,
