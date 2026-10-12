@@ -545,6 +545,15 @@ describe("<MobileCurrentTileBar />", () => {
       );
       expect(mutateSpies.renameTerminal).not.toHaveBeenCalled();
       expect(authorityRename).not.toHaveBeenCalled();
+      // No terminal.list either: the legacy title read gets no client, and the
+      // title shown is the authority's.
+      expect(terminalLegacy.titleReadClients.length).toBeGreaterThan(0);
+      expect(
+        terminalLegacy.titleReadClients.every((client) => client === null),
+      ).toBe(true);
+      expect(
+        screen.getByTestId("mobile-current-tile-title").textContent,
+      ).toBe("Deciding");
     });
   });
 
