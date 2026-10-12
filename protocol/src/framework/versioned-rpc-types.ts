@@ -222,6 +222,37 @@ export const RPC_ERROR_CODES = [
   // on that host; the agent belongs on one of the user's own hosts or a
   // sandbox.
   "PROFILE_REFUSES_AGENTS",
+  // ─── Sandbox secrets refusals (the egress broker) ───────────────────────
+  //
+  // Spelled as the broker, the gateway and the forwarder spell them on their
+  // own wires (a refusal body's `code`, a typed egress event's `code`), so one
+  // string names one refusal on every channel that can carry it. Additive, as
+  // the block above: a client that predates them narrows each to RPC_ERROR.
+  //
+  // The sandbox's egress authorization is older than the grant set it was
+  // minted for: a decision, a re-bind or a wake is in flight. Retryable
+  // shortly, and NOT a missing grant - nothing is to be asked of the user.
+  "authorization_stale",
+  // The destination's protocol has no worker class, so a secret bound to it
+  // cannot be brokered; the alternative is an exposed binding.
+  "protocol_not_brokered",
+  // A request signed in a shape no signing worker reproduces (a presigned URL,
+  // a credential set handed to a third party); the alternative is an export.
+  "signing_shape_unsupported",
+  // The route's pre-issued leaf certificate is missing or expired, so its
+  // TLS-terminated endpoint cannot answer.
+  "leaf_unavailable",
+  // The destination sits behind a private connector that is enrolled and not
+  // connected.
+  "connector_offline",
+  // The destination sits behind a private connector that was never enrolled
+  // or has been revoked.
+  "connector_not_enrolled",
+  // The route's loopback endpoint could not be bound in the guest (an
+  // in-guest listener holds the port); the route is never sent direct.
+  "endpoint_unavailable",
+  // The destination answers HTTP/3 only, which the bound class cannot carry.
+  "h3_only_destination",
 ] as const;
 
 export type RpcErrorCode = (typeof RPC_ERROR_CODES)[number];

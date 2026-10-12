@@ -963,6 +963,13 @@ export const HOST_METHOD_POLL_TABLE = {
     joinResponseTimeoutMs: null,
     poll: null,
   },
+  // A repair re-applies the guest's files and refetches its configuration; two
+  // presses must run in order, never coalesce into one answer.
+  "host.sandbox.repairGuestConfiguration": {
+    mode: "fifo",
+    joinResponseTimeoutMs: null,
+    poll: null,
+  },
   // Dial-only lease verbs: one host calls these on another, never the
   // renderer. Here because this table is exhaustive over the registry. `fifo`
   // because each acquires, releases or ends a lease and must never coalesce.

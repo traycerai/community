@@ -5,6 +5,7 @@ import {
   Check,
   CheckCircle2,
   FolderX,
+  KeyRound,
   MessageCircle,
   MessageSquarePlus,
   MessageSquareX,
@@ -550,7 +551,13 @@ function notificationRowGlyph(row: MergedNotificationRow): RowGlyph {
   if (semanticIcon !== null) {
     return { icon: semanticIcon, colorClassName: NEUTRAL_COLOR };
   }
-  switch (row.hostKind) {
+  return hostKindGlyph(row.hostKind);
+}
+
+/** The glyph a host row falls back to once severity and subject have both
+ * declined to pick one. */
+function hostKindGlyph(hostKind: MergedNotificationRow["hostKind"]): RowGlyph {
+  switch (hostKind) {
     case "agent.stopped":
       return { icon: Bell, colorClassName: NEUTRAL_COLOR };
     case "agent.stalled":
@@ -571,6 +578,10 @@ function notificationRowGlyph(row: MergedNotificationRow): RowGlyph {
         icon: NOTIFICATION_STATUS_TONES.browser.Icon,
         colorClassName: NOTIFICATION_STATUS_TONES.browser.className,
       };
+    // A secret is the subject of both rows, whatever the request's state.
+    case "secret.grant.requested":
+    case "secret.export.minted":
+      return { icon: KeyRound, colorClassName: NEUTRAL_COLOR };
     case null:
       return { icon: Bell, colorClassName: NEUTRAL_COLOR };
   }

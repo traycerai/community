@@ -83,6 +83,8 @@ const SUMMARY = {
   frozenAt: null,
   guestConfigured: null,
   guestConfigFailureReason: null,
+  phase: null,
+  routes: null,
 };
 
 function stubFetch(

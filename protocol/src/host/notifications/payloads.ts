@@ -519,6 +519,78 @@ export type HostNotificationBrowserHumanNeededPayload = z.infer<
   typeof hostNotificationBrowserHumanNeededPayloadSchema
 >;
 
+/**
+ * `secret.grant.requested` payload: what an agent on a sandbox asked for.
+ *
+ * `requestId` is the broker's id for the request and the only thing a decision
+ * is posted against; `hostId` is the sandbox the grant would be for, which is
+ * not necessarily the host that relays the row. The request names a secret, a
+ * destination, or both, so each is nullable on its own and the card shows what
+ * it has. `secretName` is the secret's NAME - no value is ever in a
+ * notification. `reason` is model-authored prose: rendered as body text, never
+ * as a title or an identifier.
+ *
+ * `epicId`/`chatId` address the asking agent's chat when it has one, for the
+ * deep link; an agent outside a chat leaves them out.
+ */
+export const hostNotificationSecretGrantRequestPayloadSchema = lazySchema(() =>
+  z
+    .object({
+      kind: z.literal("secret_grant_request"),
+      requestId: idSchema,
+      hostId: idSchema,
+      secretName: z.string().min(1).nullable(),
+      destination: z.string().min(1).nullable(),
+      port: z.number().int().positive().nullable().optional(),
+      protocol: z.string().min(1).nullable(),
+      reason: z.string(),
+      sandboxName: z.string().optional(),
+      agentId: z.string().min(1).nullable().optional(),
+      epicId: idSchema.optional(),
+      chatId: idSchema.optional(),
+    })
+    .catchall(z.unknown()),
+);
+export type HostNotificationSecretGrantRequestPayload = z.infer<
+  typeof hostNotificationSecretGrantRequestPayloadSchema
+>;
+
+/** What `traycer_secret_export` can mint. */
+export const HOST_NOTIFICATION_SECRET_EXPORT_KINDS = [
+  "presigned_url",
+  "short_lived_credentials",
+] as const;
+export type HostNotificationSecretExportKind =
+  (typeof HOST_NOTIFICATION_SECRET_EXPORT_KINDS)[number];
+
+/**
+ * `secret.export.minted` payload: an agent minted a short-lived export of a
+ * secret. The export works until `expiresAt` (epoch milliseconds) wherever it
+ * is copied, which is the one thing the notice has to say.
+ *
+ * `exportKind` rather than the plan's `kind`: `kind` is this union's
+ * discriminator. Read as a string, not the closed list above, so an export
+ * kind newer than this build still renders with generic wording instead of
+ * dropping the row to the common-field tier.
+ */
+export const hostNotificationSecretExportMintedPayloadSchema = lazySchema(() =>
+  z
+    .object({
+      kind: z.literal("secret_export_minted"),
+      secretName: z.string().min(1),
+      exportKind: z.string().min(1),
+      expiresAt: z.number().int().nonnegative(),
+      hostId: idSchema,
+      agentId: z.string().min(1).nullable().optional(),
+      epicId: idSchema.optional(),
+      chatId: idSchema.optional(),
+    })
+    .catchall(z.unknown()),
+);
+export type HostNotificationSecretExportMintedPayload = z.infer<
+  typeof hostNotificationSecretExportMintedPayloadSchema
+>;
+
 export const hostNotificationKnownPayloadSchema = lazySchema(() =>
   z.discriminatedUnion("kind", [
     hostNotificationChatStoppedPayloadSchema,
@@ -531,6 +603,8 @@ export const hostNotificationKnownPayloadSchema = lazySchema(() =>
     hostNotificationWorktreeAutoCleanupPayloadSchema,
     hostNotificationManagedCommandDeliveryParkedPayloadSchema,
     hostNotificationBrowserHumanNeededPayloadSchema,
+    hostNotificationSecretGrantRequestPayloadSchema,
+    hostNotificationSecretExportMintedPayloadSchema,
   ]),
 );
 export type HostNotificationKnownPayload = z.infer<
@@ -599,5 +673,9 @@ function payloadKindMatchesNotificationKind(
       );
     case "browser.human.needed":
       return payloadKind === "browser_human_needed";
+    case "secret.grant.requested":
+      return payloadKind === "secret_grant_request";
+    case "secret.export.minted":
+      return payloadKind === "secret_export_minted";
   }
 }

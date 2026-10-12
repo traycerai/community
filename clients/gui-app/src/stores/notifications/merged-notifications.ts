@@ -91,7 +91,7 @@ import {
   type HostNotificationSeverity,
   type HostNotificationsAttentionCursor,
   type HostNotificationsChronologicalCursor,
-  type HostNotificationsCloudFeedRowV11,
+  type HostNotificationsCloudFeedRowV13,
   type HostNotificationsCloudFeedEntryRequest,
   type HostNotificationsCloudFeedMarkAllReadRequest,
   type HostNotificationsCloudFeedClearAllRequest,
@@ -303,7 +303,7 @@ export function useMergedNotificationRows(): ReadonlyArray<MergedNotificationRow
         ...orderedGlobalEntries.map((entry) => rowFromGlobalEntry(entry)),
         ...Object.values(cloudRows)
           .filter(
-            (row): row is HostNotificationsCloudFeedRowV11 => row !== undefined,
+            (row): row is HostNotificationsCloudFeedRowV13 => row !== undefined,
           )
           .filter((row) => !isAutomaticAgentRecovery(row.entry))
           .map(rowFromCloudFeedRow),
@@ -563,7 +563,7 @@ function rowFromLocalFeedId(input: {
 
 function rowFromCloudFeedId(input: {
   readonly feedMode: "local" | "cloud" | "upgrade-required";
-  readonly cloudRow: HostNotificationsCloudFeedRowV11 | undefined;
+  readonly cloudRow: HostNotificationsCloudFeedRowV13 | undefined;
 }): MergedNotificationRow | null {
   if (
     input.feedMode !== "cloud" ||
@@ -1412,7 +1412,7 @@ export function useMergedNotificationsActions(): MergedNotificationsActions {
           if (cloudState.version !== cloudVersion) return;
           const fallbackEntryIds = Object.values(cloudState.rows)
             .filter(
-              (row): row is HostNotificationsCloudFeedRowV11 =>
+              (row): row is HostNotificationsCloudFeedRowV13 =>
                 row !== undefined && row.entry.readAt === null,
             )
             .map((row) => row.entryId);
@@ -1795,7 +1795,7 @@ export function rowFromGlobalEntry(
 }
 
 export function rowFromCloudFeedRow(
-  row: HostNotificationsCloudFeedRowV11,
+  row: HostNotificationsCloudFeedRowV13,
 ): MergedNotificationRow {
   const fallback = formatHostNotificationPresentation(row.entry);
   const title =
@@ -2035,7 +2035,21 @@ function navigationPayloadFromKnown(
     // The chat's queue is paused and its remedy lives in that chat.
     case "managed_command_delivery_parked":
       return { kind: "chat", epicId: known.epicId, chatId: known.chatId };
+    // Both secrets rows are about a sandbox agent's chat when the host could
+    // name one, and about nothing navigable otherwise: the decision and the
+    // notice are complete on the row itself.
+    case "secret_grant_request":
+    case "secret_export_minted":
+      return navigationPayloadForSecretsRow(known.epicId, known.chatId);
   }
+}
+
+function navigationPayloadForSecretsRow(
+  epicId: string | undefined,
+  chatId: string | undefined,
+): NotificationPayload | null {
+  if (epicId === undefined || chatId === undefined) return null;
+  return { kind: "chat", epicId, chatId };
 }
 
 function navigationPayloadForChatStopped(

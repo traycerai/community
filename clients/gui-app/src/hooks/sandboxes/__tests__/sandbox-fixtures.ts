@@ -29,6 +29,8 @@ export function sandboxSummaryFixture(
     frozenAt: null,
     guestConfigured: null,
     guestConfigFailureReason: null,
+    phase: null,
+    routes: null,
     priceMcPerHour: { awakeMc: 120, suspendedMc: 4, stoppedMc: 2 },
     ...overrides,
   };

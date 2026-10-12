@@ -27,6 +27,7 @@ import {
   listGuiHarnessesResponseSchemaV90,
   listGuiHarnessesResponseSchemaV91,
   listGuiHarnessesResponseSchemaV92,
+  listGuiHarnessesResponseSchemaV100,
   listGuiHarnessesResponseSchema,
 } from "@traycer/protocol/host/agent/gui/unary-schemas";
 import {
@@ -37,6 +38,7 @@ import {
   providersListResponseSchemaV90,
   providersListResponseSchemaV91,
   providersListResponseSchemaV92,
+  providersListResponseSchemaV100,
   providersListResponseSchemaV80,
   providersListResponseSchemaV10,
   providersListResponseSchemaV20,
@@ -101,9 +103,12 @@ const LIVE_FROZEN_EXPORTS = {
   // 9.2 froze when `commandcode` opened 10.0 (`1.5.0` shipped 9.2); its dump
   // did not change by the freeze.
   "agent.gui.listHarnesses@9.2": listGuiHarnessesResponseSchemaV92,
-  // The head line, holding 9.2's old job: it names the LIVE schema, so the next
-  // attempt to grow the row fails here first.
-  "agent.gui.listHarnesses@10.0": listGuiHarnessesResponseSchema,
+  // 10.0 froze when the sandbox credential keys opened 10.1 (`host-v1.5.1`
+  // shipped 10.0); its dump did not change by the freeze.
+  "agent.gui.listHarnesses@10.0": listGuiHarnessesResponseSchemaV100,
+  // The head line, holding 10.0's old job: it names the LIVE schema, so the
+  // next attempt to grow the row fails here first.
+  "agent.gui.listHarnesses@10.1": listGuiHarnessesResponseSchema,
   "agent.list@1.0": listAgentsResponseSchemaV10,
   "agent.list@2.0": listAgentsResponseSchemaV20,
   "agent.list@3.0": listAgentsResponseSchemaV30,
@@ -252,7 +257,11 @@ const LIVE_FROZEN_EXPORTS = {
   // design, so the two markers landing on the live capability regenerated it
   // without complaint. The rows above are the ones that refuse; a line earns
   // one the moment a host advertising it is published.
-  "providers.list@10.0": providersListResponseSchema,
+  "providers.list@10.0": providersListResponseSchemaV100,
+  // 10.0 froze above when `credentialsManagedInAccount` opened 10.1
+  // (`host-v1.5.1` shipped 10.0); its dump did not change by the freeze. This
+  // is the head line now, naming the LIVE schema.
+  "providers.list@10.1": providersListResponseSchema,
   // The fourth method (see the snapshot script for why it is here): its
   // response carries the PERSISTED harness enum, it is off the released floor,
   // and nothing local guarded it until Reasonix grew it and only the tag gate

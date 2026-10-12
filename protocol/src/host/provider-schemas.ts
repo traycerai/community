@@ -2187,7 +2187,7 @@ export type ProviderCliStateV90 = z.infer<typeof providerCliStateSchemaV90>;
  * here; do not regenerate the fixture.
  *
  * Do NOT add fields or ids here. Add them to `providerCliStateBaseShape`
- * above, which only the head line (10.0 today) publishes.
+ * above, which only the head line (10.1 today) publishes.
  */
 export const providerCliStateSchemaV92 = lazySchema(() =>
   providerCliStateSchemaV91.extend({
@@ -2293,9 +2293,47 @@ export const providersListResponseSchema = lazySchema(() =>
   z.object({
     providers: z.array(providerCliStateSchema),
     native: nativeListResultSchema.nullable().default(null),
+    // True on a sandbox host: it stores no provider credential
+    // (`SANDBOX_HOST_REFUSES_CREDENTIALS`), so API keys, logins and profiles
+    // are managed in the user's account and reach the sandbox through the
+    // egress broker. The Providers panel then replaces its credential controls
+    // with one line pointing there. Absent means false, which is every host
+    // that is not a sandbox and every host that predates the flag.
+    //
+    // A new KEY on `providers.list@10.1`. The frozen 10.0 response strips it
+    // on the within-major re-parse, so no emission gate is needed.
+    // `.optional()` rather than defaulted, so it is not required on OUTPUT at
+    // the response's construction sites.
+    credentialsManagedInAccount: z.boolean().optional(),
   }),
 );
 export type ProvidersListResponse = z.infer<typeof providersListResponseSchema>;
+
+/**
+ * Frozen `providers.list@10.0` response: the envelope before
+ * `credentialsManagedInAccount`.
+ *
+ * 10.0 bound the live response while it was the head line. `host-v1.5.1`
+ * shipped it, so 10.1 opens above it for the flag and this line keeps the two
+ * keys that release negotiated. A hand copy of the envelope rather than an
+ * `.omit()` of the live one, so the next envelope key cannot reach it.
+ *
+ * The provider row is still the live `providerCliStateSchema`, by reference:
+ * 10.1 adds nothing to the row, the two minors must share its id enums (no
+ * minor of a major may grow a response enum over its predecessor), and
+ * `frozen-catalog-lines.test.ts` pins this line's whole serialized shape, so a
+ * key added to the row reddens it rather than widening this line unseen. When
+ * that happens, hand-freeze the row here; do not regenerate the fixture.
+ */
+export const providersListResponseSchemaV100 = lazySchema(() =>
+  z.object({
+    providers: z.array(providerCliStateSchema),
+    native: nativeListResultSchema.nullable().default(null),
+  }),
+);
+export type ProvidersListResponseV100 = z.infer<
+  typeof providersListResponseSchemaV100
+>;
 
 /**
  * Frozen `providers.list@9.0` response - the pre-`autoJudge` provider state.

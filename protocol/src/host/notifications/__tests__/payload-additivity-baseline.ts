@@ -276,4 +276,146 @@ export const PAYLOAD_FINGERPRINT_BASELINE = {
       "chatId",
     ],
   },
+  secret_grant_request: {
+    type: "object",
+    properties: {
+      kind: {
+        type: "string",
+        const: "secret_grant_request",
+      },
+      requestId: {
+        type: "string",
+        minLength: 1,
+      },
+      hostId: {
+        type: "string",
+        minLength: 1,
+      },
+      secretName: {
+        anyOf: [
+          {
+            type: "string",
+            minLength: 1,
+          },
+          {
+            type: "null",
+          },
+        ],
+      },
+      destination: {
+        anyOf: [
+          {
+            type: "string",
+            minLength: 1,
+          },
+          {
+            type: "null",
+          },
+        ],
+      },
+      port: {
+        anyOf: [
+          {
+            type: "integer",
+            exclusiveMinimum: 0,
+            maximum: 9007199254740991,
+          },
+          {
+            type: "null",
+          },
+        ],
+      },
+      protocol: {
+        anyOf: [
+          {
+            type: "string",
+            minLength: 1,
+          },
+          {
+            type: "null",
+          },
+        ],
+      },
+      reason: {
+        type: "string",
+      },
+      sandboxName: {
+        type: "string",
+      },
+      agentId: {
+        anyOf: [
+          {
+            type: "string",
+            minLength: 1,
+          },
+          {
+            type: "null",
+          },
+        ],
+      },
+      epicId: {
+        type: "string",
+        minLength: 1,
+      },
+      chatId: {
+        type: "string",
+        minLength: 1,
+      },
+    },
+    required: [
+      "kind",
+      "requestId",
+      "hostId",
+      "secretName",
+      "destination",
+      "protocol",
+      "reason",
+    ],
+  },
+  secret_export_minted: {
+    type: "object",
+    properties: {
+      kind: {
+        type: "string",
+        const: "secret_export_minted",
+      },
+      secretName: {
+        type: "string",
+        minLength: 1,
+      },
+      exportKind: {
+        type: "string",
+        minLength: 1,
+      },
+      expiresAt: {
+        type: "integer",
+        minimum: 0,
+        maximum: 9007199254740991,
+      },
+      hostId: {
+        type: "string",
+        minLength: 1,
+      },
+      agentId: {
+        anyOf: [
+          {
+            type: "string",
+            minLength: 1,
+          },
+          {
+            type: "null",
+          },
+        ],
+      },
+      epicId: {
+        type: "string",
+        minLength: 1,
+      },
+      chatId: {
+        type: "string",
+        minLength: 1,
+      },
+    },
+    required: ["kind", "secretName", "exportKind", "expiresAt", "hostId"],
+  },
 } satisfies Record<HostNotificationKnownPayloadKind, JsonSchemaFingerprint>;

@@ -14,6 +14,8 @@ import {
   hostNotificationInterviewPayloadSchema,
   hostNotificationKnownPayloadSchema,
   hostNotificationManagedCommandDeliveryParkedPayloadSchema,
+  hostNotificationSecretExportMintedPayloadSchema,
+  hostNotificationSecretGrantRequestPayloadSchema,
   hostNotificationWorkspaceOperationFailedPayloadSchema,
   hostNotificationWorktreeAutoCleanupPayloadSchema,
   hostNotificationWorktreeDeletionPayloadSchema,
@@ -44,6 +46,8 @@ const LIVE_PAYLOAD_SCHEMAS: Record<
   managed_command_delivery_parked:
     hostNotificationManagedCommandDeliveryParkedPayloadSchema,
   browser_human_needed: hostNotificationBrowserHumanNeededPayloadSchema,
+  secret_grant_request: hostNotificationSecretGrantRequestPayloadSchema,
+  secret_export_minted: hostNotificationSecretExportMintedPayloadSchema,
 };
 
 const KINDS = [
@@ -57,6 +61,8 @@ const KINDS = [
   "worktree_auto_cleanup",
   "managed_command_delivery_parked",
   "browser_human_needed",
+  "secret_grant_request",
+  "secret_export_minted",
 ] as const satisfies readonly HostNotificationKnownPayloadKind[];
 
 describe("host notification payload additivity", () => {

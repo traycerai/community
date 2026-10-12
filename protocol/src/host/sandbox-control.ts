@@ -56,6 +56,78 @@ export const sandboxHourlyPriceSchema: z.ZodType<SandboxHourlyPrice> =
   );
 
 /**
+ * The phases a sandbox host reports in its heartbeat while it wakes, in the
+ * order it passes through them. `proxy-reachable` and `ready` both mean the
+ * egress canary answered: brokered traffic flows. `proxy-reachable` is the
+ * heartbeat the control plane activates the wake on, and the host moves to
+ * `ready` on that heartbeat's answer.
+ *
+ * The wire value is a string, not this list: a degraded host reports
+ * `degraded(<hop>)` with the failed hop named, and a phase newer than this
+ * build must not fail the sandbox list. Read it with
+ * {@link parseSandboxHeartbeatPhase}.
+ */
+export const SANDBOX_HEARTBEAT_PHASES = [
+  "enrolling",
+  "proving",
+  "attaching",
+  "proxy-reachable",
+  "ready",
+] as const;
+
+export type SandboxHeartbeatPhaseName =
+  (typeof SANDBOX_HEARTBEAT_PHASES)[number];
+
+export type SandboxHeartbeatPhase =
+  | { readonly kind: SandboxHeartbeatPhaseName }
+  | { readonly kind: "degraded"; readonly hop: string }
+  /** A phase this build does not know; shown as nothing, never as ready. */
+  | { readonly kind: "unknown"; readonly raw: string };
+
+const DEGRADED_PHASE_PATTERN = /^degraded\((.*)\)$/;
+
+export function parseSandboxHeartbeatPhase(
+  phase: string,
+): SandboxHeartbeatPhase {
+  const named = SANDBOX_HEARTBEAT_PHASES.find((name) => name === phase);
+  if (named !== undefined) return { kind: named };
+  const degraded = DEGRADED_PHASE_PATTERN.exec(phase);
+  if (degraded !== null) return { kind: "degraded", hop: degraded[1] ?? "" };
+  return { kind: "unknown", raw: phase };
+}
+
+/**
+ * Where one brokered route of a sandbox stands, as its host last reported it:
+ *
+ *  - `pending`: the route's endpoint is bound and nothing has used it yet.
+ *  - `ready`: a first connection went through to its worker.
+ *  - `unavailable`: the route cannot serve; `code` says why
+ *    (`endpoint_unavailable`, `leaf_unavailable`, `connector_offline`, ...).
+ */
+export type SandboxRouteState = "pending" | "ready" | "unavailable";
+
+export const sandboxRouteStateSchema = lazySchema(() =>
+  z.enum(["pending", "ready", "unavailable"]),
+);
+
+export interface SandboxRouteReadiness {
+  /** The route id; joins the sandbox's grants summary and its egress events. */
+  readonly route: string;
+  readonly state: SandboxRouteState;
+  /** The refusal code on an `unavailable` route, else `null`. */
+  readonly code: string | null;
+}
+
+export const sandboxRouteReadinessSchema: z.ZodType<SandboxRouteReadiness> =
+  lazySchema(() =>
+    z.object({
+      route: z.string().min(1),
+      state: sandboxRouteStateSchema,
+      code: z.string().nullable().default(null),
+    }),
+  );
+
+/**
  * One sandbox as `GET /api/sandboxes`, `GET /api/sandboxes/:id` and the
  * create and destroy answers carry it (the server's `SandboxView`). The list
  * excludes destroyed rows.
@@ -102,6 +174,22 @@ export interface SandboxSummary {
   readonly guestConfigured: boolean | null;
   /** Why it failed, as the guest reported it, when `guestConfigured` is false. */
   readonly guestConfigFailureReason: string | null;
+  /**
+   * The wake phase its host last reported in the heartbeat (see
+   * {@link SANDBOX_HEARTBEAT_PHASES}); `null` before any report and from a
+   * server that predates the secrets broker.
+   *
+   * It rides this tolerant row and NOT the host registry row: that row is
+   * `.strict()` on `GET /api/v3/hosts` and on `host.hostInventory.subscribe`,
+   * so a key added there fails the whole host list of every build that
+   * already asks for sandbox rows.
+   */
+  readonly phase: string | null;
+  /**
+   * Each brokered route's readiness, as its host last reported it; `null`
+   * before any report and from a server that predates the secrets broker.
+   */
+  readonly routes: readonly SandboxRouteReadiness[] | null;
   /** `null` when this server has no price configured for the provider. */
   readonly priceMcPerHour: SandboxHourlyPrice | null;
 }
@@ -137,6 +225,16 @@ export const sandboxSummarySchema: z.ZodType<SandboxSummary> = lazySchema(() =>
     frozenAt: z.number().nullable().default(null),
     guestConfigured: z.boolean().nullable().default(null),
     guestConfigFailureReason: z.string().nullable().default(null),
+    // The same tolerance for the two secrets-broker fields. `routes` also
+    // reads as `null` when it does not parse (a route state newer than this
+    // build): one unreadable route must not fail the row, and with it the
+    // whole sandbox list.
+    phase: z.string().nullable().default(null),
+    routes: z
+      .array(sandboxRouteReadinessSchema)
+      .nullable()
+      .default(null)
+      .catch(null),
     priceMcPerHour: sandboxHourlyPriceSchema.nullable(),
   }),
 );

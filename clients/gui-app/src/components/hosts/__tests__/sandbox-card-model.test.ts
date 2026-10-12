@@ -43,6 +43,8 @@ function summaryOf(overrides: Partial<SandboxSummary>): SandboxSummary {
     frozenAt: null,
     guestConfigured: null,
     guestConfigFailureReason: null,
+    phase: null,
+    routes: null,
     priceMcPerHour: null,
     ...overrides,
   };

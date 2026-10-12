@@ -1,5 +1,5 @@
 import {
-  type HostNotificationEntryV22,
+  type HostNotificationEntryV23,
   type HostNotificationOutcome,
 } from "@traycer/protocol/host/notifications/host-notifications";
 import {
@@ -32,7 +32,7 @@ export interface HostNotificationPresentation {
  * generic copy instead of throwing or exposing untrusted raw error text.
  */
 export function formatHostNotificationPresentation(
-  entry: HostNotificationEntryV22,
+  entry: HostNotificationEntryV23,
 ): HostNotificationPresentation {
   const known = parseKnownHostNotificationPayloadForKind(
     entry.kind,
@@ -91,7 +91,34 @@ export function formatHostNotificationPresentation(
         title: "Browser needs you",
         body: `${browserHumanNeededReason(known) ?? "Browser"} • ${resolvableRequestStatus(entry.resolvedAt, "Waiting for you", "Resumed")}`,
       };
+    // Host-composed titles. The subject is the secret's NAME (or, for a
+    // request that names only a destination, the destination); the agent's
+    // reason stays in the payload for the approval card and is not put into
+    // copy that also reaches email and hooks.
+    case "secret.grant.requested":
+      return {
+        title: "Secret requested",
+        body: `${secretGrantRequestSubject(known) ?? "A sandbox agent"} • ${resolvableRequestStatus(entry.resolvedAt, "Waiting for your decision", "Decided")}`,
+      };
+    case "secret.export.minted":
+      return {
+        title: "Secret exported",
+        body: `${secretExportMintedSubject(known) ?? "A secret"} • Short-lived export created`,
+      };
   }
+}
+
+function secretGrantRequestSubject(
+  known: HostNotificationKnownPayload | null,
+): string | null {
+  if (known?.kind !== "secret_grant_request") return null;
+  return known.secretName ?? known.destination;
+}
+
+function secretExportMintedSubject(
+  known: HostNotificationKnownPayload | null,
+): string | null {
+  return known?.kind === "secret_export_minted" ? known.secretName : null;
 }
 
 function browserHumanNeededReason(
@@ -163,6 +190,8 @@ export function hostOperationKnownCopy(
     // The browser park row's copy is composed above from the entry itself, not
     // from the payload arm: `reason` is the body's context, never a title.
     case "browser_human_needed":
+    case "secret_grant_request":
+    case "secret_export_minted":
       return null;
     case "worktree_deletion": {
       const taskTitle = nonEmptyTitle(payload.taskTitle ?? null);
@@ -248,6 +277,8 @@ function knownTaskTitle(payload: HostNotificationKnownPayload): string | null {
     case "worktree_auto_cleanup":
     case "managed_command_delivery_parked":
     case "browser_human_needed":
+    case "secret_grant_request":
+    case "secret_export_minted":
       return null;
   }
 }
@@ -265,6 +296,8 @@ function knownAgentName(payload: HostNotificationKnownPayload): string | null {
     case "worktree_auto_cleanup":
     case "managed_command_delivery_parked":
     case "browser_human_needed":
+    case "secret_grant_request":
+    case "secret_export_minted":
       return null;
   }
 }
@@ -282,6 +315,8 @@ function knownChatTitle(payload: HostNotificationKnownPayload): string | null {
     case "worktree_auto_cleanup":
     case "managed_command_delivery_parked":
     case "browser_human_needed":
+    case "secret_grant_request":
+    case "secret_export_minted":
       return null;
   }
 }
@@ -304,6 +339,8 @@ function knownStoppedReason(
     case "worktree_auto_cleanup":
     case "managed_command_delivery_parked":
     case "browser_human_needed":
+    case "secret_grant_request":
+    case "secret_export_minted":
       return null;
   }
 }
@@ -325,6 +362,8 @@ function knownProviderId(
     case "worktree_auto_cleanup":
     case "managed_command_delivery_parked":
     case "browser_human_needed":
+    case "secret_grant_request":
+    case "secret_export_minted":
       return null;
   }
 }
@@ -358,6 +397,8 @@ function knownBackgroundWorkRunning(
     case "worktree_auto_cleanup":
     case "managed_command_delivery_parked":
     case "browser_human_needed":
+    case "secret_grant_request":
+    case "secret_export_minted":
       return false;
   }
 }

@@ -106,6 +106,21 @@ const REPRESENTATIVE_ENTRIES: Readonly<
     resolvedAt: null,
     payload: { sessionId: "session-1", tabId: "tab-1", reason: "Sign in" },
   },
+  "secret.grant.requested": {
+    ...ENTRY_BASE,
+    kind: "secret.grant.requested",
+    severity: "needs_action",
+    outcome: null,
+    resolvedAt: null,
+    payload: { requestId: "request-1", hostId: "host-1" },
+  },
+  "secret.export.minted": {
+    ...ENTRY_BASE,
+    kind: "secret.export.minted",
+    severity: "info",
+    outcome: "completed",
+    payload: { secretName: "deploy-key", hostId: "host-1" },
+  },
   "host.operation.finished": {
     ...ENTRY_BASE,
     kind: "host.operation.finished",
