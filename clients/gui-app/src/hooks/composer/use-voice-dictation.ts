@@ -17,6 +17,7 @@ import {
   AnalyticsEvent,
   analyticsBlockerFromError,
 } from "@/lib/analytics";
+import type { ComposerEditorIncarnation } from "@/lib/composer/composer-editor-incarnation";
 
 export type VoiceDictationState =
   | "idle"
@@ -58,12 +59,26 @@ export interface UseVoiceDictationArgs {
   // finals, no interims).
   readonly onText: (text: string) => void;
   /**
-   * Which draft `onText` would insert into right now. A final that arrives
-   * after `stop` belongs to the draft that was open when the mic stopped; if
-   * that draft has been sent (or replaced) since, the final is dropped and
-   * the session closed rather than landing in the next message.
+   * Which draft `onText` would insert into right now: the editor incarnation
+   * and its draft generation. A final that arrives after `stop` belongs to
+   * the draft that was open when the mic stopped; if that draft has been
+   * sent, replaced, or its editor remounted since (a fresh editor starts at
+   * generation 0 again, so the generation alone cannot tell), the final is
+   * not inserted.
    */
-  readonly draftGeneration: () => number;
+  readonly draftIdentity: () => DictationDraftIdentity;
+}
+
+export interface DictationDraftIdentity {
+  readonly incarnation: ComposerEditorIncarnation | null;
+  readonly generation: number;
+}
+
+function sameDraft(
+  a: DictationDraftIdentity,
+  b: DictationDraftIdentity,
+): boolean {
+  return a.incarnation === b.incarnation && a.generation === b.generation;
 }
 
 export interface UseVoiceDictation {
@@ -163,7 +178,7 @@ function dictationDurationBucket(
 export function useVoiceDictation(
   args: UseVoiceDictationArgs,
 ): UseVoiceDictation {
-  const { language, onText, draftGeneration } = args;
+  const { language, onText, draftIdentity } = args;
   const wsStreamClient = useWsStreamClient();
   const runnerHost = useRunnerHost();
   const [state, setState] = useState<VoiceDictationState>("idle");
@@ -177,8 +192,8 @@ export function useVoiceDictation(
   const handlersRef = useRef(args);
   const stateRef = useRef(state);
   useEffect(() => {
-    handlersRef.current = { language, onText, draftGeneration };
-  }, [language, onText, draftGeneration]);
+    handlersRef.current = { language, onText, draftIdentity };
+  }, [language, onText, draftIdentity]);
   useEffect(() => {
     stateRef.current = state;
   }, [state]);
@@ -204,7 +219,7 @@ export function useVoiceDictation(
   // When `stop` asked the host to transcribe, for the decode-wait bucket.
   const flushRequestedAtRef = useRef<number | null>(null);
   // The draft the mic stopped over, for finals that arrive after `stop`.
-  const draftAtStopRef = useRef<number | null>(null);
+  const draftAtStopRef = useRef<DictationDraftIdentity | null>(null);
   // True once this session inserted any transcript text - the funnel's
   // "succeeded" fires on `flushed`, which the host sends even for an empty
   // decode, so this is what separates text from no text.
@@ -677,7 +692,7 @@ export function useVoiceDictation(
             const draftAtStop = draftAtStopRef.current;
             if (
               draftAtStop !== null &&
-              handlersRef.current.draftGeneration() !== draftAtStop
+              !sameDraft(handlersRef.current.draftIdentity(), draftAtStop)
             ) {
               return;
             }
@@ -789,7 +804,7 @@ export function useVoiceDictation(
     readyRef.current = false;
     setState("transcribing");
     flushRequestedAtRef.current = Date.now();
-    draftAtStopRef.current = handlersRef.current.draftGeneration();
+    draftAtStopRef.current = handlersRef.current.draftIdentity();
     client.flush();
     clearFinalizeTimers();
     finalizeTimerRef.current = window.setTimeout(

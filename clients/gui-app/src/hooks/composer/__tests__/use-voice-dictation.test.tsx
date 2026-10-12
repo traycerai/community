@@ -1,6 +1,10 @@
 import { act, renderHook } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Analytics, AnalyticsEvent } from "@/lib/analytics";
+import {
+  createComposerEditorIncarnation,
+  type ComposerEditorIncarnation,
+} from "@/lib/composer/composer-editor-incarnation";
 import { appLogger } from "@/lib/logger";
 import { dictationCaptureConstraints } from "@/hooks/composer/dictation-capture-constraints";
 import {
@@ -152,6 +156,10 @@ function fakeMediaStream(): FakeMediaStream {
 // The composer's draft generation as the hook sees it. A test bumps `current`
 // to say "the draft was sent (or replaced)"; reset to 0 before every test.
 const draftBox: { current: number } = { current: 0 };
+// The editor incarnation the composer reports; a remount replaces it.
+const incarnationBox: { current: ComposerEditorIncarnation | null } = {
+  current: null,
+};
 
 let getUserMediaImpl: () => Promise<FakeMediaStream> = () =>
   Promise.resolve(fakeMediaStream());
@@ -192,6 +200,7 @@ function lastAudioContext(): FakeAudioContext {
 
 beforeEach(() => {
   draftBox.current = 0;
+  incarnationBox.current = null;
   speech.FakeSpeechStreamClient.instances = [];
   FakeAudioContext.instances = [];
   streamRuntimeState.wsStreamClient = {};
@@ -234,7 +243,10 @@ function renderDictation() {
     useVoiceDictation({
       language: "en",
       onText: () => undefined,
-      draftGeneration: () => draftBox.current,
+      draftIdentity: () => ({
+        incarnation: incarnationBox.current,
+        generation: draftBox.current,
+      }),
     }),
   );
 }
@@ -826,7 +838,10 @@ describe("useVoiceDictation late final transcript", () => {
       useVoiceDictation({
         language: "en",
         onText,
-        draftGeneration: () => draftBox.current,
+        draftIdentity: () => ({
+          incarnation: incarnationBox.current,
+          generation: draftBox.current,
+        }),
       }),
     );
     return { ...rendered, onText };
@@ -1007,6 +1022,27 @@ describe("useVoiceDictation late final transcript", () => {
     const events = track.mock.calls.map(([event]) => event);
     expect(events).toContain(AnalyticsEvent.VoiceCaptureFailed);
     expect(events).not.toContain(AnalyticsEvent.VoiceTranscriptionFailed);
+  });
+
+  it("does not insert a final after the editor was remounted, even at the same generation", async () => {
+    vi.spyOn(appLogger, "warn").mockImplementation(() => undefined);
+    incarnationBox.current = createComposerEditorIncarnation();
+    const { result, onText } = renderWithText();
+    const client = await recordThenStop(result);
+    advance(FINALIZE_FALLBACK_MS);
+
+    // A fresh editor starts at generation 0 again - the generation matches,
+    // the incarnation does not.
+    incarnationBox.current = createComposerEditorIncarnation();
+    act(() => {
+      client.callbacks.onTranscript({ text: "old editor", isFinal: true });
+    });
+    expect(onText).not.toHaveBeenCalled();
+
+    act(() => {
+      client.callbacks.onFlushed();
+    });
+    expect(client.closeCalls).toBe(1);
   });
 
   it("still inserts a final that arrives while transcribing when the draft is unchanged", async () => {
