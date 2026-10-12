@@ -149,6 +149,10 @@ function fakeMediaStream(): FakeMediaStream {
   return { getTracks: () => [{ stop: () => undefined }] };
 }
 
+// The composer's draft generation as the hook sees it. A test bumps `current`
+// to say "the draft was sent (or replaced)"; reset to 0 before every test.
+const draftBox: { current: number } = { current: 0 };
+
 let getUserMediaImpl: () => Promise<FakeMediaStream> = () =>
   Promise.resolve(fakeMediaStream());
 let getUserMediaCalls = 0;
@@ -187,6 +191,7 @@ function lastAudioContext(): FakeAudioContext {
 }
 
 beforeEach(() => {
+  draftBox.current = 0;
   speech.FakeSpeechStreamClient.instances = [];
   FakeAudioContext.instances = [];
   streamRuntimeState.wsStreamClient = {};
@@ -226,7 +231,11 @@ afterEach(() => {
 
 function renderDictation() {
   return renderHook(() =>
-    useVoiceDictation({ language: "en", onText: () => undefined }),
+    useVoiceDictation({
+      language: "en",
+      onText: () => undefined,
+      draftGeneration: () => draftBox.current,
+    }),
   );
 }
 
@@ -814,7 +823,11 @@ describe("useVoiceDictation late final transcript", () => {
   function renderWithText() {
     const onText = vi.fn<(text: string) => void>();
     const rendered = renderHook(() =>
-      useVoiceDictation({ language: "en", onText }),
+      useVoiceDictation({
+        language: "en",
+        onText,
+        draftGeneration: () => draftBox.current,
+      }),
     );
     return { ...rendered, onText };
   }
@@ -898,6 +911,143 @@ describe("useVoiceDictation late final transcript", () => {
     // The cap timer was cleared with the session: nothing fires later.
     advance(LATE_FINAL_CAP_MS * 2);
     expect(client.closeCalls).toBe(1);
+  });
+
+  it("drops a late final, closes the session and stays idle when the draft was sent after the fallback", async () => {
+    vi.spyOn(appLogger, "warn").mockImplementation(() => undefined);
+    const { result, onText } = renderWithText();
+    const client = await recordThenStop(result);
+    advance(FINALIZE_FALLBACK_MS);
+    expect(result.current.state).toBe("idle");
+    expect(client.closeCalls).toBe(0);
+
+    // The person sent the draft while the decode was still running.
+    draftBox.current += 1;
+    act(() => {
+      client.callbacks.onTranscript({
+        text: "next message words",
+        isFinal: true,
+      });
+    });
+
+    expect(onText).not.toHaveBeenCalled();
+    expect(client.closeCalls).toBe(1);
+    expect(result.current.state).toBe("idle");
+
+    // Nothing is left armed: the cap timer died with the session.
+    advance(LATE_FINAL_CAP_MS * 2);
+    expect(client.closeCalls).toBe(1);
+    expect(onText).not.toHaveBeenCalled();
+  });
+
+  it("drops a final that arrives while transcribing once the draft was sent, and closes the session", async () => {
+    const { result, onText } = renderWithText();
+    const client = await recordThenStop(result);
+    expect(result.current.state).toBe("transcribing");
+
+    draftBox.current += 1;
+    act(() => {
+      client.callbacks.onTranscript({ text: "wrong draft", isFinal: true });
+    });
+
+    expect(onText).not.toHaveBeenCalled();
+    expect(client.closeCalls).toBe(1);
+    expect(result.current.state).toBe("idle");
+
+    // The session is gone, so the flushed that follows is ignored.
+    act(() => {
+      client.callbacks.onFlushed();
+    });
+    expect(client.closeCalls).toBe(1);
+  });
+
+  it("still inserts a final that arrives while transcribing when the draft is unchanged", async () => {
+    const { result, onText } = renderWithText();
+    const client = await recordThenStop(result);
+
+    act(() => {
+      client.callbacks.onTranscript({ text: "same draft", isFinal: true });
+    });
+
+    expect(onText).toHaveBeenCalledTimes(1);
+    expect(onText).toHaveBeenCalledWith("same draft");
+    expect(client.closeCalls).toBe(0);
+    expect(result.current.state).toBe("transcribing");
+  });
+
+  it("does not compare a live recording's finals against a previous session's draft", async () => {
+    vi.spyOn(appLogger, "warn").mockImplementation(() => undefined);
+    const { result, onText } = renderWithText();
+    const first = await recordThenStop(result);
+    advance(FINALIZE_FALLBACK_MS);
+    expect(result.current.state).toBe("idle");
+
+    // A new dictation starts after the draft changed; the recorded stop value
+    // belonged to the first session and must not gate this one.
+    draftBox.current += 1;
+    act(() => {
+      result.current.start();
+    });
+    await settleFake();
+    const second = lastSpeechClient();
+    expect(second).not.toBe(first);
+    act(() => {
+      second.callbacks.onReady();
+    });
+    expect(result.current.state).toBe("recording");
+
+    draftBox.current += 1;
+    act(() => {
+      second.callbacks.onTranscript({ text: "while recording", isFinal: true });
+    });
+    expect(onText).toHaveBeenCalledWith("while recording");
+    expect(second.closeCalls).toBe(0);
+  });
+
+  it("does not flush a second time when stop is called after the fallback went idle", async () => {
+    vi.spyOn(appLogger, "warn").mockImplementation(() => undefined);
+    const { result } = renderWithText();
+    const client = await recordThenStop(result);
+    advance(FINALIZE_FALLBACK_MS);
+    expect(result.current.state).toBe("idle");
+    expect(client.flushCalls).toBe(1);
+
+    // A hotkey released after the fallback fired.
+    act(() => {
+      result.current.stop();
+    });
+
+    expect(client.flushCalls).toBe(1);
+    expect(result.current.state).toBe("idle");
+    expect(client.closeCalls).toBe(0);
+
+    // The cap timer was not restarted by the stop: it still fires on schedule
+    // from the fallback, not from the second stop.
+    advance(LATE_FINAL_CAP_MS);
+    expect(client.closeCalls).toBe(1);
+  });
+
+  it("reports a host error frame after the fallback as a transcription failure, not a capture failure", async () => {
+    vi.spyOn(appLogger, "warn").mockImplementation(() => undefined);
+    vi.spyOn(appLogger, "error").mockImplementation(() => undefined);
+    const track = vi.spyOn(Analytics.getInstance(), "track");
+    const { result } = renderWithText();
+    const client = await recordThenStop(result);
+    advance(FINALIZE_FALLBACK_MS);
+    expect(result.current.state).toBe("idle");
+
+    act(() => {
+      client.callbacks.onError({
+        message: "decode failed",
+        code: "DICTATION_FAILED",
+      });
+    });
+
+    const events = track.mock.calls.map(([event]) => event);
+    expect(events).toContain(AnalyticsEvent.VoiceTranscriptionFailed);
+    expect(events).not.toContain(AnalyticsEvent.VoiceCaptureFailed);
+    expect(result.current.state).toBe("error");
+    expect(result.current.failureClass).toBe("host_error_frame");
   });
 
   it("closes the session once the cap passes with no final, and drops anything after", async () => {

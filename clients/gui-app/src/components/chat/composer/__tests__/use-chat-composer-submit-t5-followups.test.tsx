@@ -218,6 +218,7 @@ function mutableFakeEditor(initial: JsonContent): {
       removeImageAttachmentById: () => undefined,
       rewriteImageAttachmentHashById: () => false,
       insertDictatedText: () => undefined,
+      draftGeneration: () => 0,
       dismissActiveSuggestion: () => false,
     },
     setJSON: (next: JsonContent) => {
@@ -836,6 +837,7 @@ describe("R5 (6, drive-red): the bridge capability is read live at the decision,
           removeImageAttachmentById: () => undefined,
           rewriteImageAttachmentHashById: () => false,
           insertDictatedText: () => undefined,
+          draftGeneration: () => 0,
           dismissActiveSuggestion: () => false,
         }}
         onSubmitMessage={submit}
@@ -946,6 +948,7 @@ describe("R5 (7): the deferred steer confirm reads the same live getter", () => 
           removeImageAttachmentById: () => undefined,
           rewriteImageAttachmentHashById: () => false,
           insertDictatedText: () => undefined,
+          draftGeneration: () => 0,
           dismissActiveSuggestion: () => false,
         }}
         onSubmitMessage={submit}

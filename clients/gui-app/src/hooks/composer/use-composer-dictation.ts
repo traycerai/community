@@ -45,6 +45,7 @@ export function useComposerDictation(
     onText: (text) => {
       args.editorRef.current?.insertDictatedText(text);
     },
+    draftGeneration: () => args.editorRef.current?.draftGeneration() ?? 0,
   });
   const dictationError = dictation.errorMessage;
   const dictationFailureClass = dictation.failureClass;
