@@ -702,6 +702,14 @@ export interface IRunnerHost {
    * to sit on a press that visibly did nothing.
    */
   readonly systemBack: ISystemBackHost | null;
+  /**
+   * The iOS status-bar tap, the platform's "scroll to top" gesture. iOS
+   * answers it on its own only for a page that scrolls as a whole, and this
+   * app's page never does - every screen scrolls inside its own box - so the
+   * shell forwards the tap and the GUI picks the box. Present only on the iOS
+   * shell; `null` everywhere else, since no other platform has the gesture.
+   */
+  readonly statusBarTap: IStatusBarTapHost | null;
 }
 
 /**
@@ -954,6 +962,14 @@ export interface ISystemBackHost {
   onBack(handler: () => void): Disposable;
   /** Sends the app to the background, leaving it warm for the next resume. */
   minimize(): Promise<void>;
+}
+
+/**
+ * The status-bar tap, where the OS has one. See `IRunnerHost.statusBarTap`.
+ */
+export interface IStatusBarTapHost {
+  /** Fires once per tap on the status bar; carries nothing. */
+  onTap(handler: () => void): Disposable;
 }
 
 /**

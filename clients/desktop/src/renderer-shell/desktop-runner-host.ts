@@ -761,6 +761,8 @@ export class DesktopRunnerHost implements IRunnerHost {
   // No OS back request on the desktop: back is the header arrows, the mouse
   // buttons and the keybinding, all of which the GUI owns itself.
   readonly systemBack: null = null;
+  // No status bar to tap on the desktop.
+  readonly statusBarTap: null = null;
   readonly hostControllerStatus: DesktopHostControllerStatusBridge;
   readonly selectionAuthority: SelectionAuthorityClient;
   private readonly refreshSelectionFleet: () => Promise<void>;

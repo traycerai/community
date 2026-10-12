@@ -45,6 +45,15 @@ export function useComposerDictation(
     onText: (text) => {
       args.editorRef.current?.insertDictatedText(text);
     },
+    draftIdentity: () => {
+      const editor = args.editorRef.current;
+      return editor === null
+        ? { incarnation: null, generation: 0 }
+        : {
+            incarnation: editor.getEditorIncarnation(),
+            generation: editor.draftGeneration(),
+          };
+    },
   });
   const dictationError = dictation.errorMessage;
   const dictationFailureClass = dictation.failureClass;
@@ -96,8 +105,13 @@ export function useComposerDictation(
   // Only offer dictation once the on-device model is installed - this also
   // self-heals a missing model and keeps the mic (and the OS permission prompt)
   // hidden where the engine/model isn't available. While it downloads, a
-  // preparing indicator shows in the mic slot.
-  const dictationAvailability = useDictationAvailability(voiceInputEnabled);
+  // preparing indicator shows in the mic slot. The active composer also keeps
+  // the host's recogniser warm, so pressing the mic after a pause does not
+  // pay the model load.
+  const dictationAvailability = useDictationAvailability(
+    voiceInputEnabled,
+    args.isActive,
+  );
   const dictationActive = dictationAvailability.ready;
   // If availability drops mid-session (model evicted / host swap), the mic +
   // stop UI disappear - cancel so the OS mic isn't left open with no affordance.
