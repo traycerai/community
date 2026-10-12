@@ -17,9 +17,11 @@ import { z } from "zod";
  * the addon silently drops the patch and this test is what notices.
  *
  * The bug fires only at module evaluation and depends on what was allocated
- * before it, so this runs in a child process whose first pooled allocation
- * (byteOffset 0) is zeroed on purpose; in-process the vitest module cache and
- * earlier allocations would make the outcome nondeterministic.
+ * before it, so this runs in a child process that zeroes the first bytes of
+ * the pool on purpose. It writes through `head.buffer` so a preload from an
+ * inherited `NODE_OPTIONS` that already used the pool does not matter.
+ * In-process, the vitest module cache and earlier allocations would make the
+ * outcome nondeterministic.
  */
 const addonPath = createRequire(import.meta.url).resolve(
   "@xterm/addon-unicode-graphemes",
@@ -27,8 +29,7 @@ const addonPath = createRequire(import.meta.url).resolve(
 
 const childScript = `
 const head = Buffer.allocUnsafe(16);
-head.fill(0);
-if (head.byteOffset !== 0) throw new Error("pool head is not at offset 0");
+new Uint8Array(head.buffer, 0, 16).fill(0);
 const { UnicodeGraphemesAddon } = require(${JSON.stringify(addonPath)});
 const providers = [];
 new UnicodeGraphemesAddon().activate({
