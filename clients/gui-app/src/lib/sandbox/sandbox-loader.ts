@@ -6,9 +6,10 @@
 // `sandbox/index.html` and the page policy added here both keep holding.
 //
 // NOT an app module. `vite/sandbox-assets.ts` transpiles this file on its own
-// into `sandbox/loader.js`, a classic script (a module script would need CORS
-// from an opaque origin). So it imports nothing, exports nothing, and keeps
-// everything inside one function. The protocol it speaks is described in
+// and inlines it into `sandbox/index.html` as a classic script (a module
+// script would need CORS from an opaque origin, and WebKit blocks a script
+// file under iOS's `capacitor:` scheme). So it imports nothing, exports
+// nothing, and keeps everything inside one function. The protocol it speaks is described in
 // `bridge-host.ts`.
 
 interface LoaderShortcut {
