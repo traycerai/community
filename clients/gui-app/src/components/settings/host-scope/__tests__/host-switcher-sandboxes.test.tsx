@@ -3,7 +3,10 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { HostSwitcher } from "@/components/settings/host-scope/host-switcher";
 import type { HostSwitcherAction } from "@/components/settings/host-scope/host-switcher";
 import type { HostPickIntent } from "@/components/settings/host-scope/host-option-model";
-import { NO_HOST_OPTION_REFUSALS } from "@/components/settings/host-scope/host-option-model";
+import {
+  isSleepingSandboxPick,
+  NO_HOST_OPTION_REFUSALS,
+} from "@/components/settings/host-scope/host-option-model";
 import { hostScopeOptionFixture } from "@/components/settings/host-scope/host-scope-fixture";
 import type {
   HostScopeOption,
@@ -411,6 +414,11 @@ describe("<HostSwitcher /> the Automations pod", () => {
     expect(onSelect).toHaveBeenCalledWith("pod-released");
   });
 
+  // The switcher hands EVERY pin pick to `wakeSandboxOnPick`, and the
+  // "only a sleeping sandbox wakes" rule is that function's own gate
+  // (`isSleepingSandboxPick`), which the mock above replaces. So this pins
+  // both halves: the pick is forwarded, and the gate the real
+  // `wakeSandboxOnPick` reads refuses an awake pod (a released one passes).
   it("does not wake an awake pod on a pick", () => {
     renderSwitcherOffering(
       {
@@ -422,7 +430,9 @@ describe("<HostSwitcher /> the Automations pod", () => {
       true,
     );
     fireEvent.click(row("pod-awake"));
-    expect(wakeSandboxOnPick).not.toHaveBeenCalled();
+    expect(wakeSandboxOnPick).toHaveBeenCalledWith(POD_AWAKE);
+    expect(isSleepingSandboxPick(POD_AWAKE)).toBe(false);
+    expect(isSleepingSandboxPick(POD_RELEASED)).toBe(true);
     expect(onSelect).toHaveBeenCalledWith("pod-awake");
   });
 });
