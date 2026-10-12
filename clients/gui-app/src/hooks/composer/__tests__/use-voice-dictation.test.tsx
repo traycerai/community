@@ -3,7 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Analytics, AnalyticsEvent } from "@/lib/analytics";
 import { appLogger } from "@/lib/logger";
 import { dictationCaptureConstraints } from "@/hooks/composer/dictation-capture-constraints";
-import { useVoiceDictation } from "@/hooks/composer/use-voice-dictation";
+import {
+  useVoiceDictation,
+  type UseVoiceDictation,
+} from "@/hooks/composer/use-voice-dictation";
 import { useSettingsStore } from "@/stores/settings/settings-store";
 
 // ---------------------------------------------------------------------------
@@ -784,5 +787,341 @@ describe("useVoiceDictation failure logging", () => {
 
     expect(log.failures()).toHaveLength(1);
     expect(result.current.failureClass).toBe("host_error_frame");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A late final. The host answers a flush with the transcript and then
+// `flushed`; on a cold model load plus a long utterance that can take longer
+// than the UI is willing to wait. The fallback returns the UI to idle after
+// FINALIZE_FALLBACK_MS but leaves the session open, so a transcript that is
+// merely late still lands in the composer - it used to be discarded with the
+// session - and the cap closes a host that never answers at all.
+//
+// The constants are module-private in the hook, so the values are repeated
+// here: a change to either is a change to what these tests assert.
+// ---------------------------------------------------------------------------
+
+const FINALIZE_FALLBACK_MS = 15_000;
+const LATE_FINAL_CAP_MS = 60_000;
+const FALLBACK_LOG = "[voice-dictation] no flushed within fallback; waiting";
+
+describe("useVoiceDictation late final transcript", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function renderWithText() {
+    const onText = vi.fn<(text: string) => void>();
+    const rendered = renderHook(() =>
+      useVoiceDictation({ language: "en", onText }),
+    );
+    return { ...rendered, onText };
+  }
+
+  /** Lets pending promises settle without needing a real timer to fire. */
+  async function settleFake(): Promise<void> {
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+  }
+
+  function advance(ms: number): void {
+    act(() => {
+      vi.advanceTimersByTime(ms);
+    });
+  }
+
+  /**
+   * Records, then stops with fake timers armed: the state is "transcribing",
+   * the host has been asked to flush, and the fallback timer is running.
+   */
+  async function recordThenStop(result: {
+    readonly current: UseVoiceDictation;
+  }) {
+    act(() => {
+      result.current.start();
+    });
+    await flushAsync();
+    const client = lastSpeechClient();
+    act(() => {
+      client.callbacks.onReady();
+    });
+    expect(result.current.state).toBe("recording");
+    vi.useFakeTimers();
+    act(() => {
+      result.current.stop();
+    });
+    expect(result.current.state).toBe("transcribing");
+    expect(client.flushCalls).toBe(1);
+    return client;
+  }
+
+  it("goes idle after the fallback but keeps the session open", async () => {
+    const warn = vi
+      .spyOn(appLogger, "warn")
+      .mockImplementation(() => undefined);
+    const { result } = renderWithText();
+    const client = await recordThenStop(result);
+
+    advance(FINALIZE_FALLBACK_MS - 1);
+    expect(result.current.state).toBe("transcribing");
+
+    advance(1);
+    expect(result.current.state).toBe("idle");
+    // Idle for the UI, but the stream is still there for the late final.
+    expect(client.closeCalls).toBe(0);
+    expect(
+      warn.mock.calls.filter((call) => call[0] === FALLBACK_LOG),
+    ).toHaveLength(1);
+  });
+
+  it("inserts a transcript that arrives after the fallback, then closes on flushed", async () => {
+    vi.spyOn(appLogger, "warn").mockImplementation(() => undefined);
+    const { result, onText } = renderWithText();
+    const client = await recordThenStop(result);
+    advance(FINALIZE_FALLBACK_MS);
+    expect(result.current.state).toBe("idle");
+
+    act(() => {
+      client.callbacks.onTranscript({ text: "late words", isFinal: true });
+    });
+
+    expect(onText).toHaveBeenCalledTimes(1);
+    expect(onText).toHaveBeenCalledWith("late words");
+    expect(result.current.state).toBe("idle");
+
+    act(() => {
+      client.callbacks.onFlushed();
+    });
+    expect(client.closeCalls).toBe(1);
+    // The cap timer was cleared with the session: nothing fires later.
+    advance(LATE_FINAL_CAP_MS * 2);
+    expect(client.closeCalls).toBe(1);
+  });
+
+  it("closes the session once the cap passes with no final, and drops anything after", async () => {
+    vi.spyOn(appLogger, "warn").mockImplementation(() => undefined);
+    const { result, onText } = renderWithText();
+    const client = await recordThenStop(result);
+    advance(FINALIZE_FALLBACK_MS);
+
+    advance(LATE_FINAL_CAP_MS - 1);
+    expect(client.closeCalls).toBe(0);
+
+    advance(1);
+    expect(client.closeCalls).toBe(1);
+    expect(result.current.state).toBe("idle");
+
+    // The session is gone, so a transcript after the cap has nowhere to go.
+    act(() => {
+      client.callbacks.onTranscript({ text: "too late", isFinal: true });
+    });
+    expect(onText).not.toHaveBeenCalled();
+  });
+
+  it("closes a session left open for a late final when the host drops the stream", async () => {
+    vi.spyOn(appLogger, "warn").mockImplementation(() => undefined);
+    const { result } = renderWithText();
+    const client = await recordThenStop(result);
+    advance(FINALIZE_FALLBACK_MS);
+    expect(client.closeCalls).toBe(0);
+
+    act(() => {
+      client.callbacks.onConnectionStatus("closed", null);
+    });
+
+    expect(client.closeCalls).toBe(1);
+    expect(result.current.state).toBe("idle");
+    advance(LATE_FINAL_CAP_MS * 2);
+    expect(client.closeCalls).toBe(1);
+  });
+
+  it("finalises the leftover session when a new dictation starts, and keeps the old cap timer off the new one", async () => {
+    vi.spyOn(appLogger, "warn").mockImplementation(() => undefined);
+    const { result, onText } = renderWithText();
+    const first = await recordThenStop(result);
+    advance(FINALIZE_FALLBACK_MS);
+    expect(result.current.state).toBe("idle");
+
+    act(() => {
+      result.current.start();
+    });
+    await settleFake();
+    const second = lastSpeechClient();
+    expect(second).not.toBe(first);
+    expect(first.closeCalls).toBe(1);
+    act(() => {
+      second.callbacks.onReady();
+    });
+    expect(result.current.state).toBe("recording");
+
+    // The first session's cap would have fired by now; it was cleared, so the
+    // new recording is left alone.
+    advance(LATE_FINAL_CAP_MS * 2);
+    expect(second.closeCalls).toBe(0);
+    expect(result.current.state).toBe("recording");
+
+    // And the first session's late final does not land in the new recording.
+    act(() => {
+      first.callbacks.onTranscript({ text: "from before", isFinal: true });
+    });
+    expect(onText).not.toHaveBeenCalled();
+  });
+
+  it("does not arm the fallback's cap when flushed arrives in time", async () => {
+    const warn = vi
+      .spyOn(appLogger, "warn")
+      .mockImplementation(() => undefined);
+    const { result } = renderWithText();
+    const client = await recordThenStop(result);
+
+    act(() => {
+      client.callbacks.onFlushed();
+    });
+    expect(result.current.state).toBe("idle");
+    expect(client.closeCalls).toBe(1);
+
+    advance(FINALIZE_FALLBACK_MS + LATE_FINAL_CAP_MS);
+    expect(client.closeCalls).toBe(1);
+    expect(
+      warn.mock.calls.filter((call) => call[0] === FALLBACK_LOG),
+    ).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The funnel's "succeeded" fires on the host's `flushed`, which it sends even
+// when the decode produced nothing, so the event carries what separates the
+// two cases: whether any text reached the composer, and how long the person
+// waited between stopping the mic and `flushed`.
+// ---------------------------------------------------------------------------
+
+describe("useVoiceDictation transcription analytics", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function recordThenStop(result: {
+    readonly current: UseVoiceDictation;
+  }) {
+    act(() => {
+      result.current.start();
+    });
+    await flushAsync();
+    const client = lastSpeechClient();
+    act(() => {
+      client.callbacks.onReady();
+    });
+    vi.useFakeTimers();
+    act(() => {
+      result.current.stop();
+    });
+    return client;
+  }
+
+  function succeededProperties(track: { mock: { calls: unknown[][] } }) {
+    return track.mock.calls
+      .filter(([event]) => event === AnalyticsEvent.VoiceTranscriptionSucceeded)
+      .map(([, properties]) => properties);
+  }
+
+  it("reports text received and a sub-second wait", async () => {
+    const track = vi.spyOn(Analytics.getInstance(), "track");
+    const { result } = renderDictation();
+    const client = await recordThenStop(result);
+
+    act(() => {
+      vi.advanceTimersByTime(400);
+      client.callbacks.onTranscript({ text: "hello", isFinal: true });
+      client.callbacks.onFlushed();
+    });
+
+    expect(succeededProperties(track)).toEqual([
+      {
+        duration_bucket: "under_10s",
+        had_text: true,
+        decode_bucket: "under_1s",
+      },
+    ]);
+  });
+
+  it("reports a flush that returned no text as had_text false", async () => {
+    const track = vi.spyOn(Analytics.getInstance(), "track");
+    const { result } = renderDictation();
+    const client = await recordThenStop(result);
+
+    act(() => {
+      vi.advanceTimersByTime(2_000);
+      client.callbacks.onFlushed();
+    });
+
+    expect(succeededProperties(track)).toEqual([
+      {
+        duration_bucket: "under_10s",
+        had_text: false,
+        decode_bucket: "1_to_5s",
+      },
+    ]);
+  });
+
+  it("does not count an empty transcript as text", async () => {
+    const track = vi.spyOn(Analytics.getInstance(), "track");
+    const { result } = renderDictation();
+    const client = await recordThenStop(result);
+
+    act(() => {
+      client.callbacks.onTranscript({ text: "", isFinal: true });
+      client.callbacks.onFlushed();
+    });
+
+    expect(succeededProperties(track)).toMatchObject([{ had_text: false }]);
+  });
+
+  it.each([
+    [999, "under_1s"],
+    [1_000, "1_to_5s"],
+    [5_000, "1_to_5s"],
+    [5_001, "over_5s"],
+  ] as const)("buckets a %i ms wait as %s", async (waitMs, expectedBucket) => {
+    const track = vi.spyOn(Analytics.getInstance(), "track");
+    vi.spyOn(appLogger, "warn").mockImplementation(() => undefined);
+    const { result } = renderDictation();
+    const client = await recordThenStop(result);
+
+    act(() => {
+      vi.advanceTimersByTime(waitMs);
+      client.callbacks.onFlushed();
+    });
+
+    expect(succeededProperties(track)).toMatchObject([
+      { decode_bucket: expectedBucket },
+    ]);
+  });
+
+  it("still reports a flushed that arrives after the fallback, in the longest wait bucket, with its text", async () => {
+    const track = vi.spyOn(Analytics.getInstance(), "track");
+    vi.spyOn(appLogger, "warn").mockImplementation(() => undefined);
+    const { result } = renderDictation();
+    const client = await recordThenStop(result);
+
+    act(() => {
+      vi.advanceTimersByTime(20_000);
+    });
+    expect(result.current.state).toBe("idle");
+    act(() => {
+      client.callbacks.onTranscript({ text: "slow words", isFinal: true });
+      client.callbacks.onFlushed();
+    });
+
+    // `duration_bucket` is measured from the start of recording to the event,
+    // so the 20 s wait counts toward it as well.
+    expect(succeededProperties(track)).toEqual([
+      {
+        duration_bucket: "10_to_30s",
+        had_text: true,
+        decode_bucket: "over_5s",
+      },
+    ]);
   });
 });

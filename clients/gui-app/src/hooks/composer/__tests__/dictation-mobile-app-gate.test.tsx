@@ -14,7 +14,7 @@
  * host stream) and the host RPC transport are faked.
  */
 import type { RefObject } from "react";
-import { cleanup, renderHook } from "@testing-library/react";
+import { act, cleanup, renderHook } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -35,6 +35,12 @@ const host = vi.hoisted(() => ({
   // Every observed `enabled` the status query was asked for, so a test can
   // assert the speech RPC is never even armed on mobile.
   statusQueryEnabled: [] as boolean[],
+  // What `speech.getModelStatus` answers while enabled.
+  status: {
+    engineAvailable: true,
+    downloadState: "ready",
+    downloadProgress: null as number | null,
+  },
 }));
 
 vi.mock("@/hooks/composer/use-voice-dictation", () => ({
@@ -66,29 +72,32 @@ vi.mock("@/hooks/host/use-host-query", () => ({
     host.statusQueryEnabled.push(args.options.enabled);
     // A host that is fully ready to dictate - so anything the mobile build
     // still shows would be a real leak, not an artifact of an idle host.
-    return args.options.enabled
-      ? {
-          data: {
-            engineAvailable: true,
-            downloadState: "ready",
-            downloadProgress: null,
-          },
-        }
-      : { data: undefined };
+    return args.options.enabled ? { data: host.status } : { data: undefined };
   },
   useHostMutation: () => ({ mutate: host.ensureModel, isPending: false }),
 }));
 
-function renderComposerDictation() {
+function renderComposerDictationFocused(isActive: boolean) {
   const queryClient = new QueryClient();
   const editorRef: RefObject<ComposerPromptEditorHandle | null> = {
     current: null,
   };
-  return renderHook(() => useComposerDictation({ editorRef, isActive: true }), {
-    wrapper: ({ children }) => (
-      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-    ),
-  });
+  return renderHook(
+    (props: { readonly isActive: boolean }) =>
+      useComposerDictation({ editorRef, isActive: props.isActive }),
+    {
+      initialProps: { isActive },
+      wrapper: ({ children }) => (
+        <QueryClientProvider client={queryClient}>
+          {children}
+        </QueryClientProvider>
+      ),
+    },
+  );
+}
+
+function renderComposerDictation() {
+  return renderComposerDictationFocused(true);
 }
 
 // The bound default for `composer.dictation.toggle`.
@@ -105,10 +114,16 @@ function pressDictationChord(): void {
 
 beforeEach(() => {
   host.statusQueryEnabled.length = 0;
+  host.status = {
+    engineAvailable: true,
+    downloadState: "ready",
+    downloadProgress: null,
+  };
   useSettingsStore.setState({ voiceInputEnabled: true });
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   cleanup();
   vi.clearAllMocks();
   setMobileApp(false);
@@ -159,5 +174,115 @@ describe("dictation on other builds", () => {
     expect(result.current.dictationControl).not.toBeNull();
     pressDictationChord();
     expect(recorder.start).toHaveBeenCalledTimes(1);
+  });
+});
+
+// The host answers `speech.ensureModel` for an installed model by loading it
+// into its STT worker, and frees the worker five minutes after the last
+// session. The active composer therefore re-sends it: once at focus and then
+// every four minutes, so the first dictation after a pause does not wait on a
+// model load. `isActive` is the composer's focus.
+describe("keeping the host's recogniser warm while a composer is focused", () => {
+  const WARM_INTERVAL_MS = 4 * 60_000;
+
+  function advance(ms: number): void {
+    act(() => {
+      vi.advanceTimersByTime(ms);
+    });
+  }
+
+  it("asks the host for the model at once on focus, then once per four minutes", () => {
+    vi.useFakeTimers();
+    renderComposerDictationFocused(true);
+    expect(host.ensureModel).toHaveBeenCalledTimes(1);
+    expect(host.ensureModel).toHaveBeenCalledWith({ modelId: null });
+
+    advance(WARM_INTERVAL_MS - 1);
+    expect(host.ensureModel).toHaveBeenCalledTimes(1);
+    advance(1);
+    expect(host.ensureModel).toHaveBeenCalledTimes(2);
+
+    advance(WARM_INTERVAL_MS);
+    expect(host.ensureModel).toHaveBeenCalledTimes(3);
+  });
+
+  it("never asks the host while the composer is not focused", () => {
+    vi.useFakeTimers();
+    renderComposerDictationFocused(false);
+    advance(WARM_INTERVAL_MS * 3);
+    expect(host.ensureModel).not.toHaveBeenCalled();
+  });
+
+  it("starts when focus arrives and stops when it leaves", () => {
+    vi.useFakeTimers();
+    const { rerender } = renderComposerDictationFocused(false);
+    expect(host.ensureModel).not.toHaveBeenCalled();
+
+    rerender({ isActive: true });
+    expect(host.ensureModel).toHaveBeenCalledTimes(1);
+
+    rerender({ isActive: false });
+    advance(WARM_INTERVAL_MS * 3);
+    expect(host.ensureModel).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not re-send for a focus that comes back inside the throttle window", () => {
+    vi.useFakeTimers();
+    const { rerender } = renderComposerDictationFocused(true);
+    expect(host.ensureModel).toHaveBeenCalledTimes(1);
+
+    // Focus bounces between composers: the worker is still warm from the first.
+    rerender({ isActive: false });
+    advance(30_000);
+    rerender({ isActive: true });
+    expect(host.ensureModel).toHaveBeenCalledTimes(1);
+
+    // Once the window has passed, a returning focus warms again.
+    rerender({ isActive: false });
+    advance(WARM_INTERVAL_MS);
+    rerender({ isActive: true });
+    expect(host.ensureModel).toHaveBeenCalledTimes(2);
+  });
+
+  it("sends nothing while the model is still downloading", () => {
+    vi.useFakeTimers();
+    host.status = {
+      engineAvailable: true,
+      downloadState: "downloading",
+      downloadProgress: 0.4,
+    };
+    renderComposerDictationFocused(true);
+    advance(WARM_INTERVAL_MS * 2);
+    expect(host.ensureModel).not.toHaveBeenCalled();
+  });
+
+  it("sends nothing where the engine is unavailable", () => {
+    vi.useFakeTimers();
+    host.status = {
+      engineAvailable: false,
+      downloadState: "ready",
+      downloadProgress: null,
+    };
+    renderComposerDictationFocused(true);
+    advance(WARM_INTERVAL_MS * 2);
+    expect(host.ensureModel).not.toHaveBeenCalled();
+  });
+
+  it("sends nothing when voice input is off, however focused the composer is", () => {
+    vi.useFakeTimers();
+    useSettingsStore.setState({ voiceInputEnabled: false });
+    renderComposerDictationFocused(true);
+    advance(WARM_INTERVAL_MS * 2);
+    expect(host.ensureModel).not.toHaveBeenCalled();
+  });
+
+  it("stops warming when the composer unmounts", () => {
+    vi.useFakeTimers();
+    const { unmount } = renderComposerDictationFocused(true);
+    expect(host.ensureModel).toHaveBeenCalledTimes(1);
+
+    unmount();
+    advance(WARM_INTERVAL_MS * 3);
+    expect(host.ensureModel).toHaveBeenCalledTimes(1);
   });
 });

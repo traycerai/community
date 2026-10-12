@@ -38,7 +38,7 @@ export const GENERAL = defineSettingsSection("general", {
     search: { anchor: "general-voice-input" },
     label: "Voice input",
     description:
-      "Dictate prompts with the mic button or its shortcut. The microphone opens only while you are dictating, and turning this off closes it. Speech is transcribed on-device - audio never leaves your machine.",
+      "Dictate prompts with the mic button or its shortcut. The microphone opens only while you are dictating, and turning this off closes it. Speech is transcribed on-device - audio never leaves your machine - by NVIDIA Parakeet TDT 0.6B v3 (CC BY 4.0) for 25 European languages, NVIDIA Nemotron 3.5 ASR (OpenMDW 1.1) for other languages, and OpenAI Whisper tiny (MIT) to tell which is which.",
     availableWhen: isVoiceInputRowAvailable,
     keywords: ["dictation", "dictate", "speech", "microphone", "mic", "audio"],
   },

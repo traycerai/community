@@ -10,6 +10,16 @@ const SPEECH_MODEL_PARAMS = { modelId: null };
 // Cap auto-download attempts so a persistently failing download (bad network /
 // disk) doesn't loop forever; resets once the model becomes ready.
 const MAX_ENSURE_ATTEMPTS = 3;
+// How often a focused composer re-sends `speech.ensureModel` to keep the
+// host's STT worker warm. The host frees the worker five minutes after the
+// last session, so a warm every four keeps the models loaded for as long as
+// a composer is in front of the person, and a composer that loses focus
+// stops sending and lets the host free it.
+const WARM_INTERVAL_MS = 4 * 60_000;
+// A focus change or a host switch inside this window re-sends nothing: the
+// worker is still warm from the last ensure. Half the interval, so a timer
+// tick that lands a few milliseconds early is never swallowed.
+const WARM_THROTTLE_MS = WARM_INTERVAL_MS / 2;
 
 interface EnsureModelMutationContext {
   readonly hostId: string | null;
@@ -41,6 +51,12 @@ export interface DictationAvailability {
  * never offered, and the OS mic prompt never fires, before the on-device model
  * exists) and surface `preparing` as a status indicator while it downloads.
  *
+ * `focused` is the composer the person is at: while it is true and the model
+ * is ready, `speech.ensureModel` is re-sent every few minutes. The host
+ * answers an ensure for an installed model by loading it into its STT worker,
+ * so the first dictation after a pause does not pay the model load after the
+ * mic stops (oss #1836).
+ *
  * DELIBERATELY the app-wide host (`useHostClient()`), not the composer's target
  * host - the documented exception to the composer host-scope rule in
  * `AGENTS.md`. Dictation describes the person at the keyboard, not the run:
@@ -54,6 +70,7 @@ export interface DictationAvailability {
  */
 export function useDictationAvailability(
   enabled: boolean,
+  focused: boolean,
 ): DictationAvailability {
   // The installed mobile app never offers dictation, whatever the setting says.
   // Dictation is HOST-executed: `speech.dictate` streams live microphone audio
@@ -144,6 +161,36 @@ export function useDictationAvailability(
     ensure,
     activeHostId,
   ]);
+
+  // Keep the host's STT worker warm while this composer has the person's
+  // attention. One ensure at focus, then one per interval; focus moving to
+  // another composer restarts the cadence there. Per host, like the budget
+  // above: a warm on host A says nothing about host B's worker.
+  const ready = available && engineAvailable && downloadState === "ready";
+  const lastWarmRef = useRef<{ hostId: string | null; at: number } | null>(
+    null,
+  );
+  useEffect(() => {
+    if (!focused || !ready) return;
+    const warm = () => {
+      const last = lastWarmRef.current;
+      const now = Date.now();
+      if (
+        last !== null &&
+        last.hostId === activeHostId &&
+        now - last.at < WARM_THROTTLE_MS
+      ) {
+        return;
+      }
+      lastWarmRef.current = { hostId: activeHostId, at: now };
+      ensure(SPEECH_MODEL_PARAMS);
+    };
+    warm();
+    const timer = window.setInterval(warm, WARM_INTERVAL_MS);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, [focused, ready, ensure, activeHostId]);
 
   if (!available || !engineAvailable) return { ready: false, preparing: null };
   if (downloadState === "ready") return { ready: true, preparing: null };

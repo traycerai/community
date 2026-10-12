@@ -1031,6 +1031,13 @@ export interface AnalyticsEventProperties {
   readonly [AnalyticsEvent.VoiceCaptureFailed]: BlockedProperties;
   readonly [AnalyticsEvent.VoiceTranscriptionSucceeded]: {
     readonly duration_bucket: "under_10s" | "10_to_30s" | "over_30s";
+    // Whether any transcript text reached the composer: the event fires on
+    // the host's `flushed`, which is sent even when the decode produced
+    // nothing, so without this the funnel cannot tell "transcribed" from
+    // "flushed with no text".
+    readonly had_text: boolean;
+    // Mic stop to `flushed`: the wait the person feels.
+    readonly decode_bucket: "under_1s" | "1_to_5s" | "over_5s";
   };
   readonly [AnalyticsEvent.VoiceTranscriptionFailed]: {
     readonly blocker: AnalyticsBlocker;
@@ -1877,11 +1884,12 @@ const EVENT_PROPERTY_KEYS = new Map<AnalyticsEvent, ReadonlyArray<string>>([
   ),
   ...eventKeyEntries([AnalyticsEvent.AgentStopped], ["source", "cascade"]),
   ...eventKeyEntries(
-    [
-      AnalyticsEvent.VoiceDictationStopped,
-      AnalyticsEvent.VoiceTranscriptionSucceeded,
-    ],
+    [AnalyticsEvent.VoiceDictationStopped],
     ["duration_bucket"],
+  ),
+  ...eventKeyEntries(
+    [AnalyticsEvent.VoiceTranscriptionSucceeded],
+    ["duration_bucket", "had_text", "decode_bucket"],
   ),
   ...eventKeyEntries([AnalyticsEvent.VoicePermissionResolved], ["permission"]),
   ...eventKeyEntries([AnalyticsEvent.SettingsOpened], ["source", "section"]),
