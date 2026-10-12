@@ -29,6 +29,7 @@ import {
   sandboxCardActions,
   sandboxGuestConfigFailure,
   sandboxIdleLine,
+  sandboxSecretsReadiness,
   sandboxStateLine,
   sandboxSuspendKeepsLine,
   type SandboxCardAction,
@@ -52,12 +53,21 @@ import {
 } from "@/lib/sandboxes/sandbox-balance";
 import { formatCredits, formatMemory } from "@/lib/sandboxes/sandbox-pricing";
 import { useSandboxControlUnavailableReason } from "@/hooks/sandboxes/use-sandbox-control-unavailable-reason";
+import { useHostSupportsMethod } from "@/hooks/host/use-host-supports-method";
+import { useSandboxEgressEvents } from "@/hooks/sandboxes/use-sandbox-egress-events";
+import { useSandboxRepairGuestConfiguration } from "@/hooks/sandboxes/use-sandbox-repair-guest-configuration-mutation";
+import {
+  sandboxCardEgressEventLines,
+  type SandboxEgressEventLine,
+} from "@/lib/sandboxes/sandbox-egress-event-line";
+import { cn } from "@/lib/utils";
 
 /**
  * The card a sandbox host shows above its identity card in Settings: its
  * state with that state's copy and actions (`sandbox-card-model.ts`), shape,
  * region, rate, idle rule and last activity, the guest's configuration
- * failure when the heartbeat reports one, the cost view, and the balance.
+ * failure when the heartbeat reports one, its brokered secrets (readiness,
+ * the last typed egress events, repair), the cost view, and the balance.
  *
  * A frozen sandbox (out of credits) shows the frozen line with its destroy
  * date and the balance, and offers only destroy, behind a typed
@@ -103,10 +113,14 @@ export function SandboxCard(props: {
           <>
             <SandboxFacts summary={summary} />
             <SandboxGuestConfigFailure summary={summary} />
+            <SandboxSecretsSection
+              summary={summary}
+              state={state}
+              frozen={frozen}
+            />
             <SandboxCostView sandboxId={summary.id} frozen={frozen} />
           </>
         )}
-        <SandboxSecretsSummarySlot />
       </CardContent>
       {summary !== null && actions.length > 0 ? (
         <CardFooter className="flex flex-wrap gap-2">
@@ -240,6 +254,38 @@ function SandboxFacts(props: { readonly summary: SandboxSummary }): ReactNode {
   );
 }
 
+/**
+ * Whether this sandbox's brokered secrets work right now
+ * (`sandboxSecretsReadiness`), under its facts.
+ */
+function SandboxSecretsReadinessLine(props: {
+  readonly summary: SandboxSummary;
+  readonly state: HostSandboxState | null;
+  readonly frozen: boolean;
+}): ReactNode {
+  const readiness = sandboxSecretsReadiness(
+    props.state,
+    props.frozen,
+    props.summary,
+  );
+  if (readiness === null) return null;
+  return (
+    <p
+      data-testid="sandbox-card-secrets-readiness"
+      data-tone={readiness.tone}
+      className={cn(
+        "text-ui-xs leading-snug break-words",
+        readiness.tone === "ready" && "text-success-foreground",
+        readiness.tone === "pending" && "text-muted-foreground",
+        readiness.tone === "degraded" && "text-warning-foreground",
+      )}
+    >
+      <span className="text-muted-foreground">Secrets: </span>
+      {readiness.text}
+    </p>
+  );
+}
+
 function SandboxGuestConfigFailure(props: {
   readonly summary: SandboxSummary;
 }): ReactNode {
@@ -331,12 +377,179 @@ function SandboxCostFacts(props: {
 }
 
 /**
- * The named slot the secrets summary (the secrets this sandbox may use, their
- * destinations and their mode) renders into. Empty in this release; the
- * secrets track fills it, here and nowhere else on the card.
+ * The sandbox's brokered secrets, the one place on the card that speaks of
+ * them: whether they work right now, what the forwarder and the gateway last
+ * refused or closed, the repair action for its setup, and how a container
+ * reaches a brokered destination.
+ *
+ * Shown only for a sandbox whose row reports a phase - a server from before
+ * the secrets broker, or a sandbox that has none, gets nothing here - and its
+ * live parts only while the sandbox is awake, since a card on screen is never
+ * a reason to hold a connection to a sleeping one.
  */
-function SandboxSecretsSummarySlot(): ReactNode {
-  return null;
+function SandboxSecretsSection(props: {
+  readonly summary: SandboxSummary;
+  readonly state: HostSandboxState | null;
+  readonly frozen: boolean;
+}): ReactNode {
+  // Decided before anything subscribes: a sandbox with no phase mounts none
+  // of the section's hooks.
+  if (props.summary.phase === null) return null;
+  return (
+    <SandboxSecretsSectionBody
+      summary={props.summary}
+      state={props.state}
+      frozen={props.frozen}
+    />
+  );
+}
+
+function SandboxSecretsSectionBody(props: {
+  readonly summary: SandboxSummary;
+  readonly state: HostSandboxState | null;
+  readonly frozen: boolean;
+}): ReactNode {
+  const { summary } = props;
+  const awake = props.state === "awake" && !props.frozen;
+  const events = useSandboxEgressEvents(awake ? summary.hostId : null);
+  const lines = sandboxCardEgressEventLines(events);
+  return (
+    <section
+      className="flex flex-col gap-1.5"
+      data-testid="sandbox-card-secrets"
+      aria-label="Secrets"
+    >
+      <SandboxSecretsReadinessLine
+        summary={summary}
+        state={props.state}
+        frozen={props.frozen}
+      />
+      {lines.length === 0 ? null : (
+        <ul
+          className="flex flex-col gap-1.5"
+          data-testid="sandbox-card-egress-events"
+        >
+          {lines.map((line) => (
+            <SandboxEgressEventRow key={line.id} line={line} />
+          ))}
+        </ul>
+      )}
+      {awake ? <SandboxRepairAction hostId={summary.hostId} /> : null}
+      <details
+        className="text-ui-xs leading-snug text-muted-foreground"
+        data-testid="sandbox-card-docker-note"
+      >
+        <summary className="cursor-pointer">
+          Using secrets from a Docker container
+        </summary>
+        <ul className="mt-1 flex list-disc flex-col gap-1 pl-4">
+          <li>
+            curl and other proxy-aware clients: pass the proxy line,{" "}
+            <code>-e HTTPS_PROXY=http://&lt;bridge address&gt;:3128</code>.
+          </li>
+          <li>
+            Node 24 and later: the proxy line plus{" "}
+            <code>-e NODE_USE_ENV_PROXY=1</code>. Older Node ignores the proxy
+            line and is covered only by{" "}
+            <code>--add-host &lt;alias&gt;:&lt;bridge address&gt;</code> with{" "}
+            <code>NODE_EXTRA_CA_CERTS</code>.
+          </li>
+          <li>
+            A database, broker or other native destination:{" "}
+            <code>--add-host &lt;alias&gt;:&lt;bridge address&gt;</code> and
+            that destination&apos;s container port. The sandbox&apos;s egress
+            file prints the exact form for each one.
+          </li>
+          <li>
+            SSH: mount the sandbox&apos;s agent socket (
+            <code>$SSH_AUTH_SOCK</code>) into the container.
+          </li>
+        </ul>
+      </details>
+    </section>
+  );
+}
+
+function SandboxEgressEventRow(props: {
+  readonly line: SandboxEgressEventLine;
+}): ReactNode {
+  const { line } = props;
+  const now = useSampledNow();
+  return (
+    <li
+      data-testid="sandbox-card-egress-event"
+      data-tone={line.tone}
+      className={cn(
+        "rounded-md border px-2 py-1.5 text-ui-xs leading-snug break-words",
+        line.tone === "notice"
+          ? "border-border/60 text-muted-foreground"
+          : "border-warning/30 bg-warning/10 text-warning-foreground",
+      )}
+    >
+      <p className="font-medium">{line.headline}</p>
+      <p>{line.description}</p>
+      <p className="text-muted-foreground">
+        {formatRelativeTimestamp(line.at, now)}
+        {line.reportedBySandbox ? " · reported by the sandbox" : null}
+      </p>
+    </li>
+  );
+}
+
+/**
+ * Re-applies the sandbox's setup (trust files, host aliases, environment, git)
+ * and refetches it. Offered only on a host that serves the verb.
+ */
+function SandboxRepairAction(props: { readonly hostId: string }): ReactNode {
+  const supported = useHostSupportsMethod(
+    props.hostId,
+    "host.sandbox.repairGuestConfiguration",
+  );
+  const repair = useSandboxRepairGuestConfiguration();
+  const list = useSandboxList();
+  if (!supported) return null;
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Button
+        type="button"
+        variant="outline"
+        size="sm"
+        disabled={repair.isPending}
+        data-testid="sandbox-card-repair"
+        onClick={() => {
+          repair.mutate(
+            {},
+            {
+              onSuccess: (result) => {
+                if (result.guestConfigured) {
+                  toast.success("Sandbox setup repaired");
+                } else {
+                  toast.warning(
+                    result.guestConfigFailureReason === null
+                      ? "Sandbox setup is still failing"
+                      : `Sandbox setup is still failing: ${result.guestConfigFailureReason}`,
+                  );
+                }
+                void list.refetch();
+              },
+            },
+          );
+        }}
+      >
+        {repair.isPending ? (
+          <AgentSpinningDots
+            className={undefined}
+            testId="sandbox-card-repair-spinner"
+            variant={undefined}
+          />
+        ) : null}
+        Repair setup
+      </Button>
+      <span className="text-ui-xs text-muted-foreground">
+        Re-applies its trust files, host aliases, environment and git setup.
+      </span>
+    </div>
+  );
 }
 
 const VERB_DONE_TOAST: Record<SandboxLifecycleVerb, string> = {

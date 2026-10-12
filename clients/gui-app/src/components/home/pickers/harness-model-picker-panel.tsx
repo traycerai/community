@@ -6,6 +6,7 @@ import { HarnessModelPickerSearch } from "@/components/home/pickers/harness-mode
 import { HarnessModelPickerList } from "@/components/home/pickers/harness-model-picker-list";
 import { ProviderRail } from "@/components/home/pickers/harness-model-picker-group";
 import { PickerProviderAuthLine } from "@/components/home/pickers/harness-model-picker-auth-line";
+import { PickerSandboxCredentialLine } from "@/components/home/pickers/harness-sandbox-credential-line";
 import { PickerProfileDropdown } from "@/components/home/pickers/picker-profile-dropdown";
 import { isProfileUsageSidecarTarget } from "@/components/providers/profile-usage-sidecar-target";
 import { useProviderProfileAddFlowStore } from "@/stores/settings/provider-profile-add-flow-store";
@@ -372,6 +373,7 @@ export function HarnessModelPickerPanelBody(
               onClosePicker={onClosePicker}
             />
           )}
+          <PickerSandboxCredentialLine harness={activeProvider} />
           <div className="min-h-0 flex-1 overflow-hidden">
             <HarnessModelPickerList
               idPrefix={idPrefix}

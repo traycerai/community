@@ -31,6 +31,7 @@ import { useAddHostDialogStore } from "@/stores/settings/add-host-dialog-store";
 import { AddHostDialog } from "@/components/settings/host-scope/add-host-dialog";
 import { SandboxCreateDialog } from "@/components/hosts/sandbox-create-dialog";
 import { SandboxBalanceBanner } from "@/components/hosts/sandbox-balance-banner";
+import { SecretsDashboardLink } from "@/components/providers/secrets-dashboard-link";
 import { useSandboxCreateDialogStore } from "@/stores/settings/sandbox-create-dialog-store";
 import { useAuthStore } from "@/stores/auth/auth-store";
 import { Button } from "@/components/ui/button";
@@ -234,6 +235,16 @@ function SettingsSidebarHostPicker(props: {
           <Plus className="size-3.5 shrink-0" aria-hidden />
           New sandbox…
         </Button>
+      ) : null}
+      {/* Where a sandbox's secrets, coding-CLI connections and GitHub access
+          are managed: the account's dashboard page, since a sandbox never
+          takes a credential from this app. Offered wherever a sandbox can be
+          created. */}
+      {signedIn && sandboxesUnavailable === null ? (
+        <SecretsDashboardLink
+          testId="settings-secrets-and-github"
+          className="justify-start"
+        />
       ) : null}
       {/* The host list's balance banner: the two-hour and thirty-minute
           warnings for the account's awake sandboxes. Nothing for a user with

@@ -1,7 +1,9 @@
 /**
  * The transcript's copy for a turn a SANDBOX refused or paused, keyed by the
- * error block's typed code. One table, code to copy: a sandbox code added
- * later (the secrets track's three) is one more row here and nothing else.
+ * error block's typed code. One table, code to copy. The brokered-egress
+ * refusals (a missing grant, a stale authorization, an offline connector, ...)
+ * are not repeated here: their rows live in the egress table the sandbox card
+ * also reads (`sandbox-egress-refusal-copy.ts`) and are looked up there.
  *
  * These are the host's `RPC_ERROR_CODES` spellings (`SANDBOX_FROZEN`, ...),
  * which the host stamps on the error event's `code` and also leads its
@@ -9,6 +11,12 @@
  * the code first and the message prefix only when the block carries no code,
  * so an error raised from a typed host error renders the same either way.
  */
+import { SANDBOX_EGRESS_REFUSAL_CODES } from "@traycer/protocol/host/sandbox-egress";
+import {
+  NO_EGRESS_REFUSAL_SUBJECT,
+  sandboxEgressRefusalCopyFor,
+} from "@/lib/sandboxes/sandbox-egress-refusal-copy";
+
 export interface SandboxRefusalCopy {
   /** The row's headline, in the interrupted (warning) presentation. */
   readonly headline: string;
@@ -67,12 +75,36 @@ export function sandboxRefusalCopyFor(
   if (code !== null && code.length > 0) {
     return Object.hasOwn(SANDBOX_REFUSAL_COPY, code)
       ? copyOf(SANDBOX_REFUSAL_COPY[code], code, message)
-      : null;
+      : egressRefusalCopyOf(code, message);
   }
   for (const [prefix, row] of Object.entries(SANDBOX_REFUSAL_COPY)) {
     if (message.startsWith(`${prefix}:`)) return copyOf(row, prefix, message);
   }
+  for (const prefix of SANDBOX_EGRESS_REFUSAL_CODES) {
+    if (message.startsWith(`${prefix}:`)) {
+      return egressRefusalCopyOf(prefix, message);
+    }
+  }
   return null;
+}
+
+/**
+ * A brokered-egress refusal that ended a turn. The copy is the egress table's
+ * own row, so the transcript and the sandbox card say the same thing about one
+ * code. An error block names no secret, host or protocol of its own; the
+ * host's message does, and is shown as the detail.
+ */
+function egressRefusalCopyOf(
+  code: string,
+  message: string,
+): SandboxRefusalCopy | null {
+  const copy = sandboxEgressRefusalCopyFor(code, NO_EGRESS_REFUSAL_SUBJECT);
+  if (copy === null) return null;
+  return {
+    headline: copy.headline,
+    description: copy.description,
+    hostDetail: hostDetailOf(code, message),
+  };
 }
 
 function copyOf(

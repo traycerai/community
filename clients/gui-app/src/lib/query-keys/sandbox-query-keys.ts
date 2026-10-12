@@ -55,4 +55,7 @@ export const sandboxMutationKeys = {
   verb: (sandboxId: string) => ["auth", "sandbox", "verb", sandboxId] as const,
   // Per HOST: the tab open that wakes it knows the host, not the sandbox id.
   wake: (hostId: string) => ["auth", "sandbox", "wake", hostId] as const,
+  // A host RPC, not a control-plane call: the sandbox host repairs itself.
+  repairGuestConfiguration: () =>
+    ["host.sandbox.repairGuestConfiguration"] as const,
 };

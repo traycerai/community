@@ -97,6 +97,28 @@ vi.mock("@/hooks/sandboxes/use-sandbox-control-unavailable-reason", () => ({
   useSandboxControlUnavailableReason: () => sandboxControl.reason,
 }));
 
+// The Secrets and GitHub entry renders only with a runner host (it needs the
+// platform origin), and the existing cases in this suite have none. The
+// default stays `null` so they are unaffected; the sandbox cases below set it.
+// `browserView` is read by the sidebar too, and stays absent.
+interface RunnerHostStub {
+  readonly signInUrl: string;
+  readonly browserView: null;
+}
+const runnerHostStub = vi.hoisted(() => ({
+  current: null as RunnerHostStub | null,
+}));
+vi.mock("@/providers/use-runner-host", () => ({
+  useRunnerHostOrNull: () => runnerHostStub.current,
+}));
+
+const openLinkMock = vi.hoisted(() => ({
+  open: vi.fn(() => Promise.resolve()),
+}));
+vi.mock("@/lib/links/open-link", () => ({
+  useOpenLink: () => openLinkMock.open,
+}));
+
 function buildRouter(initialPath: string) {
   const rootRoute = createRootRoute({
     component: () => (
@@ -521,6 +543,8 @@ describe("<SettingsSidebar /> new sandbox entry", () => {
     cleanup();
     useAuthStore.setState({ status: "signed-out" });
     sandboxControl.reason = null;
+    runnerHostStub.current = null;
+    openLinkMock.open.mockClear();
   });
 
   function renderSidebar(): void {
@@ -576,5 +600,62 @@ describe("<SettingsSidebar /> new sandbox entry", () => {
     // The rest of the rail rendered, so the entry's absence is the assertion.
     expect(await screen.findByRole("link", { name: "General" })).toBeDefined();
     expect(screen.queryByTestId("settings-new-sandbox")).toBeNull();
+  });
+
+  it("offers Secrets and GitHub to a signed-in user and opens the account's Secrets page", async () => {
+    runnerHostStub.current = {
+      signInUrl: "https://platform.example.dev/sign-in",
+      browserView: null,
+    };
+    useAuthStore.setState({ status: "signed-in" });
+    renderSidebar();
+
+    const entry = await screen.findByTestId("settings-secrets-and-github");
+    expect(entry.textContent).toContain("Secrets and GitHub");
+
+    fireEvent.click(entry);
+
+    expect(openLinkMock.open).toHaveBeenCalledTimes(1);
+    expect(openLinkMock.open).toHaveBeenCalledWith(
+      "https://platform.example.dev/secrets",
+      "account",
+      expect.anything(),
+    );
+  });
+
+  it("offers no Secrets and GitHub when signed out", async () => {
+    runnerHostStub.current = {
+      signInUrl: "https://platform.example.dev/sign-in",
+      browserView: null,
+    };
+    useAuthStore.setState({ status: "signed-out" });
+    renderSidebar();
+
+    // The rest of the rail rendered, so the entry's absence is the assertion.
+    expect(await screen.findByRole("link", { name: "General" })).toBeDefined();
+    expect(screen.queryByTestId("settings-secrets-and-github")).toBeNull();
+  });
+
+  it("offers no Secrets and GitHub on a build that cannot reach the control plane", async () => {
+    runnerHostStub.current = {
+      signInUrl: "https://platform.example.dev/sign-in",
+      browserView: null,
+    };
+    sandboxControl.reason = "Sandboxes aren't available in staging builds.";
+    useAuthStore.setState({ status: "signed-in" });
+    renderSidebar();
+
+    expect(
+      await screen.findByTestId("settings-sandboxes-unavailable"),
+    ).toBeDefined();
+    expect(screen.queryByTestId("settings-secrets-and-github")).toBeNull();
+  });
+
+  it("offers no Secrets and GitHub when there is no runner host to name a platform origin", async () => {
+    useAuthStore.setState({ status: "signed-in" });
+    renderSidebar();
+
+    expect(await screen.findByTestId("settings-new-sandbox")).toBeDefined();
+    expect(screen.queryByTestId("settings-secrets-and-github")).toBeNull();
   });
 });

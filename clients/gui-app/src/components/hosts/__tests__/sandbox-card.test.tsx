@@ -10,6 +10,7 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { HOST_SANDBOX_STATES } from "@traycer/protocol/host/host-status";
 import type { HostListItem } from "@traycer/protocol/host/host-status";
+import type { SandboxEgressEvent } from "@traycer/protocol/host/sandbox-egress";
 import { hostListItemToDirectoryEntry } from "@traycer-clients/shared/host-client/remote-fetcher";
 import type {
   SandboxCatalogue,
@@ -36,6 +37,14 @@ const mocks = vi.hoisted(() => ({
   warning: { kind: "none" } as SandboxRunwayWarning,
   /** `IRunnerHost.sandboxControlUnavailableReason`; `null` reaches the control plane. */
   unavailableReason: null as string | null,
+  /** What `useSandboxEgressEvents` returns; the hook spy records its argument. */
+  egressEvents: [] as readonly SandboxEgressEvent[],
+  useEgressEvents: vi.fn<(hostId: string | null) => void>(),
+  /** What `useHostSupportsMethod` answers for every method. */
+  supportsMethod: false,
+  useSupportsMethod: vi.fn<(hostId: string | null, method: string) => void>(),
+  repairPending: false,
+  repairMutate: vi.fn<(variables: object, options: object) => void>(),
 }));
 
 vi.mock("sonner", () => ({
@@ -55,6 +64,29 @@ vi.mock("@/providers/use-runner-host", () => ({
   }),
 }));
 vi.mock("@/lib/host/fleet-refresh", () => ({ requestFleetRefresh: vi.fn() }));
+// The secrets section's live parts talk to the sandbox host itself; the card's
+// own suite has no host runtime, and they have their own tests.
+vi.mock("@/hooks/sandboxes/use-sandbox-egress-events", () => ({
+  useSandboxEgressEvents: (hostId: string | null) => {
+    mocks.useEgressEvents(hostId);
+    return mocks.egressEvents;
+  },
+}));
+vi.mock("@/hooks/host/use-host-supports-method", () => ({
+  useHostSupportsMethod: (hostId: string | null, method: string) => {
+    mocks.useSupportsMethod(hostId, method);
+    return mocks.supportsMethod;
+  },
+}));
+vi.mock(
+  "@/hooks/sandboxes/use-sandbox-repair-guest-configuration-mutation",
+  () => ({
+    useSandboxRepairGuestConfiguration: () => ({
+      isPending: mocks.repairPending,
+      mutate: mocks.repairMutate,
+    }),
+  }),
+);
 vi.mock("@/hooks/sandboxes/use-refresh-sandbox-costs", () => ({
   useRefreshSandboxCosts: () => undefined,
 }));
@@ -133,6 +165,12 @@ beforeEach(() => {
   mocks.costs = null;
   mocks.warning = { kind: "none" };
   mocks.unavailableReason = null;
+  mocks.egressEvents = [];
+  mocks.supportsMethod = false;
+  mocks.repairPending = false;
+  mocks.useEgressEvents.mockClear();
+  mocks.useSupportsMethod.mockClear();
+  mocks.repairMutate.mockClear();
   mocks.toastSuccess.mockClear();
   mocks.toastInfo.mockClear();
   mocks.toastFromAuthError.mockClear();
@@ -763,6 +801,189 @@ describe("<SandboxCard /> destroy", () => {
       openDestroy();
       const reopened = await screen.findByTestId("sandbox-card-destroy-typed");
       expect(reopened).toHaveProperty("value", "");
+    });
+  });
+});
+
+describe("<SandboxCard /> secrets readiness", () => {
+  it("shows a ready line for an awake sandbox whose egress canary answered", () => {
+    renderCard(sandboxOf("awake", false, { phase: "proxy-reachable" }));
+
+    const line = screen.getByTestId("sandbox-card-secrets-readiness");
+    expect(line.getAttribute("data-tone")).toBe("ready");
+  });
+
+  it("shows no readiness line while the sandbox reports no phase", () => {
+    renderCard(sandboxOf("awake", false, { phase: null }));
+
+    expect(screen.queryByTestId("sandbox-card-secrets-readiness")).toBeNull();
+  });
+
+  it("shows a pending line while the sandbox is attaching to the gateway", () => {
+    renderCard(sandboxOf("awake", false, { phase: "attaching" }));
+
+    const line = screen.getByTestId("sandbox-card-secrets-readiness");
+    expect(line.getAttribute("data-tone")).toBe("pending");
+  });
+});
+
+describe("<SandboxCard /> secrets section", () => {
+  function teardownEvent(): SandboxEgressEvent {
+    return {
+      kind: "egress.teardown",
+      id: "ev-teardown",
+      at: new Date(2026, 9, 1, 12).getTime(),
+      emitter: "gateway",
+      untrusted: false,
+      route: "route-1",
+      reason: "revoke",
+    };
+  }
+
+  function untrustedRefusalEvent(): SandboxEgressEvent {
+    return {
+      kind: "egress.refused",
+      id: "ev-refused",
+      at: new Date(2026, 9, 1, 12).getTime(),
+      emitter: "reporter",
+      untrusted: true,
+      code: "grant_missing",
+      route: null,
+      host: "db.internal",
+      protocol: "postgres",
+      secret: "PROD_DB",
+      howToRequest: null,
+    };
+  }
+
+  it("is absent while the sandbox reports no phase", () => {
+    renderCard(sandboxOf("awake", false, { phase: null }));
+
+    expect(screen.queryByTestId("sandbox-card-secrets")).toBeNull();
+  });
+
+  it("mounts none of its live hooks while the sandbox reports no phase", () => {
+    mocks.supportsMethod = true;
+
+    renderCard(sandboxOf("awake", false, { phase: null }));
+
+    expect(mocks.useEgressEvents).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("sandbox-card-repair")).toBeNull();
+  });
+
+  it("shows the section and the Docker note for an awake, ready sandbox", () => {
+    renderCard(sandboxOf("awake", false, { phase: "ready" }));
+
+    const section = screen.getByTestId("sandbox-card-secrets");
+    // Node ignores the proxy line before 24 and needs its own switch from
+    // 24 on, so the note names both paths and not the proxy line alone.
+    const note = within(section).getByTestId("sandbox-card-docker-note");
+    expect(note.textContent).toContain("HTTPS_PROXY=http://<bridge address>");
+    expect(note.textContent).toContain("NODE_USE_ENV_PROXY=1");
+    expect(note.textContent).toContain("NODE_EXTRA_CA_CERTS");
+    expect(note.textContent).toContain("--add-host <alias>:<bridge address>");
+    expect(note.textContent).toContain("$SSH_AUTH_SOCK");
+  });
+
+  it("shows no event list while there are no events", () => {
+    renderCard(sandboxOf("awake", false, { phase: "ready" }));
+
+    expect(screen.queryByTestId("sandbox-card-egress-events")).toBeNull();
+    expect(screen.queryByTestId("sandbox-card-egress-event")).toBeNull();
+  });
+
+  it("lists a teardown event as a closed line", () => {
+    mocks.egressEvents = [teardownEvent()];
+
+    renderCard(sandboxOf("awake", false, { phase: "ready" }));
+
+    const item = screen.getByTestId("sandbox-card-egress-event");
+    expect(item.getAttribute("data-tone")).toBe("closed");
+    expect(item.textContent).toContain("Connections closed");
+    expect(item.textContent).not.toContain("reported by the sandbox");
+  });
+
+  it("says an untrusted refusal was reported by the sandbox", () => {
+    mocks.egressEvents = [untrustedRefusalEvent()];
+
+    renderCard(sandboxOf("awake", false, { phase: "ready" }));
+
+    const item = screen.getByTestId("sandbox-card-egress-event");
+    expect(item.getAttribute("data-tone")).toBe("refused");
+    expect(item.textContent).toContain("reported by the sandbox");
+  });
+
+  it("subscribes to the egress events of the summary's host while awake", () => {
+    renderCard(sandboxOf("awake", false, { phase: "ready" }));
+
+    expect(mocks.useEgressEvents).toHaveBeenLastCalledWith("host-sbx-1");
+  });
+
+  it("subscribes to nothing while the sandbox is suspended", () => {
+    renderCard(sandboxOf("suspended", false, { phase: "ready" }));
+
+    expect(screen.getByTestId("sandbox-card-secrets")).toBeTruthy();
+    expect(mocks.useEgressEvents).toHaveBeenLastCalledWith(null);
+    expect(mocks.useEgressEvents).not.toHaveBeenCalledWith("host-sbx-1");
+  });
+
+  it("subscribes to nothing for a frozen sandbox", () => {
+    renderCard(sandboxOf("awake", true, { phase: "ready" }));
+
+    expect(mocks.useEgressEvents).toHaveBeenLastCalledWith(null);
+  });
+
+  describe("the repair action", () => {
+    it("is hidden when the host does not serve the verb", () => {
+      mocks.supportsMethod = false;
+
+      renderCard(sandboxOf("awake", false, { phase: "ready" }));
+
+      expect(screen.queryByTestId("sandbox-card-repair")).toBeNull();
+    });
+
+    it("is hidden while the sandbox is not awake, even when the host serves the verb", () => {
+      mocks.supportsMethod = true;
+
+      renderCard(sandboxOf("suspended", false, { phase: "ready" }));
+
+      expect(screen.queryByTestId("sandbox-card-repair")).toBeNull();
+    });
+
+    it("asks the summary's host about the verb", () => {
+      mocks.supportsMethod = true;
+
+      renderCard(sandboxOf("awake", false, { phase: "ready" }));
+
+      expect(mocks.useSupportsMethod).toHaveBeenLastCalledWith(
+        "host-sbx-1",
+        "host.sandbox.repairGuestConfiguration",
+      );
+    });
+
+    it("is shown for an awake sandbox on a host that serves the verb, and runs the mutation with an empty request", () => {
+      mocks.supportsMethod = true;
+      renderCard(sandboxOf("awake", false, { phase: "ready" }));
+
+      const button = screen.getByTestId("sandbox-card-repair");
+      expect(button.hasAttribute("disabled")).toBe(false);
+      expect(screen.queryByTestId("sandbox-card-repair-spinner")).toBeNull();
+      fireEvent.click(button);
+
+      expect(mocks.repairMutate).toHaveBeenCalledTimes(1);
+      expect(mocks.repairMutate.mock.lastCall?.[0]).toEqual({});
+    });
+
+    it("is disabled and shows a spinner while the repair is pending", () => {
+      mocks.supportsMethod = true;
+      mocks.repairPending = true;
+
+      renderCard(sandboxOf("awake", false, { phase: "ready" }));
+
+      expect(
+        screen.getByTestId("sandbox-card-repair").hasAttribute("disabled"),
+      ).toBe(true);
+      expect(screen.getByTestId("sandbox-card-repair-spinner")).toBeTruthy();
     });
   });
 });

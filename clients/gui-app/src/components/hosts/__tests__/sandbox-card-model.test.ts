@@ -10,6 +10,7 @@ import {
   sandboxFrozenLine,
   sandboxGuestConfigFailure,
   sandboxIdleLine,
+  sandboxSecretsReadiness,
   sandboxStateLine,
   sandboxSuspendKeepsLine,
   sandboxTileOverlay,
@@ -304,5 +305,74 @@ describe("sandboxTileOverlay", () => {
       expect(sandboxTileOverlay(state, false)).toBeNull();
     }
     expect(sandboxTileOverlay(null, false)).toBeNull();
+  });
+});
+
+describe("sandboxSecretsReadiness", () => {
+  it("is null when the summary reports no phase", () => {
+    expect(
+      sandboxSecretsReadiness("awake", false, summaryOf({ phase: null })),
+    ).toBeNull();
+  });
+
+  it("is null unless the sandbox is awake", () => {
+    const summary = summaryOf({ phase: "ready" });
+    for (const state of HOST_SANDBOX_STATES) {
+      if (state === "awake") continue;
+      expect(sandboxSecretsReadiness(state, false, summary)).toBeNull();
+    }
+    expect(sandboxSecretsReadiness(null, false, summary)).toBeNull();
+  });
+
+  it("is null while the sandbox is frozen", () => {
+    expect(
+      sandboxSecretsReadiness("awake", true, summaryOf({ phase: "ready" })),
+    ).toBeNull();
+  });
+
+  it("is null for a phase this build does not know, never ready", () => {
+    expect(
+      sandboxSecretsReadiness(
+        "awake",
+        false,
+        summaryOf({ phase: "teleporting" }),
+      ),
+    ).toBeNull();
+  });
+
+  it.each(["proxy-reachable", "ready"])("reads %s as ready", (phase) => {
+    expect(
+      sandboxSecretsReadiness("awake", false, summaryOf({ phase }))?.tone,
+    ).toBe("ready");
+  });
+
+  it.each(["enrolling", "proving", "attaching"])(
+    "reads %s as pending",
+    (phase) => {
+      expect(
+        sandboxSecretsReadiness("awake", false, summaryOf({ phase }))?.tone,
+      ).toBe("pending");
+    },
+  );
+
+  it("reads degraded(hop) as degraded and names the hop", () => {
+    const readiness = sandboxSecretsReadiness(
+      "awake",
+      false,
+      summaryOf({ phase: "degraded(gateway)" }),
+    );
+    expect(readiness?.tone).toBe("degraded");
+    expect(readiness?.text).toContain("gateway");
+  });
+
+  it("reads degraded() as degraded without an empty hop", () => {
+    const readiness = sandboxSecretsReadiness(
+      "awake",
+      false,
+      summaryOf({ phase: "degraded()" }),
+    );
+    expect(readiness?.tone).toBe("degraded");
+    expect(readiness?.text).not.toContain("at :");
+    expect(readiness?.text).not.toContain("  ");
   });
 });

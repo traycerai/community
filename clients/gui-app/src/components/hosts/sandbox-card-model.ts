@@ -1,7 +1,8 @@
 import type { HostSandboxState } from "@traycer/protocol/host/host-status";
-import type {
-  SandboxLifecycleVerb,
-  SandboxSummary,
+import {
+  parseSandboxHeartbeatPhase,
+  type SandboxLifecycleVerb,
+  type SandboxSummary,
 } from "@traycer/protocol/host/sandbox-control";
 import { frozenDestroyAt } from "@/lib/sandboxes/sandbox-balance";
 
@@ -177,6 +178,60 @@ export function sandboxGuestConfigFailure(
   return reason === null || reason.trim().length === 0
     ? "Guest setup failed. Agents can't start here until it succeeds."
     : `Guest setup failed: ${reason}`;
+}
+
+/**
+ * Whether brokered traffic flows on an awake sandbox, from the phase its host
+ * last reported (`SandboxSummary.phase`). The card says "ready" on this and
+ * not on the host merely being up: a sandbox whose host answers while its
+ * gateway connection is still being proven cannot use a single secret yet.
+ */
+export interface SandboxSecretsReadiness {
+  readonly tone: "ready" | "pending" | "degraded";
+  readonly text: string;
+}
+
+/** The longest hop name shown; the phase is the guest's own text. */
+const DEGRADED_HOP_MAX_LENGTH = 80;
+
+/**
+ * `null` when there is nothing to say: the sandbox is not awake (its grants
+ * are refused until it is, and the state line already says where it stands),
+ * the server reports no phase (one from before the field, or a sandbox with
+ * no brokered secrets), or the phase is one this build does not know - which
+ * is shown as nothing, never as ready.
+ */
+export function sandboxSecretsReadiness(
+  state: HostSandboxState | null,
+  frozen: boolean,
+  summary: SandboxSummary,
+): SandboxSecretsReadiness | null {
+  if (frozen || state !== "awake" || summary.phase === null) return null;
+  const phase = parseSandboxHeartbeatPhase(summary.phase);
+  switch (phase.kind) {
+    case "proxy-reachable":
+    case "ready":
+      return { tone: "ready", text: "Ready: brokered traffic is flowing" };
+    case "enrolling":
+    case "proving":
+    case "attaching":
+      return {
+        tone: "pending",
+        text: "Connecting to Traycer's gateway. Secrets work once it is ready.",
+      };
+    case "degraded": {
+      const hop = phase.hop.trim().slice(0, DEGRADED_HOP_MAX_LENGTH);
+      return {
+        tone: "degraded",
+        text:
+          hop.length === 0
+            ? "Degraded: requests to granted destinations are refused until it recovers."
+            : `Degraded at ${hop}: requests to granted destinations are refused until it recovers.`,
+      };
+    }
+    case "unknown":
+      return null;
+  }
 }
 
 /**

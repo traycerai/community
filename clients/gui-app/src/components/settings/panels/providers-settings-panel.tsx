@@ -31,6 +31,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ProviderList } from "@/components/providers/provider-list";
 import { HarnessIcon } from "@/components/home/pickers/harness-icon";
 import { useProvidersList } from "@/hooks/providers/use-providers-list-query";
+import { AccountManagedCredentialsLine } from "@/components/providers/secrets-dashboard-link";
 import { useProvidersSetEnabled } from "@/hooks/providers/use-providers-set-enabled-mutation";
 import {
   useHostMethodSchemaVersion,
@@ -1407,6 +1408,22 @@ interface ProviderProfileTabProps {
   ) => void;
 }
 
+/**
+ * A sandbox host says its credentials live in the account
+ * (`providers.list@10.1`). Its key and sign-in controls could only ever be
+ * refused, so the one line that says where they are managed stands in their
+ * place; on every other host the controls (`children`) render as they did.
+ * Reads the panel's own query key, so there is no second fetch.
+ */
+function CredentialsManagedInAccountOr(props: {
+  readonly children: ReactNode;
+}): ReactNode {
+  const managedInAccount =
+    useProvidersList({ enabled: true, subscribed: true }).data
+      ?.credentialsManagedInAccount === true;
+  return managedInAccount ? <AccountManagedCredentialsLine /> : props.children;
+}
+
 function ProviderTabBody({
   tab,
   state,
@@ -1471,15 +1488,18 @@ function ProviderTabBody({
     // sitting outside the tab bar entirely.
     case "account":
       return (
-        <ProviderApiKeySection
-          state={state}
-          draft={apiKeyDraft}
-          onDraftChange={onApiKeyDraftChange}
-        />
+        <CredentialsManagedInAccountOr>
+          <ProviderApiKeySection
+            state={state}
+            draft={apiKeyDraft}
+            onDraftChange={onApiKeyDraftChange}
+          />
+        </CredentialsManagedInAccountOr>
       );
     case "usage":
       return (
         <div className="flex flex-col gap-3">
+          <CredentialsManagedInAccountOr>{null}</CredentialsManagedInAccountOr>
           <ProviderProfileScopedSection
             state={state}
             {...profileTab}

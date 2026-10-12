@@ -158,60 +158,70 @@ type CancelLoginVariables = RequestOfMethod<
   "providers.cancelLogin"
 >;
 
-const providerMocks = vi.hoisted(() => ({
-  listResult: {
-    data: { providers: [] as ProviderCliState[] },
-    isPending: false,
-    isError: false,
-    isFetching: false,
-    error: undefined as
-      | HostRpcError
-      | { message: string; code: string }
+// The `providers.list` envelope as this harness serves it. The flag is the
+// `providers.list@10.1` key a sandbox host sets; every other host omits it.
+interface ProvidersListEnvelope {
+  providers: ProviderCliState[];
+  credentialsManagedInAccount?: boolean;
+}
+
+const providerMocks = vi.hoisted(() => {
+  const initialList: ProvidersListEnvelope = { providers: [] };
+  return {
+    listResult: {
+      data: initialList,
+      isPending: false,
+      isError: false,
+      isFetching: false,
+      error: undefined as
+        | HostRpcError
+        | { message: string; code: string }
+        | undefined,
+      refetch: vi.fn(() => Promise.resolve({})),
+    },
+    setSelectionMutate: vi.fn(),
+    addCustomPathMutate: vi.fn(),
+    removeCustomPathMutate: vi.fn(),
+    setEnabledMutate: vi.fn<SetEnabledMutate>(),
+    setProfileEnabledMutate: vi.fn(),
+    refreshProfileStatusMutate: vi.fn(() => Promise.resolve()),
+    setApiKeyMutate: vi.fn(),
+    clearApiKeyMutate: vi.fn(),
+    setTerminalAgentArgsMutate: vi.fn(),
+    setEnvOverrideMutate: vi.fn(),
+    deleteEnvOverrideMutate: vi.fn(),
+    startLoginMutate: vi.fn<StartLoginMutate>(),
+    awaitLoginMutate: vi.fn<AwaitLoginMutate>(),
+    cancelLoginMutate: vi.fn(),
+    cancelLoginPending: false,
+    submitLoginCodeMutate: vi.fn<SubmitLoginCodeMutate>(),
+    submitLoginCodeReset: vi.fn(),
+    submitLoginCodePending: false,
+    submitLoginCodeSuccess: false,
+    submitLoginCodeData: undefined as
+      | { readonly outcome: "accepted" | "noActiveLogin" }
       | undefined,
-    refetch: vi.fn(() => Promise.resolve({})),
-  },
-  setSelectionMutate: vi.fn(),
-  addCustomPathMutate: vi.fn(),
-  removeCustomPathMutate: vi.fn(),
-  setEnabledMutate: vi.fn<SetEnabledMutate>(),
-  setProfileEnabledMutate: vi.fn(),
-  refreshProfileStatusMutate: vi.fn(() => Promise.resolve()),
-  setApiKeyMutate: vi.fn(),
-  clearApiKeyMutate: vi.fn(),
-  setTerminalAgentArgsMutate: vi.fn(),
-  setEnvOverrideMutate: vi.fn(),
-  deleteEnvOverrideMutate: vi.fn(),
-  startLoginMutate: vi.fn<StartLoginMutate>(),
-  awaitLoginMutate: vi.fn<AwaitLoginMutate>(),
-  cancelLoginMutate: vi.fn(),
-  cancelLoginPending: false,
-  submitLoginCodeMutate: vi.fn<SubmitLoginCodeMutate>(),
-  submitLoginCodeReset: vi.fn(),
-  submitLoginCodePending: false,
-  submitLoginCodeSuccess: false,
-  submitLoginCodeData: undefined as
-    | { readonly outcome: "accepted" | "noActiveLogin" }
-    | undefined,
-  submitLoginCodeError: null as Error | null,
-  touchLoginMutate: vi.fn(),
-  touchLoginReset: vi.fn(),
-  renameProfileMutate: vi.fn<RenameProfileMutate>(),
-  renameProfilePending: false,
-  renameProfileError: null as Error | null,
-  recolorProfileMutate: vi.fn<RecolorProfileMutate>(),
-  removeProfileMutate: vi.fn<RemoveProfileMutate>(),
-  refreshProviders: vi.fn(() => Promise.resolve()),
-  /** Host id each Refresh RESOLVED, which is the wrong-host bug's signature. */
-  refreshedHostIds: [] as string[],
-  /** The app-wide binding. Null unless a test opts into a distinct ambient. */
-  ambientBinding: null as {
-    hostClient: { getActiveHostId: () => string };
-  } | null,
-  refreshUsageLimits: vi.fn(() => Promise.resolve()),
-  openLink: vi.fn(),
-  /** What `useHostCredentialRefusal` answers; `null` is a host that takes sign-ins. */
-  credentialRefusal: null as string | null,
-}));
+    submitLoginCodeError: null as Error | null,
+    touchLoginMutate: vi.fn(),
+    touchLoginReset: vi.fn(),
+    renameProfileMutate: vi.fn<RenameProfileMutate>(),
+    renameProfilePending: false,
+    renameProfileError: null as Error | null,
+    recolorProfileMutate: vi.fn<RecolorProfileMutate>(),
+    removeProfileMutate: vi.fn<RemoveProfileMutate>(),
+    refreshProviders: vi.fn(() => Promise.resolve()),
+    /** Host id each Refresh RESOLVED, which is the wrong-host bug's signature. */
+    refreshedHostIds: [] as string[],
+    /** The app-wide binding. Null unless a test opts into a distinct ambient. */
+    ambientBinding: null as {
+      hostClient: { getActiveHostId: () => string };
+    } | null,
+    refreshUsageLimits: vi.fn(() => Promise.resolve()),
+    openLink: vi.fn(),
+    /** What `useHostCredentialRefusal` answers; `null` is a host that takes sign-ins. */
+    credentialRefusal: null as string | null,
+  };
+});
 
 // The auto-judge row the panel now renders reaches TanStack Query for the
 // harness catalog and the set-judge mutation. This suite renders the panel
@@ -657,6 +667,9 @@ vi.mock("@/lib/links/open-link", () => ({
 // no `<RunnerHostProvider>` above it.
 vi.mock("@/providers/use-runner-host", () => ({
   useRunnerHost: () => ({ signInUrl: "https://auth.example/sign-in" }),
+  // The account-managed line's Secrets link is null-tolerant; null renders the
+  // line without it, which is all these cases need.
+  useRunnerHostOrNull: () => null,
 }));
 
 // MCP Project scope resolves workspaces via host query; this harness has no
@@ -2860,6 +2873,90 @@ describe("<ProvidersSettingsPanel />", () => {
     fireEvent.click(railProviderRow("Devin", false));
     selectTab("Account");
     expect(field().value).toBe("");
+  });
+
+  describe("account-managed credentials (providers.list credentialsManagedInAccount)", () => {
+    function apiKeyProvider(): ProviderCliState {
+      return providerState({
+        providerId: "cursor",
+        selected: { kind: "bundled" },
+        candidates: [],
+        envOverrides: [],
+        nativeCapabilities: CURSOR_TABS,
+        apiKey: { supported: true, configured: false, source: null },
+      });
+    }
+
+    function renderPanel(): void {
+      render(
+        <TooltipProvider>
+          <ProvidersSettingsPanel />
+        </TooltipProvider>,
+      );
+    }
+
+    it("shows the account-managed line instead of the API key controls on the Account tab", () => {
+      providerMocks.listResult.data = {
+        providers: [apiKeyProvider()],
+        credentialsManagedInAccount: true,
+      };
+      renderPanel();
+
+      selectTab("Account");
+
+      const panel = within(screen.getByRole("tabpanel"));
+      expect(panel.getByTestId("credentials-managed-in-account")).toBeDefined();
+      expect(panel.queryByLabelText("API key")).toBeNull();
+    });
+
+    it("renders the API key controls and no line when the flag is false", () => {
+      providerMocks.listResult.data = {
+        providers: [apiKeyProvider()],
+        credentialsManagedInAccount: false,
+      };
+      renderPanel();
+
+      selectTab("Account");
+
+      const panel = within(screen.getByRole("tabpanel"));
+      expect(panel.getByLabelText("API key")).toBeDefined();
+      expect(panel.queryByTestId("credentials-managed-in-account")).toBeNull();
+    });
+
+    it("renders the API key controls and no line when the flag is absent", () => {
+      providerMocks.listResult.data = { providers: [apiKeyProvider()] };
+      renderPanel();
+
+      selectTab("Account");
+
+      const panel = within(screen.getByRole("tabpanel"));
+      expect(panel.getByLabelText("API key")).toBeDefined();
+      expect(panel.queryByTestId("credentials-managed-in-account")).toBeNull();
+    });
+
+    it("shows the line above the profile section on the Usage tab", () => {
+      providerMocks.listResult.data = {
+        providers: [
+          providerState({
+            providerId: "codex",
+            selected: { kind: "bundled" },
+            candidates: [],
+            envOverrides: [],
+            nativeCapabilities: FULL_TABS,
+          }),
+        ],
+        credentialsManagedInAccount: true,
+      };
+      renderPanel();
+
+      openProfilesTab();
+
+      expect(
+        within(screen.getByRole("tabpanel")).getByTestId(
+          "credentials-managed-in-account",
+        ),
+      ).toBeDefined();
+    });
   });
 
   it("falls back to the first supported tab when the current tab is missing", () => {

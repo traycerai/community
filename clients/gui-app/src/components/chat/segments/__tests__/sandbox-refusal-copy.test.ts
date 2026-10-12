@@ -188,3 +188,37 @@ describe("sandboxRefusalCopyFor", () => {
     ).toBe("Sandboxes don't take sign-ins");
   });
 });
+
+describe("sandboxRefusalCopyFor brokered-egress codes", () => {
+  it("renders authorization_stale from the egress table, with the host's message as detail", () => {
+    const copy = sandboxRefusalCopyFor(
+      "authorization_stale",
+      "authorization_stale: lease expired for db.internal",
+    );
+    expect(copy?.headline).toBe("Authorization is stale, retry shortly");
+    expect(copy?.description).toContain("No grant is missing");
+    expect(copy?.hostDetail).toBe("lease expired for db.internal");
+  });
+
+  it("matches an egress code by its message prefix when the block carries no code", () => {
+    const copy = sandboxRefusalCopyFor(
+      null,
+      "grant_missing: no grant for db.internal",
+    );
+    expect(copy?.headline).toBe("No grant for this destination");
+    expect(copy?.hostDetail).toBe("no grant for db.internal");
+  });
+
+  it("keeps the transcript table's own row for SANDBOX_GUEST_NOT_CONFIGURED, not the egress row", () => {
+    const copy = sandboxRefusalCopyFor(
+      "SANDBOX_GUEST_NOT_CONFIGURED",
+      "SANDBOX_GUEST_NOT_CONFIGURED: setup stopped",
+    );
+    expect(copy?.headline).toBe("Waiting for this sandbox's setup to finish");
+    expect(copy?.headline).not.toBe("Sandbox setup is not finished");
+  });
+
+  it("returns null for an unknown code", () => {
+    expect(sandboxRefusalCopyFor("ssh_flow_unknown", "boom")).toBeNull();
+  });
+});
