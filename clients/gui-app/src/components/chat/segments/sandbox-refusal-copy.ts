@@ -52,6 +52,12 @@ const SANDBOX_REFUSAL_COPY: Readonly<Record<string, SandboxRefusalRow>> = {
       "This needed a sign-in or a key on the sandbox, and a sandbox never holds your credentials. Run it on one of your own hosts instead.",
     showsHostDetail: false,
   },
+  PROFILE_REFUSES_AGENTS: {
+    headline: "Automations doesn't run agents",
+    description:
+      "The Automations host runs shells, terminals and file copies only. Start the agent on one of your own hosts or on a sandbox.",
+    showsHostDetail: false,
+  },
 };
 
 export function sandboxRefusalCopyFor(

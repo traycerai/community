@@ -93,6 +93,7 @@ describe("sandbox refusal codes", () => {
       "SANDBOX_FROZEN",
       "SANDBOX_HOST_REFUSES_CREDENTIALS",
       "SANDBOX_GUEST_NOT_CONFIGURED",
+      "PROFILE_REFUSES_AGENTS",
     ]) {
       expect(RPC_ERROR_CODES).toContain(code);
     }

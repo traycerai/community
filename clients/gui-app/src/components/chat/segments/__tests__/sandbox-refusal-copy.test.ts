@@ -70,6 +70,22 @@ describe("sandboxRefusalCopyFor", () => {
     expect(sandboxRefusalCopyFor(null, "boom")).toBeNull();
   });
 
+  it("renders PROFILE_REFUSES_AGENTS as the Automations copy, by code and by prefix, with no host detail", () => {
+    const byCode = sandboxRefusalCopyFor(
+      "PROFILE_REFUSES_AGENTS",
+      "PROFILE_REFUSES_AGENTS: this host's profile runs no agents",
+    );
+    expect(byCode?.headline).toBe("Automations doesn't run agents");
+    expect(byCode?.description).toContain("one of your own hosts");
+    expect(byCode?.hostDetail).toBeNull();
+    expect(
+      sandboxRefusalCopyFor(
+        null,
+        "PROFILE_REFUSES_AGENTS: this host's profile runs no agents",
+      )?.headline,
+    ).toBe("Automations doesn't run agents");
+  });
+
   it("gives SANDBOX_FROZEN no host detail, whatever the host's message says", () => {
     expect(
       sandboxRefusalCopyFor(

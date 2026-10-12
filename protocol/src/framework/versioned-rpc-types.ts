@@ -216,6 +216,12 @@ export const RPC_ERROR_CODES = [
   // the attempt's last status in the message, rather than hang through a
   // broker outage.
   "SANDBOX_GUEST_NOT_CONFIGURED",
+  // The host runs a profile that carries no agents (the Automations pod's
+  // `automation` profile: shells, terminals and file copies only), so the two
+  // agent-creation verbs answer this instead of creating one. Not retryable
+  // on that host; the agent belongs on one of the user's own hosts or a
+  // sandbox.
+  "PROFILE_REFUSES_AGENTS",
 ] as const;
 
 export type RpcErrorCode = (typeof RPC_ERROR_CODES)[number];
