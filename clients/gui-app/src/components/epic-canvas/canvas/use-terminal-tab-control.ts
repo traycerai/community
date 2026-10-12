@@ -45,11 +45,16 @@ export function useTerminalTabControl(
   };
 }
 
-/** Whether the legacy title read applies: only off a capable host. */
+/**
+ * Whether the legacy title read applies: only on a `legacy` host (or a tile
+ * with no authority). Not while the mode is still `unknown`: the title then
+ * comes from the authority anyway, and a host that serves only the plain
+ * verbs (the Automations host) would refuse the read.
+ */
 export function terminalTabUsesLegacyReads(
   control: TerminalTabControl | null,
 ): boolean {
-  return control?.mode !== "capable";
+  return control === null || control.mode === "legacy";
 }
 
 /** The title to show: the authority's once it is capable or still deciding. */

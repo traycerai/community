@@ -115,6 +115,7 @@ import { useClipboardCopy } from "@/hooks/ui/use-clipboard-copy";
 import { resolveAbsolutePath } from "@/lib/path/cross-platform-path";
 import { TabHostProvider } from "@/components/epic-canvas/tab-host-provider";
 import {
+  terminalTabUsesLegacyReads,
   useTerminalTabControl,
   type TerminalTabControl,
 } from "@/components/epic-canvas/canvas/use-terminal-tab-control";
@@ -585,7 +586,7 @@ function useTabRenameControl(args: {
     isTerminalTab ? tabHostId(tab) : null,
   );
   const terminalHostClient =
-    isTerminalTab && terminalControl?.mode !== "capable"
+    isTerminalTab && terminalTabUsesLegacyReads(terminalControl)
       ? resolvedHostClient
       : null;
   const fallbackDisplayTitle = useEpicTabDisplayTitle(
