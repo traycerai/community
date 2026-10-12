@@ -38,9 +38,15 @@ export function hashAppQueryKey(queryKey: QueryKey): string {
     if (typeof value !== "object" || value === null || Array.isArray(value)) {
       return value;
     }
-    if (!isPlainObject(value)) return { instance: instanceId(value) };
+    if (!isPlainObject(value)) return { $instance: instanceId(value) };
+    // A "$" prefix is escaped to "$$", so no plain object can spell `$instance`.
     return Object.fromEntries(
-      Object.entries(value).sort(([a], [b]) => compareKeys(a, b)),
+      Object.entries(value)
+        .map(([k, v]): [string, unknown] => [
+          k.startsWith("$") ? `$${k}` : k,
+          v,
+        ])
+        .sort(([a], [b]) => compareKeys(a, b)),
     );
   });
 }

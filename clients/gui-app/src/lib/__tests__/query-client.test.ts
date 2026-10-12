@@ -167,4 +167,15 @@ describe("createAppQueryClient query key hashing", () => {
     });
     expect(client.getQueryData(["plain", { b: 2, a: 1 }])).toBe(1);
   });
+
+  it("never lets a plain object spell an instance segment", async () => {
+    const client = createAppQueryClient();
+    const service = new Service();
+    await client.fetchQuery({
+      queryKey: ["svc", service],
+      queryFn: () => Promise.resolve(1),
+    });
+    expect(client.getQueryData(["svc", { instance: 1 }])).toBeUndefined();
+    expect(client.getQueryData(["svc", { $instance: 1 }])).toBeUndefined();
+  });
 });
