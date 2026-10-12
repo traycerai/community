@@ -140,6 +140,7 @@ function fakeEditor(content: JsonContent): ComposerPromptEditorHandle {
     removeImageAttachmentById: () => undefined,
     rewriteImageAttachmentHashById: () => false,
     insertDictatedText: () => undefined,
+    draftGeneration: () => 0,
     dismissActiveSuggestion: () => false,
   };
 }

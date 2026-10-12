@@ -111,6 +111,7 @@ function mutableFakeEditor(initial: JsonContent): {
       removeImageAttachmentById: () => undefined,
       rewriteImageAttachmentHashById: () => false,
       insertDictatedText: () => undefined,
+      draftGeneration: () => 0,
       dismissActiveSuggestion: () => false,
     },
     setJSON: (next: JsonContent) => {
