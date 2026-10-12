@@ -23,7 +23,7 @@
  */
 import { createContext, use, type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, waitFor } from "@testing-library/react";
+import { act, cleanup, render, waitFor } from "@testing-library/react";
 import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
 import { HostClient } from "@traycer-clients/shared/host-client/host-client";
 import { MockHostMessenger } from "@traycer-clients/shared/host-client/mock/mock-host-messenger";
@@ -90,16 +90,30 @@ vi.mock("@/providers/host-runtime-provider", () => {
   };
 });
 
-const watchScope = vi.hoisted<{ value: HostScope }>(() => ({
-  // Overwritten in every test before render; this default is never read.
-  value: {} as HostScope,
-}));
-vi.mock("@/hooks/host-scope/use-watch-host-scope", () => ({
-  useWatchHostScope: () => ({
-    scope: watchScope.value,
-    hasExplicitPick: true,
-  }),
-}));
+const watchScope = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  return {
+    // Overwritten in every test before render; this default is never read.
+    value: {} as HostScope,
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    set(next: HostScope): void {
+      this.value = next;
+      listeners.forEach((listener) => listener());
+    },
+  };
+});
+vi.mock("@/hooks/host-scope/use-watch-host-scope", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useWatchHostScope: () => ({
+      scope: useSyncExternalStore(watchScope.subscribe, () => watchScope.value),
+      hasExplicitPick: true,
+    }),
+  };
+});
 
 import { hostRpcRegistry, type HostRpcRegistry } from "@/lib/host";
 import { ProviderLimitWindowsReader } from "@/components/layout-editor/inspector/provider-limit-windows";
@@ -207,6 +221,7 @@ function seedUsage(
       totalTokens: 0,
       remainingTokens: 0,
       providerRateLimits: claudeRateLimits(usedPercent),
+      usageUpdatedAt: null,
     },
     Date.now(),
   );
@@ -313,7 +328,7 @@ describe("ProviderLimitWindowsReader watches ONE host's real cache (no mocked se
       );
     }
 
-    const { rerender } = render(<Tree />);
+    render(<Tree />);
     // `providers.list` is a real fetch (see `buildSpine`'s handler), so the
     // provider catalog - and with it, the windowed-provider read this
     // suite is actually about - lands asynchronously.
@@ -322,8 +337,7 @@ describe("ProviderLimitWindowsReader watches ONE host's real cache (no mocked se
     // Same tree, watched host moved to B: a genuine per-host scope re-reads
     // host B's own cache slot rather than replaying host A's answer (a stale
     // closure over the first-resolved client) or merging the two.
-    watchScope.value = scopeFor(HOST_B, spine);
-    rerender(<Tree />);
+    act(() => watchScope.set(scopeFor(HOST_B, spine)));
     await waitFor(() => expect(seen.at(-1)).toEqual([88]));
   });
 });

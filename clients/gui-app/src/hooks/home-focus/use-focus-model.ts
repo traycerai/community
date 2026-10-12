@@ -27,6 +27,7 @@ import {
   EMPTY_FOCUS_MODEL,
   focusActivityCoverage,
   focusActivityDegradedReason,
+  type BuildFocusModelInput,
 } from "@/lib/home-focus/build-focus-model";
 import { compareAscending } from "@/lib/home-focus/focus-identity";
 import {
@@ -44,14 +45,6 @@ import {
 } from "@/hooks/home-focus/use-mounted-epic-projection";
 import { useBrowserSessionsPlane } from "@/hooks/home-focus/use-browser-sessions-plane";
 import { useWarmChatBackground } from "@/hooks/home-focus/use-warm-chat-background";
-
-/**
- * Per-hook-instance memory of the last model built, so an unchanged section
- * keeps its row objects across a rebuild triggered by a different section.
- * Keyed by a token the hook owns, so two Home surfaces in one window do not
- * share (and reset) each other's baseline, and the entry dies with the token.
- */
-const focusModelCache = new WeakMap<object, FocusModel>();
 
 /**
  * Every host's `byEpic`, unioned.
@@ -523,74 +516,77 @@ export function useFocusModel(): FocusModel {
     [browserEpics, taskTitles, projection.agentIdentities],
   );
 
-  // The previous model, so the builders can hand back their own unchanged rows
-  // rather than rebuilding every section whenever one of them moves. `useMemo`
-  // alone cannot do this - it has no access to what it produced last time.
-  //
-  // Held in a module WeakMap keyed by a per-instance token, the same shape
-  // `useStableChatTimelineRows` uses and for the same reason: reading a ref
-  // during render is what `react-hooks/refs` forbids. The entry is published
-  // from render, so a discarded render can advance it - which is harmless here
-  // because the builders are idempotent (rebuilding from identical inputs
-  // against a previous that already equals the result returns that same
-  // result), and nothing downstream reasons about what was last COMMITTED.
-  const [cacheKey] = useState<object>(() => ({}));
-  const model = useMemo(() => {
-    const previous = focusModelCache.get(cacheKey) ?? EMPTY_FOCUS_MODEL;
-    const next = buildFocusModel(
-      {
-        notificationRows,
-        tasks: {
-          byEpic,
-          taskTitles,
-          mountedEpicIds: projection.mountedEpicIds,
-          agentIdentities: projection.agentIdentities,
-          activityHostIds,
-          indicatorEpics: indicators.epics,
-          coldEpicHostIds,
-          activeHostId,
-          reachableHostIds,
-        },
-        backgroundChats,
-        browsers,
-        activity: {
-          connectionStatus,
-          cloudSyncStatus,
-          stateFrameSeenThisEpoch,
-          connectableHostCount: connectableHosts.hostIds.length,
-          connectableHostsResolved: connectableHosts.resolved,
-        },
-        degradedHosts,
-        feedMode,
+  const input = useMemo<BuildFocusModelInput>(
+    () => ({
+      notificationRows,
+      tasks: {
+        byEpic,
+        taskTitles,
+        mountedEpicIds: projection.mountedEpicIds,
+        agentIdentities: projection.agentIdentities,
+        activityHostIds,
+        indicatorEpics: indicators.epics,
+        coldEpicHostIds,
+        activeHostId,
+        reachableHostIds,
       },
-      previous,
-    );
-    focusModelCache.set(cacheKey, next);
-    return next;
-  }, [
-    cacheKey,
-    notificationRows,
-    byEpic,
-    taskTitles,
-    projection.mountedEpicIds,
-    projection.agentIdentities,
-    activityHostIds,
-    indicators.epics,
-    backgroundChats,
-    browsers,
-    coldEpicHostIds,
-    activeHostId,
-    reachableHostIds,
-    connectionStatus,
-    cloudSyncStatus,
-    stateFrameSeenThisEpoch,
-    degradedHosts,
-    connectableHosts.hostIds.length,
-    connectableHosts.resolved,
-    feedMode,
-  ]);
+      backgroundChats,
+      browsers,
+      activity: {
+        connectionStatus,
+        cloudSyncStatus,
+        stateFrameSeenThisEpoch,
+        connectableHostCount: connectableHosts.hostIds.length,
+        connectableHostsResolved: connectableHosts.resolved,
+      },
+      degradedHosts,
+      feedMode,
+    }),
+    [
+      notificationRows,
+      byEpic,
+      taskTitles,
+      projection.mountedEpicIds,
+      projection.agentIdentities,
+      activityHostIds,
+      indicators.epics,
+      backgroundChats,
+      browsers,
+      coldEpicHostIds,
+      activeHostId,
+      reachableHostIds,
+      connectionStatus,
+      cloudSyncStatus,
+      stateFrameSeenThisEpoch,
+      degradedHosts,
+      connectableHosts.hostIds.length,
+      connectableHosts.resolved,
+      feedMode,
+    ],
+  );
+  // React discards this reconciliation baseline with an abandoned render, so
+  // a prompt can retain only an activation that actually reached a commit.
+  // The input is held with the model it built: storing a new model renders
+  // again, and that render must read the model back, not build it a second time.
+  const [held, setHeld] = useState<HeldFocusModel>(NO_FOCUS_MODEL_BUILT);
+  const model = useMemo(
+    () =>
+      held.input === input ? held.model : buildFocusModel(input, held.model),
+    [held, input],
+  );
+  if (model !== held.model) setHeld({ input, model });
   return model;
 }
+
+interface HeldFocusModel {
+  readonly input: BuildFocusModelInput | null;
+  readonly model: FocusModel;
+}
+
+const NO_FOCUS_MODEL_BUILT: HeldFocusModel = {
+  input: null,
+  model: EMPTY_FOCUS_MODEL,
+};
 
 function workingEpicIds(
   byEpic: ReadonlyMap<string, { readonly working: ReadonlySet<string> }>,

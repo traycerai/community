@@ -69,6 +69,24 @@ export function worktreePathMatcher(
   };
 }
 
+/** Matches a worktree directory itself or a directory lexically beneath it. */
+export function worktreeDirectoryMatcher(
+  paths: ReadonlySet<string>,
+): (candidate: string) => boolean {
+  const isSame = worktreePathMatcher(paths);
+  const prefixes = [...paths].flatMap((path) => {
+    const key = lexicalWorktreePathKey(path);
+    if (key === null) return [];
+    const separator = key.startsWith("/") ? "/" : "\\";
+    return [key.endsWith(separator) ? key : key + separator];
+  });
+  return (candidate) => {
+    if (isSame(candidate)) return true;
+    const key = lexicalWorktreePathKey(candidate);
+    return key !== null && prefixes.some((prefix) => key.startsWith(prefix));
+  };
+}
+
 /**
  * Selection-mode rows grouped under the path each was REQUESTED as: the row
  * whose `worktreePath` is byte-equal to the request, else the rows equal to it

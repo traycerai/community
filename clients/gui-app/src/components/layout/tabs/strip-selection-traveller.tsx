@@ -34,6 +34,8 @@ export function StripSelectionTraveller({
       ref={ref}
       aria-hidden
       data-testid="tab-selection-traveller"
+      // Out of flow and resized on every frame of a slide: not strip geometry.
+      data-strip-overlay=""
       hidden={pane === null}
       // The join rule in `index.css` paints it exactly like a joined tab box:
       // its destination's fill, the outline, open at the bottom.

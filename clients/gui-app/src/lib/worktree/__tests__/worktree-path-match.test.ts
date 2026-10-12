@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   lexicalWorktreePathKey,
   rowsByRequestedPath,
+  worktreeDirectoryMatcher,
   worktreePathMatcher,
 } from "@/lib/worktree/worktree-path-match";
 
@@ -64,6 +65,40 @@ describe("worktreePathMatcher", () => {
     const isMatch = worktreePathMatcher(new Set(["wt/app"]));
     expect(isMatch("wt/app")).toBe(true);
     expect(isMatch("./wt/app")).toBe(false);
+  });
+});
+
+describe("worktreeDirectoryMatcher", () => {
+  it("matches the directory itself and anything inside it", () => {
+    const isInside = worktreeDirectoryMatcher(new Set(["/wt/app"]));
+    expect(isInside("/wt/app")).toBe(true);
+    expect(isInside("/wt/app/packages/web")).toBe(true);
+  });
+
+  it("matches under the same lexical normalization the identity matcher uses", () => {
+    const isInside = worktreeDirectoryMatcher(new Set(["/wt/app/"]));
+    expect(isInside("/wt//app/./src")).toBe(true);
+    expect(isInside("/wt/other/../app/src")).toBe(true);
+  });
+
+  it("does not match a sibling that only shares the path as a prefix, or a parent", () => {
+    const isInside = worktreeDirectoryMatcher(new Set(["/wt/app"]));
+    expect(isInside("/wt/app-other")).toBe(false);
+    expect(isInside("/wt/application/src")).toBe(false);
+    expect(isInside("/wt")).toBe(false);
+  });
+
+  it("is separator-bounded for a drive-letter path, whichever separator either side spells", () => {
+    const isInside = worktreeDirectoryMatcher(new Set(["C:\\wt\\app"]));
+    expect(isInside("C:\\wt\\app\\src")).toBe(true);
+    expect(isInside("C:/wt/app/src")).toBe(true);
+    expect(isInside("C:\\wt\\app-other")).toBe(false);
+  });
+
+  it("matches a relative candidate only exactly, like the identity matcher", () => {
+    const isInside = worktreeDirectoryMatcher(new Set(["wt/app"]));
+    expect(isInside("wt/app")).toBe(true);
+    expect(isInside("wt/app/src")).toBe(false);
   });
 });
 

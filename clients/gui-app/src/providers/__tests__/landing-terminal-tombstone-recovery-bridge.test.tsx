@@ -19,8 +19,24 @@ const mocks = vi.hoisted(() => {
   // is `entries`, exactly as the bridge reads it.
   const fleetSettled: { current: boolean } = { current: false };
   const directoryListeners = new Set<() => void>();
+  // The real fleet is reactive (a stream per device), so the mock re-emits on
+  // a notification rather than on a re-render of its parent: a compiled bridge
+  // keeps the fleet element when its props are equal, so a `rerender()` alone
+  // no longer reaches the mock. The two revision counters below publish on
+  // write, and a case bumps them inside `act`.
+  const revisions = { authority: 0, browserSessions: 0 };
+  const fleetListeners = new Set<() => void>();
+  const publishFleet = (): void => {
+    for (const listener of fleetListeners) listener();
+  };
   return {
     entries: [] as readonly HostDirectoryEntry[],
+    subscribeFleet: (listener: () => void): (() => void) => {
+      fleetListeners.add(listener);
+      return () => {
+        fleetListeners.delete(listener);
+      };
+    },
     // The bridge's legacy drain now dispatches through `mutateAsync` so a
     // rejection can be retried; one fn backs both so existing call
     // assertions keep describing the same dispatch.
@@ -29,7 +45,13 @@ const mocks = vi.hoisted(() => {
     authorityStatus: initialAuthorityStatus(),
     canMutate: false,
     /** Bump to make the fleet mock re-emit an entry with the current status. */
-    authorityRevision: 0,
+    get authorityRevision(): number {
+      return revisions.authority;
+    },
+    set authorityRevision(next: number) {
+      revisions.authority = next;
+      publishFleet();
+    },
     terminalsById,
     closeAsync: vi.fn(() => Promise.resolve()),
     /** The host ids the authority fleet was last asked to probe. */
@@ -47,7 +69,13 @@ const mocks = vi.hoisted(() => {
      */
     browserSessionsByHost,
     /** Bump to make the fleet mock re-report the current browser sessions. */
-    browserSessionsRevision: 0,
+    get browserSessionsRevision(): number {
+      return revisions.browserSessions;
+    },
+    set browserSessionsRevision(next: number) {
+      revisions.browserSessions = next;
+      publishFleet();
+    },
     /** `false` models a registry nobody has successfully reached yet. */
     fleetSettled,
     /** Drives the directory's `onChange`, which is how settlement propagates. */
@@ -89,7 +117,7 @@ vi.mock(
 vi.mock(
   "@/components/home/terminal-panel/landing-terminal-authority-fleet",
   async () => {
-    const { useEffect } = await import("react");
+    const { useEffect, useSyncExternalStore } = await import("react");
     return {
       LandingTerminalAuthorityFleet: (props: {
         readonly hostIds: readonly string[];
@@ -99,7 +127,10 @@ vi.mock(
       }) => {
         const { onEntry, onBrowserSessions } = props;
         const browserHostKey = props.browserHostIds.join("|");
-        const browserRevision = mocks.browserSessionsRevision;
+        const browserRevision = useSyncExternalStore(
+          mocks.subscribeFleet,
+          () => mocks.browserSessionsRevision,
+        );
         useEffect(() => {
           const hostIds =
             browserHostKey.length === 0 ? [] : browserHostKey.split("|");
@@ -117,7 +148,10 @@ vi.mock(
           };
         }, [browserHostKey, browserRevision, onBrowserSessions]);
         const hostKey = props.hostIds.join("\u0000");
-        const revision = mocks.authorityRevision;
+        const revision = useSyncExternalStore(
+          mocks.subscribeFleet,
+          () => mocks.authorityRevision,
+        );
         useEffect(() => {
           const hostIds = hostKey.length === 0 ? [] : hostKey.split("\u0000");
           mocks.probedHostIds = hostIds;
@@ -497,16 +531,17 @@ describe("<LandingTerminalTombstoneRecoveryBridge />", () => {
     });
     useLandingPanelStore.getState().closeTab("landing-page", "arm-swap-tab");
 
-    const view = render(<LandingTerminalTombstoneRecoveryBridge />);
+    render(<LandingTerminalTombstoneRecoveryBridge />);
     await act(async () => Promise.resolve());
     expect(mocks.kill).toHaveBeenCalledTimes(1);
     expect(mocks.closeAsync).not.toHaveBeenCalled();
 
     // The create lands: this session is now a plain terminal the host
     // publishes, so `terminal.plain.close` is the arm that names it.
-    mocks.terminalsById = { "session-arm-swap": {} };
-    mocks.authorityRevision += 1;
-    view.rerender(<LandingTerminalTombstoneRecoveryBridge />);
+    act(() => {
+      mocks.terminalsById = { "session-arm-swap": {} };
+      mocks.authorityRevision += 1;
+    });
     await act(async () => Promise.resolve());
 
     // No timer advanced. The arm changed, so the drain must not sit on a
@@ -722,23 +757,25 @@ describe("<LandingTerminalTombstoneRecoveryBridge />", () => {
     });
     useLandingPanelStore.getState().closeTab("landing-page", "refresh-tab");
 
-    const view = render(<LandingTerminalTombstoneRecoveryBridge />);
+    render(<LandingTerminalTombstoneRecoveryBridge />);
     await act(async () => Promise.resolve());
     expect(mocks.closeAsync).toHaveBeenCalledTimes(1);
 
     // The stream goes stale as that first close rejects. `kill` is unaffected -
     // it never reads a listing - so nothing about the HOST's drainability moved.
-    mocks.canMutate = false;
-    mocks.authorityRevision += 1;
-    view.rerender(<LandingTerminalTombstoneRecoveryBridge />);
+    act(() => {
+      mocks.canMutate = false;
+      mocks.authorityRevision += 1;
+    });
     await act(async () => Promise.resolve());
     expect(mocks.closeAsync).toHaveBeenCalledTimes(1);
 
     // Freshness returns. That is this arm's recovery edge even though the host
     // was continuously dialable and continuously `capable`.
-    mocks.canMutate = true;
-    mocks.authorityRevision += 1;
-    view.rerender(<LandingTerminalTombstoneRecoveryBridge />);
+    act(() => {
+      mocks.canMutate = true;
+      mocks.authorityRevision += 1;
+    });
     await act(async () => Promise.resolve());
 
     expect(mocks.closeAsync).toHaveBeenCalledTimes(2);
@@ -876,7 +913,7 @@ describe("<LandingTerminalTombstoneRecoveryBridge />", () => {
     });
     useLandingPanelStore.getState().closeTab("landing-page", "late-create-tab");
 
-    const view = render(<LandingTerminalTombstoneRecoveryBridge />);
+    render(<LandingTerminalTombstoneRecoveryBridge />);
     await act(async () => Promise.resolve());
 
     // Nine answers against an absent projection: one short of the budget.
@@ -904,9 +941,10 @@ describe("<LandingTerminalTombstoneRecoveryBridge />", () => {
 
     // The create lands WHILE that kill is in flight, so the host is publishing
     // the terminal by the time the answer comes back.
-    mocks.terminalsById = { "session-late-create": {} };
-    mocks.authorityRevision += 1;
-    view.rerender(<LandingTerminalTombstoneRecoveryBridge />);
+    act(() => {
+      mocks.terminalsById = { "session-late-create": {} };
+      mocks.authorityRevision += 1;
+    });
     await act(async () => Promise.resolve());
 
     // Now the tenth answer arrives. This pass holds BOTH a spent budget and a
@@ -1588,16 +1626,17 @@ describe("<LandingTerminalTombstoneRecoveryBridge />", () => {
     });
     useLandingPanelStore.getState().closeTab("landing-page", "flip-tab");
 
-    const view = render(<LandingTerminalTombstoneRecoveryBridge />);
+    render(<LandingTerminalTombstoneRecoveryBridge />);
     await act(async () => Promise.resolve());
     expect(mocks.closeAsync).toHaveBeenCalledTimes(1);
     expect(mocks.kill).not.toHaveBeenCalled();
 
     // The host drops to legacy while that close is still outstanding.
-    mocks.authorityStatus = "legacy";
-    mocks.canMutate = false;
-    mocks.authorityRevision += 1;
-    view.rerender(<LandingTerminalTombstoneRecoveryBridge />);
+    act(() => {
+      mocks.authorityStatus = "legacy";
+      mocks.canMutate = false;
+      mocks.authorityRevision += 1;
+    });
     await act(async () => Promise.resolve());
     expect(mocks.kill).not.toHaveBeenCalled();
 
@@ -1645,17 +1684,18 @@ describe("<LandingTerminalTombstoneRecoveryBridge />", () => {
     });
     useLandingPanelStore.getState().closeTab("landing-page", "mirror-tab");
 
-    const view = render(<LandingTerminalTombstoneRecoveryBridge />);
+    render(<LandingTerminalTombstoneRecoveryBridge />);
     await act(async () => Promise.resolve());
     expect(mocks.kill).toHaveBeenCalledTimes(1);
     expect(mocks.closeAsync).not.toHaveBeenCalled();
 
     // The probe resolves to the plain protocol while the kill is outstanding.
-    mocks.authorityStatus = "capable";
-    mocks.canMutate = true;
-    mocks.terminalsById = { "session-mirror": {} };
-    mocks.authorityRevision += 1;
-    view.rerender(<LandingTerminalTombstoneRecoveryBridge />);
+    act(() => {
+      mocks.authorityStatus = "capable";
+      mocks.canMutate = true;
+      mocks.terminalsById = { "session-mirror": {} };
+      mocks.authorityRevision += 1;
+    });
     await act(async () => Promise.resolve());
     expect(mocks.closeAsync).not.toHaveBeenCalled();
 
@@ -1759,7 +1799,7 @@ describe("<LandingTerminalTombstoneRecoveryBridge />", () => {
     });
     useLandingPanelStore.getState().closeTab("landing-page", "budget-tab");
 
-    const view = render(<LandingTerminalTombstoneRecoveryBridge />);
+    render(<LandingTerminalTombstoneRecoveryBridge />);
     await act(async () => Promise.resolve());
 
     const advance = async (ms: number): Promise<void> => {
@@ -1775,14 +1815,15 @@ describe("<LandingTerminalTombstoneRecoveryBridge />", () => {
     for (let round = 0; round < 30; round += 1) await advance(60_000);
 
     // The host comes back speaking the plain protocol, still failing.
-    mocks.authorityStatus = "capable";
-    mocks.canMutate = true;
-    mocks.terminalsById = { "session-budget": {} };
-    mocks.authorityRevision += 1;
     mocks.closeAsync.mockImplementation(() =>
       Promise.reject(new Error("still failing")),
     );
-    view.rerender(<LandingTerminalTombstoneRecoveryBridge />);
+    act(() => {
+      mocks.authorityStatus = "capable";
+      mocks.canMutate = true;
+      mocks.terminalsById = { "session-budget": {} };
+      mocks.authorityRevision += 1;
+    });
     // Let the dispatch AND its rejection settle, so the retry timer is armed
     // before the clock moves.
     await advance(0);
@@ -2043,10 +2084,12 @@ describe("<LandingTerminalTombstoneRecoveryBridge />", () => {
 
       // A third of the way in, one of them finally publishes.
       await settle(LANDING_BROWSER_RECOVERY_ATTEMPT_MS / 3);
-      mocks.browserSessionsByHost = {
-        "host-1": unclosable("host-1", closes),
-      };
-      mocks.browserSessionsRevision += 1;
+      act(() => {
+        mocks.browserSessionsByHost = {
+          "host-1": unclosable("host-1", closes),
+        };
+        mocks.browserSessionsRevision += 1;
+      });
       await settle(0);
 
       // Exactly ON the deadline the silent cohort was carrying, which is the

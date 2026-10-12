@@ -11,6 +11,7 @@ import {
   PaneSurfaceActivityContext,
   PaneVisibilityContext,
 } from "@/components/epic-tabs/pane-visibility-context";
+import { SurfaceDemandContext } from "@/stores/tabs/surface-demand";
 import { LandingTerminalPanel } from "./landing-terminal-panel";
 import { LandingTerminalGestureProvider } from "./landing-terminal-gesture-provider";
 import { resolveHostedLandingDraftId } from "./landing-terminal-surface-binding";
@@ -36,6 +37,7 @@ export function LandingTerminalPaneAnchor(props: {
   // React position, so it is also the only place that can read that pane's real
   // presentation. It publishes it for the host to re-provide around the portal.
   const activity = use(PaneSurfaceActivityContext);
+  const demand = use(SurfaceDemandContext);
   const portalContainer = use(PanePortalContainerContext);
   const isPaneFocusedNow = use(PaneFocusProbeContext);
   const ref = useCallback(
@@ -43,8 +45,20 @@ export function LandingTerminalPaneAnchor(props: {
     [draftId, setAnchor],
   );
   useEffect(() => {
-    setPresentation(draftId, { activity, portalContainer, isPaneFocusedNow });
-  }, [activity, draftId, isPaneFocusedNow, portalContainer, setPresentation]);
+    setPresentation(draftId, {
+      activity,
+      demand,
+      portalContainer,
+      isPaneFocusedNow,
+    });
+  }, [
+    activity,
+    demand,
+    draftId,
+    isPaneFocusedNow,
+    portalContainer,
+    setPresentation,
+  ]);
   // Retraction is its own effect keyed on identity alone: folding it into the
   // publish effect's cleanup would delete and re-add the entry on every pane
   // state change, and the host would portal the panel through a frame of
@@ -84,6 +98,10 @@ export function LandingTerminalPaneAnchor(props: {
  *   grab gate on `usePaneFocused()`, so an unprojected panel would keep them
  *   eligible while sitting behind an epic tab.
  *
+ * - Surface demand: a held header cycle PREVIEWS the start page, and the
+ *   panel's browser watch must not open a stream for a step the cycle is about
+ *   to leave. Without it the panel reads the default `settled`.
+ *
  * Mirrors `hosted-chat-surface-context-bridge`, which solves the same
  * displaced-surface problem for hosted chat tiles.
  */
@@ -99,7 +117,9 @@ function LandingTerminalPresentationBridge(props: {
           <PanePortalContainerContext.Provider
             value={presentation.portalContainer}
           >
-            {props.children}
+            <SurfaceDemandContext.Provider value={presentation.demand}>
+              {props.children}
+            </SurfaceDemandContext.Provider>
           </PanePortalContainerContext.Provider>
         </PaneFocusProbeContext.Provider>
       </PaneVisibilityContext.Provider>

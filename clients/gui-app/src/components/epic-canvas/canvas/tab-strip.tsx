@@ -1,7 +1,10 @@
+import { HORIZONTAL_STRIP_AXIS } from "../dnd/strip-axis";
+import { registerTabStripGeometry } from "../surface-host/tile-surface-geometry-coordinator";
 import { useBrowserAttention } from "@/hooks/notifications/use-browser-attention";
 import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
 import { NOTIFICATION_STATUS_TONES } from "@/components/notifications/notification-indicator-tones";
 import {
+  memo,
   useCallback,
   useContext,
   useEffect,
@@ -24,7 +27,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { LayoutGroup, useReducedMotion, type Transition } from "motion/react";
+import { useReducedMotion, type Transition } from "motion/react";
 import * as m from "motion/react-m";
 import { runTileStripCommitHandoff } from "@/components/epic-canvas/dnd/tile-strip-commit-handoff";
 import { useTileTabDisplacement } from "@/components/epic-canvas/dnd/use-tile-tab-displacement";
@@ -144,9 +147,7 @@ export interface TabStripProps {
   readonly tabId: string;
   readonly groupId: string;
   readonly tabs: ReadonlyArray<EpicCanvasTileRef>;
-  // For the auto-scroll effect only. Per-tab active/preview/globally-active
-  // state is read inside `TabItem` via `useTabActivation`, NOT threaded through
-  // the map - see the `tabs.map(...)` note below.
+  // Selection is rendered by TabItem; the geometry owner observes aria-selected.
   readonly activeTabId: string | null;
   readonly onSelectTab: (groupId: string, tabId: string) => void;
   readonly onCloseTab: (groupId: string, tabId: string) => void;
@@ -167,33 +168,6 @@ export interface TabStripProps {
   >;
 }
 
-function useTabElementRegistry() {
-  const tabRefs = useRef<Map<string, HTMLElement> | null>(null);
-
-  const getTabElements = useCallback(() => {
-    if (tabRefs.current === null) {
-      tabRefs.current = new Map();
-    }
-    return tabRefs.current;
-  }, []);
-
-  const setTabRef = useCallback(
-    (id: string) => (el: HTMLElement | null) => {
-      const tabElements = getTabElements();
-      if (el === null) tabElements.delete(id);
-      else tabElements.set(id, el);
-    },
-    [getTabElements],
-  );
-
-  const getTabElement = useCallback(
-    (id: string) => tabRefs.current?.get(id),
-    [],
-  );
-
-  return { setTabRef, getTabElement };
-}
-
 /**
  * VS Code-style tab strip. Renders one tab item per canvas tile ref, with
  * preview-mode italic, hover/active close buttons, top-border accent on
@@ -208,7 +182,6 @@ export function TabStrip(props: TabStripProps) {
     tabId,
     groupId,
     tabs,
-    activeTabId,
     onSelectTab,
     onCloseTab,
     onPromotePreview,
@@ -224,7 +197,7 @@ export function TabStrip(props: TabStripProps) {
     runTileStripCommitHandoff(groupId);
   });
   const handleWheel = useHorizontalWheelScroll();
-  const { setTabRef, getTabElement } = useTabElementRegistry();
+  const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
   const stripEndDropData = useMemo<EpicCanvasDropTargetData>(
     () => ({
       kind: "artifact-tab-strip-end",
@@ -239,13 +212,14 @@ export function TabStrip(props: TabStripProps) {
     data: stripEndDropData,
   });
 
-  // Auto-scroll active tab into view when it changes.
   useEffect(() => {
-    if (activeTabId === null) return;
-    const el = getTabElement(activeTabId);
-    if (el === undefined) return;
-    el.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }, [activeTabId, getTabElement]);
+    if (scroller === null) return;
+    return registerTabStripGeometry(scroller, HORIZONTAL_STRIP_AXIS, () => {});
+  }, [scroller]);
+  const setScrollerRef = useMemo(
+    () => mergeRefs<HTMLDivElement>(stripEndDropRef, setScroller),
+    [stripEndDropRef],
+  );
 
   // Double-clicking the empty area after the tabs opens a blank tab in this
   // group (browser new-tab gesture). Guarded to the strip-end container itself
@@ -317,7 +291,7 @@ export function TabStrip(props: TabStripProps) {
       >
         <div className="relative flex min-w-0 flex-1 items-stretch">
           <div
-            ref={stripEndDropRef}
+            ref={setScrollerRef}
             data-testid="tab-strip-end"
             onWheel={handleWheel}
             onDoubleClick={handleStripEndDoubleClick}
@@ -331,38 +305,31 @@ export function TabStrip(props: TabStripProps) {
             deps to `tabs` + stable handlers means a pure active-switch
             re-renders only the two tabs whose flags flip.
           */}
-            <LayoutGroup id={`epic-tab-strip-${groupId}`}>
-              {tabs.map((tab, index) => {
-                return (
-                  <TabItem
-                    key={tab.instanceId}
-                    domRef={setTabRef(tab.instanceId)}
-                    tab={tab}
-                    epicId={epicId}
-                    tabId={tabId}
-                    groupId={groupId}
-                    offsetX={tileOffsets.get(tab.instanceId) ?? 0}
-                    showDropIndicatorBefore={dndDropIndicator === index}
-                    index={index}
-                    onSelect={onSelectTab}
-                    onClose={onCloseTab}
-                    onPromotePreview={onPromotePreview}
-                    canRenameTabs={canRenameTabs}
-                    menuProps={{
-                      groupId,
-                      tabId: tab.instanceId,
-                      canCloseRight: index < tabs.length - 1,
-                      ...menuHandlers,
-                    }}
-                  />
-                );
-              })}
-              <TabStripEndDropIndicator
-                visible={
-                  dndDropIndicator !== null && dndDropIndicator >= tabs.length
-                }
-              />
-            </LayoutGroup>
+            {tabs.map((tab, index) => {
+              return (
+                <TabItem
+                  key={tab.instanceId}
+                  tab={tab}
+                  epicId={epicId}
+                  tabId={tabId}
+                  groupId={groupId}
+                  offsetX={tileOffsets.get(tab.instanceId) ?? 0}
+                  showDropIndicatorBefore={dndDropIndicator === index}
+                  index={index}
+                  onSelect={onSelectTab}
+                  onClose={onCloseTab}
+                  onPromotePreview={onPromotePreview}
+                  canRenameTabs={canRenameTabs}
+                  canCloseRight={index < tabs.length - 1}
+                  menuHandlers={menuHandlers}
+                />
+              );
+            })}
+            <TabStripEndDropIndicator
+              visible={
+                dndDropIndicator !== null && dndDropIndicator >= tabs.length
+              }
+            />
           </div>
         </div>
         <div
@@ -474,11 +441,14 @@ interface TabItemProps {
   readonly onClose: (groupId: string, tabId: string) => void;
   readonly onPromotePreview: (groupId: string) => void;
   readonly canRenameTabs: boolean;
-  readonly menuProps: Omit<
-    TabStripContextMenuProps,
-    "canRename" | "onCopyFilePath" | "onEditTitle" | "onOpenUsage"
-  >;
-  readonly domRef: (el: HTMLElement | null) => void;
+  readonly canCloseRight: boolean;
+  /**
+   * The strip's shared handlers, passed through as one stable object. The
+   * per-tab menu props are built inside the item: an object literal built in
+   * the strip's map is new on every strip render, which defeated `memo` and
+   * re-rendered every tab on each tab step.
+   */
+  readonly menuHandlers: TabStripProps["menuHandlers"];
 }
 
 // Ticket 12's chat cost line: the tab's own overflow (this context menu),
@@ -518,7 +488,11 @@ interface TerminalTabControl {
   readonly rename: (title: string) => void;
 }
 
-function TabItem(props: TabItemProps) {
+// Behind `memo`: the strip re-renders on every tab step (drop indicator,
+// offsets, its parent's demand), and every prop here is stable or a
+// primitive, so a tab whose own inputs did not change skips. Active and
+// preview state is read per tab inside (`useTabActivation`).
+const TabItem = memo(function TabItem(props: TabItemProps) {
   if (props.tab.type === "browser-session") {
     return <BrowserTabItem {...props} tab={props.tab} />;
   }
@@ -536,7 +510,7 @@ function TabItem(props: TabItemProps) {
       <TerminalTabItem {...props} tab={props.tab} />
     </TabHostProvider>
   );
-}
+});
 
 function BrowserTabItem(
   props: Omit<TabItemProps, "tab"> & { readonly tab: BrowserSessionTileRef },
@@ -596,7 +570,7 @@ function useTabRenameControl(args: {
   readonly canRenameTabs: boolean;
   readonly terminalControl: TerminalTabControl | null;
   readonly browserPresentation: BrowserTabPresentation | null;
-  readonly onRename: TabItemProps["menuProps"]["onRename"];
+  readonly onRename: TabItemProps["menuHandlers"]["onRename"];
 }) {
   const {
     tab,
@@ -687,9 +661,18 @@ function TabItemBody(
     onClose,
     onPromotePreview,
     canRenameTabs,
-    menuProps,
-    domRef,
+    canCloseRight,
+    menuHandlers,
   } = props;
+  const menuProps = useMemo(
+    () => ({
+      groupId,
+      tabId: tab.instanceId,
+      canCloseRight,
+      ...menuHandlers,
+    }),
+    [canCloseRight, groupId, menuHandlers, tab.instanceId],
+  );
   // Read this tab's active/preview/globally-active state per tab so the strip's
   // map need not depend on the group's `activeTabId`; an active-switch then
   // re-renders only the two tabs whose flags flip. See `makeSelectTabActivation`.
@@ -758,8 +741,8 @@ function TabItemBody(
     tab.type === "chat" ? tab.id : null,
   );
   const setRef = useMemo(
-    () => mergeRefs<HTMLElement>(domRef, dragRef, dropRef),
-    [domRef, dragRef, dropRef],
+    () => mergeRefs<HTMLElement>(dragRef, dropRef),
+    [dragRef, dropRef],
   );
 
   const { copy } = useClipboardCopy({
@@ -1217,11 +1200,16 @@ function TabItemMotionFrame(props: {
  * leaving the neighbour chasing a spring after pointer-up. Under reduced
  * motion the order still changes but nothing travels.
  */
+const TILE_DISPLACEMENT_TRANSITION: Transition = {
+  ...EPIC_TAB_REORDER_TRANSITION,
+  opacity: { duration: 0 },
+};
+const REDUCED_TILE_DISPLACEMENT_TRANSITION: Transition = { duration: 0 };
+
 function useTileDisplacementTransition(): Transition {
-  const reduceMotion = useReducedMotion() === true;
-  return reduceMotion
-    ? { duration: 0 }
-    : { ...EPIC_TAB_REORDER_TRANSITION, opacity: { duration: 0 } };
+  return useReducedMotion() === true
+    ? REDUCED_TILE_DISPLACEMENT_TRANSITION
+    : TILE_DISPLACEMENT_TRANSITION;
 }
 
 function TabStripDropIndicator(props: { readonly visible: boolean }) {

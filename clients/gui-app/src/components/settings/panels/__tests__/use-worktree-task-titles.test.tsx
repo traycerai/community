@@ -1,6 +1,6 @@
 import { createElement, type ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { HostRpcError } from "@traycer-clients/shared/host-transport/host-messenger";
 import type { WorktreeHostEntryV14 } from "@traycer/protocol/host/index";
@@ -468,6 +468,43 @@ describe("useWorktreeTaskTitles", () => {
           task: listTaskLight("epic-x", "X"),
         },
       },
+    });
+  });
+
+  it("returns a title that a later cloud task page adds, under the same worktrees", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    seedTier1Cache(queryClient, [listTaskLight("epic-first", "First")]);
+    mockHostClient.request.mockImplementation((method: string) => {
+      if (method === "epic.listTasks") {
+        return new Promise(() => undefined);
+      }
+      return Promise.reject(new Error(`unexpected method: ${method}`));
+    });
+
+    const worktrees = [
+      worktreeWithOwners("/wt/a", ["epic-first"]),
+      worktreeWithOwners("/wt/b", ["epic-later"]),
+    ];
+    const { result } = renderHook(
+      () => useWorktreeTaskTitles(mockHostClient as never, worktrees, false),
+      { wrapper: makeWrapper(queryClient) },
+    );
+    await waitFor(() => {
+      expect(result.current.get("epic-first")).toBe("First");
+    });
+    expect(result.current.has("epic-later")).toBe(false);
+
+    act(() => {
+      seedTier1Cache(queryClient, [
+        listTaskLight("epic-first", "First"),
+        listTaskLight("epic-later", "Later"),
+      ]);
+    });
+
+    await waitFor(() => {
+      expect(result.current.get("epic-later")).toBe("Later");
     });
   });
 });

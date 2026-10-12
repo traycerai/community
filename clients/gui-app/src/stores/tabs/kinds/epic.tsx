@@ -1,4 +1,5 @@
-import { createElement, lazy } from "react";
+import { createElement } from "react";
+import { PreloadedTabSurface } from "@/components/layout/preloaded-tab-surface";
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
 import { useLandingDraftStore } from "@/stores/home/landing-draft-store";
 import { epicHasUnsyncedEdits } from "@/lib/registries/epic-session-registry";
@@ -13,12 +14,7 @@ import {
   isTabStructurallyLocked,
 } from "@/stores/tabs/tab-structural-lock";
 import { TAB_KIND_SPLIT_ELIGIBILITY } from "@/stores/tabs/tab-kind-policy";
-
-const epicSurface = lazy(() =>
-  import("@/components/epic-tabs/epic-surface").then((module) => ({
-    default: module.EpicSurface,
-  })),
-);
+import { epicSurfaceModule } from "@/stores/tabs/kinds/surface-modules";
 
 /**
  * `build()`'s input: the epic-canvas source record plus the `hostId` the
@@ -70,8 +66,14 @@ export const epicTabModule: TabKindModule<"epic", EpicTabBuildSource> = {
   descriptor: {
     kind: "epic",
     surface: {
-      render: (tab) =>
-        createElement(epicSurface, { epicId: tab.epicId, tabId: tab.id }),
+      render: (tab) => (
+        <PreloadedTabSurface
+          module={epicSurfaceModule}
+          render={(surface) =>
+            createElement(surface, { epicId: tab.epicId, tabId: tab.id })
+          }
+        />
+      ),
       canonicalRoute: (tab) => tab.route,
       splitEligibility: TAB_KIND_SPLIT_ELIGIBILITY.epic,
       duplication: "allowed",

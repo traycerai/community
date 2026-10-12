@@ -24,9 +24,19 @@ uploads the Playwright report, with a trace for each failed test.
 
 - `playwright.config.ts` starts ONE Vite dev server for the whole run with
   `vite.browser-tests.config.ts` (the app's config, which also compiles
-  Tailwind for the fixtures), and drives the machine's own Google Chrome
+  Tailwind for the fixtures and runs the React Compiler, so a fixture renders
+  the code the product ships), and drives the machine's own Google Chrome
   (`channel: "chrome"`; `CHROME_BIN` overrides it). Nothing downloads a
   browser.
+- The run starts when the server is warm, not when it listens: Playwright
+  waits on `/__browser-tests-warm`, which the server answers once it has
+  transformed every fixture's module graph
+  (`vite/browser-tests-warm-gate.ts`). That takes about a minute on a cold
+  server, so no test loads a page the server is still compiling. A module
+  that cannot be transformed stops the server at once, with the error.
+  To pay it once while you iterate, keep a server running, because Playwright
+  reuses one that is already on the port:
+  `node node_modules/vite/bin/vite.js --config vite.browser-tests.config.ts --host 127.0.0.1 --port 4178 --strictPort`.
 - Each test gets a fresh browser context and page. Load a fixture with
   `page.goto(fixture("name"))` from `support/fixtures.ts`.
 - `BROWSER_TESTS_PORT` gives a run its own server (and its own Vite cache),

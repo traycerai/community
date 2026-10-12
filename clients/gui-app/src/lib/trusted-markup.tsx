@@ -8,6 +8,7 @@ const TEXT_NODE = 3;
 const ATTRIBUTE_NAME_MAP: Readonly<Record<string, string>> = {
   class: "className",
   for: "htmlFor",
+  tabindex: "tabIndex",
   "accept-charset": "acceptCharset",
   "alignment-baseline": "alignmentBaseline",
   "baseline-shift": "baselineShift",

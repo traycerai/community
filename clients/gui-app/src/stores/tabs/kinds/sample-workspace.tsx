@@ -1,13 +1,10 @@
-import { createElement, lazy } from "react";
+import { createElement } from "react";
 import { SlidersHorizontal } from "lucide-react";
+import { PreloadedTabSurface } from "@/components/layout/preloaded-tab-surface";
+import { sampleWorkspaceSurfaceModule } from "@/stores/tabs/kinds/surface-modules";
 import type { HeaderTab, TabKindModule } from "@/stores/tabs/types";
 import { TAB_KIND_SPLIT_ELIGIBILITY } from "@/stores/tabs/tab-kind-policy";
 
-const sampleWorkspaceSurface = lazy(() =>
-  import("@/components/sample-workspace/sample-workspace-surface").then(
-    (module) => ({ default: module.SampleWorkspaceSurface }),
-  ),
-);
 const tab: Extract<HeaderTab, { kind: "sample-workspace" }> = {
   kind: "sample-workspace",
   id: "sample-workspace",
@@ -53,8 +50,12 @@ export const sampleWorkspaceTabModule: TabKindModule<"sample-workspace", null> =
     descriptor: {
       kind: "sample-workspace",
       surface: {
-        render: (tab) =>
-          createElement(sampleWorkspaceSurface, { tabId: tab.id }),
+        render: (tab) => (
+          <PreloadedTabSurface
+            module={sampleWorkspaceSurfaceModule}
+            render={(surface) => createElement(surface, { tabId: tab.id })}
+          />
+        ),
         canonicalRoute: (tab) => tab.route,
         splitEligibility: TAB_KIND_SPLIT_ELIGIBILITY["sample-workspace"],
         duplication: "forbidden",

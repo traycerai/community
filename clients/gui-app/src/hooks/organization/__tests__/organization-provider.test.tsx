@@ -17,7 +17,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HostRpcRegistry } from "@traycer/protocol/host/index";
 import type { OrganizationView } from "@traycer/protocol/host/organization/contracts";
 import { OrganizationProvider } from "@/hooks/organization/organization-provider";
-import { useOrganization } from "@/hooks/organization/organization-context";
+import {
+  useOrganization,
+  useOrganizationTasks,
+} from "@/hooks/organization/organization-context";
 import {
   cloudEpicTasksQueryKey,
   LIST_CLOUD_TASKS_REQUEST,
@@ -26,6 +29,10 @@ import { hostQueryKeys } from "@/lib/query-keys/host-query-keys";
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
 import { tabItemId } from "@/stores/tabs/layout";
 import { useTabsStore } from "@/stores/tabs/store";
+import {
+  SurfaceDemandContext,
+  type ActiveSurfaceDemand,
+} from "@/stores/tabs/surface-demand";
 
 const state = vi.hoisted(() => {
   const identity: {
@@ -51,7 +58,12 @@ const state = vi.hoisted(() => {
     getActiveHostId: () => identity.hostId,
     getRequestContextUserId: () => identity.userId,
   };
-  return { client, identity, view };
+  const session = { onServerFrame: vi.fn(), close: vi.fn() };
+  const streamClient = {
+    subscribe: vi.fn((_method: string, _params: object) => session),
+  };
+  const stream: { enabled: boolean } = { enabled: false };
+  return { client, identity, view, session, streamClient, stream };
 });
 
 vi.mock("@/lib/host", () => ({
@@ -69,21 +81,26 @@ vi.mock("@/hooks/host/use-host-supports-method", () => ({
   useHostSupportsMethod: () => true,
 }));
 
-vi.mock("@/stores/auth/auth-store", () => ({
-  authorizesCloudCapability: () => true,
-  useAuthStore: Object.assign(
-    <T,>(
-      selector: (auth: {
-        readonly status: "signed-in";
-        readonly contextMetadata: { readonly userId: string } | null;
-      }) => T,
-    ): T => selector(authSnapshot()),
-    {
-      getState: authSnapshot,
-      subscribe: () => () => {},
-    },
-  ),
-}));
+// The composer draft store subscribes to the auth store when it loads (it is
+// reached transitively from `organization-provider`), so the mock needs
+// `subscribe` and the real, pure `admitsLocalPlane`.
+vi.mock("@/stores/auth/auth-store", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("@/stores/auth/auth-store")>();
+  return {
+    admitsLocalPlane: actual.admitsLocalPlane,
+    authorizesCloudCapability: () => true,
+    useAuthStore: Object.assign(
+      <T,>(
+        selector: (auth: {
+          readonly status: "signed-in";
+          readonly contextMetadata: { readonly userId: string } | null;
+        }) => T,
+      ): T => selector(authSnapshot()),
+      { getState: authSnapshot, subscribe: () => () => undefined },
+    ),
+  };
+});
 
 function authSnapshot(): {
   readonly status: "signed-in";
@@ -99,7 +116,8 @@ function authSnapshot(): {
 }
 
 vi.mock("@/hooks/host/use-surface-host-stream-binding", () => ({
-  useSurfaceHostStreamBinding: () => null,
+  useSurfaceHostStreamBinding: () =>
+    state.stream.enabled ? { wsStreamClient: state.streamClient } : null,
 }));
 
 vi.mock("@/hooks/host/use-host-query", () => ({
@@ -170,6 +188,10 @@ function resetStores(): void {
   state.identity.userId = "user-1";
   state.identity.authUserId = "user-1";
   state.view = emptyView();
+  state.stream.enabled = false;
+  state.streamClient.subscribe.mockClear();
+  state.session.onServerFrame.mockClear();
+  state.session.close.mockClear();
 }
 
 function OrganizationStateProbe() {
@@ -734,5 +756,105 @@ describe("OrganizationProvider lifecycle projection", () => {
       expect(customization?.pendingGroupId).toBeUndefined();
       expect(customization?.organizationOwnerId).toBeUndefined();
     });
+  });
+});
+
+function TasksConsumer(props: { readonly taskIds: readonly string[] }) {
+  useOrganizationTasks(props.taskIds);
+  return null;
+}
+
+function renderConsumers(
+  queryClient: QueryClient,
+  demand: ActiveSurfaceDemand,
+  consumers: ReactNode,
+): ReactNode {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <OrganizationProvider>
+        <SurfaceDemandContext value={demand}>{consumers}</SurfaceDemandContext>
+      </OrganizationProvider>
+    </QueryClientProvider>
+  );
+}
+
+function subscribedTaskIds(): string[][] {
+  return state.streamClient.subscribe.mock.calls.flatMap(([method, params]) =>
+    method === "organization.subscribe" && "taskIds" in params
+      ? [Array.isArray(params.taskIds) ? params.taskIds.map(String) : []]
+      : [],
+  );
+}
+
+describe("OrganizationProvider task subscriptions", () => {
+  beforeEach(() => {
+    state.stream.enabled = true;
+  });
+
+  it("registers no task ids while the surface is only previewed, and subscribes them once it settles", () => {
+    const queryClient = new QueryClient();
+    const rendered = render(
+      renderConsumers(
+        queryClient,
+        "preview",
+        <TasksConsumer taskIds={["task-a"]} />,
+      ),
+    );
+    act(() => {});
+    expect(subscribedTaskIds()).not.toContainEqual(["task-a"]);
+
+    act(() => {
+      rendered.rerender(
+        renderConsumers(
+          queryClient,
+          "settled",
+          <TasksConsumer taskIds={["task-a"]} />,
+        ),
+      );
+    });
+    expect(subscribedTaskIds()).toContainEqual(["task-a"]);
+  });
+
+  it("does not reopen an existing subscription when a consumer mounts and unmounts with ids already registered", () => {
+    const queryClient = new QueryClient();
+    const rendered = render(
+      renderConsumers(
+        queryClient,
+        "settled",
+        <TasksConsumer taskIds={["task-a"]} />,
+      ),
+    );
+    act(() => {});
+    expect(subscribedTaskIds().filter((ids) => ids.length > 0)).toEqual([
+      ["task-a"],
+    ]);
+    const subscribeCalls = state.streamClient.subscribe.mock.calls.length;
+    const closeCalls = state.session.close.mock.calls.length;
+
+    // A second consumer of the same ids changes nothing about the id set.
+    act(() => {
+      rendered.rerender(
+        renderConsumers(
+          queryClient,
+          "settled",
+          <>
+            <TasksConsumer taskIds={["task-a"]} />
+            <TasksConsumer taskIds={["task-a"]} />
+          </>,
+        ),
+      );
+    });
+    act(() => {
+      rendered.rerender(
+        renderConsumers(
+          queryClient,
+          "settled",
+          <TasksConsumer taskIds={["task-a"]} />,
+        ),
+      );
+    });
+
+    expect(state.streamClient.subscribe.mock.calls.length).toBe(subscribeCalls);
+    expect(state.session.close.mock.calls.length).toBe(closeCalls);
   });
 });

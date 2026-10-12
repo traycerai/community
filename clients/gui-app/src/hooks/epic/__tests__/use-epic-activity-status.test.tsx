@@ -14,11 +14,14 @@ import { afterEach, describe, expect, it } from "vitest";
 import { act, renderHook } from "@testing-library/react";
 import type { ManagedCommand } from "@traycer/protocol/host/managed-command/unary-schemas";
 import {
-  chatSessionWaitingReason,
   epicWaitingReasonFromSessions,
   useEpicActivityStatus,
   useEpicWaitingReason,
 } from "@/hooks/epic/use-epic-activity-status";
+import {
+  chatSessionWaitingOnUser,
+  chatSessionWaitingReason,
+} from "@/stores/chats/chat-run-activity";
 import { __getOpenEpicRegistryForTests } from "@/lib/registries/epic-session-registry";
 import {
   __getChatSessionRegistryForTests,
@@ -311,6 +314,33 @@ function setChatGates(
   handle.store.setState(gates);
 }
 
+/** The person at this window owns the chat and can answer its gates. */
+const OWNER_ACCESS: NonNullable<ChatSessionState["access"]> = {
+  role: "owner",
+  ownerUserId: "chat-owner",
+  canAct: true,
+};
+
+/** The person at this window only views the chat: its gates are not theirs. */
+const VIEWER_ACCESS: NonNullable<ChatSessionState["access"]> = {
+  role: "viewer",
+  ownerUserId: "chat-owner",
+  canAct: false,
+};
+
+function setChatAccess(
+  chatId: string,
+  access: ChatSessionState["access"],
+): void {
+  const handle = __getChatSessionRegistryForTests().peek(
+    EPIC_ID,
+    chatId,
+    ACTIVITY_HOST_ID,
+  );
+  if (handle === null) throw new Error(`expected chat session ${chatId}`);
+  handle.store.setState({ access });
+}
+
 describe("chatSessionWaitingReason", () => {
   it.each<{
     readonly name: string;
@@ -392,11 +422,83 @@ describe("chatSessionWaitingReason", () => {
   });
 });
 
+describe("chatSessionWaitingOnUser", () => {
+  const APPROVAL_GATES: Pick<
+    ChatSessionState,
+    "pendingApprovals" | "pendingFileEditApprovals" | "pendingInterviews"
+  > = {
+    pendingApprovals: [COMMAND_APPROVAL],
+    pendingFileEditApprovals: [],
+    pendingInterviews: [],
+  };
+
+  it("reads approval for an owner who can act on a pending command approval", () => {
+    registerChatSession(AGENT_ID, []);
+    setChatAccess(AGENT_ID, OWNER_ACCESS);
+    setChatGates(AGENT_ID, APPROVAL_GATES);
+    expect(chatSessionWaitingOnUser(chatStore(AGENT_ID))).toBe("approval");
+  });
+
+  it("reads null for a viewer, whose session carries the same pending approval", () => {
+    registerChatSession(AGENT_ID, []);
+    setChatAccess(AGENT_ID, VIEWER_ACCESS);
+    setChatGates(AGENT_ID, APPROVAL_GATES);
+    expect(chatSessionWaitingOnUser(chatStore(AGENT_ID))).toBeNull();
+  });
+
+  it("reads null while the session's access is not known yet", () => {
+    registerChatSession(AGENT_ID, []);
+    setChatAccess(AGENT_ID, null);
+    setChatGates(AGENT_ID, APPROVAL_GATES);
+    expect(chatSessionWaitingOnUser(chatStore(AGENT_ID))).toBeNull();
+  });
+});
+
 describe("epicWaitingReasonFromSessions", () => {
+  it("reads null when the task's only waiting chat is one the user views", () => {
+    registerSessionHoldingAgents([AGENT_ID]);
+    registerChatSession(AGENT_ID, []);
+    setChatAccess(AGENT_ID, VIEWER_ACCESS);
+    setChatGates(AGENT_ID, {
+      pendingApprovals: [COMMAND_APPROVAL],
+      pendingFileEditApprovals: [],
+      pendingInterviews: [],
+    });
+    expect(
+      epicWaitingReasonFromSessions(EPIC_ID, new Set([AGENT_ID])),
+    ).toBeNull();
+  });
+
+  it("does not let a viewed chat's reply outrank an owned chat's approval", () => {
+    registerSessionHoldingAgents([AGENT_ID, OTHER_AGENT_ID]);
+    registerChatSession(AGENT_ID, []);
+    registerChatSession(OTHER_AGENT_ID, []);
+    setChatAccess(AGENT_ID, OWNER_ACCESS);
+    setChatAccess(OTHER_AGENT_ID, VIEWER_ACCESS);
+    setChatGates(AGENT_ID, {
+      pendingApprovals: [COMMAND_APPROVAL],
+      pendingFileEditApprovals: [],
+      pendingInterviews: [],
+    });
+    setChatGates(OTHER_AGENT_ID, {
+      pendingApprovals: [],
+      pendingFileEditApprovals: [],
+      pendingInterviews: [INTERVIEW],
+    });
+    expect(
+      epicWaitingReasonFromSessions(
+        EPIC_ID,
+        new Set([AGENT_ID, OTHER_AGENT_ID]),
+      ),
+    ).toBe("approval");
+  });
+
   it("ranks reply over approval across two chats, in either order", () => {
     registerSessionHoldingAgents([AGENT_ID, OTHER_AGENT_ID]);
     registerChatSession(AGENT_ID, []);
     registerChatSession(OTHER_AGENT_ID, []);
+    setChatAccess(AGENT_ID, OWNER_ACCESS);
+    setChatAccess(OTHER_AGENT_ID, OWNER_ACCESS);
     const live = new Set([AGENT_ID, OTHER_AGENT_ID]);
 
     setChatGates(AGENT_ID, {
@@ -426,6 +528,7 @@ describe("epicWaitingReasonFromSessions", () => {
 
   it("ignores a warm chat the live projection no longer holds", () => {
     registerChatSession(AGENT_ID, []);
+    setChatAccess(AGENT_ID, OWNER_ACCESS);
     setChatGates(AGENT_ID, {
       pendingApprovals: [COMMAND_APPROVAL],
       pendingFileEditApprovals: [],
@@ -444,6 +547,8 @@ describe("useEpicWaitingReason", () => {
     registerSessionHoldingAgents([AGENT_ID, OTHER_AGENT_ID]);
     registerChatSession(AGENT_ID, []);
     registerChatSession(OTHER_AGENT_ID, []);
+    setChatAccess(AGENT_ID, OWNER_ACCESS);
+    setChatAccess(OTHER_AGENT_ID, OWNER_ACCESS);
     setChatGates(AGENT_ID, {
       pendingApprovals: [],
       pendingFileEditApprovals: [],
@@ -484,6 +589,7 @@ describe("useEpicWaitingReason", () => {
 
     act(() => {
       registerChatSession(AGENT_ID, []);
+      setChatAccess(AGENT_ID, OWNER_ACCESS);
       setChatGates(AGENT_ID, {
         pendingApprovals: [],
         pendingFileEditApprovals: [FILE_EDIT_APPROVAL],
@@ -496,6 +602,7 @@ describe("useEpicWaitingReason", () => {
   it("picks up a warm chat that joins the epic's live projection after mount", () => {
     registerSessionHoldingAgents([]);
     registerChatSession(AGENT_ID, []);
+    setChatAccess(AGENT_ID, OWNER_ACCESS);
     setChatGates(AGENT_ID, {
       pendingApprovals: [COMMAND_APPROVAL],
       pendingFileEditApprovals: [],
@@ -510,6 +617,42 @@ describe("useEpicWaitingReason", () => {
         ?.store.setState({ chats: { allIds: [AGENT_ID], byId: {} } });
     });
     expect(result.current).toBe("approval");
+  });
+
+  it("picks up access that arrives after the gate, not only the gate", () => {
+    registerSessionHoldingAgents([AGENT_ID]);
+    registerChatSession(AGENT_ID, []);
+    setChatAccess(AGENT_ID, null);
+    setChatGates(AGENT_ID, {
+      pendingApprovals: [COMMAND_APPROVAL],
+      pendingFileEditApprovals: [],
+      pendingInterviews: [],
+    });
+    const { result } = renderHook(() => useEpicWaitingReason(EPIC_ID));
+    expect(result.current).toBeNull();
+
+    act(() => {
+      setChatAccess(AGENT_ID, OWNER_ACCESS);
+    });
+    expect(result.current).toBe("approval");
+  });
+
+  it("stops waiting when the user's access drops to viewer under a pending gate", () => {
+    registerSessionHoldingAgents([AGENT_ID]);
+    registerChatSession(AGENT_ID, []);
+    setChatAccess(AGENT_ID, OWNER_ACCESS);
+    setChatGates(AGENT_ID, {
+      pendingApprovals: [COMMAND_APPROVAL],
+      pendingFileEditApprovals: [],
+      pendingInterviews: [],
+    });
+    const { result } = renderHook(() => useEpicWaitingReason(EPIC_ID));
+    expect(result.current).toBe("approval");
+
+    act(() => {
+      setChatAccess(AGENT_ID, VIEWER_ACCESS);
+    });
+    expect(result.current).toBeNull();
   });
 
   it("reads null for a null epic id", () => {

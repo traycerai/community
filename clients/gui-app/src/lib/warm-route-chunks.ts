@@ -1,4 +1,12 @@
 import { isMobileApp } from "@/lib/mobile-app";
+import {
+  draftSurfaceModule,
+  epicSurfaceModule,
+  historySurfaceModule,
+  homeSurfaceModule,
+  sampleWorkspaceSurfaceModule,
+  settingsSurfaceModule,
+} from "@/stores/tabs/kinds/surface-modules";
 
 /**
  * Eagerly warm the heavy epic route component chunks shortly after startup so
@@ -25,7 +33,7 @@ import { isMobileApp } from "@/lib/mobile-app";
 let warmed = false;
 
 export interface RouteChunkWarmer {
-  /** The warmed module's specifier, as written in `load`. */
+  /** The specifier of the module `load` brings in. */
   readonly module: string;
   readonly load: () => Promise<unknown>;
 }
@@ -42,18 +50,19 @@ const EPIC_WARMERS: ReadonlyArray<RouteChunkWarmer> = [
     load: () => import("@/routes/epic-tab-route-components"),
   },
   // The top-level tab host reaches every surface through
-  // `tabSurfaceDescriptor(kind).render()`, which returns a `lazy()`
-  // component - so NOTHING statically imports these modules and the route
-  // adapters above no longer pull them in. Each one must be warmed by name
-  // or the first open of that tab kind pays the cold dynamic import behind
-  // `Suspense fallback={null}`, i.e. a blank pane. `epic-surface` is the
-  // expensive one: it owns `EpicRouteSessionBody` + `EpicSidebarColumn` +
-  // `EpicSessionProvider`, which the epic route adapter used to import
-  // directly and warm for free. `surface-modules-are-warmed.test.ts` keeps
-  // this list in sync with the `lazy()` calls in `stores/tabs/kinds/`.
+  // `tabSurfaceDescriptor(kind).render()`, which draws it from an on-demand
+  // module (`stores/tabs/kinds/surface-modules.ts`) - so NOTHING statically
+  // imports these modules and the route adapters above no longer pull them
+  // in. Each one must be warmed, through its own `load`, or the first open
+  // of that tab kind pays the cold import behind a pending screen.
+  // `epic-surface` is the expensive one: it owns `EpicRouteSessionBody` +
+  // `EpicSidebarColumn` + `EpicSessionProvider`, which the epic route adapter
+  // used to import directly and warm for free.
+  // `surface-modules-are-warmed.test.ts` keeps this list in sync with the
+  // surface modules.
   {
     module: "@/components/epic-tabs/epic-surface",
-    load: () => import("@/components/epic-tabs/epic-surface"),
+    load: () => epicSurfaceModule.load(),
   },
 ];
 
@@ -64,30 +73,30 @@ const DESKTOP_ONLY_WARMERS: ReadonlyArray<RouteChunkWarmer> = [
   },
   {
     module: "@/components/home-focus/home-focus-view",
-    load: () => import("@/components/home-focus/home-focus-view"),
+    load: () => homeSurfaceModule.load(),
   },
+  // The draft surface is one entry of two modules: both rows load it.
   {
     module: "@/components/home/landing-draft-surface",
-    load: () => import("@/components/home/landing-draft-surface"),
+    load: () => draftSurfaceModule.load(),
   },
   {
     module: "@/providers/draft-surface-provider",
-    load: () => import("@/providers/draft-surface-provider"),
+    load: () => draftSurfaceModule.load(),
   },
   {
     module: "@/components/epics/history-surface",
-    load: () => import("@/components/epics/history-surface"),
+    load: () => historySurfaceModule.load(),
   },
   {
     module: "@/components/settings/settings-surface",
-    load: () => import("@/components/settings/settings-surface"),
+    load: () => settingsSurfaceModule.load(),
   },
   // The experimental layout editor's sample workspace (Settings >
   // Appearance). Off by default, and never a phone boot path.
   {
     module: "@/components/sample-workspace/sample-workspace-surface",
-    load: () =>
-      import("@/components/sample-workspace/sample-workspace-surface"),
+    load: () => sampleWorkspaceSurfaceModule.load(),
   },
 ];
 

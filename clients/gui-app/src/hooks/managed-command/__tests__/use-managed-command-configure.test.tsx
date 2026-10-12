@@ -12,6 +12,7 @@ import {
 } from "@traycer/protocol/host/index";
 import type { ManagedCommand } from "@traycer/protocol/host/managed-command/unary-schemas";
 import { createHostQueryInvalidator } from "@/lib/host/query-invalidator";
+import { managedCommandMutationKeys } from "@/lib/query-keys/managed-command-mutation-keys";
 
 /**
  * `managedCommand.configure`, driven against a real `HostClient` and a mock
@@ -352,5 +353,34 @@ describe("useManagedCommandConfigure", () => {
       expect(a.result.current.isSuccess).toBe(true);
       expect(b.result.current.isSuccess).toBe(true);
     });
+  });
+});
+
+describe("useManagedCommandConfigureIsPending follows a changed command while mounted", () => {
+  it("reads the write of the command it is given, not the command it was first mounted with", () => {
+    act(() => {
+      void queryClient
+        .getMutationCache()
+        .build(queryClient, {
+          mutationKey: managedCommandMutationKeys.configure("host-1", "cmd-a"),
+          mutationFn: () => new Promise<never>(() => undefined),
+        })
+        .execute(undefined);
+    });
+    const { result, rerender } = renderHook(
+      (props: { readonly commandId: string }) =>
+        useManagedCommandConfigureIsPending({
+          hostId: "host-1",
+          commandId: props.commandId,
+        }),
+      { initialProps: { commandId: "cmd-a" }, wrapper },
+    );
+    expect(result.current).toBe(true);
+
+    rerender({ commandId: "cmd-b" });
+    expect(result.current).toBe(false);
+
+    rerender({ commandId: "cmd-a" });
+    expect(result.current).toBe(true);
   });
 });

@@ -5,7 +5,9 @@
  * canvas for its pane, so sidebar collapse/resize can never remount canvas
  * content.
  */
-import { use, useMemo, type ReactNode } from "react";
+import { use, useMemo, useState, type ReactNode } from "react";
+import { useSurfaceDemand } from "@/stores/tabs/surface-demand";
+import { SurfacePreviewShell } from "@/components/layout/surface-preview-shell";
 import { TileCanvas } from "@/components/epic-canvas/canvas/tile-canvas";
 import { ChatStreamPrewarm } from "@/components/epic-canvas/chat-stream-prewarm";
 import { WorkspaceFileIconSpriteSheet } from "@/components/epic-canvas/workspace-file/workspace-file-icons";
@@ -56,8 +58,14 @@ interface EpicShellProps {
 export function EpicShell(props: EpicShellProps) {
   const { epicId, tabId, active } = props;
   const sessionReady = useMaybeOpenEpicHandle() !== null;
+  const demand = useSurfaceDemand();
   const presentation = use(EpicSessionPresentationContext);
   const failure = presentation?.kind === "failed" ? presentation : null;
+  let fallback: ReactNode;
+  if (demand === "preview") fallback = <SurfacePreviewShell />;
+  else if (failure !== null)
+    fallback = <EpicRepointFailure presentation={failure} />;
+  else fallback = <EpicShellLoadingBody epicId={epicId} tabId={tabId} />;
 
   return (
     <div
@@ -68,15 +76,7 @@ export function EpicShell(props: EpicShellProps) {
       data-session-ready={sessionReady ? "true" : "false"}
     >
       <WorkspaceFileIconSpriteSheet />
-      <EpicSessionGate
-        fallback={
-          failure === null ? (
-            <EpicShellLoadingBody epicId={epicId} tabId={tabId} />
-          ) : (
-            <EpicRepointFailure presentation={failure} />
-          )
-        }
-      >
+      <EpicSessionGate fallback={fallback}>
         {/*
          * The failure is surfaced OVER a mounted body, never in place of it.
          * Swapping `EpicShellSessionBody` out for the card unmounted
@@ -139,6 +139,7 @@ export function EpicShell(props: EpicShellProps) {
 function EpicShellSessionBody(
   props: EpicShellProps & { readonly readOnly: boolean },
 ) {
+  const demand = useSurfaceDemand();
   const snapshotLoaded = useEpicSnapshotLoaded();
   const snapshotFetchError = useEpicSnapshotFetchError();
   const hasActiveHandoff = useInitialChatHandoffStore((state) =>
@@ -148,6 +149,26 @@ function EpicShellSessionBody(
     () => ({ snapshotLoaded, snapshotFetchError }),
     [snapshotLoaded, snapshotFetchError],
   );
+
+  // A latch, like `TopLevelSurfaceMount`'s: the shell stands in only for a
+  // body that has never mounted. A held header cycle passes a loading tab once
+  // per turn, and swapping the mounted body out for that one step unmounted
+  // every owner below it - the connection pill closed and reopened its
+  // terminal list stream on each pass. A mounted loading body stays quiet
+  // under a preview because its loaders gate on settled demand themselves.
+  //
+  // The latch holds the epic it admitted, not a flag: a tab can change its
+  // epic in place (`resolveTabEpicIdentity`), and where the new epic's handle
+  // is already published the gate above never falls back, so this instance
+  // lives on. The other epic has not mounted here and starts cold.
+  const previewedUnloaded = demand === "preview" && !snapshotLoaded;
+  const [mountedEpicId, setMountedEpicId] = useState(
+    previewedUnloaded ? null : props.epicId,
+  );
+  if (!previewedUnloaded && mountedEpicId !== props.epicId) {
+    setMountedEpicId(props.epicId);
+  }
+  if (mountedEpicId !== props.epicId) return <SurfacePreviewShell />;
 
   return (
     <SnapshotLoadingProvider value={snapshotContextValue}>

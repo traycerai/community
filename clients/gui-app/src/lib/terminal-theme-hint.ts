@@ -4,6 +4,7 @@ import type { TerminalThemeHint } from "@traycer/protocol/host/terminal/unary-sc
 import { ResolvedThemeContext } from "@/providers/use-resolved-theme";
 import { useThemeRevision } from "@/providers/use-theme-revision";
 import { readCssVar } from "@/lib/css-color";
+import { readOnSignal } from "@/lib/read-on-signal";
 
 // Per-appearance fallbacks matching the neutral canvas tokens, for the
 // headless/jsdom case where the cascade resolves nothing.
@@ -77,14 +78,22 @@ export function useTerminalThemeHint(): TerminalThemeHint {
   const themeContext = use(ResolvedThemeContext);
   const resolvedTheme = themeContext?.resolvedTheme ?? null;
   const themePreset = themeContext?.themePreset ?? null;
-  return useMemo(() => {
-    // Part of the memo identity for the same reason as `useTerminalTheme`:
-    // the preset's values flow in through the CSS cascade, not the closure.
-    themePreset;
-    themeRevision;
-    const appearance =
-      resolvedTheme ??
-      (document.documentElement.classList.contains("dark") ? "dark" : "light");
-    return buildTerminalThemeHint(appearance, document);
-  }, [resolvedTheme, themePreset, themeRevision]);
+  return useMemo(
+    // The preset's values flow in through the CSS cascade, not the closure,
+    // so the preset and the revision are signals of the read.
+    () =>
+      readOnSignal(
+        () =>
+          buildTerminalThemeHint(
+            resolvedTheme ??
+              (document.documentElement.classList.contains("dark")
+                ? "dark"
+                : "light"),
+            document,
+          ),
+        themePreset,
+        themeRevision,
+      ),
+    [resolvedTheme, themePreset, themeRevision],
+  );
 }

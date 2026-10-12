@@ -22,6 +22,26 @@ const hostState = vi.hoisted((): { id: string | null; attached: boolean } => ({
   id: "host-a",
   attached: true,
 }));
+// The real hooks behind these answers are reactive, so the mocks are too: a
+// mid-test move goes through `act(() => hostStateChannel.publish())`. A
+// compiled `TestEpicSessionTab` keeps its prop-less environment element across
+// `rerender()`, so a re-render alone no longer carries a moved host down.
+const hostStateChannel = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  return {
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    publish(): void {
+      listeners.forEach((listener) => {
+        listener();
+      });
+    },
+  };
+});
 const authServiceStub = vi.hoisted(() => ({
   revalidateCurrentContext: () => Promise.resolve({ kind: "valid" as const }),
 }));
@@ -95,13 +115,24 @@ vi.mock("@/lib/host/use-durable-stream-transport", async () => {
 // value the test body holds. Both sides call the accessor instead.
 const transportRegistry = fakeDurableStreamTransports();
 
-vi.mock("@/hooks/host/use-effective-host-id", () => ({
-  useEffectiveHostId: () => hostState.id,
-}));
+vi.mock("@/hooks/host/use-effective-host-id", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useEffectiveHostId: () =>
+      useSyncExternalStore(hostStateChannel.subscribe, () => hostState.id),
+  };
+});
 
-vi.mock("@/hooks/host/use-selection-authority-attached", () => ({
-  useSelectionAuthorityAttached: () => hostState.attached,
-}));
+vi.mock("@/hooks/host/use-selection-authority-attached", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useSelectionAuthorityAttached: () =>
+      useSyncExternalStore(
+        hostStateChannel.subscribe,
+        () => hostState.attached,
+      ),
+  };
+});
 
 vi.mock("@/hooks/host/use-host-client-for-host-id", () => ({
   useHostClientForHostId: (hostId: string | null) =>
@@ -355,13 +386,9 @@ describe("<EpicSessionProvider /> transport ownership", () => {
       expect(seenHandles).toHaveLength(1);
     });
 
-    hostState.id = "host-b";
     act(() => {
-      rendered.rerender(
-        sessionBody("epic-repoint-reason", "epic-repoint-reason", (handle) => {
-          seenHandles.push(handle);
-        }),
-      );
+      hostState.id = "host-b";
+      hostStateChannel.publish();
     });
 
     await waitFor(() => {

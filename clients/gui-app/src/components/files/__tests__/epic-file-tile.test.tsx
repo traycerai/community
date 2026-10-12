@@ -1,4 +1,5 @@
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -25,6 +26,8 @@ import type {
   IFileSaveHost,
   UrlDownloadRequest,
 } from "@traycer-clients/shared/platform/runner-host";
+import { TabBodySelectedContext } from "@/components/epic-canvas/canvas/tab-body-selected-context";
+import { PaneVisibilityContext } from "@/components/epic-tabs/pane-visibility-context";
 import { EpicFileTile } from "@/components/files/epic-file-tile";
 import type { HostReachability } from "@/hooks/agent/use-host-reachability";
 import {
@@ -32,6 +35,10 @@ import {
   type EpicFileRpc,
 } from "@/lib/files/epic-file-rpc";
 import { makeEpicFileTileRef } from "@/stores/epics/canvas/tile-schema/epic-file-tile";
+import {
+  SurfaceDemandContext,
+  type ActiveSurfaceDemand,
+} from "@/stores/tabs/surface-demand";
 
 const HOST_ID = "host-1";
 const OTHER_HOST_ID = "host-2";
@@ -186,6 +193,72 @@ function renderTile(path: string, rpc: EpicFileRpc) {
   };
 }
 
+interface TileVisibility {
+  readonly pane: boolean;
+  readonly tab: boolean;
+}
+
+const TILE_SHOWN: TileVisibility = { pane: true, tab: true };
+
+/** The two contexts `useTileBodyVisible()` composes, as a tile body provides. */
+function TileBody(props: {
+  readonly visibility: TileVisibility;
+  readonly children: ReactNode;
+}): ReactNode {
+  return (
+    <PaneVisibilityContext.Provider value={props.visibility.pane}>
+      <TabBodySelectedContext.Provider value={props.visibility.tab}>
+        {props.children}
+      </TabBodySelectedContext.Provider>
+    </PaneVisibilityContext.Provider>
+  );
+}
+
+function renderTileInBody(
+  path: string,
+  rpc: EpicFileRpc,
+  visibility: TileVisibility,
+) {
+  const client = new QueryClient();
+  const body = (current: TileVisibility): ReactNode => (
+    <TileBody visibility={current}>
+      <QueryClientProvider client={client}>
+        <EpicFileRpcContext.Provider value={rpc}>
+          {tile(path)}
+        </EpicFileRpcContext.Provider>
+      </QueryClientProvider>
+    </TileBody>
+  );
+  const view = render(body(visibility));
+  return {
+    setVisibility: (next: TileVisibility): void => view.rerender(body(next)),
+  };
+}
+
+/** A shown, selected tile body whose surface demand a test steers. */
+function renderTileUnderDemand(
+  path: string,
+  rpc: EpicFileRpc,
+  demand: ActiveSurfaceDemand,
+) {
+  const client = new QueryClient();
+  const body = (current: ActiveSurfaceDemand): ReactNode => (
+    <TileBody visibility={TILE_SHOWN}>
+      <SurfaceDemandContext.Provider value={current}>
+        <QueryClientProvider client={client}>
+          <EpicFileRpcContext.Provider value={rpc}>
+            {tile(path)}
+          </EpicFileRpcContext.Provider>
+        </QueryClientProvider>
+      </SurfaceDemandContext.Provider>
+    </TileBody>
+  );
+  const view = render(body(demand));
+  return {
+    setDemand: (next: ActiveSurfaceDemand): void => view.rerender(body(next)),
+  };
+}
+
 function rangeReads(rpc: EpicFileRpc): number {
   return vi
     .mocked(rpc.readFile)
@@ -224,6 +297,73 @@ describe("<EpicFileTile /> when its host goes away", () => {
       "disabled",
       true,
     );
+  });
+});
+
+describe("<EpicFileTile /> restored in a tile body that is not on screen", () => {
+  const HIDDEN: ReadonlyArray<readonly [string, TileVisibility]> = [
+    ["its pane is not the shown pane", { pane: false, tab: true }],
+    ["its tab is not the front tab", { pane: true, tab: false }],
+  ];
+
+  it.each(HIDDEN)(
+    "reads nothing and runs no page while %s, loads once shown, and keeps the live page when hidden again",
+    async (_case, hidden) => {
+      const rpc = makeRpc(() => PAGE);
+      const settle = () =>
+        act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+
+      const body = renderTileInBody("files/pages/report.html", rpc, hidden);
+      await settle();
+      expect(rpc.readFile).not.toHaveBeenCalled();
+      expect(rpc.fetchFile).not.toHaveBeenCalled();
+      expect(screen.queryByTestId("sandbox-frame")).toBeNull();
+
+      body.setVisibility(TILE_SHOWN);
+      const frame = await screen.findByTestId("sandbox-frame");
+      expect(rpc.readFile).toHaveBeenCalledTimes(1);
+
+      // A running page is not torn down and reloaded for a tab switch.
+      body.setVisibility(hidden);
+      await settle();
+      expect(screen.getByTestId("sandbox-frame")).toBe(frame);
+      expect(rpc.readFile).toHaveBeenCalledTimes(1);
+      expect(rpc.fetchFile).not.toHaveBeenCalled();
+    },
+  );
+});
+
+describe("<EpicFileTile /> restored in a tile body a held tab cycle is only previewing", () => {
+  it("reads nothing and runs no page while previewed, loads once settled, and keeps the live page through a later preview", async () => {
+    const rpc = makeRpc(() => PAGE);
+    const settle = () =>
+      act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+    const body = renderTileUnderDemand(
+      "files/pages/report.html",
+      rpc,
+      "preview",
+    );
+    await settle();
+    // Shown and selected, yet only passed through.
+    expect(rpc.readFile).not.toHaveBeenCalled();
+    expect(rpc.fetchFile).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("sandbox-frame")).toBeNull();
+
+    body.setDemand("settled");
+    const frame = await screen.findByTestId("sandbox-frame");
+    expect(rpc.readFile).toHaveBeenCalledTimes(1);
+
+    // A running page is not torn down and reloaded for a later preview.
+    body.setDemand("preview");
+    await settle();
+    expect(screen.getByTestId("sandbox-frame")).toBe(frame);
+    expect(rpc.readFile).toHaveBeenCalledTimes(1);
+    expect(rpc.fetchFile).not.toHaveBeenCalled();
   });
 });
 

@@ -4,14 +4,16 @@ import { MessageSquareLock } from "lucide-react";
 import { NotificationIndicatorIcon } from "@/components/notifications/notification-indicator-icon";
 import { useSurfaceNotificationIndicatorState } from "@/components/notifications/notification-indicator-context";
 import {
-  useRegisteredEpicAgentActivityTiers,
+  useRegisteredEpicAgentActivityTier,
   useRegisteredEpicPermissionRole,
 } from "@/lib/epic-selectors";
 import { useExistingChatSessionHandle } from "@/lib/registries/chat-session-registry";
 import { chatActivityIndicator } from "@/components/epic-canvas/renderers/chat-tile-session-state";
+import { withWaitingIndicator } from "@/components/layout/tabs/tab-waiting";
 import type { IndicatorRunningKind } from "@/components/notifications/notification-indicator-icon";
 import type { AgentActivityCoverage } from "@/lib/agent-activity";
 import { useAgentActivityCoverage } from "@/stores/agent-activity-store";
+import { chatSessionWaitingOnUser } from "@/stores/chats/chat-run-activity";
 import type { ChatSessionStoreHandle } from "@/stores/chats/chat-session-store";
 import type { NotificationIndicatorState } from "@/stores/notifications/notification-indicator-state";
 import { EPIC_NODE_ICONS } from "@/lib/artifacts/node-display";
@@ -44,9 +46,10 @@ interface ChatProgressIconProps {
 
 export function ChatProgressIcon(props: ChatProgressIconProps) {
   // Sidebar-level awareness covers chats running host-side without a renderer
-  // session handle. An opened session adds run-status race smoothing and
-  // authoritative chat access; notification rows own prompt and outcome
-  // presentation.
+  // session handle. An opened session adds run-status race smoothing,
+  // authoritative chat access and its own pending gates; notification rows
+  // own outcome presentation, and prompt presentation for every chat this
+  // window has not opened.
   //
   // Read as a TIER, not as membership of the active-id set. The two have
   // identical membership, but the set alone cannot say whether an unopened
@@ -57,7 +60,7 @@ export function ChatProgressIcon(props: ChatProgressIconProps) {
   // for it. A host that has not classified its agents still reports `"turn"`.
   //
   // Both reads go through the REGISTERED (keyed, non-throwing) selectors, not
-  // the ambient `useEpicAgentActivityTiers()` / `useEpicPermissionRole()`: this
+  // the ambient `useEpicAgentActivityTier()` / `useEpicPermissionRole()`: this
   // icon already carries its `epicId`, and it is a presentational leaf that
   // must stay renderable wherever a chat node is drawn - the same rule the
   // sibling `TuiAgentLiveTabIcon` follows. With the ambient hooks it was the
@@ -67,8 +70,7 @@ export function ChatProgressIcon(props: ChatProgressIconProps) {
   // - no activity, `null` role - which is the same neutral idle the icon
   // already shows for an unknown permission.
   const awarenessRunning: IndicatorRunningKind =
-    useRegisteredEpicAgentActivityTiers(props.epicId).get(props.chatId) ??
-    false;
+    useRegisteredEpicAgentActivityTier(props.epicId, props.chatId) ?? false;
   // Read for the HANDLE-LESS arm below, but hooks cannot be called
   // conditionally so it is resolved here for both. `null` answers
   // `indeterminate` by construction, which is the right reading for a row
@@ -139,9 +141,19 @@ function ChatProgressIconWithHandle(props: {
     chatActivityIndicator(state),
   );
   const access = useStore(props.handle.store, (state) => state.access);
+  // The session knows it is blocked on the user in the same update that draws
+  // the approval card. The notification bit says the same thing later, once
+  // the host has filed the prompt notification and its feed has reached this
+  // window; until then this icon would spin beside a card that is already
+  // asking, and for as long as that feed is slow. So an open session lights
+  // the bit itself, as the task tab does (`useEpicWaitingReason`).
+  //
+  // Only for someone who can answer it, the rule the task tab reads through
+  // the same helper.
+  const waitingReason = useStore(props.handle.store, chatSessionWaitingOnUser);
   return (
     <ChatProgressPresentation
-      indicatorState={props.indicatorState}
+      indicatorState={withWaitingIndicator(props.indicatorState, waitingReason)}
       // The session's own tri-state is authoritative when it reads any
       // activity: it sees the queue and background items directly, while
       // awareness reports what the HOST classified. Awareness only backfills

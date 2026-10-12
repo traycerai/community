@@ -1455,7 +1455,10 @@ export async function submitComposerDraft(chatId: string): Promise<void> {
   const hostId =
     before.draftId === null ? null : hostIdForDraft(before.draftId);
   const store = useComposerDraftStore.getState();
-  store.clearDraft(chatId);
+  const foreign = hostId !== null && composerDraftRowIsForeign(before, hostId);
+  // Clear and fence before any host round trip. The submit barrier may retire
+  // a stale local revision of this identity, but preserves a newer draft id.
+  store.clearSubmittedDraft(chatId, foreign ? null : hostId);
   if (before.draftId === null || hostId === null) return;
   // A row the tab host does not own (a replica, or another host's row),
   // submitted without an edit that would have forked it: `drafts.delete`
@@ -1463,17 +1466,6 @@ export async function submitComposerDraft(chatId: string): Promise<void> {
   // The id is dropped with no pending delete, and the cloud row is
   // retracted on the user's authority through the tab host instead - the
   // same rule the landing path applies to a foreign row.
-  const foreign = composerDraftRowIsForeign(before, hostId);
-  // Retire the id BEFORE any host round trip below is awaited. `clearDraft`
-  // keeps it, so an edit typed during an awaited retract or delete would
-  // re-dirty the id, the mirror could upsert it, and the tombstone that
-  // follows would remove that content and mark it synced. Fenced first,
-  // the next edit mints a fresh id and a fresh host row.
-  store.fenceAndDetachSubmittedDraft(
-    chatId,
-    before.draftId,
-    foreign ? null : hostId,
-  );
   // A fork whose first write has not been acknowledged still carries
   // `supersedes`: the upsert that would make the host retract the
   // ancestor's cloud row has not landed (and after the fence above it never
@@ -1626,6 +1618,15 @@ export async function ingestCloudDraftSummary(input: {
     landingDraftIsRetired(input.document.draftId)
   ) {
     settleCloudDraftHead(input.summary, SETTLED_WITHOUT_MIRROR);
+  } else if (
+    input.document.kind === "landing" &&
+    !cloudIngestSeqByDraft.has(input.document.draftId)
+  ) {
+    // An absence sweep dropped the row while the apply waited on its images
+    // (it removed the apply's reservation). A mount that lists the row again
+    // skipped this head as already reading, so it is woken rather than left
+    // until its next directory delivery.
+    abandonCloudDraftHeadRead(input.summary, "released");
   } else {
     releaseCloudDraftHeadRead(input.summary);
   }
@@ -2447,6 +2448,13 @@ export function sweepAbsentCloudDraftMirrors(
   });
   // A dropped mirror's head is no longer settled here: the same head listed
   // again later (a row that reappears) is read and applied again.
+  // An apply of the row still parked on its blob reads started before this
+  // directory was dispatched, so it is superseded too, or it would install
+  // the row the directory just removed: its reservation goes, which is also
+  // how its ingest tells this refusal from the others
+  // (`ingestCloudDraftSummary`). Removed rather than advanced, so the row's
+  // fence is what it would be had the apply never run.
+  for (const id of dropped) cloudIngestSeqByDraft.delete(id);
   if (dropped.length > 0) forgetCloudDraftHeadsOfMirrors(new Set(dropped));
   return dropped;
 }

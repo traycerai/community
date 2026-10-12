@@ -202,6 +202,25 @@ const sessionsState = vi.hoisted<{
   },
 }));
 
+// The real inventory is a store subscription, so the mocked hooks are reactive
+// too: `replaceSessions` notifies the subscribers they registered.
+const sessionsSeam = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  return {
+    version: 0,
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    bump(): void {
+      this.version += 1;
+      listeners.forEach((listener) => listener());
+    },
+  };
+});
+
 const chatsState = vi.hoisted(() => ({
   value: [
     { id: "chat-driver", title: "Checkout agent" },
@@ -209,9 +228,41 @@ const chatsState = vi.hoisted(() => ({
   ],
 }));
 
-vi.mock("@/components/epic-canvas/renderers/browser-sessions-context", () => ({
-  useBrowserSessionsContext: () => sessionsState.value,
-}));
+vi.mock(
+  "@/components/epic-canvas/renderers/browser-sessions-context",
+  async () => {
+    const { useSyncExternalStore } = await import("react");
+    return {
+      useBrowserSessionsContext: () => {
+        useSyncExternalStore(
+          sessionsSeam.subscribe,
+          () => sessionsSeam.version,
+        );
+        return sessionsState.value;
+      },
+    };
+  },
+);
+
+// `BrowsersPanelBody`'s row list reads the narrowed inventory selector
+// (`use-browser-sessions.ts`), not the full context above - project the same
+// fixture state the way `selectBrowserInventory` does in production, so the
+// panel sees the items/lifecycle/errorMessage/retry/closeTab the test sets.
+vi.mock("@/components/epic-canvas/renderers/use-browser-sessions", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useBrowserSessionsInventory: () => {
+      useSyncExternalStore(sessionsSeam.subscribe, () => sessionsSeam.version);
+      return {
+        items: sessionsState.value.items,
+        lifecycle: sessionsState.value.lifecycle,
+        errorMessage: sessionsState.value.errorMessage,
+        retry: sessionsState.value.retry,
+        closeTab: sessionsState.value.closeTab,
+      };
+    },
+  };
+});
 
 vi.mock("@/lib/epic-selectors", () => ({
   useEpicChatRecords: () => chatsState.value,
@@ -260,10 +311,13 @@ function wrapper(node: ReactNode): ReactNode {
 }
 
 function replaceSessions(items: readonly BrowserSessionInfo[]): void {
-  sessionsState.value = {
-    ...sessionsState.value,
-    items,
-  };
+  act(() => {
+    sessionsState.value = {
+      ...sessionsState.value,
+      items,
+    };
+    sessionsSeam.bump();
+  });
 }
 
 function identitySession(tabInfo: BrowserTabInfo): BrowserSessionInfo {

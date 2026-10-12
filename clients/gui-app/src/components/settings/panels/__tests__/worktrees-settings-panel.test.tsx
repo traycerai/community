@@ -11,7 +11,11 @@ import {
   type RenderResult,
 } from "@testing-library/react";
 import type { ReactNode } from "react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  QueryClient,
+  QueryClientProvider,
+  type QueryKey,
+} from "@tanstack/react-query";
 import { HostClient } from "@traycer-clients/shared/host-client/host-client";
 import { mockLocalHostEntry } from "@traycer-clients/shared/host-client/mock/mock-host-directory";
 import { MockHostMessenger } from "@traycer-clients/shared/host-client/mock/mock-host-messenger";
@@ -31,7 +35,10 @@ import {
   type HostStreamRpcRegistry,
 } from "@traycer/protocol/host/registry";
 import { WorktreesList } from "@/components/settings/panels/worktrees-settings-panel";
-import { useWorktreeListing } from "@/components/settings/panels/worktrees-listing-query";
+import {
+  listingQueryKeyFor,
+  useWorktreeListing,
+} from "@/components/settings/panels/worktrees-listing-query";
 import { hostRpcRegistry, type HostRpcRegistry } from "@/lib/host";
 import {
   __resetWorktreeDeleteRunForTests,
@@ -40,7 +47,7 @@ import {
   useWorktreeDeleteRun,
 } from "@/components/settings/panels/use-worktree-delete-run";
 import { hostQueryKeys } from "@/lib/query-keys";
-import { WORKTREE_BINDING_INVALIDATIONS } from "@/hooks/worktree/invalidations";
+import { installFakeResizeObserver } from "@/__tests__/fake-resize-observer";
 import {
   DEFAULT_WORKTREE_SORT_MODE,
   EMPTY_WORKTREE_TIER_FILTERS,
@@ -53,6 +60,10 @@ import {
 } from "./worktrees-virtualizer-test-utils";
 import { NO_TRANSPORT_EVIDENCE } from "@traycer-clients/shared/host-selection/transport-evidence";
 import { TEST_CLIENT_IDENTITY } from "@traycer-clients/shared/test-fixtures/client-identity";
+
+// Typed as `unknown` so the asymmetric matcher's `any` never lands in an
+// object property (`no-unsafe-assignment`).
+const ANY_PREDICATE: unknown = expect.any(Function);
 
 // The delete is a stream: mock the wrapper so a test can drive server frames
 // (started / phase / output / complete / failed) and assert the modal + cache
@@ -503,6 +514,37 @@ function renderList(args: {
       />
     </Wrapper>,
   );
+}
+
+// `WorktreesList` is props-driven, so deletion only invalidates queries a
+// test caches itself.
+function seedAffectedWorktreeCaches(
+  queryClient: QueryClient,
+  hostId: string,
+  deletedPaths: readonly string[],
+): void {
+  queryClient.setQueryData(listingQueryKeyFor(hostId), {
+    worktrees: [],
+    nextCursor: null,
+  });
+  queryClient.setQueryData(
+    hostQueryKeys.method<HostRpcRegistry, "worktree.getBinding">(
+      hostId,
+      "worktree.getBinding",
+      { epicId: "epic-1", ownerId: "chat-1", ownerKind: "chat" },
+    ),
+    { binding: null, missingWorktreePaths: [deletedPaths[0]] },
+  );
+  for (const workspacePath of deletedPaths) {
+    queryClient.setQueryData(
+      hostQueryKeys.method<HostRpcRegistry, "worktree.listBranches">(
+        hostId,
+        "worktree.listBranches",
+        { workspacePath, includeRemote: false },
+      ),
+      { branches: [], uncommittedFileCount: 0 },
+    );
+  }
 }
 
 // Renders the toolbar with explicit props (the `renderList` helper always
@@ -1175,6 +1217,33 @@ describe("WorktreesList delete flow", () => {
     ).toBe("true");
   });
 
+  it("never reads the action bar's layout while the list re-renders", () => {
+    const resizeObservers = installFakeResizeObserver();
+    try {
+      renderDefault();
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: "Select worktree feat-clean" }),
+      );
+      const actionBar = screen.getByTestId("worktrees-selection-action-bar");
+      const observer = resizeObservers
+        .live()
+        .find((candidate) => candidate.target === actionBar);
+      if (observer === undefined) throw new Error("action bar is not observed");
+      const layoutReads = vi.spyOn(actionBar, "getBoundingClientRect");
+      act(() => observer.emit({ inline: 600, block: 100 }));
+
+      // Each selection change re-renders the panel around the observed bar.
+      for (const branch of ["feat-dirty", "feat-busy", "feat-dirty"]) {
+        fireEvent.click(
+          screen.getByRole("checkbox", { name: `Select worktree ${branch}` }),
+        );
+      }
+      expect(layoutReads).not.toHaveBeenCalled();
+    } finally {
+      resizeObservers.restore();
+    }
+  });
+
   it("selecting the first row does not insert a new top bar that shifts the list", () => {
     renderDefault();
     const scrollRegion = screen.getByTestId("worktrees-virtual-scroll");
@@ -1272,42 +1341,34 @@ describe("WorktreesList delete flow", () => {
   });
 
   it("grows the scroll clearance to match a taller (wrapped) action bar instead of the fixed minimum", () => {
-    renderDefault();
+    const resizeObservers = installFakeResizeObserver();
+    try {
+      renderDefault();
 
-    fireEvent.click(
-      screen.getByRole("checkbox", { name: "Select worktree feat-clean" }),
-    );
-    const actionBar = screen.getByTestId("worktrees-selection-action-bar");
-    // Simulate the bar wrapping to two lines (narrow width, or the
-    // `Checking` notice pushing it taller) by measuring taller than the
-    // seeded minimum clearance.
-    Object.defineProperty(actionBar, "getBoundingClientRect", {
-      configurable: true,
-      value: () => ({
-        x: 0,
-        y: 0,
-        width: 300,
-        height: 96,
-        top: 0,
-        right: 300,
-        bottom: 96,
-        left: 0,
-        toJSON: () => ({}),
-      }),
-    });
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: "Select worktree feat-clean" }),
+      );
+      const actionBar = screen.getByTestId("worktrees-selection-action-bar");
+      const observer = resizeObservers
+        .live()
+        .find((candidate) => candidate.target === actionBar);
+      if (observer === undefined) throw new Error("action bar is not observed");
+      // The bar wrapping to two lines (narrow width, or the `Checking` notice
+      // pushing it taller) reports a border box taller than the seeded
+      // minimum clearance.
+      act(() => observer.emit({ inline: 300, block: 96 }));
 
-    // Force a re-render of the same mounted action bar (no unmount, so the
-    // mocked node and its override survive) so the height observer's
-    // snapshot is re-read against the taller measurement.
-    fireEvent.click(
-      screen.getByRole("checkbox", { name: "Select worktree feat-dirty" }),
-    );
-
-    const scrollRegion = screen.getByTestId("worktrees-virtual-scroll");
-    // 96px measured height + the bar's own gap/offset clearance (32px),
-    // clearly exceeding the 64px seeded minimum - proving the clearance
-    // tracks the bar's real rendered height rather than a hard-coded value.
-    expect(scrollRegion.style.paddingBottom).toBe("128px");
+      const scrollRegion = screen.getByTestId("worktrees-virtual-scroll");
+      // 96px observed height + the bar's own gap/offset clearance (32px),
+      // clearly exceeding the 64px seeded minimum - proving the clearance
+      // tracks the bar's real rendered height rather than a hard-coded value.
+      expect(scrollRegion.style.paddingBottom).toBe("128px");
+      // Shorter than the seeded minimum: the floor holds.
+      act(() => observer.emit({ inline: 600, block: 10 }));
+      expect(scrollRegion.style.paddingBottom).toBe("64px");
+    } finally {
+      resizeObservers.restore();
+    }
   });
 
   it("renders an actionable select-all control with enabled foreground contrast", () => {
@@ -1743,6 +1804,8 @@ describe("WorktreesList delete flow", () => {
       onVisiblePathsChange: undefined,
       taskTitlesByEpicId: undefined,
     });
+    const deletedPaths = ["/wt/clean", "/wt/dirty", "/wt/api-clean"];
+    seedAffectedWorktreeCaches(queryClient, "host-a", deletedPaths);
 
     selectRows(["feat-clean", "feat-dirty", "feat-api-clean"]);
     fireEvent.click(screen.getByTestId("worktrees-list-delete-selected"));
@@ -1793,13 +1856,38 @@ describe("WorktreesList delete flow", () => {
       callbacksFor("/wt/api-clean").onComplete(true);
     });
     screen.getByText("3/3 deleted");
-    expect(invalidateSpy).toHaveBeenCalledTimes(
-      WORKTREE_BINDING_INVALIDATIONS.length + 2,
-    );
+    expect(invalidateSpy).toHaveBeenCalledTimes(2 + deletedPaths.length + 1);
     expect(invalidateSpy).toHaveBeenCalledWith({
-      queryKey: hostQueryKeys.methodScope("host-a", "worktree.listAllForHost"),
+      queryKey: hostQueryKeys.methodScope("host-a", "git.getCapabilities"),
+      predicate: ANY_PREDICATE,
+    });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: listingQueryKeyFor("host-a"),
+      exact: true,
       refetchType: "active",
     });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: hostQueryKeys.method<HostRpcRegistry, "worktree.getBinding">(
+        "host-a",
+        "worktree.getBinding",
+        { epicId: "epic-1", ownerId: "chat-1", ownerKind: "chat" },
+      ),
+      exact: true,
+      refetchType: "active",
+    });
+    for (const workspacePath of deletedPaths) {
+      expect(invalidateSpy).toHaveBeenCalledWith({
+        queryKey: hostQueryKeys.method<
+          HostRpcRegistry,
+          "worktree.listBranches"
+        >("host-a", "worktree.listBranches", {
+          workspacePath,
+          includeRemote: false,
+        }),
+        exact: true,
+        refetchType: "active",
+      });
+    }
   });
 
   it("fails every target non-modally when the command stream cannot start", () => {
@@ -1980,6 +2068,8 @@ describe("WorktreesList delete flow", () => {
       onVisiblePathsChange: undefined,
       taskTitlesByEpicId: undefined,
     });
+    const deletedPaths = ["/wt/clean", "/wt/dirty"];
+    seedAffectedWorktreeCaches(queryClient, "host-a", deletedPaths);
 
     selectRows(["feat-clean", "feat-dirty"]);
     fireEvent.click(screen.getByTestId("worktrees-list-delete-selected"));
@@ -2000,9 +2090,36 @@ describe("WorktreesList delete flow", () => {
     });
 
     expect(invalidateSpy).toHaveBeenCalledWith({
-      queryKey: hostQueryKeys.methodScope("host-a", "worktree.listAllForHost"),
+      queryKey: hostQueryKeys.methodScope("host-a", "git.getCapabilities"),
+      predicate: ANY_PREDICATE,
+    });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: listingQueryKeyFor("host-a"),
+      exact: true,
       refetchType: "active",
     });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: hostQueryKeys.method<HostRpcRegistry, "worktree.getBinding">(
+        "host-a",
+        "worktree.getBinding",
+        { epicId: "epic-1", ownerId: "chat-1", ownerKind: "chat" },
+      ),
+      exact: true,
+      refetchType: "active",
+    });
+    for (const workspacePath of deletedPaths) {
+      expect(invalidateSpy).toHaveBeenCalledWith({
+        queryKey: hostQueryKeys.method<
+          HostRpcRegistry,
+          "worktree.listBranches"
+        >("host-a", "worktree.listBranches", {
+          workspacePath,
+          includeRemote: false,
+        }),
+        exact: true,
+        refetchType: "active",
+      });
+    }
   });
 
   it("keeps fallback reservations in step with the queue, so drained and dismissed targets can be deleted again", () => {
@@ -2428,6 +2545,8 @@ describe("WorktreesList delete flow", () => {
       onVisiblePathsChange: undefined,
       taskTitlesByEpicId: undefined,
     });
+    const deletedPaths = ["/wt/clean"];
+    seedAffectedWorktreeCaches(queryClient, "host-a", deletedPaths);
 
     confirmDelete("feat-clean");
 
@@ -2455,20 +2574,86 @@ describe("WorktreesList delete flow", () => {
       streamMock.callbacks?.onComplete(true);
     });
 
+    // Every invalidation carries the captured host-a, never the swapped host-b.
     expect(invalidateSpy).toHaveBeenCalledWith({
-      queryKey: hostQueryKeys.methodScope("host-a", "worktree.listAllForHost"),
+      queryKey: hostQueryKeys.methodScope("host-a", "git.getCapabilities"),
+      predicate: ANY_PREDICATE,
+    });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: listingQueryKeyFor("host-a"),
+      exact: true,
       refetchType: "active",
     });
-    for (const method of WORKTREE_BINDING_INVALIDATIONS) {
-      expect(invalidateSpy).toHaveBeenCalledWith({
-        queryKey: hostQueryKeys.methodScope("host-a", method),
-        refetchType: "all",
-      });
-    }
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: hostQueryKeys.method<HostRpcRegistry, "worktree.getBinding">(
+        "host-a",
+        "worktree.getBinding",
+        { epicId: "epic-1", ownerId: "chat-1", ownerKind: "chat" },
+      ),
+      exact: true,
+      refetchType: "active",
+    });
+    expect(invalidateSpy).toHaveBeenCalledWith({
+      queryKey: hostQueryKeys.method<HostRpcRegistry, "worktree.listBranches">(
+        "host-a",
+        "worktree.listBranches",
+        {
+          workspacePath: deletedPaths[0],
+          includeRemote: false,
+        },
+      ),
+      exact: true,
+      refetchType: "active",
+    });
     expect(invalidateSpy).not.toHaveBeenCalledWith({
-      queryKey: hostQueryKeys.methodScope("host-b", "worktree.listAllForHost"),
-      refetchType: "active",
+      queryKey: hostQueryKeys.methodScope("host-b", "git.getCapabilities"),
+      predicate: ANY_PREDICATE,
     });
+  });
+
+  it("re-probes git capabilities for a directory inside the deleted worktree, leaving a similarly named sibling, an unrelated worktree and another host alone", () => {
+    const queryClient = new QueryClient();
+    renderList({
+      hostId: "host-a",
+      queryClient,
+      worktrees: WORKTREES,
+      enrichedByPath: undefined,
+      erroredPaths: undefined,
+      seededPaths: undefined,
+      onVisiblePathsChange: undefined,
+      taskTitlesByEpicId: undefined,
+    });
+    const capabilities = (hostId: string, runningDir: string) =>
+      hostQueryKeys.method<HostRpcRegistry, "git.getCapabilities">(
+        hostId,
+        "git.getCapabilities",
+        { hostId, runningDir, ignoreWhitespace: false },
+      );
+    const seeded = {
+      root: capabilities("host-a", "/wt/clean"),
+      // A panel rooted in a subfolder of the worktree that is being deleted.
+      nested: capabilities("host-a", "/wt/clean/packages/app"),
+      // Shares the deleted path as a prefix without being inside it.
+      lookalike: capabilities("host-a", "/wt/clean-other"),
+      unrelated: capabilities("host-a", "/wt/dirty"),
+      otherHost: capabilities("host-b", "/wt/clean/packages/app"),
+    };
+    for (const key of Object.values(seeded)) {
+      queryClient.setQueryData(key, { available: true });
+    }
+
+    confirmDelete("feat-clean");
+    act(() => {
+      streamMock.callbacks?.onComplete(true);
+    });
+
+    const invalidated = (key: QueryKey): boolean | undefined =>
+      queryClient.getQueryState(key)?.isInvalidated;
+    expect(invalidated(seeded.root)).toBe(true);
+    expect(invalidated(seeded.nested)).toBe(true);
+    expect(invalidated(seeded.lookalike)).toBe(false);
+    expect(invalidated(seeded.unrelated)).toBe(false);
+    expect(invalidated(seeded.otherHost)).toBe(false);
   });
 
   it("backgrounds a running delete: hides the panel and marks the row as deleting", () => {

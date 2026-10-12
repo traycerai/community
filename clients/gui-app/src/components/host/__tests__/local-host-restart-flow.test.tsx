@@ -29,25 +29,66 @@ interface HostBindingFixture {
    */
   readonly hostId?: string | null;
 }
-const hostBindingMock = vi.hoisted(
-  (): { current: HostBindingFixture | null } => ({ current: null }),
-);
-vi.mock("@/lib/host", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("@/lib/host")>();
-  return { ...actual, useHostBinding: () => hostBindingMock.current };
-});
-
+// Both hooks are reactive in production (a context and a query), so their mocks
+// are too: a mid-test change goes through `set`, which notifies the
+// subscribers the mocked hook registered. An assignment to `.current` is only
+// for setup BEFORE the first render - React cannot see it.
+interface MockSource<T> {
+  current: T;
+  subscribe: (listener: () => void) => () => void;
+  set: (next: T) => void;
+}
 interface DirectoryListMockState {
   readonly data: readonly HostDirectoryEntry[] | undefined;
 }
-const directoryListMock = vi.hoisted(
-  (): { current: DirectoryListMockState } => ({
-    current: { data: undefined },
-  }),
-);
-vi.mock("@/hooks/host/use-host-directory-list-query", () => ({
-  useHostDirectoryList: () => directoryListMock.current,
-}));
+const { hostBindingMock, directoryListMock } = vi.hoisted(() => {
+  function createMockSource<T>(initial: T): MockSource<T> {
+    const listeners = new Set<() => void>();
+    const source: MockSource<T> = {
+      current: initial,
+      subscribe: (listener) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+      set: (next) => {
+        source.current = next;
+        listeners.forEach((listener) => listener());
+      },
+    };
+    return source;
+  }
+  return {
+    hostBindingMock: createMockSource<HostBindingFixture | null>(null),
+    directoryListMock: createMockSource<DirectoryListMockState>({
+      data: undefined,
+    }),
+  };
+});
+vi.mock("@/lib/host", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/host")>();
+  const { useSyncExternalStore } = await import("react");
+  return {
+    ...actual,
+    useHostBinding: () =>
+      useSyncExternalStore(
+        hostBindingMock.subscribe,
+        () => hostBindingMock.current,
+      ),
+  };
+});
+
+vi.mock("@/hooks/host/use-host-directory-list-query", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useHostDirectoryList: () =>
+      useSyncExternalStore(
+        directoryListMock.subscribe,
+        () => directoryListMock.current,
+      ),
+  };
+});
 
 type HostClientResolver = (
   hostId: string | null,
@@ -530,24 +571,13 @@ describe("<LocalHostRestartFlow /> - host runtime binding present, local host re
       Promise.resolve({ kind: "restarted" as const }),
     );
     const runnerHost = createFakeRunnerHost({ requestHostRespawn });
-    // A fresh element tree (not a reused reference) on every call: React's
-    // reconciler bails out of an update entirely - without re-invoking any
-    // function component below it - when a fiber's incoming props are
-    // REFERENTIALLY identical to its previous props and nothing scheduled a
-    // state update in that subtree. Reusing one `harness` element for both
-    // `render` and `rerender` would hit exactly that bailout, since mutating
-    // `hostBindingMock.current` is invisible to React - so this is a fresh
-    // JSX evaluation each call, not a cosmetic difference.
-    function buildHarness(): ReactNode {
-      return (
-        <QueryClientProvider client={queryClient}>
-          <RunnerHostProvider runnerHost={runnerHost}>
-            <RestartFlowHarness firstLeg="cooperative" />
-          </RunnerHostProvider>
-        </QueryClientProvider>
-      );
-    }
-    const result = render(buildHarness());
+    render(
+      <QueryClientProvider client={queryClient}>
+        <RunnerHostProvider runnerHost={runnerHost}>
+          <RestartFlowHarness firstLeg="cooperative" />
+        </RunnerHostProvider>
+      </QueryClientProvider>,
+    );
 
     await openAndConfirm();
     const errorDialog = await screen.findByTestId(
@@ -567,8 +597,9 @@ describe("<LocalHostRestartFlow /> - host runtime binding present, local host re
     // agree, or the live entry would simply win and the test would not
     // exercise the directory-list side of the switch.
     liveEntry = localEntry("host-b");
-    directoryListMock.current = { data: [localEntry("host-b")] };
-    result.rerender(buildHarness());
+    act(() => {
+      directoryListMock.set({ data: [localEntry("host-b")] });
+    });
 
     await openAndConfirm();
     await waitFor(() => {
@@ -857,24 +888,13 @@ describe("<LocalHostRestartFlow /> - a local host identity change under an open 
       Promise.resolve({ kind: "restarted" as const }),
     );
     const runnerHost = createFakeRunnerHost({ requestHostRespawn });
-    // A fresh element tree (not a reused reference) on every call: React's
-    // reconciler bails out of an update entirely - without re-invoking any
-    // function component below it - when a fiber's incoming props are
-    // REFERENTIALLY identical to its previous props and nothing scheduled a
-    // state update in that subtree. Reusing one `harness` element for both
-    // `render` and `rerender` would hit exactly that bailout, since mutating
-    // `hostBindingMock.current` is invisible to React - so this is a fresh
-    // JSX evaluation each call, not a cosmetic difference.
-    function buildHarness(): ReactNode {
-      return (
-        <QueryClientProvider client={queryClient}>
-          <RunnerHostProvider runnerHost={runnerHost}>
-            <RestartFlowHarness firstLeg="cooperative" />
-          </RunnerHostProvider>
-        </QueryClientProvider>
-      );
-    }
-    const result = render(buildHarness());
+    render(
+      <QueryClientProvider client={queryClient}>
+        <RunnerHostProvider runnerHost={runnerHost}>
+          <RestartFlowHarness firstLeg="cooperative" />
+        </RunnerHostProvider>
+      </QueryClientProvider>,
+    );
 
     await openAndConfirm();
     await screen.findByTestId("host-busy-force-defer-dialog");
@@ -882,11 +902,12 @@ describe("<LocalHostRestartFlow /> - a local host identity change under an open 
 
     // The machine's local host identity changed while the offer sat open -
     // both resolution sources now describe host-b.
-    hostBindingMock.current = {
-      directory: { getLocalEntry: () => localEntry("host-b") },
-    };
-    directoryListMock.current = { data: [localEntry("host-b")] };
-    result.rerender(buildHarness());
+    act(() => {
+      hostBindingMock.set({
+        directory: { getLocalEntry: () => localEntry("host-b") },
+      });
+      directoryListMock.set({ data: [localEntry("host-b")] });
+    });
 
     await waitFor(() => {
       expect(screen.queryByTestId("host-busy-force-defer-dialog")).toBeNull();

@@ -17,7 +17,10 @@ import {
   chatActivityIndicator,
   type ChatActivityIndicator,
 } from "@/components/epic-canvas/renderers/chat-tile-session-state";
-import { approvalAwaitingJudge } from "@/components/epic-canvas/renderers/chat-approval-visibility";
+import {
+  chatSessionWaitingOnUser,
+  type ChatWaitingReason,
+} from "@/stores/chats/chat-run-activity";
 
 const CHAT_REGISTRY = getChatSessionRegistry();
 const EPIC_REGISTRY = getOpenEpicRegistry();
@@ -171,37 +174,18 @@ export function chatSessionActivity(
   return chatActivityIndicator(state);
 }
 
-/** What a chat is blocked on the user for: a question to answer, or a gate to approve. */
-export type EpicWaitingReason = "approval" | "reply";
+/** What an epic's live chats are blocked on the user for; the same two reasons a chat has. */
+export type EpicWaitingReason = ChatWaitingReason;
 
 /**
- * The warm session's own gate facts, which stay true while the agent is
- * blocked, including when no prompt notification is lit for it (cleared,
- * superseded, or not yet filed). A pending interview outranks an approval, the
- * order `attentionTone` uses. An approval under an auto-judge is not waiting on
- * the user until the judge escalates it; a plan approval is.
- */
-export function chatSessionWaitingReason(
-  state: ChatSessionState,
-): EpicWaitingReason | null {
-  if (state.pendingInterviews.length > 0) return "reply";
-  if (
-    state.pendingApprovals.some(
-      (approval) => !approvalAwaitingJudge(approval),
-    ) ||
-    state.pendingFileEditApprovals.length > 0
-  ) {
-    return "approval";
-  }
-  return null;
-}
-
-/**
- * Aggregates {@link chatSessionWaitingReason} over the epic's live chats with
+ * Aggregates {@link chatSessionWaitingOnUser} over the epic's live chats with
  * a warm session; `"reply"` outranks `"approval"`. `candidateIds` is the same
  * liveness filter {@link epicActivityStatusFromSources} takes, and `null` (no
  * session for the epic in this window) reads as not waiting, since only a warm
  * chat session knows it is blocked.
+ *
+ * Only a chat this user can act on counts. A task whose one blocked chat
+ * belongs to someone else is not waiting on the person looking at the tab.
  *
  * Chats match by epic id only, not by host, the same scope
  * {@link epicActivityStatusFromSources} reads, so a tab bound to one host can
@@ -216,7 +200,7 @@ export function epicWaitingReasonFromSessions(
   for (const handle of CHAT_REGISTRY.listHandles()) {
     if (handle.epicId !== epicId) continue;
     if (!candidateIds.has(handle.chatId)) continue;
-    const chatReason = chatSessionWaitingReason(handle.store.getState());
+    const chatReason = chatSessionWaitingOnUser(handle.store.getState());
     if (chatReason === "reply") return "reply";
     if (chatReason === "approval") reason = "approval";
   }
@@ -260,9 +244,11 @@ function subscribeWaitingReasons(
       chatSubscriptions,
       (handle) =>
         handle.store.subscribe((state, previous) => {
+          // Compared through the same reading the aggregate takes, so access
+          // arriving after the gate is a change too.
           if (
-            chatSessionWaitingReason(state) !==
-            chatSessionWaitingReason(previous)
+            chatSessionWaitingOnUser(state) !==
+            chatSessionWaitingOnUser(previous)
           ) {
             onChange();
           }

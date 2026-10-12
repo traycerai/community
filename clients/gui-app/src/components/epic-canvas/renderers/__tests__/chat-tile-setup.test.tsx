@@ -413,6 +413,74 @@ describe("useChatSetupFailureRestoreDriver", () => {
     );
   });
 
+  it("a quota failure while restoring is handled and reported, withholds the take - the pending prompt survives for retry and the text stays in the composer", () => {
+    const harness = createHarness();
+    emitSnapshot(harness.callbacks(), [], []);
+
+    const failedContent = {
+      type: "doc" as const,
+      content: [
+        {
+          type: "paragraph" as const,
+          content: [{ type: "text" as const, text: "queued prompt" }],
+        },
+      ],
+    };
+
+    act(() => {
+      sendTestMessage(harness, failedContent);
+    });
+    const sent = harness.handle.store.getState().pendingUserMessages.at(0);
+    if (sent === undefined) throw new Error("expected pending user message");
+
+    render(<DriverHost handle={harness.handle} />);
+
+    // Support native Storage and the setup's own-method fallback.
+    const storageSpyTarget: Storage = Object.hasOwn(
+      window.localStorage,
+      "setItem",
+    )
+      ? window.localStorage
+      : Storage.prototype;
+    const setItemSpy = vi
+      .spyOn(storageSpyTarget, "setItem")
+      .mockImplementation(() => {
+        throw new DOMException("quota exceeded", "QuotaExceededError");
+      });
+    try {
+      // The persist barrier throws before the take call is reached, and that
+      // throw must not escape the effect and take the tile down with it.
+      expect(() => {
+        act(() => {
+          appendEvent(
+            harness.callbacks(),
+            chatEvent(
+              "evt-failed",
+              "setup.failed",
+              { workspacePath: "/repo", setupExitCode: 1 },
+              { messageId: sent.messageId },
+            ),
+          );
+        });
+      }).not.toThrow();
+    } finally {
+      setItemSpy.mockRestore();
+    }
+
+    // The user is told, and nothing was consumed: the pending entry was never
+    // taken, and the restored text is in the composer's memory.
+    expect(sonnerToastError).toHaveBeenCalled();
+    expect(harness.handle.store.getState().pendingUserMessages).toEqual([sent]);
+    expect(
+      harness.handle.store
+        .getState()
+        .peekSetupFailedRestoration(sent.messageId),
+    ).toEqual(failedContent);
+    expect(useComposerDraftStore.getState().drafts[CHAT_ID]?.content).toEqual(
+      failedContent,
+    );
+  });
+
   it("restores the failed prompt on the windowed line, where no event ever reaches state.events", () => {
     // Consumer 25 of the `state.messages` sweep, and the one with no
     // client-side repair: `selectRestorableSetupInterruption`'s scan reads

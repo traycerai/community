@@ -1,3 +1,5 @@
+import { replaceSliceRows } from "./projection-table-changes";
+import { chatProjectionsEq } from "../projection-helpers";
 import { sessionKeyOf } from "@traycer-clients/shared/replica-runtime";
 import type { ConfirmedChatMutation } from "@traycer-clients/shared/replica-runtime/worker/bridge-protocol";
 /**
@@ -337,6 +339,19 @@ export function createChatRecordTable(
           currentUserId,
         );
         return next.allIds.length === 0 ? EMPTY_CHATS_SLICE : next;
+      },
+      /**
+       * Pending creations do not disable this. The rows handed here were held
+       * before and after the write, so each already shadows its own stand-in,
+       * and a stand-in for another chat is not this write's to move. Whatever
+       * can add or drop a VISIBLE stand-in takes the full build on its own: a
+       * row arriving or leaving is a membership change, and registering,
+       * clearing and retracting a creation each force one.
+       */
+      updateSlice: (previous, changedRows, currentUserId) => {
+        if (currentUserId === null) return null;
+        const changed = chatRecordsSlice(changedRows);
+        return replaceSliceRows(previous, changed, chatProjectionsEq);
       },
       slicesEq: chatSlicesEq,
       emptySlice: EMPTY_CHATS_SLICE,

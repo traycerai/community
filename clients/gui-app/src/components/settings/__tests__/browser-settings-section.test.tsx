@@ -1,6 +1,7 @@
 import "../../../../__tests__/test-browser-apis";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -42,9 +43,32 @@ const saveLogins = vi.hoisted((): { current: BrowserSaveLoginsController } => ({
     setEnabled: () => Promise.resolve(null),
   },
 }));
-const sites = vi.hoisted((): { current: SavedLoginSitesAnswer | null } => ({
-  current: null,
-}));
+// Reactive like the real query: a mid-test answer change reaches the mounted
+// rows through a store subscription, not through a parent re-render.
+const sites = vi.hoisted(
+  (): {
+    current: SavedLoginSitesAnswer | null;
+    subscribe: (listener: () => void) => () => void;
+    set(next: SavedLoginSitesAnswer | null): void;
+  } => {
+    const listeners = new Set<() => void>();
+    return {
+      current: null,
+      subscribe: (listener: () => void): (() => void) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+      set(next: SavedLoginSitesAnswer | null): void {
+        this.current = next;
+        listeners.forEach((listener) => {
+          listener();
+        });
+      },
+    };
+  },
+);
 const queryState = vi.hoisted(() => ({ isLoading: false, isError: false }));
 const refetch = vi.hoisted(() => vi.fn());
 const hostDirectory = vi.hoisted(
@@ -76,15 +100,18 @@ vi.mock("@/lib/browser-view/use-browser-save-logins", () => ({
   useBrowserSaveLogins: () => saveLogins.current,
 }));
 
-vi.mock("@/hooks/browser/use-browser-saved-login-sites-query", () => ({
-  BROWSER_SAVED_LOGIN_SITES_METHOD: "browser.savedLoginSites",
-  useBrowserSavedLoginSitesQuery: () => ({
-    data: sites.current,
-    isLoading: queryState.isLoading,
-    isError: queryState.isError,
-    refetch,
-  }),
-}));
+vi.mock("@/hooks/browser/use-browser-saved-login-sites-query", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    BROWSER_SAVED_LOGIN_SITES_METHOD: "browser.savedLoginSites",
+    useBrowserSavedLoginSitesQuery: () => ({
+      data: useSyncExternalStore(sites.subscribe, () => sites.current),
+      isLoading: queryState.isLoading,
+      isError: queryState.isError,
+      refetch,
+    }),
+  };
+});
 
 vi.mock("@/hooks/host/use-reactive-local-host-id", () => ({
   useReactiveLocalHostId: () => hostDirectory.localHostId,
@@ -453,13 +480,15 @@ describe("<BrowserSettingsSection /> website sessions", () => {
     view.rerender(browserSettingsSection());
     expect(screen.queryByText("example.com")).toBeNull();
 
-    sites.current = {
-      kind: "sites",
-      sites: [savedSite("example.org", null)],
-    };
-    view.rerender(browserSettingsSection());
-    sites.current = bothSites;
-    view.rerender(browserSettingsSection());
+    act(() => {
+      sites.set({
+        kind: "sites",
+        sites: [savedSite("example.org", null)],
+      });
+    });
+    act(() => {
+      sites.set(bothSites);
+    });
 
     expect(screen.getAllByText("example.com").length).toBeGreaterThan(0);
   });

@@ -30,7 +30,11 @@ interface Harness {
   readonly failNextFactoryRun: () => void;
 }
 
-function createHarness(chatId: string): Harness {
+/**
+ * A handle exactly as the registry holds one for a chat no tile has mounted a
+ * surface for: nothing has ever reported its visibility.
+ */
+function createUnreportedHarness(chatId: string): Harness {
   let runs = 0;
   let failNext = false;
   let lastCallbacks: ChatStreamCallbacks | null = null;
@@ -72,6 +76,13 @@ function createHarness(chatId: string): Harness {
       failNext = true;
     },
   };
+}
+
+/** A chat shown on a visible tile: the surface has reported itself visible. */
+function createHarness(chatId: string): Harness {
+  const harness = createUnreportedHarness(chatId);
+  harness.handle.setSurfaceVisibility("test-surface", true);
+  return harness;
 }
 
 function driveTerminallyClosed(harness: Harness): void {
@@ -354,6 +365,132 @@ describe("subscribeChatSessionWakeRetry", () => {
     expect(harness.factoryRuns()).toBe(1);
 
     dispose();
+  });
+
+  it("queues a hidden surface's wake retry and drains it on the jittered background tick, while a visible session in the same wake retries immediately", () => {
+    const runnerHost = makeRunnerHost();
+    const { fireResume } = wireResumeSpy(runnerHost);
+    vi.spyOn(Math, "random").mockReturnValue(0);
+
+    const visible = createHarness("chat-visible");
+    const hidden = createHarness("chat-hidden");
+    __getChatSessionRegistryForTests().acquire(
+      {
+        epicId: EPIC_ID,
+        chatId: "chat-visible",
+        hostId: HOST_ID,
+        scopeKey: "wake-test-scope",
+      },
+      () => visible.handle,
+    );
+    __getChatSessionRegistryForTests().acquire(
+      {
+        epicId: EPIC_ID,
+        chatId: "chat-hidden",
+        hostId: HOST_ID,
+        scopeKey: "wake-test-scope",
+      },
+      () => hidden.handle,
+    );
+    driveTerminallyClosed(visible);
+    driveTerminallyClosed(hidden);
+    hidden.handle.setSurfaceVisibility("test-surface", false);
+
+    vi.useFakeTimers();
+    try {
+      const dispose = subscribeChatSessionWakeRetry(runnerHost);
+
+      fireResume();
+      // The visible session dials immediately; the hidden one is queued.
+      expect(visible.factoryRuns()).toBe(2);
+      expect(hidden.factoryRuns()).toBe(1);
+
+      vi.advanceTimersByTime(200);
+      expect(hidden.factoryRuns()).toBe(2);
+
+      dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("staggers the wake re-dials of closed sessions no surface has ever reported on, one per background tick", () => {
+    const runnerHost = makeRunnerHost();
+    const { fireResume } = wireResumeSpy(runnerHost);
+    vi.spyOn(Math, "random").mockReturnValue(0);
+
+    // Warm sessions that no tile has mounted a surface for (an Epic's
+    // background chats): real handles, never told anything about visibility.
+    const unreported = ["chat-bg-1", "chat-bg-2", "chat-bg-3"].map((chatId) => {
+      const harness = createUnreportedHarness(chatId);
+      __getChatSessionRegistryForTests().acquire(
+        {
+          epicId: EPIC_ID,
+          chatId,
+          hostId: HOST_ID,
+          scopeKey: "wake-test-scope",
+        },
+        () => harness.handle,
+      );
+      driveTerminallyClosed(harness);
+      return harness;
+    });
+    const redialed = (): number =>
+      unreported.filter((harness) => harness.factoryRuns() === 2).length;
+
+    vi.useFakeTimers();
+    try {
+      const dispose = subscribeChatSessionWakeRetry(runnerHost);
+
+      fireResume();
+      // Nothing dials inside the wake pulse itself: a screen-less session is
+      // background work, and N of them must not rebuild in one task.
+      expect(redialed()).toBe(0);
+
+      vi.advanceTimersByTime(100);
+      expect(redialed()).toBe(1);
+      vi.advanceTimersByTime(100);
+      expect(redialed()).toBe(2);
+      vi.advanceTimersByTime(100);
+      expect(redialed()).toBe(3);
+
+      dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("drops a queued hidden-surface retry on unsubscribe instead of firing it later", () => {
+    const runnerHost = makeRunnerHost();
+    const { fireResume } = wireResumeSpy(runnerHost);
+    vi.spyOn(Math, "random").mockReturnValue(0);
+
+    const hidden = createHarness("chat-hidden-cleanup");
+    __getChatSessionRegistryForTests().acquire(
+      {
+        epicId: EPIC_ID,
+        chatId: "chat-hidden-cleanup",
+        hostId: HOST_ID,
+        scopeKey: "wake-test-scope",
+      },
+      () => hidden.handle,
+    );
+    driveTerminallyClosed(hidden);
+    hidden.handle.setSurfaceVisibility("test-surface", false);
+
+    vi.useFakeTimers();
+    try {
+      const dispose = subscribeChatSessionWakeRetry(runnerHost);
+
+      fireResume();
+      expect(hidden.factoryRuns()).toBe(1);
+
+      dispose();
+      vi.advanceTimersByTime(1_000);
+      expect(hidden.factoryRuns()).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("folds a burst of wake pulses into one dial per episode for a fast-re-closing session", () => {

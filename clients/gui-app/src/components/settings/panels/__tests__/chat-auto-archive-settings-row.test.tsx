@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import {
   afterEach,
   beforeEach,
@@ -49,30 +55,62 @@ interface Harness {
    */
   mutationVariables: ChatAutoArchiveSetRequest | undefined;
   trackSettingChanged: Mock<(section: string, setting: string) => void>;
+  /**
+   * The mocked viewer, query and mutation hooks are reactive like the real
+   * ones: each subscribes to `version`, and `change` applies a mutation of the
+   * fields above and notifies them. The row's body takes no props, so a
+   * change reaches it through the subscription, not a re-render of its parent.
+   */
+  version: number;
+  subscribe: (listener: () => void) => () => void;
+  change(mutation: () => void): void;
 }
 
-const harness = vi.hoisted((): Harness => ({
-  viewerUserId: "user-a",
-  getSupport: true,
-  setSupport: true,
-  query: {
-    data: undefined,
-    isError: false,
-    isPending: false,
-  },
-  mutate: vi.fn<MutateFn>(),
-  mutationPending: false,
-  mutationVariables: undefined,
-  trackSettingChanged: vi.fn(),
-}));
+const harness = vi.hoisted((): Harness => {
+  const listeners = new Set<() => void>();
+  return {
+    viewerUserId: "user-a",
+    getSupport: true,
+    setSupport: true,
+    query: {
+      data: undefined,
+      isError: false,
+      isPending: false,
+    },
+    mutate: vi.fn<MutateFn>(),
+    mutationPending: false,
+    mutationVariables: undefined,
+    trackSettingChanged: vi.fn(),
+    version: 0,
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    change(mutation: () => void): void {
+      mutation();
+      this.version += 1;
+      listeners.forEach((listener) => {
+        listener();
+      });
+    },
+  };
+});
 
 vi.mock("@/hooks/host/use-addressable-host-id", () => ({
   useAddressableHostId: () => "host-1",
 }));
 
-vi.mock("@/hooks/chats/use-cloud-chat-queries", () => ({
-  useCloudChatViewerId: () => harness.viewerUserId,
-}));
+vi.mock("@/hooks/chats/use-cloud-chat-queries", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useCloudChatViewerId: () => {
+      useSyncExternalStore(harness.subscribe, () => harness.version);
+      return harness.viewerUserId;
+    },
+  };
+});
 
 vi.mock("@/hooks/host/use-host-supports-method", () => ({
   useHostMethodSupport: (_hostId: string | null, method: string) => {
@@ -82,17 +120,35 @@ vi.mock("@/hooks/host/use-host-supports-method", () => ({
   },
 }));
 
-vi.mock("@/hooks/chat-auto-archive/use-chat-auto-archive-policy-query", () => ({
-  useChatAutoArchivePolicyQuery: () => harness.query,
-}));
+vi.mock(
+  "@/hooks/chat-auto-archive/use-chat-auto-archive-policy-query",
+  async () => {
+    const { useSyncExternalStore } = await import("react");
+    return {
+      useChatAutoArchivePolicyQuery: () => {
+        useSyncExternalStore(harness.subscribe, () => harness.version);
+        return harness.query;
+      },
+    };
+  },
+);
 
-vi.mock("@/hooks/chat-auto-archive/use-chat-auto-archive-set-mutation", () => ({
-  useChatAutoArchiveSetMutation: () => ({
-    mutate: harness.mutate,
-    isPending: harness.mutationPending,
-    variables: harness.mutationVariables,
-  }),
-}));
+vi.mock(
+  "@/hooks/chat-auto-archive/use-chat-auto-archive-set-mutation",
+  async () => {
+    const { useSyncExternalStore } = await import("react");
+    return {
+      useChatAutoArchiveSetMutation: () => {
+        useSyncExternalStore(harness.subscribe, () => harness.version);
+        return {
+          mutate: harness.mutate,
+          isPending: harness.mutationPending,
+          variables: harness.mutationVariables,
+        };
+      },
+    };
+  },
+);
 
 vi.mock("@/lib/analytics", () => ({
   trackSettingChanged: (section: string, setting: string): void => {
@@ -283,11 +339,20 @@ function rejectEverySave(
 
 /**
  * Marks `request` as the save in flight. The mutate mock settles nothing, so a
- * test declares the pending state itself, then rerenders.
+ * test declares the pending state itself; the mounted row follows it.
  */
 function setWritePending(request: ChatAutoArchiveSetRequest): void {
-  harness.mutationPending = true;
-  harness.mutationVariables = request;
+  changeHarness(() => {
+    harness.mutationPending = true;
+    harness.mutationVariables = request;
+  });
+}
+
+/** Applies a mutation of the harness and lets the mounted row follow it. */
+function changeHarness(mutation: () => void): void {
+  act(() => {
+    harness.change(mutation);
+  });
 }
 
 /**
@@ -297,14 +362,13 @@ function setWritePending(request: ChatAutoArchiveSetRequest): void {
  */
 function renderWithCustomFieldSavePending(): void {
   harness.query.data = SAVED_ENABLED_PRESET;
-  const { rerender } = render(<ChatAutoArchiveSettingsRow />);
+  renderRow();
   pickOption(archiveAfterSelect(), "Custom…");
   typeCustom("5");
   fireEvent.blur(customInput(), { relatedTarget: null });
   expectWrite({ ...ENABLED_PRESET_WRITE, idleSeconds: 18_000 });
 
   setWritePending(writeAt(0));
-  rerender(<ChatAutoArchiveSettingsRow />);
 }
 
 /**
@@ -615,7 +679,7 @@ describe("<ChatAutoArchiveSettingsRow />", () => {
 
     it("writes nothing more when focus leaves the field while a unit pick's save is pending", () => {
       harness.query.data = SAVED_ENABLED_PRESET;
-      const { rerender } = render(<ChatAutoArchiveSettingsRow />);
+      renderRow();
       pickOption(archiveAfterSelect(), "Custom…");
       pickOption(unitSelect(), "days");
       expectWrite({ ...ENABLED_PRESET_WRITE, idleSeconds: 86_400 });
@@ -624,7 +688,6 @@ describe("<ChatAutoArchiveSettingsRow />", () => {
       // in-flight threshold the row builds on stands between this blur and a
       // second identical write.
       setWritePending(writeAt(0));
-      rerender(<ChatAutoArchiveSettingsRow />);
       fireEvent.blur(unitSelect(), { relatedTarget: null });
       expect(harness.mutate).toHaveBeenCalledTimes(1);
       expect(harness.trackSettingChanged).toHaveBeenCalledTimes(1);
@@ -894,14 +957,15 @@ describe("<ChatAutoArchiveSettingsRow />", () => {
     it("drops back to the saved policy once a rejected save settles", () => {
       harness.query.data = SAVED_ENABLED_PRESET;
       setWritePending({ ...ENABLED_PRESET_WRITE, idleSeconds: 86_400 });
-      const { rerender } = render(<ChatAutoArchiveSettingsRow />);
+      renderRow();
       expect(archiveAfterSelect().textContent).toBe("1 day");
 
       // Rejected: the saved policy never moved. Like the real mutation result,
       // `variables` still holds the refused request after it settles, so only
       // the pending flag keeps the row from showing it.
-      harness.mutationPending = false;
-      rerender(<ChatAutoArchiveSettingsRow />);
+      changeHarness(() => {
+        harness.mutationPending = false;
+      });
       expect(archiveAfterSelect().textContent).toBe("1 hour");
     });
 
@@ -961,7 +1025,7 @@ describe("<ChatAutoArchiveSettingsRow />", () => {
 
     it("a later write builds on the saved policy again once the newest write settled", () => {
       harness.query.data = SAVED_ENABLED_PRESET;
-      const { rerender } = render(<ChatAutoArchiveSettingsRow />);
+      renderRow();
       fireEvent.click(includeSwitch());
       expect(writeAt(0)).toEqual({
         ...ENABLED_PRESET_WRITE,
@@ -973,8 +1037,9 @@ describe("<ChatAutoArchiveSettingsRow />", () => {
       // refetch the save triggers). A request left standing as the row's
       // base would write the old 1 hour back over that threshold.
       settleWriteAt(0);
-      harness.query.data = savedPolicy(true, true, 86_400, FULL_BOUNDS);
-      rerender(<ChatAutoArchiveSettingsRow />);
+      changeHarness(() => {
+        harness.query.data = savedPolicy(true, true, 86_400, FULL_BOUNDS);
+      });
       expect(includeSwitch().getAttribute("aria-checked")).toBe("true");
 
       fireEvent.click(includeSwitch());
@@ -996,15 +1061,16 @@ describe("<ChatAutoArchiveSettingsRow />", () => {
   describe("when the viewer changes", () => {
     it("discards an outgoing custom draft", () => {
       harness.query.data = SAVED_ENABLED_CUSTOM;
-      const { rerender } = render(<ChatAutoArchiveSettingsRow />);
+      renderRow();
       typeCustom("45");
       expect(customInput().value).toBe("45");
 
       // The incoming viewer's saved value is the SAME, so only the viewer key
       // can drop the draft.
-      harness.viewerUserId = "user-b";
-      harness.query.data = savedPolicy(true, false, 5400, FULL_BOUNDS);
-      rerender(<ChatAutoArchiveSettingsRow />);
+      changeHarness(() => {
+        harness.viewerUserId = "user-b";
+        harness.query.data = savedPolicy(true, false, 5400, FULL_BOUNDS);
+      });
 
       expect(customInput().value).toBe("90");
       expect(screen.queryByRole("alert")).toBeNull();
@@ -1014,14 +1080,15 @@ describe("<ChatAutoArchiveSettingsRow />", () => {
 
     it("discards a validation error", () => {
       harness.query.data = SAVED_ENABLED_CUSTOM;
-      const { rerender } = render(<ChatAutoArchiveSettingsRow />);
+      renderRow();
       typeCustom("0");
       fireEvent.blur(customInput());
       expect(screen.getByRole("alert")).toBeTruthy();
 
-      harness.viewerUserId = "user-b";
-      harness.query.data = savedPolicy(true, false, 5400, FULL_BOUNDS);
-      rerender(<ChatAutoArchiveSettingsRow />);
+      changeHarness(() => {
+        harness.viewerUserId = "user-b";
+        harness.query.data = savedPolicy(true, false, 5400, FULL_BOUNDS);
+      });
 
       expect(screen.queryByRole("alert")).toBeNull();
       expect(customInput().value).toBe("90");
@@ -1030,7 +1097,7 @@ describe("<ChatAutoArchiveSettingsRow />", () => {
     it("an account switch while a save is in flight shows and writes the new account's policy, not the outgoing one's", () => {
       // Viewer A saves 1 day through the row; that save is still in flight.
       harness.query.data = savedPolicy(true, true, 3600, FULL_BOUNDS);
-      const { rerender } = render(<ChatAutoArchiveSettingsRow />);
+      renderRow();
       pickOption(archiveAfterSelect(), "1 day");
       const outgoingWrite = writeAt(0);
       expect(outgoingWrite).toEqual({
@@ -1039,7 +1106,6 @@ describe("<ChatAutoArchiveSettingsRow />", () => {
         idleSeconds: 86_400,
       });
       setWritePending(outgoingWrite);
-      rerender(<ChatAutoArchiveSettingsRow />);
       expect(includeSwitch().getAttribute("aria-checked")).toBe("true");
       expect(archiveAfterSelect().textContent).toBe("1 day");
 
@@ -1048,11 +1114,12 @@ describe("<ChatAutoArchiveSettingsRow />", () => {
       // gives the remounted body) is modelled by clearing it. The key's other
       // reach, the row's unsettled write, is real here: A's save was sent
       // through the row and never settled.
-      harness.viewerUserId = "user-b";
-      harness.query.data = savedPolicy(true, false, 3600, FULL_BOUNDS);
-      harness.mutationPending = false;
-      harness.mutationVariables = undefined;
-      rerender(<ChatAutoArchiveSettingsRow />);
+      changeHarness(() => {
+        harness.viewerUserId = "user-b";
+        harness.query.data = savedPolicy(true, false, 3600, FULL_BOUNDS);
+        harness.mutationPending = false;
+        harness.mutationVariables = undefined;
+      });
 
       expect(includeSwitch().getAttribute("aria-checked")).toBe("false");
       expect(archiveAfterSelect().textContent).toBe("1 hour");
@@ -1069,13 +1136,14 @@ describe("<ChatAutoArchiveSettingsRow />", () => {
 
     it("closes a custom field the outgoing viewer opened by hand", () => {
       harness.query.data = SAVED_ENABLED_PRESET;
-      const { rerender } = render(<ChatAutoArchiveSettingsRow />);
+      renderRow();
       pickOption(archiveAfterSelect(), "Custom…");
       expect(customInput().value).toBe("1");
 
-      harness.viewerUserId = "user-b";
-      harness.query.data = savedPolicy(true, false, 3600, FULL_BOUNDS);
-      rerender(<ChatAutoArchiveSettingsRow />);
+      changeHarness(() => {
+        harness.viewerUserId = "user-b";
+        harness.query.data = savedPolicy(true, false, 3600, FULL_BOUNDS);
+      });
 
       expect(archiveAfterSelect().textContent).toBe("1 hour");
       expect(

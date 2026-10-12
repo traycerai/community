@@ -1,10 +1,22 @@
 import {
   useCallback,
   useEffect,
+  useEffectEvent,
   useReducer,
   useRef,
   useSyncExternalStore,
 } from "react";
+import { usePaneVisible } from "@/components/epic-tabs/pane-visibility-context";
+import { useTabBodySelected } from "@/components/epic-canvas/canvas/tab-body-selected-context";
+import {
+  cancelRetainedChatPrewarms,
+  prewarmRetainedChat,
+} from "./chat-prewarm";
+import {
+  useSurfaceDemand,
+  useSurfaceDemandStore,
+} from "@/stores/tabs/surface-demand";
+import type { HostRpcRegistry } from "@traycer/protocol/host/registry";
 import { useQueryClient } from "@tanstack/react-query";
 import { ChatStreamClient } from "@traycer-clients/shared/host-transport/chat-stream-client";
 import type { IHostStreamClient } from "@traycer-clients/shared/host-transport/host-stream-client";
@@ -18,6 +30,8 @@ import {
   authenticatedHostStreamKey,
   authenticatedOwnerIdentityKey,
 } from "@/hooks/host/use-host-stream-client-for";
+import { useRequestContextUserId } from "@/hooks/host/use-request-context-user-id";
+import { readOnSignal } from "@/lib/read-on-signal";
 import { isLocalHostBootingEntry } from "@/lib/host/transport-key";
 import { useDurableStreamTransportFactory } from "@/lib/host/use-durable-stream-transport";
 import { openOwnedDurableStreamClient } from "@/lib/host/owned-durable-stream-client";
@@ -265,6 +279,7 @@ export function getChatSessionHandleHostId(
 }
 
 export function disposeAllChatSessions(): void {
+  cancelRetainedChatPrewarms();
   registry.disposeAll();
 }
 
@@ -294,8 +309,23 @@ export function useChatSessionHandle(
   chatId: string,
   hostId: string,
   enabled: boolean,
+  demand: "surface" | "startup",
 ): ChatSessionStoreHandle | null {
   const epicId = useOpenEpicId();
+  const paneVisible = usePaneVisible();
+  const tabSelected = useTabBodySelected();
+  // Startup demand survives a hide until its tile handoff or timeout.
+  const visible = demand === "startup" || (paneVisible && tabSelected);
+  const prewarmPriority = demand === "startup" || paneVisible;
+  const surfaceDemand = useSurfaceDemand();
+  const settled = demand === "startup" || surfaceDemand === "settled";
+  // The prewarm queue pauses itself during a hold (`hasPreviewDemand`). A
+  // hidden body re-runs only when a hold SETTLES, which requeues one the byte
+  // budget evicted; re-running on the edge a hold STARTS too re-acquired every
+  // hidden mounted chat for nothing.
+  const settleEpoch = useSurfaceDemandStore((state) =>
+    visible ? 0 : state.settleEpoch,
+  );
   const hostEntry = useHostDirectoryEntry(hostId);
   const lease = useHostLease(hostId);
   // Chat is a DURABLE per-tab stream: its `WsStreamClient` is OWNED by the
@@ -305,6 +335,9 @@ export function useChatSessionHandle(
   // opener wires the shared "durable stream = auth + wake" recovery; the returned
   // handle's `close()` tears it all down when the session disposes.
   const globalClient = useHostClient();
+  // The two keys below read the request context off the client, which a
+  // render cannot depend on; this is what makes them follow a sign-out.
+  const requestUserId = useRequestContextUserId(globalClient);
   const authService = useAuthService();
   const authServiceRef = useRef(authService);
   const userId = useAuthStore((state) => state.profile?.userId ?? null);
@@ -320,7 +353,10 @@ export function useChatSessionHandle(
   const transportKey =
     streamClientFactoryOverride !== null
       ? "test-stream-client-factory"
-      : authenticatedHostStreamKey(globalClient, hostEntry);
+      : readOnSignal(
+          () => authenticatedHostStreamKey(globalClient, hostEntry),
+          requestUserId,
+        );
   // Owner identity (R-1), which with the host's kind is the whole of the
   // session's scope: `hostId + userId` for a local host, plus the public key
   // and relay attach URL for a remote one, so a remote public-key rotation
@@ -328,7 +364,10 @@ export function useChatSessionHandle(
   const ownerIdentityKey =
     streamClientFactoryOverride !== null
       ? "test-stream-client-factory"
-      : authenticatedOwnerIdentityKey(globalClient, hostEntry);
+      : readOnSignal(
+          () => authenticatedOwnerIdentityKey(globalClient, hostEntry),
+          requestUserId,
+        );
   const hostKind = hostEntry?.kind ?? null;
   // Whether this chat may hold its session. A dialable host may. So may a host
   // that is coming back, which is what keeps the store and its transcript
@@ -350,6 +389,9 @@ export function useChatSessionHandle(
       next: ChatSessionStoreHandle | null,
     ) => next,
     null,
+  );
+  const isMountedHandle = useEffectEvent(
+    (candidate: ChatSessionStoreHandle): boolean => candidate === handle,
   );
 
   useEffect(() => {
@@ -459,18 +501,43 @@ export function useChatSessionHandle(
     // to this chat's host - the host the turn runs on.
     const onProviderAuthError = (): void => {
       void queryClient.invalidateQueries({
-        queryKey: hostQueryKeys.methodScope(hostId, "providers.list"),
+        queryKey: hostQueryKeys.method<HostRpcRegistry, "providers.list">(
+          hostId,
+          "providers.list",
+          { native: null },
+        ),
+        exact: true,
       });
     };
 
-    let cancelled = false;
-    let activeHandle: ChatSessionStoreHandle | null = null;
-    const acquire = (): void => {
-      if (cancelled) return;
+    const warm = registry.get(epicId, chatId, hostId, scopeKey);
+    // A retained snapshot can outlive its body and still serve a warm preview.
+    const mounted = warm !== null && isMountedHandle(warm);
+    if (!mounted) setHandle(null);
+    if (
+      surfaceDemand === "preview" &&
+      demand !== "startup" &&
+      !mounted &&
+      !warm?.store.getState().snapshotLoaded
+    )
+      return;
+    const speculative = !visible;
+    const acquire = (): (() => void) | void => {
+      if (!visible && isEpicParked(epicId)) return;
+      const cacheKey = { userId, hostId, epicId, chatId };
+      // Preview admission must not start IndexedDB work during a held cycle.
+      if (
+        visible &&
+        settled &&
+        registry.get(epicId, chatId, hostId, scopeKey) === null &&
+        shouldLoadDurableSkeletonForResume(cacheKey)
+      ) {
+        void hydrateSkeletonForResume(cacheKey).catch(() => undefined);
+      }
       const next = registry.acquire(
         { epicId, chatId, hostId, scopeKey },
-        (factoryEpicId, factoryChatId) =>
-          createChatSessionStore({
+        (factoryEpicId, factoryChatId) => {
+          const created = createChatSessionStore({
             hostId,
             epicId: factoryEpicId,
             chatId: factoryChatId,
@@ -501,26 +568,50 @@ export function useChatSessionHandle(
             // neither is evidence of a dead session, so neither escalates.
             transportSilentFor: (ms) =>
               boundStreamClient?.isSilentFor?.(ms) ?? false,
-          }),
+          });
+          if (visible && demand === "surface") registry.markTransient(created);
+          return created;
+        },
       );
-      activeHandle = next;
-      setHandle(next);
-    };
+      // Hidden neighbours share the normal warm pool and byte accountant.
+      // Only startup and visible demand pin a session.
+      if (speculative || demand === "startup") registry.markPresented(next);
+      if (speculative) registry.releaseHandle(epicId, chatId, hostId, next);
+      const refreshRetainedHandle = (): void => {
+        if (registry.peek(epicId, chatId, hostId) !== next) setHandle(null);
+      };
+      const unsubscribeRetention = speculative
+        ? registry.subscribe(refreshRetainedHandle)
+        : () => {};
+      setHandle(registry.peek(epicId, chatId, hostId) === next ? next : null);
 
-    const cacheKey = { userId, hostId, epicId, chatId };
-    if (
-      registry.get(epicId, chatId, hostId, scopeKey) === null &&
-      shouldLoadDurableSkeletonForResume(cacheKey)
-    ) {
-      void hydrateSkeletonForResume(cacheKey).catch(() => undefined);
-    }
-    acquire();
-
-    return () => {
-      cancelled = true;
-      if (activeHandle !== null)
-        registry.releaseHandle(epicId, chatId, hostId, activeHandle);
+      // A loaded, settled surface has been presented. A pending snapshot
+      // remains transient, so leaving it still releases an unused session.
+      const observe = (): void => {
+        if (visible && settled && next.store.getState().snapshotLoaded) {
+          registry.markPresented(next);
+          unsubscribe();
+        }
+      };
+      const unsubscribe =
+        visible && registry.isTransient(next)
+          ? next.store.subscribe(observe)
+          : () => {};
+      observe();
+      return () => {
+        unsubscribe();
+        unsubscribeRetention();
+        if (!speculative) registry.releaseHandle(epicId, chatId, hostId, next);
+      };
     };
+    // Eviction clears the retained handle without an immediate reacquisition
+    // loop under byte pressure. A later settled selection requeues it.
+    const prewarm = speculative && (!mounted || registry.isTransient(warm));
+    if (prewarm) setHandle(null);
+    const release = prewarm
+      ? prewarmRetainedChat(prewarmPriority, acquire)
+      : acquire();
+    return () => release?.();
     // `openTransport` is referentially stable and reads its deps (auth, runner
     // host, credential source, directory) live, so the recovery wiring is never
     // a stale-capture risk and does not belong in this array. `transportKey` is
@@ -537,6 +628,12 @@ export function useChatSessionHandle(
     ownerIdentityKey,
     userId,
     enabled,
+    demand,
+    visible,
+    prewarmPriority,
+    settleEpoch,
+    surfaceDemand,
+    settled,
     openTransport,
     queryClient,
   ]);

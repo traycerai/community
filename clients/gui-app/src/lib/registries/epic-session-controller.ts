@@ -108,6 +108,10 @@
  * construction stamp in the same module generation, or `requireConstructionHostStamp`
  * throws (F1). This module imports the registry; the registry never imports it.
  */
+import {
+  topLevelDemand,
+  useSurfaceDemandStore,
+} from "@/stores/tabs/surface-demand";
 import { appLogger } from "@/lib/logger";
 import type { OpenEpicStoreHandle } from "@/stores/epics/open-epic/store";
 import type { HostClient } from "@traycer-clients/shared/host-client/host-client";
@@ -1438,6 +1442,27 @@ function createEpicSessionController(): EpicSessionController {
   }
 
   /**
+   * Whether a held tab cycle is only previewing this entry: some tab is the
+   * preview and none is settled. A tab outside the active keys (a background
+   * open, a task created elsewhere) has no demand either way and keeps its
+   * ordinary claim, so an unnamed one still acquires for its title.
+   */
+  function isOnlyPreviewed(entry: ControllerEntry): boolean {
+    const attached = surfaces.get(entry.epicId);
+    const tabIds =
+      attached === undefined || attached.size === 0
+        ? entry.tabs.keys()
+        : attached;
+    let previewed = false;
+    for (const tabId of tabIds) {
+      const demand = topLevelDemand(`epic:${tabId}`);
+      if (demand === "settled") return false;
+      if (demand === "preview") previewed = true;
+    }
+    return previewed;
+  }
+
+  /**
    * The identity of the run these inputs call for, or `null` for none. A
    * change cancels the run in flight - what the provider's effect deps did.
    */
@@ -1445,6 +1470,7 @@ function createEpicSessionController(): EpicSessionController {
     entry: ControllerEntry,
     inputs: ReconcileInputs,
   ): string | null {
+    if (entry.session === null && isOnlyPreviewed(entry)) return null;
     if (!inputs.ownershipClaimed || inputs.parked || entry.suspended) {
       return null;
     }
@@ -2193,6 +2219,7 @@ function createEpicSessionController(): EpicSessionController {
 
   registry.subscribe(onRegistryChanged);
   subscribeEpicParking(onParkingChanged);
+  useSurfaceDemandStore.subscribe(requestReconcileAll);
   useSelectionAuthorityStore.subscribe(requestReconcileAll);
   useAuthStore.subscribe((state, previous) => {
     const userId = state.profile?.userId ?? null;

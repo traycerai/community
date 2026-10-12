@@ -111,6 +111,14 @@ type ArmedReaderDeparture =
 export const CHAT_TIMELINE_FOLLOW_CORRECTION_MAX_ATTEMPTS = 5;
 
 interface ChatTimelineFollowLatchOptions {
+  /**
+   * Whether the timeline's surface is shown. A hidden timeline reads no
+   * geometry: every maintain trigger and scroll report returns before the
+   * DOM read, which would otherwise force a layout of the whole document on
+   * each tab switch that hides it. The follow intent is kept as it was, and
+   * the first resize report after the surface is shown reconciles it.
+   */
+  readonly visible: boolean;
   readonly onFollowIntentChange: ((isFollowing: boolean) => void) | undefined;
   readonly onReaderGesture:
     | ((intent: ChatTimelineReaderGestureIntent) => void)
@@ -203,12 +211,15 @@ export function useChatTimelineFollowLatch(
   options: ChatTimelineFollowLatchOptions,
 ): ChatTimelineFollowLatch {
   const {
+    visible,
     onFollowIntentChange,
     onReaderGesture,
     isCorrectionSuppressed,
     resolveSuppressedEndLanding,
   } = options;
   const permissionRef = useRef(initialScrollAtEnd);
+  const visibleRef = useRef(visible);
+  const resizeObserverRef = useRef<ResizeObserver | null>(null);
   const [scrollNode, setScrollNode] = useState<HTMLElement | null>(null);
   const onFollowIntentChangeRef = useRef(onFollowIntentChange);
   const onReaderGestureRef = useRef(onReaderGesture);
@@ -235,6 +246,27 @@ export function useChatTimelineFollowLatch(
     }
     activeCorrectionRef.current = null;
   }, []);
+
+  // Declared before every effect that consults the latch, so a commit that
+  // shows or hides the surface is seen by all of them.
+  useLayoutEffect(() => {
+    const wasVisible = visibleRef.current;
+    visibleRef.current = visible;
+    if (visible === wasVisible) return;
+    if (!visible) {
+      // Each of its validation frames would read the hidden node.
+      cancelActiveCorrection();
+      return;
+    }
+    // Observing again delivers one resize report: after this commit's layout,
+    // so the read forces none, and after the owner's own show effect has
+    // armed its restore gate. That report is the single fresh read that
+    // reconciles whatever changed while nothing was read.
+    const observer = resizeObserverRef.current;
+    if (observer === null || scrollNode === null) return;
+    observer.unobserve(scrollNode);
+    observer.observe(scrollNode);
+  }, [visible, cancelActiveCorrection, scrollNode]);
 
   const supersedePendingEndCorrection = useCallback(
     (offset: number): void => {
@@ -487,6 +519,7 @@ export function useChatTimelineFollowLatch(
   );
 
   const observeLiveGeometry = useCallback((): void => {
+    if (!visibleRef.current) return;
     const node = listRef.current?.getScrollableNode();
     if (!node) return;
     const geometry = readScrollGeometry(node);
@@ -534,6 +567,7 @@ export function useChatTimelineFollowLatch(
   ]);
 
   const followEndIfPermitted = useCallback((): void => {
+    if (!visibleRef.current) return;
     const list = listRef.current;
     const node = list?.getScrollableNode();
     if (!list || !node) return;
@@ -684,9 +718,11 @@ export function useChatTimelineFollowLatch(
       followEndIfPermitted();
     });
     resizeObserver.observe(node);
+    resizeObserverRef.current = resizeObserver;
     followEndIfPermitted();
 
     return () => {
+      resizeObserverRef.current = null;
       node.removeEventListener("scroll", observeLiveGeometry);
       node.removeEventListener("wheel", handleWheel);
       node.removeEventListener(

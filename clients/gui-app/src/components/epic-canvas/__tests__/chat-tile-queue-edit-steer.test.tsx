@@ -31,7 +31,7 @@ import { ChatTile } from "@/components/epic-canvas/renderers/chat-tile";
 import { TabHostProvider } from "@/components/epic-canvas/tab-host-provider";
 import { RunnerHostProvider } from "@/providers/runner-host-provider";
 import { MockRunnerHost } from "@traycer-clients/shared/host-client/mock/mock-runner-host";
-import { useComposerDraftStore } from "@/stores/composer/composer-draft-store";
+import { resetComposerDraftPersistence } from "@/stores/composer/__tests__/composer-draft-rows";
 import { useComposerRunSettingsStore } from "@/stores/composer/composer-run-settings-store";
 import { useComposerHarnessMemoryStore } from "@/stores/composer/composer-harness-memory-store";
 import { useSettingsStore } from "@/stores/settings/settings-store";
@@ -115,13 +115,11 @@ vi.mock("@/hooks/epic/use-epic-chat-mutations", async (importActual) => ({
   ...(await importActual<
     typeof import("@/hooks/epic/use-epic-chat-mutations")
   >()),
+  // Mirrors TanStack's `useMutation`: a NEW result object on every call, but a
+  // STABLE `mutate`. A per-call `mutate` would make the stable-`onSideChat`
+  // regression case below unreachable (it could never go red).
   useEpicCreateChatForHost: () => ({
-    mutate: (
-      request: CreateChatMutationInput,
-      callbacks: CreateChatCallbacksCapture,
-    ) => {
-      createChatCapture.calls.push({ request, callbacks });
-    },
+    mutate: createChatMutate,
     isPending: false,
   }),
 }));
@@ -203,6 +201,12 @@ interface CreateChatCall {
   readonly callbacks: CreateChatCallbacksCapture;
 }
 const createChatCapture: { calls: CreateChatCall[] } = { calls: [] };
+function createChatMutate(
+  request: CreateChatMutationInput,
+  callbacks: CreateChatCallbacksCapture,
+): void {
+  createChatCapture.calls.push({ request, callbacks });
+}
 
 const EPIC_ID = "epic-queue-edit-steer";
 const CHAT_ARTIFACT = {
@@ -461,7 +465,7 @@ function emitChatSnapshot(
   });
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   installLegendListViewportMetrics();
   window.localStorage.clear();
   useAuthStore.setState({
@@ -473,7 +477,10 @@ beforeEach(() => {
     },
     contextMetadata: { userId: "owner-1", username: "Owner" },
   });
-  useComposerDraftStore.setState({ drafts: {} });
+  // After the sign-in above: the store is on `owner-1`'s namespace, and this
+  // also drops the storage adapter's revision baseline so a row an earlier test
+  // flushed cannot make this test's edit-restore barrier report a conflict.
+  await resetComposerDraftPersistence();
   useComposerRunSettingsStore.getState().resetForTests();
   useComposerHarnessMemoryStore.getState().resetForTests();
   useSettingsStore.setState({
@@ -498,6 +505,34 @@ afterEach(() => {
   epicHarness.teardown();
   __getOpenEpicRegistryForTests().disposeAll();
   resetFocusedComposerControlsForTests();
+});
+
+describe("chat-tile side chat callback identity", () => {
+  it("keeps the composer's onSideChat identity across a tile re-render that changes nothing it needs", async () => {
+    chatHarness.teardown();
+    chatHarness.install("owner", [
+      queuedPromptItem("queue-identity", QUEUED_CONTENT),
+    ]);
+
+    const { rerender } = renderChatTile();
+    await waitForChatTileLoaded();
+
+    await waitFor(() => {
+      expect(submitCapture.onSideChat).not.toBeNull();
+    });
+    const before = submitCapture.onSideChat;
+
+    // A parent re-render with identical props re-runs the tile body, and with
+    // it `useEpicCreateChatForHost()`, which returns a fresh result object.
+    act(() => {
+      rerender();
+    });
+    act(() => {
+      rerender();
+    });
+
+    expect(submitCapture.onSideChat).toBe(before);
+  });
 });
 
 describe("chat-tile queue edit save-and-steer routing (decision 14)", () => {
@@ -866,26 +901,24 @@ describe("chat-tile queue-edit /btw side chat cancellation (decision 14 refineme
   });
 });
 
-function renderChatTile(): void {
+function renderChatTile(): { readonly rerender: () => void } {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false, gcTime: 0 } },
   });
-  render(
+  const runnerHost = new MockRunnerHost({
+    signInUrl: "https://example.com",
+    authnBaseUrl: "https://auth.example.com",
+    localHost: null,
+    hosts: [],
+    workspaceFolderPickerPaths: undefined,
+    hasLocalHost: undefined,
+    traycerCli: undefined,
+  });
+  // Built from stable instances so a `rerender` changes no provider input.
+  const tree = () => (
     <TestRouterProvider>
       <QueryClientProvider client={queryClient}>
-        <RunnerHostProvider
-          runnerHost={
-            new MockRunnerHost({
-              signInUrl: "https://example.com",
-              authnBaseUrl: "https://auth.example.com",
-              localHost: null,
-              hosts: [],
-              workspaceFolderPickerPaths: undefined,
-              hasLocalHost: undefined,
-              traycerCli: undefined,
-            })
-          }
-        >
+        <RunnerHostProvider runnerHost={runnerHost}>
           <TooltipProvider>
             <TestEpicSessionWrapper epicId={EPIC_ID}>
               <TabHostProvider hostId={CHAT_ARTIFACT.hostId}>
@@ -900,8 +933,10 @@ function renderChatTile(): void {
           </TooltipProvider>
         </RunnerHostProvider>
       </QueryClientProvider>
-    </TestRouterProvider>,
+    </TestRouterProvider>
   );
+  const { rerender } = render(tree());
+  return { rerender: () => rerender(tree()) };
 }
 
 async function waitForChatTileLoaded(): Promise<void> {

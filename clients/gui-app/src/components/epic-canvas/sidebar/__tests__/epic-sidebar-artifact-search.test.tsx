@@ -63,12 +63,35 @@ const harness = vi.hoisted<Harness>(() => ({
   artifactIds: [],
 }));
 
-vi.mock("@/hooks/epic/use-epic-search-artifacts-query", () => ({
-  useEpicSearchArtifacts: (args: UseEpicSearchArtifactsArgs) => {
-    harness.lastArgs = args;
-    return harness.result;
-  },
-}));
+// The real query is reactive (a cache subscription), so the mock is too: a
+// mid-test change to `harness.result` goes through `bump`, which notifies the
+// mocked hook's subscribers.
+const resultSeam = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  return {
+    version: 0,
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    bump(): void {
+      this.version += 1;
+      listeners.forEach((listener) => listener());
+    },
+  };
+});
+vi.mock("@/hooks/epic/use-epic-search-artifacts-query", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useEpicSearchArtifacts: (args: UseEpicSearchArtifactsArgs) => {
+      useSyncExternalStore(resultSeam.subscribe, () => resultSeam.version);
+      harness.lastArgs = args;
+      return harness.result;
+    },
+  };
+});
 // The two host reads this box makes, mocked as DISTINGUISHABLE pairs. The
 // search box is a sidebar - outside every tile `TabHostProvider` - and both of
 // its reads belong to the Epic SESSION: the client the search runs on, and the
@@ -530,7 +553,7 @@ describe("ArtifactSearchBox", () => {
       results: [],
       truncated: false,
     });
-    const { rerender } = renderBox({
+    renderBox({
       tabId: DEFAULT_TAB_ID,
       searchQuery: "auth",
       debouncedQuery: "auth",
@@ -540,15 +563,10 @@ describe("ArtifactSearchBox", () => {
       screen.getByTestId("epic-artifact-search-mirror-unavailable"),
     ).toBeTruthy();
 
-    harness.result = successResult(ready([], false));
-    rerender(
-      <BoxHarness
-        epicId="epic-1"
-        tabId={DEFAULT_TAB_ID}
-        searchQuery="auth"
-        debouncedQuery="auth"
-      />,
-    );
+    act(() => {
+      harness.result = successResult(ready([], false));
+      resultSeam.bump();
+    });
     expect(screen.getByTestId("epic-artifact-search-empty")).toBeTruthy();
   });
 

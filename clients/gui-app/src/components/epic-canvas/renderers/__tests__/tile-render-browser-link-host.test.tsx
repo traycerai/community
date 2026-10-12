@@ -49,24 +49,42 @@ vi.mock(
     const notify = (key: string): void => {
       listeners.get(key)?.forEach((listener) => listener());
     };
+    const stateOf = (key: string | null): BrowserSessionsState | null =>
+      key === null ? null : (states.get(key) ?? null);
+    const subscribe = (key: string | null, listener: () => void) => {
+      if (key === null) return () => undefined;
+      const existing = listeners.get(key) ?? new Set<() => void>();
+      existing.add(listener);
+      listeners.set(key, existing);
+      return () => {
+        existing.delete(listener);
+      };
+    };
     return {
       ...actual,
       hasBrowserSessionsCoordinator: (key: string) => states.has(key),
-      browserSessionsCoordinatorState: (key: string | null) =>
-        key === null ? null : (states.get(key) ?? null),
+      browserSessionsCoordinatorState: stateOf,
       upsertBrowserSessionsCoordinatorConsumer: () => undefined,
-      subscribeToBrowserSessionsCoordinator: (
-        key: string | null,
-        listener: () => void,
-      ) => {
-        if (key === null) return () => undefined;
-        const existing = listeners.get(key) ?? new Set<() => void>();
-        existing.add(listener);
-        listeners.set(key, existing);
-        return () => {
-          existing.delete(listener);
-        };
-      },
+      // The real store closes over the module's own state/listener maps, not
+      // this mock's, so it has to be re-backed by the maps `acquire` fills.
+      browserSessionsCoordinatorStore: (key: string | null) => ({
+        getState: () => stateOf(key),
+        getInitialState: () => null,
+        subscribe: (
+          listener: (
+            state: BrowserSessionsState | null,
+            previous: BrowserSessionsState | null,
+          ) => void,
+        ) => {
+          let previous = stateOf(key);
+          return subscribe(key, () => {
+            const state = stateOf(key);
+            const before = previous;
+            previous = state;
+            listener(state, before);
+          });
+        },
+      }),
       acquireBrowserSessionsCoordinator: (args: {
         readonly key: string;
         readonly owner: { readonly hostId: string };
@@ -89,9 +107,16 @@ vi.mock("@/components/epic-canvas/hooks/use-canvas-host-id", () => ({
 vi.mock("@/hooks/host/use-host-client-for-host-id", () => ({
   // `getRequestContextUserId` because the provider asks the client whether
   // this renderer knows who it is signed in as yet (H10); it never names the
-  // user to main, so `null` is a complete answer here.
+  // user to main, so `null` is a complete answer here. It reads that as a
+  // subscription, hence `onChange`; this one never changes.
   useHostClientForHostId: (hostId: string | null) =>
-    hostId === null ? null : { hostId, getRequestContextUserId: () => null },
+    hostId === null
+      ? null
+      : {
+          hostId,
+          getRequestContextUserId: () => null,
+          onChange: () => () => undefined,
+        },
 }));
 vi.mock("@/hooks/epic/use-epic-session-host-client", () => ({
   useEpicSessionHostClient: () => null,

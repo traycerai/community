@@ -22,7 +22,18 @@ function ContextMenuTrigger({
   );
 }
 
-function ContextMenuContent({
+function ContextMenuContent(
+  props: React.ComponentProps<typeof ContextMenuPrimitive.Content>,
+) {
+  // Radix's portal presence mounts the guard only while content is presented.
+  return (
+    <ContextMenuPrimitive.Portal>
+      <PresentedContextMenuContent {...props} />
+    </ContextMenuPrimitive.Portal>
+  );
+}
+
+function PresentedContextMenuContent({
   ref,
   className,
   collisionPadding,
@@ -49,23 +60,21 @@ function ContextMenuContent({
   // During the exit animation, hover must not let a closed menu item steal
   // focus from the control its action just opened (for example, inline rename).
   return (
-    <ContextMenuPrimitive.Portal>
-      <ContextMenuPrimitive.Content
-        ref={ref}
-        data-slot="context-menu-content"
-        collisionPadding={collisionPadding ?? safeAreaInsets}
-        className={cn(
-          "z-50 max-w-safe-dvw min-w-40 overflow-hidden rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:pointer-events-none data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
-          className,
-        )}
-        onCloseAutoFocus={handleCloseAutoFocus}
-        {...props}
-      >
-        {/* Mounted with the open menu: no hover card opens meanwhile. */}
-        <MenuOpenMarker />
-        {children}
-      </ContextMenuPrimitive.Content>
-    </ContextMenuPrimitive.Portal>
+    <ContextMenuPrimitive.Content
+      ref={ref}
+      data-slot="context-menu-content"
+      collisionPadding={collisionPadding ?? safeAreaInsets}
+      className={cn(
+        "z-50 max-w-safe-dvw min-w-40 overflow-hidden rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:pointer-events-none data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+        className,
+      )}
+      onCloseAutoFocus={handleCloseAutoFocus}
+      {...props}
+    >
+      {/* Mounted with the open menu: no hover card opens meanwhile. */}
+      <MenuOpenMarker />
+      {children}
+    </ContextMenuPrimitive.Content>
   );
 }
 

@@ -605,7 +605,12 @@ describe("<TerminalXtermHost /> presentation-gated canvases", () => {
       return observed.rendererController.currentCanvas() !== null;
     };
 
-    function PresentationObserver(): ReactNode {
+    // The effects below have no dependency list, so they run whenever this
+    // component renders. The compiler keeps an element whose props are equal,
+    // so `tabSelected` is passed only to make each commit render it again.
+    function PresentationObserver(_props: {
+      readonly tabSelected: boolean;
+    }): ReactNode {
       useLayoutEffect(() => {
         seen.push({ phase: "layout", hasCanvas: hasLiveCanvas() });
       });
@@ -625,7 +630,7 @@ describe("<TerminalXtermHost /> presentation-gated canvases", () => {
             onContainerResize={vi.fn()}
             keepAlive
           />
-          <PresentationObserver />
+          <PresentationObserver tabSelected={props.tabSelected} />
         </>
       );
     }

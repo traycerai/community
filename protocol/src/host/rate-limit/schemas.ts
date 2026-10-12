@@ -1142,8 +1142,7 @@ export type RateLimitUsageResponseV40 = z.infer<
 // arm. The request shape is unchanged from v4.0 (`rateLimitUsageRequestSchemaV40`,
 // `force` included).
 //
-// This is the LIVE line while `5` is unreleased. The moment a tag ships it,
-// freeze it against a snapshot union and open 6.0 for the next arm.
+// Released v5.0 response contract; keep this shape unchanged.
 export const rateLimitUsageResponseSchemaV50 = lazySchema(() =>
   rateLimitUsageResponseSchema.extend({
     providerRateLimits: providerRateLimitsSchema.nullable(),
@@ -1151,6 +1150,23 @@ export const rateLimitUsageResponseSchemaV50 = lazySchema(() =>
 );
 export type RateLimitUsageResponseV50 = z.infer<
   typeof rateLimitUsageResponseSchemaV50
+>;
+
+// v5.1 adds `usageUpdatedAt`: when the host captured the reading behind
+// `providerRateLimits` (epoch ms), the same value `providers.list` reports as
+// that profile's `usageUpdatedAt`, so a client re-reads the list only when a
+// capture is newer than the row it holds. `null` when the host holds no
+// reading for that provider/profile, and on an aperture call.
+//
+// A minor, not a 6.0: 5.0 is released, and an extra key is what a 5.0 peer's
+// parse strips. `.default(null)` so a 5.0 response upgrades by parsing.
+export const rateLimitUsageResponseSchemaV51 = lazySchema(() =>
+  rateLimitUsageResponseSchemaV50.extend({
+    usageUpdatedAt: z.number().nullable().default(null),
+  }),
+);
+export type RateLimitUsageResponseV51 = z.infer<
+  typeof rateLimitUsageResponseSchemaV51
 >;
 
 /**

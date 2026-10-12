@@ -18,6 +18,10 @@ import {
 import { useLayoutEffect, type ReactNode } from "react";
 import type { CloudChatSummary } from "@traycer/protocol/host/epic/cloud-chat";
 import { TabGroupView } from "@/components/epic-canvas/canvas/tab-group-view";
+import {
+  setPaneDemand,
+  useSurfaceDemandStore,
+} from "@/stores/tabs/surface-demand";
 import { paneActivationDeferProps } from "@/components/epic-canvas/pane-activation";
 import { PaneVisibilityContext } from "@/components/epic-tabs/pane-visibility-context";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -90,10 +94,14 @@ const VIEW_TAB_ID = "view-tab-1";
 // store otherwise defaults to `signed-out`.
 beforeEach(() => {
   useAuthStore.setState({ status: "signed-in" });
+  // Activation writes demand through the shared coordinator; a previous
+  // suite's leftovers must not decide this suite's surface membership.
+  useSurfaceDemandStore.setState(useSurfaceDemandStore.getInitialState(), true);
 });
 
 afterEach(() => {
   useAuthStore.setState({ status: "signed-out" });
+  useSurfaceDemandStore.setState(useSurfaceDemandStore.getInitialState(), true);
 });
 
 interface TestState {
@@ -232,6 +240,7 @@ vi.mock("@/lib/epic-selectors", () => ({
   // non-throwing) selectors, so both forms are answered here.
   useEpicAgentActivityTiers: () => new Map<string, false>(),
   useRegisteredEpicAgentActivityTiers: () => new Map<string, false>(),
+  useRegisteredEpicAgentActivityTier: () => undefined,
   useRegisteredEpicPermissionRole: () => "owner",
 }));
 
@@ -257,14 +266,43 @@ vi.mock("@/lib/registries/chat-session-registry", () => ({
 // ActiveTabBody's published-copy fallback reads reachability + the active host
 // through these two hook seams. Stubbed at the hook boundary (not their query
 // internals) so this provider-less suite can flip a bound host dead per test.
-vi.mock("@/hooks/agent/use-host-reachability", () => ({
-  useHostReachability: (hostId: string) => ({
-    status: testState.unreachableHostIds.has(hostId)
-      ? "unreachable"
-      : "reachable",
-    hostLabel: hostId,
-  }),
-}));
+//
+// The real hook is reactive (a host directory query), so the mock is too: a
+// mid-test change to `unreachableHostIds` goes through `bump`, which notifies
+// the mocked hook's subscribers.
+const reachabilitySeam = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  return {
+    version: 0,
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    bump(): void {
+      this.version += 1;
+      listeners.forEach((listener) => listener());
+    },
+  };
+});
+vi.mock("@/hooks/agent/use-host-reachability", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useHostReachability: (hostId: string) => {
+      useSyncExternalStore(
+        reachabilitySeam.subscribe,
+        () => reachabilitySeam.version,
+      );
+      return {
+        status: testState.unreachableHostIds.has(hostId)
+          ? "unreachable"
+          : "reachable",
+        hostLabel: hostId,
+      };
+    },
+  };
+});
 
 // The host whose PROJECTION the record gate judges refs against - the Epic
 // session's (the canvas host), not the app-wide one this suite used to seed.
@@ -652,6 +690,10 @@ describe("<TabGroupView />", () => {
     testState.missingArtifactIds.clear();
     testState.stableTileSurfaceHostEnabled = false;
     useEpicCanvasStore.setState(useEpicCanvasStore.getInitialState(), true);
+    useSurfaceDemandStore.setState(
+      useSurfaceDemandStore.getInitialState(),
+      true,
+    );
     usePaneEmphasisStore.setState({ outlinedInstanceId: null, flash: null });
   });
 
@@ -831,6 +873,73 @@ describe("<TabGroupView />", () => {
     seedCanvas(tabs, "inst-spec-1");
     rerender(groupView(tabs, "inst-spec-1", true));
     expect(testState.mounts.get("spec-1")).toBe(2);
+  });
+
+  it("previewing a cold tab shows only the static shell and mounts nothing, keeps warm tabs mounted, and settling mounts it", async () => {
+    const tabs = [specTab(1), specTab(2), specTab(3)];
+    seedCanvas(tabs, "inst-spec-1");
+    const { container, rerender } = render(
+      groupView(tabs, "inst-spec-1", true),
+    );
+    seedCanvas(tabs, "inst-spec-2");
+    rerender(groupView(tabs, "inst-spec-2", true));
+    await waitFor(() => {
+      expect(testState.mounts.get("spec-2")).toBe(1);
+    });
+
+    // The cursor lands on spec-3, which was never mounted: it is selected and
+    // visible but owns no resource, and the warm tabs behind it stay mounted.
+    act(() => setPaneDemand("group-1", "inst-spec-3", "preview"));
+    seedCanvas(tabs, "inst-spec-3");
+    rerender(groupView(tabs, "inst-spec-3", true));
+    const previewLayer = container.querySelector(
+      '[data-tab-instance-id="inst-spec-3"]',
+    );
+    expect(previewLayer?.getAttribute("data-selected")).toBe("true");
+    expect(
+      previewLayer?.querySelector('[data-testid="surface-preview-shell"]'),
+    ).not.toBeNull();
+    expect(testState.mounts.get("spec-3")).toBeUndefined();
+    expect(testState.unmounts.get("spec-1")).toBeUndefined();
+    expect(testState.unmounts.get("spec-2")).toBeUndefined();
+
+    // Settling the same target mounts its real body.
+    act(() => setPaneDemand("group-1", "inst-spec-3", "settled"));
+    await waitFor(() => {
+      expect(testState.mounts.get("spec-3")).toBe(1);
+    });
+    expect(
+      container
+        .querySelector('[data-tab-instance-id="inst-spec-3"]')
+        ?.querySelector('[data-testid="surface-preview-shell"]'),
+    ).toBeNull();
+  });
+
+  it("previewing an already-mounted tab reveals its live body without a remount or a shell", async () => {
+    const tabs = [specTab(1), specTab(2)];
+    seedCanvas(tabs, "inst-spec-1");
+    const { container, rerender } = render(
+      groupView(tabs, "inst-spec-1", true),
+    );
+    seedCanvas(tabs, "inst-spec-2");
+    rerender(groupView(tabs, "inst-spec-2", true));
+    await waitFor(() => {
+      expect(testState.mounts.get("spec-2")).toBe(1);
+    });
+
+    act(() => setPaneDemand("group-1", "inst-spec-1", "preview"));
+    seedCanvas(tabs, "inst-spec-1");
+    rerender(groupView(tabs, "inst-spec-1", true));
+
+    const warmLayer = container.querySelector(
+      '[data-tab-instance-id="inst-spec-1"]',
+    );
+    expect(warmLayer?.getAttribute("data-selected")).toBe("true");
+    expect(
+      warmLayer?.querySelector('[data-testid="surface-preview-shell"]'),
+    ).toBeNull();
+    expect(testState.mounts.get("spec-1")).toBe(1);
+    expect(testState.unmounts.get("spec-1")).toBeUndefined();
   });
 
   it("collapses a hidden pane to the active tab plus terminals", async () => {
@@ -1509,9 +1618,7 @@ describe("<TabGroupView /> published-copy fallback for an unreachable bound host
     testState.unreachableHostIds.add(CHAT.hostId);
     testState.sessionHostId = "host-B";
     seedCanvas([CHAT], CHAT.instanceId);
-    const { container, rerender } = render(
-      groupView([CHAT], CHAT.instanceId, true),
-    );
+    const { container } = render(groupView([CHAT], CHAT.instanceId, true));
 
     await waitFor(() => {
       expect(
@@ -1521,8 +1628,10 @@ describe("<TabGroupView /> published-copy fallback for an unreachable bound host
       ).not.toBeNull();
     });
 
-    testState.unreachableHostIds.delete(CHAT.hostId);
-    rerender(groupView([CHAT], CHAT.instanceId, true));
+    act(() => {
+      testState.unreachableHostIds.delete(CHAT.hostId);
+      reachabilitySeam.bump();
+    });
     await waitFor(() => {
       expect(
         container.querySelector(

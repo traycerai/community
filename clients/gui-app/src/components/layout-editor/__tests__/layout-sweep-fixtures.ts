@@ -4,7 +4,7 @@ import { vi } from "vitest";
 import { MockHostMessenger } from "@traycer-clients/shared/host-client/mock/mock-host-messenger";
 import type { LocalHostSnapshot } from "@traycer-clients/shared/platform/runner-host";
 import { providersListResponseSchema } from "@traycer/protocol/host/provider-schemas";
-import { rateLimitUsageResponseSchemaV40 } from "@traycer/protocol/host/rate-limit/schemas";
+import { rateLimitUsageResponseSchemaV51 } from "@traycer/protocol/host/rate-limit/schemas";
 import { createResourcesStore } from "@/stores/resources/resources-store";
 import { resourcesRegistry } from "@/stores/resources/resources-registry";
 import type { HostNotificationsIndicatorStateResponse } from "@traycer/protocol/host/notifications/contracts";
@@ -89,7 +89,7 @@ function harnessRateLimitUsage(providerId: string | undefined) {
     resetsAt: HARNESS_RESETS_AT,
     durationMinutes,
   });
-  return rateLimitUsageResponseSchemaV40.parse({
+  return rateLimitUsageResponseSchemaV51.parse({
     totalTokens: 0,
     remainingTokens: 0,
     providerRateLimits:

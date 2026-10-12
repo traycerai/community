@@ -53,6 +53,26 @@ const durableAuthority = vi.hoisted<{
   renamePending: false,
   collectionIncludesSession: false,
 }));
+// The real authority and mutation hooks are reactive (host queries), so their
+// mocks are too: a mid-test change to `durableAuthority` goes through `bump`,
+// which notifies the mocked hooks' subscribers. An assignment before the first
+// render needs no notification.
+const authoritySeam = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  return {
+    version: 0,
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    bump(): void {
+      this.version += 1;
+      listeners.forEach((listener) => listener());
+    },
+  };
+});
 const hostRequest = vi.hoisted(() =>
   vi.fn<
     (method: string, vars: { readonly terminalId: string }) => Promise<unknown>
@@ -125,12 +145,21 @@ vi.mock("@/hooks/terminal/use-terminal-list-query", () => ({
   }),
 }));
 
-vi.mock("@/hooks/terminal/use-terminal-kill-for-mutation", () => ({
-  useTerminalKillFor: () => ({
-    mutate: killMutate,
-    isPending: durableAuthority.killPending,
-  }),
-}));
+vi.mock("@/hooks/terminal/use-terminal-kill-for-mutation", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useTerminalKillFor: () => {
+      useSyncExternalStore(
+        authoritySeam.subscribe,
+        () => authoritySeam.version,
+      );
+      return {
+        mutate: killMutate,
+        isPending: durableAuthority.killPending,
+      };
+    },
+  };
+});
 
 vi.mock("@/hooks/terminal/use-terminal-rename-for-mutation", () => ({
   useTerminalRenameFor: () => ({
@@ -154,27 +183,36 @@ vi.mock("@/lib/terminals/resolve-plain-terminal-owner-client", () => ({
   }),
 }));
 
-vi.mock("@/hooks/terminal/use-plain-terminal-authority", () => ({
-  useHostPlainTerminalAuthority: () => ({
-    hostId: "host-1",
-    scope: { kind: "epic", epicId: "epic-1" },
-    capability:
-      durableAuthority.capability === "capable"
-        ? {
-            status: "capable",
-            schemaVersion: { major: 2, minor: 1 },
-          }
-        : { status: durableAuthority.capability },
-    canMutate: durableAuthority.canMutate,
-    collection: {
-      terminalsByIdentity: durableAuthority.collectionIncludesSession
-        ? {
-            [JSON.stringify(["host-1", SESSION_ID])]: DURABLE_PROJECTION,
-          }
-        : {},
+vi.mock("@/hooks/terminal/use-plain-terminal-authority", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useHostPlainTerminalAuthority: () => {
+      useSyncExternalStore(
+        authoritySeam.subscribe,
+        () => authoritySeam.version,
+      );
+      return {
+        hostId: "host-1",
+        scope: { kind: "epic", epicId: "epic-1" },
+        capability:
+          durableAuthority.capability === "capable"
+            ? {
+                status: "capable",
+                schemaVersion: { major: 2, minor: 1 },
+              }
+            : { status: durableAuthority.capability },
+        canMutate: durableAuthority.canMutate,
+        collection: {
+          terminalsByIdentity: durableAuthority.collectionIncludesSession
+            ? {
+                [JSON.stringify(["host-1", SESSION_ID])]: DURABLE_PROJECTION,
+              }
+            : {},
+        },
+      };
     },
-  }),
-}));
+  };
+});
 
 vi.mock(
   "@/hooks/terminal/use-plain-terminal-mutations",
@@ -183,11 +221,16 @@ vi.mock(
       await importOriginal<
         typeof import("@/hooks/terminal/use-plain-terminal-mutations")
       >();
+    const { useSyncExternalStore } = await import("react");
     return {
       ...actual,
       useHostPlainTerminalMutations: (
         authority: Parameters<typeof actual.useHostPlainTerminalMutations>[0],
       ) => {
+        useSyncExternalStore(
+          authoritySeam.subscribe,
+          () => authoritySeam.version,
+        );
         const real = actual.useHostPlainTerminalMutations(authority);
         return {
           ...real,
@@ -865,10 +908,10 @@ describe("terminal sidebar Close", () => {
     // while all of it held. Either conjunct can go false underneath it:
     // `canMutate` is host-wide (a disconnect, a permission change), and the
     // pending flag is PANEL-wide, since one mutation observer serves every row.
-    apply();
-    view.rerender(
-      wrapper(<TerminalsPanelBody epicId="epic-1" tabId={TAB_ID} />),
-    );
+    act(() => {
+      apply();
+      authoritySeam.bump();
+    });
 
     fireEvent.keyDown(
       view.getByTestId(`epic-terminal-sidebar-rename-input-${SESSION_ID}`),
@@ -1171,10 +1214,10 @@ describe("terminal sidebar failed headless create", () => {
       view.getByTestId(failedCreateTestId("host-1", SESSION_ID)),
     ).not.toBeNull();
 
-    durableAuthority.collectionIncludesSession = true;
-    view.rerender(
-      wrapper(<TerminalsPanelBody epicId="epic-1" tabId={TAB_ID} />),
-    );
+    act(() => {
+      durableAuthority.collectionIncludesSession = true;
+      authoritySeam.bump();
+    });
 
     await waitFor(() => {
       expect(
@@ -1193,10 +1236,10 @@ describe("terminal sidebar failed headless create", () => {
       ),
     ).toBe(false);
 
-    durableAuthority.collectionIncludesSession = false;
-    view.rerender(
-      wrapper(<TerminalsPanelBody epicId="epic-1" tabId={TAB_ID} />),
-    );
+    act(() => {
+      durableAuthority.collectionIncludesSession = false;
+      authoritySeam.bump();
+    });
     expect(
       view.queryByTestId(failedCreateTestId("host-1", SESSION_ID)),
     ).toBeNull();

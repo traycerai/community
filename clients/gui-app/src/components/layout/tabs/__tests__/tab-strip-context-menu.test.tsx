@@ -10,7 +10,13 @@ import {
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { ContextMenu, ContextMenuTrigger } from "@/components/ui/context-menu";
 import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   HomeTabContextMenu,
+  SplitQuickActionsMenuContent,
+  SplitSlotMenuContent,
   TabContextMenuContent,
 } from "@/components/layout/tabs/tab-strip-context-menu";
 import { installEditFirewall } from "@/components/layout-editor/canvas/edit-firewall";
@@ -27,7 +33,13 @@ import { __getOpenEpicRegistryForTests } from "@/lib/registries/epic-session-reg
 import { useKeybindingStore } from "@/stores/settings/keybinding-store";
 import { type EpicStreamClientFactory } from "@/stores/epics/open-epic/store";
 import { openStoreForTest } from "@/stores/epics/open-epic/test-support/open-store-for-test";
-import type { HeaderTab } from "@/stores/tabs/types";
+import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
+import { useTabsStore } from "@/stores/tabs/store";
+import {
+  registerTabStructuralLockPredicate,
+  resetTabStructuralLockForTesting,
+} from "@/stores/tabs/tab-structural-lock";
+import type { HeaderTab, TabRef } from "@/stores/tabs/types";
 import type { TaskPinnedState } from "@/hooks/epic/use-epic-task-pinned-states-query";
 import { useAuthStore } from "@/stores/auth/auth-store";
 
@@ -746,3 +758,145 @@ describe("TabContextMenuContent cloud-homed pin reading unanswered (settled miss
     expect(item.getAttribute("aria-disabled")).toBeNull();
   });
 });
+
+const SPLIT_LEFT: TabRef = { kind: "epic", id: "split-left" };
+const SPLIT_RIGHT: TabRef = { kind: "epic", id: "split-right" };
+const SPLIT_TAB: Extract<HeaderTab, { kind: "epic" }> = {
+  ...EPIC_TAB,
+  id: SPLIT_RIGHT.id,
+  epicId: "split-right-epic",
+};
+
+function seedSplitLayout(): void {
+  useEpicCanvasStore
+    .getState()
+    .openEpicTabWithId(SPLIT_LEFT.id, "split-left-epic", "Left");
+  useEpicCanvasStore
+    .getState()
+    .openEpicTabWithId(SPLIT_RIGHT.id, "split-right-epic", "Right");
+  useTabsStore.setState({
+    version: 2,
+    items: [
+      {
+        kind: "split",
+        id: "split-a",
+        left: { kind: "tab", ref: SPLIT_LEFT },
+        right: { kind: "tab", ref: SPLIT_RIGHT },
+        focusedSide: "right",
+        routeBackingSide: "right",
+        leftRatio: 0.5,
+      },
+    ],
+    activeItemId: "split-a",
+    stripOrder: [SPLIT_LEFT, SPLIT_RIGHT],
+    systemTabs: { history: null, settings: null },
+  });
+}
+
+const SPLIT_SURFACES: ReadonlyArray<{
+  readonly name: string;
+  readonly render: (tab: HeaderTab) => ReactElement;
+}> = [
+  {
+    name: "the tab context menu",
+    render: (tab) => (
+      <ContextMenu open>
+        <ContextMenuTrigger>Open menu</ContextMenuTrigger>
+        <TabContextMenuContent
+          tab={tab}
+          canCloseOtherTabs
+          canOpenInNewWindow={false}
+          canEditTitle={false}
+          taskPinnedState={null}
+          isTaskPinPending={false}
+          onCloseOtherTabs={() => undefined}
+          onDuplicateTab={() => undefined}
+          onOpenInNewWindow={() => undefined}
+          onSplitCommand={() => undefined}
+          onEditTitle={() => undefined}
+          onSetTaskPinned={() => undefined}
+        />
+      </ContextMenu>
+    ),
+  },
+  {
+    name: "the empty half's context menu",
+    render: (tab) => (
+      <ContextMenu open>
+        <ContextMenuTrigger>Open menu</ContextMenuTrigger>
+        <SplitSlotMenuContent partner={tab} onSplitCommand={() => undefined} />
+      </ContextMenu>
+    ),
+  },
+  {
+    name: "the split quick actions menu",
+    render: (tab) => (
+      <DropdownMenu open>
+        <DropdownMenuTrigger>Open menu</DropdownMenuTrigger>
+        <SplitQuickActionsMenuContent
+          tab={tab}
+          onSplitCommand={() => undefined}
+        />
+      </DropdownMenu>
+    ),
+  },
+];
+
+describe.each(SPLIT_SURFACES)(
+  "Separate views availability in $name",
+  ({ render: renderSurface }) => {
+    afterEach(() => {
+      cleanup();
+      useTabsStore.setState(useTabsStore.getInitialState(), true);
+      useEpicCanvasStore.setState(useEpicCanvasStore.getInitialState(), true);
+      resetTabStructuralLockForTesting();
+    });
+
+    function separateItem(): HTMLElement {
+      return screen.getByRole("menuitem", { name: "Separate views" });
+    }
+
+    it("follows a structural lock taken and released while the menu is open", () => {
+      seedSplitLayout();
+      renderWithQueryClient(renderSurface(SPLIT_TAB));
+      expect(separateItem().getAttribute("aria-disabled")).toBeNull();
+
+      let unregister = (): void => undefined;
+      act(() => {
+        unregister = registerTabStructuralLockPredicate(() => true);
+      });
+      expect(separateItem().getAttribute("aria-disabled")).toBe("true");
+
+      act(() => {
+        unregister();
+      });
+      expect(separateItem().getAttribute("aria-disabled")).toBeNull();
+    });
+
+    it("disables the item when the layout stops grouping the tab while the menu is open", () => {
+      seedSplitLayout();
+      renderWithQueryClient(renderSurface(SPLIT_TAB));
+      expect(separateItem().getAttribute("aria-disabled")).toBeNull();
+
+      act(() => {
+        useTabsStore.setState({
+          items: [
+            {
+              kind: "tab",
+              id: `tab:epic:${SPLIT_RIGHT.id}`,
+              ref: SPLIT_RIGHT,
+            },
+          ],
+          activeItemId: `tab:epic:${SPLIT_RIGHT.id}`,
+          stripOrder: [SPLIT_RIGHT],
+        });
+      });
+      // The tab's own context menu drops its group commands once none of them
+      // applies; the two flat menus keep the item and disable it.
+      const item = screen.queryByRole("menuitem", { name: "Separate views" });
+      expect(
+        item === null || item.getAttribute("aria-disabled") === "true",
+      ).toBe(true);
+    });
+  },
+);

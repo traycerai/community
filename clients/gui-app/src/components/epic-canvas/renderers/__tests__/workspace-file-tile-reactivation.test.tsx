@@ -56,19 +56,45 @@ vi.mock("@/hooks/host/use-host-supports-method", () => ({
   useHostSupportsMethod: () => state.supportsWrite,
 }));
 
-vi.mock("@/hooks/workspace/use-read-file-query", () => ({
-  useWorkspaceReadFile: () => ({
-    data: {
-      content: state.readContent,
-      error: null,
-      truncated: state.truncated,
+// The real query is reactive (a cache subscription), so the mock is too: a
+// change to `state.readContent` made after the first render goes through
+// `bump`, which notifies the mocked hook's subscribers.
+const readSeam = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  return {
+    version: 0,
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
     },
-    isLoading: false,
-    isError: false,
-    error: null,
-    refetch: state.refetch,
-  }),
-}));
+    bump(): void {
+      this.version += 1;
+      listeners.forEach((listener) => listener());
+    },
+  };
+});
+
+vi.mock("@/hooks/workspace/use-read-file-query", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useWorkspaceReadFile: () => {
+      useSyncExternalStore(readSeam.subscribe, () => readSeam.version);
+      return {
+        data: {
+          content: state.readContent,
+          error: null,
+          truncated: state.truncated,
+        },
+        isLoading: false,
+        isError: false,
+        error: null,
+        refetch: state.refetch,
+      };
+    },
+  };
+});
 
 vi.mock("@/hooks/workspace/use-workspace-write-file-mutation", () => ({
   useWorkspaceWriteFile: () => ({ mutateAsync: state.writeFile }),
@@ -200,9 +226,11 @@ describe("<WorkspaceFileTile /> reactivation refresh", () => {
     const newContent = "const value = 2;\n";
     // `state.readContent` only changes once `refetch` itself resolves - not
     // ahead of time - so this only passes if the reactivation edge actually
-    // called `refetch`, not merely because the tile re-rendered.
+    // called `refetch`, not merely because the tile re-rendered. Like a real
+    // `useQuery`, the settled refetch notifies the hook's subscribers.
     state.refetch.mockImplementation(() => {
       state.readContent = newContent;
+      readSeam.bump();
       return Promise.resolve({
         error: null,
         data: { content: newContent, error: null, truncated: false },
@@ -213,11 +241,7 @@ describe("<WorkspaceFileTile /> reactivation refresh", () => {
     await waitFor(() => {
       expect(state.refetch).toHaveBeenCalled();
     });
-    // The mocked hook has no real subscription, so re-render it manually to
-    // observe the post-refetch value - a real `useQuery` would do this via
-    // its own store subscription once `refetch` settles.
     await waitFor(() => {
-      harness.setActive(true);
       expect(state.rendererContent).toHaveBeenCalledWith(newContent);
     });
   });

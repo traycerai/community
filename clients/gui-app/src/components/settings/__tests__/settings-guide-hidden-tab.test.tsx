@@ -46,6 +46,7 @@ import { useOnboardingStore } from "@/stores/onboarding/onboarding-store";
 import { useSettingsSearchStore } from "@/stores/settings/settings-search-store";
 import { resetSystemTabModalColdLoadForTests } from "@/stores/tabs/use-system-tab-modal";
 import { useTabsStore } from "@/stores/tabs/store";
+import { settingsSurfaceModule } from "@/stores/tabs/kinds/surface-modules";
 
 vi.mock("@/components/epics/history-modal-content", () => ({
   HistoryModalContent: () => null,
@@ -176,11 +177,12 @@ function reset(): void {
   });
 }
 
-// The Settings surface and the coachmark are lazy chunks; loading them once up
-// front keeps the assertions below off the transform clock.
+// The Settings tab draws its surface from an on-demand module
+// (`settingsSurfaceModule`) and the coachmark is a lazy chunk; loading both
+// once up front keeps the assertions below off the transform clock.
 beforeAll(async () => {
   await Promise.all([
-    import("@/components/settings/settings-surface"),
+    settingsSurfaceModule.load(),
     import("@/components/onboarding/onboarding-coachmark"),
   ]);
 });

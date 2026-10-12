@@ -7,6 +7,8 @@ import {
   authenticatedHostStreamKey,
   authenticatedOwnerIdentityKey,
 } from "@/hooks/host/use-host-stream-client-for";
+import { useRequestContextUserId } from "@/hooks/host/use-request-context-user-id";
+import { readOnSignal } from "@/lib/read-on-signal";
 import { useDurableStreamTransportFactory } from "@/lib/host/use-durable-stream-transport";
 import { openOwnedDurableStreamClient } from "@/lib/host/owned-durable-stream-client";
 import { hostQueryKeys } from "@/lib/query-keys";
@@ -96,6 +98,9 @@ export function useTerminalSessionHandle(
 ): TerminalSessionStoreHandle | null {
   const hostEntry = useHostDirectoryEntry(args.hostId);
   const globalClient = useHostClient();
+  // The two keys below read the request context off the client, which a
+  // render cannot depend on; this is what makes them follow a sign-out.
+  const requestUserId = useRequestContextUserId(globalClient);
   // Terminal is a DURABLE per-tab stream: its `WsStreamClient` is OWNED by the
   // session store for the session's warm lifetime (live sessions are kept warm
   // across tile unmount - agents indefinitely, plain terminals for the
@@ -120,7 +125,10 @@ export function useTerminalSessionHandle(
   const transportKey =
     streamClientFactoryOverride !== null
       ? "test-stream-client-factory"
-      : authenticatedHostStreamKey(globalClient, hostEntry);
+      : readOnSignal(
+          () => authenticatedHostStreamKey(globalClient, hostEntry),
+          requestUserId,
+        );
   // Owner-identity discriminator (R-1): `transportKey` deliberately omits a
   // remote host's public key (dialability, not identity). `args.hostId` is
   // stable for a terminal tab's whole lifetime by design (bound for life -
@@ -129,7 +137,10 @@ export function useTerminalSessionHandle(
   const ownerIdentityKey =
     streamClientFactoryOverride !== null
       ? "test-stream-client-factory"
-      : authenticatedOwnerIdentityKey(globalClient, hostEntry);
+      : readOnSignal(
+          () => authenticatedOwnerIdentityKey(globalClient, hostEntry),
+          requestUserId,
+        );
 
   const [handle, setHandle] = useReducer(
     (

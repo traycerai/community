@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useCallback } from "react";
 import type { ChatSessionAnchor } from "@traycer/protocol/persistence/epic/schemas";
 import type { ProviderCliState } from "@traycer/protocol/host/provider-schemas";
 import { providerCliIdForHarness } from "@/lib/provider-ordering";
@@ -63,10 +63,13 @@ export function TombstonedProfileProvider({
   readonly hostId: string;
   readonly children: ReactNode;
 }) {
-  const resolve = (
-    anchor: ChatSessionAnchor,
-  ): TombstonedProfileVerdict | null =>
-    resolveTombstonedProfileLabel(anchor, providers, hostId);
+  // Keyed on the inputs: a fresh resolver on every chat tile render changed
+  // the context value and re-rendered every user message in the transcript.
+  const resolve = useCallback(
+    (anchor: ChatSessionAnchor): TombstonedProfileVerdict | null =>
+      resolveTombstonedProfileLabel(anchor, providers, hostId),
+    [providers, hostId],
+  );
   return (
     <TombstonedProfileContext.Provider value={resolve}>
       {children}

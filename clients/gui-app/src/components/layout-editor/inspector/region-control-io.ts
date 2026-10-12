@@ -4,6 +4,7 @@ import {
   type RegionValueKey,
 } from "@/lib/layout/layout-values";
 import { PRESET_VALUES } from "@/lib/layout/layout-presets";
+import type { LayoutSnapshot } from "@/lib/layout/layout-snapshot";
 import type { RegionId } from "@/lib/layout/region-id";
 import { useLayoutEditorStore } from "@/stores/layout/layout-editor-store";
 import {
@@ -82,12 +83,22 @@ export function revertControlValue(
   revertControlValues(region, [key]);
 }
 
+/**
+ * What a "has this changed" question reads off the layout. It is an ARGUMENT
+ * of the two functions below, never a store read inside them: a row asks at
+ * render, and the React Compiler caches a call by its arguments, so a hidden
+ * read would be answered once and kept. A row passes `useLayoutSnapshot()`,
+ * a gesture passes `getLayoutSnapshot()`.
+ */
+type LayoutChangeFacts = Pick<LayoutSnapshot, "basePreset" | "overrides">;
+
 /** Whether one control's key differs from the base preset (for its revert icon). */
 export function isControlValueChanged(
+  snapshot: LayoutChangeFacts,
   region: RegionId,
   key: RegionValueKey,
 ): boolean {
-  return changedControlKeys(region, [key]).length > 0;
+  return changedControlKeys(snapshot, region, [key]).length > 0;
 }
 
 /**
@@ -100,10 +111,10 @@ export function isControlValueChanged(
  * predicate that only says it is.
  */
 export function changedControlKeys(
+  snapshot: LayoutChangeFacts,
   region: RegionId,
   keys: ReadonlyArray<string>,
 ): ReadonlyArray<string> {
-  const snapshot = getLayoutSnapshot();
   const override = snapshot.overrides[region];
   if (override === undefined) return [];
   // By DIFFERENCE against the current base, not by the key's presence in the
@@ -136,7 +147,7 @@ export function revertControlValues(
   // does not: it passes `regionFacts(...)` keys. Reverting nothing is the
   // right answer for a registry typo too, since a key that is not in the
   // base cannot differ from it.
-  const owned = changedControlKeys(region, keys);
+  const owned = changedControlKeys(getLayoutSnapshot(), region, keys);
   if (owned.length === 0) return;
   useLayoutEditorStore.getState().recordGesture(() => {
     useLayoutStore.getState().clearRegionValues(region, owned);

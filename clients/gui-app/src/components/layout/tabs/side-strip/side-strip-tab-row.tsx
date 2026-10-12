@@ -1,3 +1,4 @@
+import { useSurfaceNotificationWaitingProbe } from "@/components/notifications/notification-indicator-context";
 import type { ReactNode } from "react";
 import { useTopLevelStripPairPreview } from "@/components/epic-canvas/dnd/dnd-store";
 import { LeaderDigitBadge } from "@/components/ui/leader-digit-badge";
@@ -64,6 +65,10 @@ export function SideStripTabRow(props: {
   const { item, input, rootRef } = props;
   const { tab, isActive } = input;
   const epicId = tab.kind === "epic" ? tab.epicId : null;
+  const readCommittedWaiting = useSurfaceNotificationWaitingProbe(
+    { epicId: epicId ?? tab.id },
+    null,
+  );
   const activityStatus = useEpicActivityStatus(epicId);
   const titleGenerating = useRegisteredEpicTitleGenerating(epicId);
   const pairPreview = useTopLevelStripPairPreview(tab.kind, tab.id);
@@ -145,6 +150,7 @@ export function SideStripTabRow(props: {
                 })
           }
           badge={badge}
+          readCommittedWaiting={readCommittedWaiting}
           agents={agents}
           status={status}
           section={section}

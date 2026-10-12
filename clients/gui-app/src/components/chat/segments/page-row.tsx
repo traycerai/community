@@ -25,6 +25,7 @@ import type { EpicFileAddress } from "@/hooks/files/use-epic-file-text-query";
 import { Analytics, AnalyticsEvent } from "@/lib/analytics";
 import { tileIntent } from "@/lib/canvas/tile-open/intent";
 import { makeEpicFileTileRef } from "@/stores/epics/canvas/tile-schema/epic-file-tile";
+import { useSurfaceDemand } from "@/stores/tabs/surface-demand";
 import { LiveElapsed } from "./segment-elapsed";
 import { TouchActionsSheet } from "./touch-actions-sheet";
 
@@ -57,7 +58,14 @@ export interface PageRowProps {
  */
 export function PageRow(props: PageRowProps): ReactNode {
   const scope = useChatAttachmentScope();
+  // A held tab cycle's preview must not load the page; settling does.
+  const settled = useSurfaceDemand() === "settled";
+  const [loaded, setLoaded] = useState(false);
+  if (!loaded && settled && props.page !== null && scope !== null) {
+    setLoaded(true);
+  }
   if (props.page !== null && scope !== null) {
+    if (!settled && !loaded) return props.fallback;
     return (
       <ShownPage
         page={props.page}

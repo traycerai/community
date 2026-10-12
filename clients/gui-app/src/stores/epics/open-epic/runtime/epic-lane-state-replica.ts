@@ -1,3 +1,4 @@
+import { replaceSliceRows } from "./projection-table-changes";
 /**
  * The records lane's read model: `epic.state.subscribe@1.0` rows in, the same
  * raw populations the `@1` root doc produces out.
@@ -60,10 +61,7 @@
  * replacement instead of racing two.
  */
 import type { RoleClaim } from "@traycer/protocol/persistence/epic/role-claims";
-import type {
-  EpicDeletedArtifactRecord,
-  EpicMeta,
-} from "@traycer/protocol/host/epic/state-subscribe";
+import type { EpicDeletedArtifactRecord } from "@traycer/protocol/host/epic/state-subscribe";
 import type { CommentThreadWire } from "@traycer/protocol/host/epic/unary-schemas";
 import type {
   EpicStateLaneEvent,
@@ -485,6 +483,101 @@ function buildLaneSlices(rows: readonly HeldLaneRow[]): EpicLaneStateSlices {
   };
 }
 
+type CommentThreadRow = Extract<
+  EpicStateRow,
+  { kind: "comment-thread" }
+>["record"];
+
+/** `null` when the thread moved artifacts: regrouping is the full build's. */
+function replaceCommentThread(
+  previous: CommentThreadsSlice,
+  before: CommentThreadRow,
+  next: CommentThreadRow,
+): CommentThreadsSlice | null {
+  if (
+    before.artifactId !== next.artifactId ||
+    !Object.hasOwn(previous.byArtifactId, next.artifactId)
+  )
+    return null;
+  const held = previous.byArtifactId[next.artifactId];
+  const index = held.indexOf(before);
+  if (index === -1) return null;
+  return {
+    byArtifactId: {
+      ...previous.byArtifactId,
+      [next.artifactId]: held.with(index, next),
+    },
+  };
+}
+
+/**
+ * One changed row, applied to the one population it belongs to, so a header
+ * touch or a download tick leaves every artifact and thread reference alone.
+ * Artifact rows are returned to the caller, which replaces them as a set.
+ *
+ * `null` asks for the full build. Claims and tombstones always do: the epic
+ * projection composes in full on either (`needsFullProjection`), so a patch
+ * here would save nothing.
+ */
+function updateLanePopulation(
+  previous: EpicLaneStateSlices,
+  before: EpicStateRow,
+  row: EpicStateRow,
+): EpicLaneStateSlices | null {
+  if (row.kind === "epic-meta" && before.kind === "epic-meta") {
+    const { title, updatedAt } = row.meta;
+    return title === previous.epicHeader.title &&
+      updatedAt === previous.epicHeader.updatedAt
+      ? previous
+      : { ...previous, epicHeader: { title, updatedAt } };
+  }
+  if (row.kind === "files" && before.kind === "files") {
+    const files: FilesSlice = { served: true, records: row.files };
+    return filesSliceEq(previous.files, files)
+      ? previous
+      : { ...previous, files };
+  }
+  if (row.kind === "comment-thread" && before.kind === "comment-thread") {
+    const commentThreads = replaceCommentThread(
+      previous.commentThreads,
+      before.record,
+      row.record,
+    );
+    return commentThreads === null ? null : { ...previous, commentThreads };
+  }
+  return null;
+}
+
+/** Existing rows only (same row id before and after); see `updateSlice`. */
+function updateLaneSlices(
+  previous: EpicLaneStateSlices,
+  changedRows: readonly HeldLaneRow[],
+  previousRows: readonly HeldLaneRow[],
+): EpicLaneStateSlices | null {
+  let next = previous;
+  const artifactRows: HeldLaneRow[] = [];
+  for (const [index, held] of changedRows.entries()) {
+    const before = previousRows[index].row;
+    if (held.row.kind === "artifact") {
+      if (before.kind !== "artifact" || held.row.record.id !== before.record.id)
+        return null;
+      artifactRows.push(held);
+      continue;
+    }
+    const updated = updateLanePopulation(next, before, held.row);
+    if (updated === null) return null;
+    next = updated;
+  }
+  if (artifactRows.length === 0) return next;
+  const artifacts = replaceSliceRows(
+    next.artifacts,
+    buildLaneSlices(artifactRows).artifacts,
+    artifactProjectionsEq,
+  );
+  if (artifacts === null) return null;
+  return artifacts === next.artifacts ? next : { ...next, artifacts };
+}
+
 /**
  * This head's populations, in the shape the shared composition consumes.
  *
@@ -550,6 +643,8 @@ export function createEpicLaneStateReplica(
          */
         recency: null,
         buildSlice: (visibleRows) => buildLaneSlices(visibleRows),
+        updateSlice: (previous, changedRows, _currentUserId, previousRows) =>
+          updateLaneSlices(previous, changedRows, previousRows),
         slicesEq: laneSlicesEq,
         emptySlice: EMPTY_LANE_STATE_SLICES,
       },
@@ -570,13 +665,6 @@ export function createEpicLaneStateReplica(
   let epoch: string | null = null;
   let seedTrust: SeedTrust | null = null;
 
-  /** The whole `EpicMeta` currently held, for folding a patch onto. */
-  function heldEpicMeta(): EpicMeta | null {
-    const header = table.current().epicHeader;
-    if (header === EMPTY_LANE_STATE_SLICES.epicHeader) return null;
-    return { title: header.title, updatedAt: header.updatedAt };
-  }
-
   /**
    * A row as the table should hold it, with a metadata patch already folded.
    *
@@ -588,8 +676,9 @@ export function createEpicLaneStateReplica(
     if (row.row.kind !== "epic-meta-patch") {
       return { rowId: row.rowId, revision: row.revision, row: row.row };
     }
-    const held = heldEpicMeta();
-    if (held === null) return null;
+    const retained = table.retainedRow(row.rowId);
+    if (retained?.row.kind !== "epic-meta") return null;
+    const held = retained.row.meta;
     return {
       rowId: row.rowId,
       revision: row.revision,
@@ -597,7 +686,7 @@ export function createEpicLaneStateReplica(
     };
   }
 
-  function applyChange(change: RecordChange<EpicStateRow>): boolean {
+  function applyChange(change: RecordChange<EpicStateRow>): void {
     if (change.kind === "remove") {
       // The shared table types its removal reason as `ChatRecordRemovalReason`
       // - a chat-plane enum on the one algorithm every plane shares, which is a
@@ -607,16 +696,17 @@ export function createEpicLaneStateReplica(
       // in effect; the adapter's own closed constant
       // (`ARTIFACT_TOMBSTONE_REMOVE_REASON` / `COMMENT_THREAD_REMOVE_REASON`)
       // stays the diagnostic, and both of them ARE deletions.
-      return table.applyRemoval(change.rowId, "deleted") !== null;
+      table.applyRemoval(change.rowId, "deleted");
+      return;
     }
     const held = heldRowFor(change.row);
-    if (held === null) return false;
+    if (held === null) return;
     // `"complete"`: the lane carries whole rows from the authority, so there
     // is no field this path leaves unstated for a later list read to fill.
     // The incomplete counter is about the record STREAM's two seeded gaps
     // (an unknown chat home, an unstated session facet) - see
     // `UpsertCompleteness`.
-    return table.applyUpsert(held, "complete") !== null;
+    table.applyUpsert(held, "complete");
   }
 
   function applyRecordSnapshot(
@@ -660,16 +750,15 @@ export function createEpicLaneStateReplica(
     if (cursor !== null && event.cursor.position <= cursor.position) {
       return { kind: "ignored", reason: "duplicate" };
     }
-    let moved = false;
-    for (const change of event.changes) {
-      if (applyChange(change)) moved = true;
-    }
+    const publication = table.batch(() => {
+      for (const change of event.changes) applyChange(change);
+    });
     // The cursor advances ONLY here, after every change in the envelope
     // has been offered to the replica - never per change, and never on
     // arrival. A position persisted mid-envelope would let a resume ask
     // the host to continue past a tombstone this client had not absorbed.
     cursor = event.cursor;
-    if (moved) onChanged();
+    if (publication !== null) onChanged();
     return applied(cursor);
   }
 

@@ -73,9 +73,15 @@ export default defineConfig({
     command: `node ${JSON.stringify(viteBin())} --config vite.browser-tests.config.ts --host 127.0.0.1 --port ${String(PORT)} --strictPort`,
     cwd: GUI_APP_ROOT,
     env: { BROWSER_TESTS_PORT: String(PORT) },
-    url: `${BASE_URL}/src/__tests__/browser/quit-intercept-cancel.html`,
+    // Answered once every fixture's module graph is transformed
+    // (`vite/browser-tests-warm-gate.ts`), so no test races a cold server.
+    // The gate has no timer of its own: `timeout` below is the only bound on
+    // that wait. The transform takes about a minute on a developer Mac and a
+    // few on a CI runner, so ten minutes fails a server that is broken, not
+    // one that is slow, and stays inside the CI job's own 20.
+    url: `${BASE_URL}/__browser-tests-warm`,
     reuseExistingServer: !isCi,
-    timeout: 120_000,
+    timeout: 600_000,
     stdout: "ignore",
     stderr: "pipe",
   },

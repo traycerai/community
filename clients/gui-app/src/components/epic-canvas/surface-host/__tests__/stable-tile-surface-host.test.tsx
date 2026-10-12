@@ -1,3 +1,4 @@
+import { resizeObserverEntryFor } from "@/__tests__/resize-observer-entry";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
@@ -76,7 +77,10 @@ Object.defineProperty(globalThis, "ResizeObserver", {
 
 function triggerResizeObserverCallbacks(): void {
   for (const instance of controllableResizeObserverInstances) {
-    instance.callback([], instance);
+    instance.callback(
+      [...instance.observed].map(resizeObserverEntryFor),
+      instance,
+    );
   }
 }
 
@@ -956,6 +960,148 @@ describe("StableTileSurfaceHost geometry retention while hidden (confirmed scrol
     expect(record.style.transform).toBe("translate(40px, 60px)");
     expect(record.style.width).toBe("500px");
     expect(record.style.height).toBe("400px");
+    slot.remove();
+  });
+
+  /**
+   * Perf fix W1-B item 6: registration keys on `[instanceId, slotElement]`
+   * only; a SEPARATE effect keyed on `[instanceId, slotElement, visible]`
+   * calls `refreshTileSurfaceGeometrySlot` instead of re-registering. A pane
+   * tab reselection republishes the same `geometryAnchorElement` with a
+   * different `presentation` - it must not re-observe the slot, and re-show
+   * reapplies the CACHED box without reading the slot: ResizeObserver and
+   * explicit topology remeasures own fresh reads.
+   */
+  it("a presentation-only toggle does not re-observe or re-read the slot, and only the observer's report applies a moved slot", () => {
+    seedOneChat();
+    const slot = document.createElement("div");
+    document.body.appendChild(slot);
+    // A spy wrapping a mutable rect, rather than repeated `stubElementRect`
+    // reassignments - `stubElementRect` replaces the own `getBoundingClientRect`
+    // property outright, which would silently drop this spy on every restub.
+    let currentSlotRect = { left: 10, top: 20, width: 300, height: 200 };
+    const setSlotRect = (rect: typeof currentSlotRect): void => {
+      currentSlotRect = rect;
+    };
+    const slotRectSpy = vi.fn(() => fakeDomRect(currentSlotRect));
+    slot.getBoundingClientRect = slotRectSpy;
+
+    const observeSpy = vi.spyOn(
+      ControllableResizeObserver.prototype,
+      "observe",
+    );
+    render(<StableTileSurfaceHost renderRecordBody={() => null} />);
+    act(() => {
+      publishWithAnchor("chat-1", slot, {
+        topLevelVisible: true,
+        topLevelFocused: false,
+      });
+    });
+    const record = screen.getByTestId("stable-tile-surface-record-chat-1");
+    expect(record.style.transform).toBe("translate(10px, 20px)");
+    const observeCallsAfterMount = observeSpy.mock.calls.length;
+    expect(observeCallsAfterMount).toBeGreaterThan(0);
+
+    // Hide, move the slot's real rect, and re-show with NO observer batch:
+    // the re-show is a presentation change, so it replays the cached box and
+    // reads nothing.
+    act(() => {
+      publishWithAnchor("chat-1", slot, {
+        topLevelVisible: false,
+        topLevelFocused: false,
+      });
+    });
+    setSlotRect({ left: 40, top: 60, width: 500, height: 400 });
+    const rectCallsBeforeShow = slotRectSpy.mock.calls.length;
+    act(() => {
+      publishWithAnchor("chat-1", slot, {
+        topLevelVisible: true,
+        topLevelFocused: false,
+      });
+    });
+    expect(observeSpy.mock.calls.length).toBe(observeCallsAfterMount);
+    expect(slotRectSpy.mock.calls.length).toBe(rectCallsBeforeShow);
+    expect(record.style.transform).toBe("translate(10px, 20px)");
+    expect(record.style.width).toBe("300px");
+    expect(record.style.height).toBe("200px");
+
+    // The observer reporting the resize is what reads the new box.
+    act(() => {
+      triggerResizeObserverCallbacks();
+    });
+    expect(record.style.transform).toBe("translate(40px, 60px)");
+    expect(record.style.width).toBe("500px");
+    expect(record.style.height).toBe("400px");
+
+    // A second hide/show cycle onto a slot that genuinely went to 0x0 while
+    // hidden (its pane collapsed): the observer's report is applied, so the
+    // real zero rect wins over the stale 500x400.
+    act(() => {
+      publishWithAnchor("chat-1", slot, {
+        topLevelVisible: false,
+        topLevelFocused: false,
+      });
+    });
+    setSlotRect({ left: 40, top: 60, width: 0, height: 0 });
+    act(() => {
+      triggerResizeObserverCallbacks();
+      publishWithAnchor("chat-1", slot, {
+        topLevelVisible: true,
+        topLevelFocused: false,
+      });
+    });
+
+    expect(observeSpy.mock.calls.length).toBe(observeCallsAfterMount);
+    expect(record.style.width).toBe("0px");
+    expect(record.style.height).toBe("0px");
+
+    observeSpy.mockRestore();
+    slot.remove();
+  });
+
+  it("re-measures a slot whose cached box is zero on re-show, so a pane switched back from display:none does not lay its body out at zero width", () => {
+    seedOneChat();
+    const slot = document.createElement("div");
+    document.body.appendChild(slot);
+    stubElementRect(slot, { left: 10, top: 20, width: 300, height: 200 });
+
+    render(<StableTileSurfaceHost renderRecordBody={() => null} />);
+    act(() => {
+      publishWithAnchor("chat-1", slot, {
+        topLevelVisible: true,
+        topLevelFocused: false,
+      });
+    });
+    const record = screen.getByTestId("stable-tile-surface-record-chat-1");
+    expect(record.style.width).toBe("300px");
+
+    act(() => {
+      publishWithAnchor("chat-1", slot, {
+        topLevelVisible: false,
+        topLevelFocused: false,
+      });
+    });
+    // Hidden under a display:none ancestor, the slot reports 0x0 and the
+    // coordinator caches it; the record keeps its last painted box.
+    act(() => {
+      stubElementRect(slot, { left: 0, top: 0, width: 0, height: 0 });
+      triggerResizeObserverCallbacks();
+    });
+    expect(record.style.width).toBe("300px");
+
+    // The ancestor is shown again, but no observer batch has been delivered
+    // yet: the re-show must read the slot rather than replay the cached zero.
+    stubElementRect(slot, { left: 10, top: 20, width: 300, height: 200 });
+    act(() => {
+      publishWithAnchor("chat-1", slot, {
+        topLevelVisible: true,
+        topLevelFocused: false,
+      });
+    });
+
+    expect(record.style.width).toBe("300px");
+    expect(record.style.height).toBe("200px");
+    expect(record.style.transform).toBe("translate(10px, 20px)");
     slot.remove();
   });
 });

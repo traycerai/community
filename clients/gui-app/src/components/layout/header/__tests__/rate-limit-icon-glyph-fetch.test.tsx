@@ -125,6 +125,7 @@ function createFetchHarness(): FetchHarness {
             totalTokens: 0,
             remainingTokens: 0,
             providerRateLimits: null,
+            usageUpdatedAt: null,
           };
         },
       },

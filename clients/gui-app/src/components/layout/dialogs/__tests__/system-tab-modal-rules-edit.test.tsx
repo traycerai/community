@@ -58,6 +58,10 @@ import {
 } from "@/components/settings/panels/auto-policy-document";
 import { SettingsSurface } from "@/components/settings/settings-surface";
 import { ThemeEditorHost } from "@/components/settings/themes/theme-editor-host";
+// `ThemeEditorHost` loads this panel as a lazy chunk when a draft opens.
+// Imported here so it is loaded before any test runs: the dialog lookups
+// below then wait for the editor to render, not for its module to load.
+import "@/components/settings/themes/theme-editor-panel";
 import { ThemeProvider } from "@/providers/theme-provider";
 import { systemTabOverlaySearchSchema } from "@/lib/system-tab-overlay-search";
 import { __resetTabNavigationControllerForTesting } from "@/lib/tab-navigation";

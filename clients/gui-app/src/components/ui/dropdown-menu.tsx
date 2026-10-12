@@ -43,12 +43,23 @@ type DropdownMenuContentProps = React.ComponentProps<
 };
 
 function DropdownMenuContent({
+  container,
+  ...props
+}: DropdownMenuContentProps) {
+  // Radix's portal presence mounts the guard only while content is presented.
+  return (
+    <DropdownMenuPrimitive.Portal container={container}>
+      <PresentedDropdownMenuContent {...props} />
+    </DropdownMenuPrimitive.Portal>
+  );
+}
+
+function PresentedDropdownMenuContent({
   ref,
   className,
   align = "start",
   sideOffset = 4,
   collisionPadding,
-  container,
   onCloseAutoFocus,
   children,
   ...props
@@ -65,30 +76,28 @@ function DropdownMenuContent({
   const safeAreaInsets = useSafeAreaCollisionPadding();
   if (!paneFocused || concealed) return null;
   return (
-    <DropdownMenuPrimitive.Portal container={container}>
-      <DropdownMenuPrimitive.Content
-        ref={ref}
-        data-slot="dropdown-menu-content"
-        sideOffset={sideOffset}
-        align={align}
-        collisionPadding={collisionPadding ?? safeAreaInsets}
-        className={cn(
-          // `max-w-safe-dvw` is primitive-owned and sits ahead of the caller's
-          // `className`, so an unmodified caller `max-w-*` displaces it -
-          // CSS allows one width clamp per element, so the cap is a default,
-          // not a floor. It only conflicts at all because the token is
-          // registered in `cn()`'s merge config (`lib/utils.ts`).
-          "z-50 max-h-(--radix-dropdown-menu-content-available-height) w-(--radix-dropdown-menu-trigger-width) max-w-safe-dvw min-w-32 origin-(--radix-dropdown-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10 duration-100 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-[state=closed]:overflow-hidden data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
-          className,
-        )}
-        onCloseAutoFocus={handleCloseAutoFocus}
-        {...props}
-      >
-        {/* Mounted with the open menu: no hover card opens meanwhile. */}
-        <MenuOpenMarker />
-        {children}
-      </DropdownMenuPrimitive.Content>
-    </DropdownMenuPrimitive.Portal>
+    <DropdownMenuPrimitive.Content
+      ref={ref}
+      data-slot="dropdown-menu-content"
+      sideOffset={sideOffset}
+      align={align}
+      collisionPadding={collisionPadding ?? safeAreaInsets}
+      className={cn(
+        // `max-w-safe-dvw` is primitive-owned and sits ahead of the caller's
+        // `className`, so an unmodified caller `max-w-*` displaces it -
+        // CSS allows one width clamp per element, so the cap is a default,
+        // not a floor. It only conflicts at all because the token is
+        // registered in `cn()`'s merge config (`lib/utils.ts`).
+        "z-50 max-h-(--radix-dropdown-menu-content-available-height) w-(--radix-dropdown-menu-trigger-width) max-w-safe-dvw min-w-32 origin-(--radix-dropdown-menu-content-transform-origin) overflow-x-hidden overflow-y-auto rounded-lg bg-popover p-1 text-popover-foreground shadow-md ring-1 ring-foreground/10 duration-100 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 data-[state=closed]:overflow-hidden data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
+        className,
+      )}
+      onCloseAutoFocus={handleCloseAutoFocus}
+      {...props}
+    >
+      {/* Mounted with the open menu: no hover card opens meanwhile. */}
+      <MenuOpenMarker />
+      {children}
+    </DropdownMenuPrimitive.Content>
   );
 }
 

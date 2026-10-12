@@ -71,6 +71,12 @@ export interface TileFindTargetRegistration {
 
 export interface TileFindTargetRecord extends TileFindTargetRegistration {
   readonly registeredAt: number;
+  /**
+   * Orders eligible targets for the active-owner pick: the most recently
+   * ELIGIBLE wins. Set at registration and bumped each time the target
+   * becomes eligible, so a focus change orders owners without re-registering.
+   */
+  readonly eligibleOrder: number;
 }
 
 export interface TileFindActiveOwner {

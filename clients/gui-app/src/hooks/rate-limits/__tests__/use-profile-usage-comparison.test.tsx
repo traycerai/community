@@ -150,6 +150,7 @@ function goodResponse(): RateLimitUsageResponse {
       modelScoped: [],
       extraUsage: null,
     },
+    usageUpdatedAt: null,
   };
 }
 
@@ -422,7 +423,12 @@ describe("useProfileUsageComparison", () => {
     const calls: Array<unknown> = [];
     const { scope } = buildHostScope("default-host", queryClient, (params) => {
       calls.push(params);
-      return { totalTokens: 0, remainingTokens: 0, providerRateLimits: null };
+      return {
+        totalTokens: 0,
+        remainingTokens: 0,
+        providerRateLimits: null,
+        usageUpdatedAt: null,
+      };
     });
     scopesRef.byHostId.set(null, scope);
 
@@ -599,6 +605,7 @@ describe("useProfileUsageComparison", () => {
               available: false as const,
               reason: "usage_fetch_failed" as const,
             },
+            usageUpdatedAt: null,
           }
         : goodResponse(),
     );

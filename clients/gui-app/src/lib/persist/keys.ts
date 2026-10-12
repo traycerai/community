@@ -83,6 +83,12 @@ export const githubMentionFiltersKey = (identity: string | null): string =>
 export const lastLocalHostIdKey = (): string =>
   persistKey("last-local-host-id");
 
+// The hosts this window has seen acknowledge `unary.persistentSession`
+// (persistent-unary-host-store.ts). A sessionStorage key: it only has to
+// outlive a reload, so the boot burst of unary calls shares one handshake.
+export const persistentUnaryHostsKey = (): string =>
+  persistKey("persistent-unary-hosts");
+
 export const appLocalNotificationsKey = (userId: string | null): string =>
   scopedPersistKey("app-local-notifications", scopeBucket(userId));
 
@@ -140,6 +146,25 @@ export const appLocalNotificationCompletionReceiptKey = (input: {
     encodeURIComponent(input.originHostId),
     encodeURIComponent(input.occurrenceKey),
   );
+
+// The unscoped name is the anonymous/legacy bucket. Signed-in drafts never
+// share it; row keys retain the existing host ownership inside their values.
+export const composerDraftStorageKey = (userId: string | null): string =>
+  userId === null
+    ? persistKey("composer-drafts")
+    : scopedPersistKey(
+        "composer-drafts",
+        "account",
+        encodeURIComponent(userId),
+      );
+
+export const composerDraftRowPrefix = (name: string): string => `${name}:rows:`;
+
+export const composerDraftRowKey = (
+  name: string,
+  kind: "draft" | "delete",
+  id: string,
+): string => `${composerDraftRowPrefix(name)}${kind}:${encodeURIComponent(id)}`;
 
 // Interview answer drafts persist ONE localStorage key per (chatId, blockId)
 // instead of a single full-snapshot Zustand blob. Separate keys prevent a
@@ -424,6 +449,13 @@ export const PERSIST_STORES = [
   {
     camelName: "consumedInitialRoute",
     leaf: "consumed-initial-route",
+    kind: "session",
+  },
+  // `persistent-unary-hosts` - sessionStorage seed for the unary cold-burst
+  // memo (persistent-unary-host-store.ts).
+  {
+    camelName: "persistentUnaryHosts",
+    leaf: "persistent-unary-hosts",
     kind: "session",
   },
   // `deleted-epic-events:last` — localStorage cross-tab notification mirror.

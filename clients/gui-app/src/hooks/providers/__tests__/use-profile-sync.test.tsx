@@ -388,3 +388,79 @@ describe("profile sync pending readers", () => {
     expect(otherDevice.result.current).toBe(false);
   });
 });
+
+/** One mutation that never settles, put in the cache under `mutationKey`. */
+function startHangingMutation(
+  queryClient: QueryClient,
+  mutationKey: readonly unknown[],
+): void {
+  act(() => {
+    void queryClient
+      .getMutationCache()
+      .build(queryClient, { mutationKey, mutationFn: hang })
+      .execute(undefined);
+  });
+}
+
+describe("pending reads follow a changed key while mounted", () => {
+  afterEach(() => {
+    cleanup();
+  });
+
+  it("useProfileSyncNowPending moves with the destination host", () => {
+    const queryClient = makeQueryClient();
+    startHangingMutation(
+      queryClient,
+      profileSyncKeys.syncNow(SOURCE_HOST_ID, DEST_A),
+    );
+    const { result, rerender } = renderHook(
+      (props: { readonly destinationHostId: string }) =>
+        useProfileSyncNowPending(SOURCE_HOST_ID, props.destinationHostId),
+      {
+        initialProps: { destinationHostId: DEST_A },
+        wrapper: wrapperFor(queryClient),
+      },
+    );
+    expect(result.current).toBe(true);
+
+    rerender({ destinationHostId: DEST_B });
+    expect(result.current).toBe(false);
+
+    rerender({ destinationHostId: DEST_A });
+    expect(result.current).toBe(true);
+  });
+
+  it("useProfileSyncAcceptAccountPending moves with the source profile", () => {
+    const OTHER_PROFILE_ID = "22222222-2222-4222-8222-222222222222";
+    const queryClient = makeQueryClient();
+    startHangingMutation(
+      queryClient,
+      profileSyncKeys.acceptAccount(
+        SOURCE_HOST_ID,
+        DEST_A,
+        PROVIDER_ID,
+        SOURCE_PROFILE_ID,
+      ),
+    );
+    const { result, rerender } = renderHook(
+      (props: { readonly sourceProfileId: string }) =>
+        useProfileSyncAcceptAccountPending(
+          SOURCE_HOST_ID,
+          DEST_A,
+          PROVIDER_ID,
+          props.sourceProfileId,
+        ),
+      {
+        initialProps: { sourceProfileId: SOURCE_PROFILE_ID },
+        wrapper: wrapperFor(queryClient),
+      },
+    );
+    expect(result.current).toBe(true);
+
+    rerender({ sourceProfileId: OTHER_PROFILE_ID });
+    expect(result.current).toBe(false);
+
+    rerender({ sourceProfileId: SOURCE_PROFILE_ID });
+    expect(result.current).toBe(true);
+  });
+});

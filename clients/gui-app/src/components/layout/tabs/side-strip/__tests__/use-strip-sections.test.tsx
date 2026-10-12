@@ -229,7 +229,11 @@ const COMMAND_APPROVAL: ChatSessionState["pendingApprovals"][number] = {
   reviewing: null,
 };
 
-/** A warm chat session of `epicId`, waiting on an approval or, with `null`, on nothing. */
+/**
+ * A warm chat session of `epicId`, waiting on an approval or, with `null`, on
+ * nothing. It is this user's own chat (owner access): a gate waits on the user
+ * only with chat access that lets them act. Both callers mean exactly that.
+ */
 function setChatApproval(
   epicId: string,
   chatId: string,
@@ -259,6 +263,7 @@ function setChatApproval(
     }),
   );
   handle.store.setState({
+    access: { role: "owner", ownerUserId: "chat-owner", canAct: true },
     pendingApprovals: approval === null ? [] : [approval],
   });
 }

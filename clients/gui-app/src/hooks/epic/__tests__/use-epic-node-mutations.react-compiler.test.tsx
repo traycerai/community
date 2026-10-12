@@ -27,9 +27,8 @@ import {
  * `isPending` as `handle.store(selector)` (the bound-store call form) is not
  * recognizable as a hook to the React Compiler, which memoizes the call on
  * `handle` and skips it on the next render with the same handle - shifting
- * the hook order and throwing "Should have a queue". Only a suite compiled
- * through `vitest.react-compiler.config.ts` can see this; the plain config
- * does not run the compiler at all.
+ * the hook order and throwing "Should have a queue". Only compiled code can
+ * show this; the suite compiles every module (`vitest.config.ts`).
  */
 
 function fakeFactory(): EpicStreamClientFactory {

@@ -12,6 +12,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeGallery } from "@/components/settings/themes/theme-gallery";
+// The theme gallery loads this dialog as a lazy chunk on "Import theme".
+// Imported here so it is loaded before any test runs: the dialog lookups
+// below then wait for the dialog to render, not for its module to load.
+import "@/components/settings/themes/theme-import-dialog";
 import { ThemeProvider } from "@/providers/theme-provider";
 import { useSettingsStore } from "@/stores/settings/settings-store";
 import { useThemeLibraryStore } from "@/stores/settings/theme-library-store";

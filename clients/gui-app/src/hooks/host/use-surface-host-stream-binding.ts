@@ -4,6 +4,8 @@ import {
   streamTransportRetain,
   useHostStreamClientBindingFor,
 } from "@/hooks/host/use-host-stream-client-for";
+import { useRequestContextUserId } from "@/hooks/host/use-request-context-user-id";
+import { readOnSignal } from "@/lib/read-on-signal";
 import { useHostDirectoryEntryForHostId } from "@/hooks/host/use-host-client-for-host-id";
 import { useEffectiveHostId } from "@/hooks/host/use-effective-host-id";
 import { useHostClient } from "@/lib/host";
@@ -88,7 +90,11 @@ export function useSurfaceHostStreamBinding(
   const auth = useStreamAuthRevalidator();
   const ambientClient = useHostClient();
   const binding = useHostStreamClientBindingFor(entry, auth);
-  const expectedKey = authenticatedOwnerIdentityKey(ambientClient, entry);
+  const requestUserId = useRequestContextUserId(ambientClient);
+  const expectedKey = readOnSignal(
+    () => authenticatedOwnerIdentityKey(ambientClient, entry),
+    requestUserId,
+  );
   const matched =
     binding !== null && binding.transportKey === expectedKey ? binding : null;
   // Safe to read off `entry` only BECAUSE the key matched: that comparison is

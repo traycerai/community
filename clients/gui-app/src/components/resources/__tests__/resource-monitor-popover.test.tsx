@@ -2834,6 +2834,73 @@ describe("ResourceMonitorPopover", () => {
     ).not.toHaveBeenCalled();
   });
 
+  it("stops offering a closed terminal for reopening when a tombstone arrives while the popover is open", async () => {
+    routerMock.pathname = "/epics/epic-1/tab-1";
+    canvasMock.state.closedTilePayloadsByTabId["tab-closed"] = {
+      "tile-term-late": {
+        node: {
+          id: "term-late",
+          instanceId: "tile-term-late",
+          type: "terminal",
+          name: "Late Build",
+          titleSource: "manual",
+          hostId: "host-1",
+          cwd: "/work/background",
+        },
+        pendingCreate: false,
+      },
+    };
+    const stub = installStubFactory();
+    renderPopover();
+
+    act(() => {
+      stub.emit().onSnapshot(
+        projection({
+          owners: [
+            owner({
+              owner: {
+                kind: "terminal",
+                hostId: "host-1",
+                epicId: "epic-2",
+                ownerId: "term-late",
+              },
+              harnessId: null,
+              activeProcessName: "make",
+            }),
+          ],
+        }),
+      );
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Resources" }));
+    const reopenable = await screen.findByRole<HTMLButtonElement>("button", {
+      name: /^Late Build/,
+    });
+    expect(reopenable.disabled).toBe(false);
+
+    act(() => {
+      queryClient.setQueryData(
+        hostQueryKeys.plainTerminals("host-1", {
+          kind: "epic",
+          epicId: "epic-2",
+        }),
+        {
+          ...emptyPlainTerminalCollection(),
+          deletedRevisionByIdentity: {
+            [JSON.stringify(["host-1", "term-late"])]: 2,
+          },
+          projectionSequence: 1,
+        },
+      );
+    });
+
+    expect(screen.queryByText("Late Build")).toBeNull();
+    const row = await screen.findByRole<HTMLButtonElement>("button", {
+      name: /^make/,
+    });
+    expect(row.disabled).toBe(true);
+  });
+
   it("reopens a closed terminal tile of the CURRENT tab through the same-route boundary", async () => {
     routerMock.pathname = "/epics/epic-1/tab-1";
     canvasMock.state.closedTilePayloadsByTabId["tab-1"] = {

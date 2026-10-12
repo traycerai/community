@@ -1,8 +1,10 @@
-import { cleanup, render, screen } from "@testing-library/react";
+import { memo } from "react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   createChatSessionStore,
+  type ChatSessionState,
   type ChatSessionStoreHandle,
 } from "@/stores/chats/chat-session-store";
 import { IMMEDIATE_STREAM_FLUSH_COORDINATOR } from "@/stores/chats/stream-flush-coordinator";
@@ -16,6 +18,27 @@ const RUNNING_TEST_ID = `${TEST_ID}-activity-${CHAT_ID}`;
 const BACKGROUND_TEST_ID = `${TEST_ID}-background-activity-${CHAT_ID}`;
 const TURN_RUNNING_LABEL = "Agent in progress";
 const BACKGROUND_RUNNING_LABEL = "Background activity — agent idle";
+
+const APPROVAL_TEST_ID = `${TEST_ID}-approval-${CHAT_ID}`;
+const REPLY_TEST_ID = `${TEST_ID}-interview-${CHAT_ID}`;
+
+const COMMAND_APPROVAL: ChatSessionState["pendingApprovals"][number] = {
+  kind: "tool",
+  approvalId: "approval-1",
+  toolName: "bash",
+  description: "Run a command",
+  input: null,
+  planId: null,
+  actions: [],
+  requestedAt: 1,
+  reason: null,
+  reviewing: null,
+};
+
+const INTERVIEW: ChatSessionState["pendingInterviews"][number] = {
+  blockId: "question-1",
+  requestedAt: 1,
+};
 
 const MONITOR_ITEM = {
   taskId: "task-1",
@@ -55,7 +78,10 @@ const mockSessionState = vi.hoisted<{
 }));
 
 vi.mock("@/lib/epic-selectors", () => ({
-  useRegisteredEpicAgentActivityTiers: () => mockSessionState.activityTiers,
+  useRegisteredEpicAgentActivityTier: (
+    _epicId: string | null,
+    agentId: string,
+  ) => mockSessionState.activityTiers.get(agentId),
   useRegisteredEpicPermissionRole: () => mockSessionState.epicPermissionRole,
 }));
 
@@ -260,21 +286,97 @@ describe("<ChatProgressIcon />", () => {
     ).toBeNull();
   });
 
-  it("keeps the running spinner for an active opened chat that needs approval", () => {
+  it("keeps the running spinner while the session's access is not known yet, even with a pending interview", () => {
     const handle = createHandle();
-    handle.store.setState({
-      pendingInterviews: [{ blockId: "question-1", requestedAt: 1 }],
-    });
+    handle.store.setState({ pendingInterviews: [INTERVIEW] });
     mockSessionState.activityTiers.set(CHAT_ID, "turn");
     mockSessionState.existingHandle = handle;
 
     renderIcon();
 
     expect(screen.queryByTestId(RUNNING_TEST_ID)).not.toBeNull();
+    expect(screen.queryByTestId(REPLY_TEST_ID)).toBeNull();
     expect(screen.queryByTitle("Waiting for your approval")).toBeNull();
     expect(tooltipTextNear(screen.getByTestId(RUNNING_TEST_ID))).toBe(
       "Agent in progress",
     );
+  });
+
+  describe("the session's own gate facts, without any notification", () => {
+    /** An owner's open session mid-turn, mounted behind a `memo` boundary. */
+    function mountOwnerSession(): ChatSessionStoreHandle {
+      const handle = createHandle();
+      setChatAccess(handle, "owner");
+      mockSessionState.activityTiers.set(CHAT_ID, "turn");
+      mockSessionState.existingHandle = handle;
+      renderMemoIcon();
+      expect(screen.queryByTestId(RUNNING_TEST_ID)).not.toBeNull();
+      return handle;
+    }
+
+    it("lights the approval tone, and drops the spinner, when a command approval arrives after mount", () => {
+      const handle = mountOwnerSession();
+
+      act(() => {
+        handle.store.setState({ pendingApprovals: [COMMAND_APPROVAL] });
+      });
+
+      expect(screen.queryByTestId(APPROVAL_TEST_ID)).not.toBeNull();
+      expect(screen.queryByTestId(RUNNING_TEST_ID)).toBeNull();
+    });
+
+    it("lights the reply tone for a pending interview", () => {
+      const handle = mountOwnerSession();
+
+      act(() => {
+        handle.store.setState({ pendingInterviews: [INTERVIEW] });
+      });
+
+      expect(screen.queryByTestId(REPLY_TEST_ID)).not.toBeNull();
+      expect(screen.queryByTestId(APPROVAL_TEST_ID)).toBeNull();
+    });
+
+    it("keeps the spinner for a command approval the auto-judge is still checking", () => {
+      const handle = mountOwnerSession();
+
+      act(() => {
+        handle.store.setState({
+          pendingApprovals: [{ ...COMMAND_APPROVAL, reviewing: "checking" }],
+        });
+      });
+
+      expect(screen.queryByTestId(RUNNING_TEST_ID)).not.toBeNull();
+      expect(screen.queryByTestId(APPROVAL_TEST_ID)).toBeNull();
+    });
+
+    it("shows no approval tone to a viewer, who cannot act on it", () => {
+      const handle = createHandle();
+      setChatAccess(handle, "viewer");
+      mockSessionState.activityTiers.set(CHAT_ID, "turn");
+      mockSessionState.existingHandle = handle;
+      renderMemoIcon();
+
+      act(() => {
+        handle.store.setState({ pendingApprovals: [COMMAND_APPROVAL] });
+      });
+
+      expect(screen.queryByTestId(APPROVAL_TEST_ID)).toBeNull();
+    });
+
+    it("goes back to the spinner when the gate clears", () => {
+      const handle = mountOwnerSession();
+      act(() => {
+        handle.store.setState({ pendingApprovals: [COMMAND_APPROVAL] });
+      });
+      expect(screen.queryByTestId(APPROVAL_TEST_ID)).not.toBeNull();
+
+      act(() => {
+        handle.store.setState({ pendingApprovals: [] });
+      });
+
+      expect(screen.queryByTestId(APPROVAL_TEST_ID)).toBeNull();
+      expect(screen.queryByTestId(RUNNING_TEST_ID)).not.toBeNull();
+    });
   });
 
   it("shows the background glyph for an UNOPENED chat the host reports as background-only", () => {
@@ -323,6 +425,28 @@ function renderIcon() {
       defaultIcon={undefined}
     />,
   );
+}
+
+/**
+ * The icon behind a `memo` boundary with constant props, so a change reaches it
+ * only through its own subscription, never through a parent re-render.
+ */
+const MemoizedIcon = memo(function MemoizedIcon() {
+  return (
+    <ChatProgressIcon
+      chatId={CHAT_ID}
+      className={undefined}
+      epicId={EPIC_ID}
+      hostId="host-1"
+      mutedClassName="text-muted-foreground"
+      testId={TEST_ID}
+      defaultIcon={undefined}
+    />
+  );
+});
+
+function renderMemoIcon() {
+  return render(<MemoizedIcon />);
 }
 
 function createHandle(): ChatSessionStoreHandle {

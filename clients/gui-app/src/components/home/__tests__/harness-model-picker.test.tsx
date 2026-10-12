@@ -1506,7 +1506,7 @@ describe("<HarnessModelPicker />", () => {
   it("shows 'Loading models' - never the Add API key CTA - for a cold, still-pending API-key provider with no settled verdict yet", async () => {
     // Unlike `OPENROUTER_HARNESS`'s default fixture (settled unavailable, an
     // attached error), this provider has never settled: still probing, no
-    // error yet. `ModelRowsState` must resolve this as "loading", not
+    // error yet. `modelRowsState` must resolve this as "loading", not
     // "unavailable" - the CTA is for a settled negative, and showing it here
     // would send the user to add a key for a provider that might turn out to
     // be available a moment later.
@@ -1561,7 +1561,7 @@ describe("<HarnessModelPicker />", () => {
   it("shows the Add API key CTA - not the loading spinner - for a still-pending provider that already carries an error", async () => {
     // Same unsettled shape as the previous test (`availabilityPending: true`,
     // `available: false`), but this probe has already come back with a
-    // reason. `ModelRowsState`'s pending-loading branch now requires
+    // reason. `modelRowsState`'s pending-loading branch now requires
     // `provider.error === null`, so a pending row that already carries an
     // error must fall through to `unavailableProviderState`'s CTA instead of
     // spinning forever on a verdict that already arrived.

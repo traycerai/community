@@ -49,17 +49,32 @@ const tabHostClient = vi.hoisted(() => ({
   getRequestContextUserId: vi.fn((): string | null => "user-1"),
 }));
 
-const detailSubscription: { current: PrDetailSubscriptionResult } = vi.hoisted(
-  () => ({
-    current: {
-      data: null,
-      error: null,
-      isPending: false,
-      sendRefresh: () => undefined,
-      methodSupported: true,
+// The real subscription is reactive, so the mock is too: a mid-test change goes
+// through `set`, which notifies the mocked hook's subscribers. An assignment to
+// `.current` is only for setup BEFORE the first render.
+const detailSubscription = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  const initial: PrDetailSubscriptionResult = {
+    data: null,
+    error: null,
+    isPending: false,
+    sendRefresh: () => undefined,
+    methodSupported: true,
+  };
+  return {
+    current: initial,
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
     },
-  }),
-);
+    set(next: PrDetailSubscriptionResult): void {
+      this.current = next;
+      listeners.forEach((listener) => listener());
+    },
+  };
+});
 
 vi.mock("@/hooks/host/use-tab-host-client", () => ({
   useTabHostClient: () => tabHostClient,
@@ -75,9 +90,16 @@ vi.mock("@/hooks/agent/use-host-reachability", () => ({
     r.status === "checking" ? null : r.hostLabel,
 }));
 
-vi.mock("@/hooks/pr/use-pr-detail-subscription", () => ({
-  usePrDetailSubscription: () => detailSubscription.current,
-}));
+vi.mock("@/hooks/pr/use-pr-detail-subscription", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    usePrDetailSubscription: () =>
+      useSyncExternalStore(
+        detailSubscription.subscribe,
+        () => detailSubscription.current,
+      ),
+  };
+});
 
 vi.mock("@/components/epic-canvas/git-diff/diff-content-primitive", () => ({
   DiffContentPrimitive: (props: { readonly patch: string }) => (
@@ -596,7 +618,7 @@ describe("PrDiffTile range-drift recovery", () => {
       },
     );
     const queryClient = makeQueryClient();
-    const mounted = renderTile(queryClient);
+    renderTile(queryClient);
 
     // Episode 1 of A: drift reported, one recovery, quiesce.
     expect(
@@ -610,14 +632,9 @@ describe("PrDiffTile range-drift recovery", () => {
     });
 
     // The PR advances to D - healthy, no drift, token untouched.
-    detailSubscription.current = subscriptionWithHead(headD);
-    mounted.view.rerender(
-      tileTree({
-        queryClient,
-        node: tileOnTab(mounted.tabId, mounted.node.instanceId),
-        tabId: mounted.tabId,
-      }),
-    );
+    act(() => {
+      detailSubscription.set(subscriptionWithHead(headD));
+    });
     await waitFor(() => {
       expect(summaryCalls).toBe(3);
     });
@@ -628,14 +645,9 @@ describe("PrDiffTile range-drift recovery", () => {
 
     // Force-push back to A: cached summary, cached unavailable answers,
     // remounted sections - a new episode that must get its ONE recovery.
-    detailSubscription.current = subscriptionWithHead(headA);
-    mounted.view.rerender(
-      tileTree({
-        queryClient,
-        node: tileOnTab(mounted.tabId, mounted.node.instanceId),
-        tabId: mounted.tabId,
-      }),
-    );
+    act(() => {
+      detailSubscription.set(subscriptionWithHead(headA));
+    });
     await waitFor(() => {
       expect(summaryCalls).toBe(4);
     });

@@ -1,5 +1,6 @@
 import { useLayoutEffect, type RefObject } from "react";
 import { formatHex, interpolate, parse, wcagContrast } from "culori";
+import { useIsMobileViewport } from "@/hooks/ui/use-mobile-viewport";
 import { useThemeRevision } from "@/providers/use-theme-revision";
 
 /** WCAG AA for normal text. */
@@ -37,7 +38,9 @@ function readableGroupName(
  * Sets the block's header-name colour from what the block paints now: its
  * resolved tinted fill and its text colour. The fill depends on the theme and
  * on the strip's ground (`md` swaps the canvas for the shell ground), so it is
- * read again when the theme changes and when the block resizes. Until it is
+ * read again when the theme changes and when the window crosses `md`: the two
+ * things that change the fill. The block's own size never does, so nothing
+ * here observes it. Until it is
  * set, and where the fill does not resolve, the name keeps the group's colour.
  * While a drag has `placed` the block, it paints no fill of its own (a layer
  * beside it does), so there is nothing to read: the name stays as it was and
@@ -49,24 +52,18 @@ export function useGroupNameColor(
   placed: boolean,
 ): void {
   const themeRevision = useThemeRevision();
+  // The complement of `md`, the breakpoint the strip's ground swaps at.
+  const belowMd = useIsMobileViewport();
   useLayoutEffect(() => {
     const block = blockRef.current;
-    if (block === null || placed) return undefined;
-    const apply = (): void => {
-      const painted = getComputedStyle(block);
-      const name = readableGroupName(
-        groupColor,
-        painted.backgroundColor,
-        painted.color,
-      );
-      if (name === null) block.style.removeProperty(GROUP_NAME_PROPERTY);
-      else block.style.setProperty(GROUP_NAME_PROPERTY, name);
-    };
-    apply();
-    const observer = new ResizeObserver(apply);
-    observer.observe(block);
-    return () => {
-      observer.disconnect();
-    };
-  }, [blockRef, groupColor, placed, themeRevision]);
+    if (block === null || placed) return;
+    const painted = getComputedStyle(block);
+    const name = readableGroupName(
+      groupColor,
+      painted.backgroundColor,
+      painted.color,
+    );
+    if (name === null) block.style.removeProperty(GROUP_NAME_PROPERTY);
+    else block.style.setProperty(GROUP_NAME_PROPERTY, name);
+  }, [blockRef, groupColor, placed, themeRevision, belowMd]);
 }

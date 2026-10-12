@@ -1,5 +1,9 @@
+import {
+  SurfaceDemandContext,
+  useSurfaceDemandStore,
+} from "@/stores/tabs/surface-demand";
 /** Restores the contexts lost when a chat moves into the stable surface host. */
-import type { ReactNode } from "react";
+import { type ReactNode, useMemo } from "react";
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
 import { useEpicPermissionRole } from "@/lib/epic-selectors";
 import { renderTile } from "@/components/epic-canvas/renderers/tile-render";
@@ -24,18 +28,36 @@ export function HostedChatSurfaceContextBridge(props: {
   readonly environment: ReadyTileSurfaceEnvironment;
 }): ReactNode {
   const { environment } = props;
+  // One object per (visible, focused): an inline value re-provided the pane
+  // activity on every environment publish, waking the whole hosted chat.
+  const topLevelVisible = environment.presentation.topLevelVisible;
+  const topLevelFocused = environment.presentation.topLevelFocused;
+  const activity = useMemo(
+    () => ({ visible: topLevelVisible, focused: topLevelFocused }),
+    [topLevelVisible, topLevelFocused],
+  );
+  // Settled only while the demand store still names this surface active. The
+  // environment's `topLevelVisible` is published by the slot a commit after a
+  // switch, while the demand keys move in the activation itself, so the
+  // surface a held cycle just left still reads visible for one render. Read as
+  // settled there, its chat would open a session and socket and drop both on
+  // the next commit.
+  const preview = useSurfaceDemandStore((state) => {
+    const key = `epic:${environment.placement.viewTabId}`;
+    return (
+      state.topLevelPreviewKeys.includes(key) ||
+      (state.topLevelActiveKeys !== null &&
+        !state.topLevelActiveKeys.includes(key)) ||
+      state.panePreviewTargets[environment.placement.paneId] !== undefined
+    );
+  });
   const hostId = getEpicSessionHandleHostId(
     environment.services.openEpicHandle,
   );
   return (
     <EpicSessionContext.Provider value={environment.services.openEpicHandle}>
       <EpicViewTabContext.Provider value={environment.placement.viewTabId}>
-        <PaneSurfaceActivityContext.Provider
-          value={{
-            visible: environment.presentation.topLevelVisible,
-            focused: environment.presentation.topLevelFocused,
-          }}
-        >
+        <PaneSurfaceActivityContext.Provider value={activity}>
           <PaneVisibilityContext.Provider
             value={environment.presentation.topLevelVisible}
           >
@@ -56,7 +78,11 @@ export function HostedChatSurfaceContextBridge(props: {
                     <TabBodySelectedContext.Provider
                       value={environment.canvasActivity.tabSelected}
                     >
-                      <HostedChatSurfaceBody environment={environment} />
+                      <SurfaceDemandContext.Provider
+                        value={preview ? "preview" : "settled"}
+                      >
+                        <HostedChatSurfaceBody environment={environment} />
+                      </SurfaceDemandContext.Provider>
                     </TabBodySelectedContext.Provider>
                   </PanePortalContainerContext.Provider>
                 </PaneFocusProbeContext.Provider>

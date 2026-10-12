@@ -1,3 +1,8 @@
+import type { ProviderCliState } from "@traycer/protocol/host/provider-schemas";
+import {
+  ChatRowPresentationContext,
+  ChatRowStoreContext,
+} from "@/components/chat/chat-row-presentation";
 import {
   useCallback,
   useEffect,
@@ -8,7 +13,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { SetupCardWindowIdentity } from "@traycer/protocol/host/agent/gui/subscribe-windowed";
+
 import { useMeasuredElementHeight } from "@/hooks/ui/use-measured-element-height";
 import { useChatMessageActions } from "./use-chat-message-actions";
 import { useChatQueueActions } from "./use-chat-queue-actions";
@@ -18,7 +23,6 @@ import { useShallow } from "zustand/react/shallow";
 import { useTabProvidersList } from "@/hooks/providers/use-tab-providers-list-query";
 import { TombstonedProfileProvider } from "@/components/chat/tombstoned-profile-provider";
 import type { InterviewAnswer } from "@traycer/protocol/persistence/epic/schemas";
-import { importedProvenance } from "@traycer/protocol/persistence/epic/chat-events";
 import type {
   BackgroundItem,
   OpenChatQueuedPromptItem,
@@ -30,10 +34,7 @@ import {
   ChatMessages,
   type ChatMessageScrollRequest,
 } from "@/components/chat/chat-messages";
-import {
-  queuedPromptMessageIds,
-  queueWithoutPersistedPrompts,
-} from "@/components/chat/chat-queue-utils";
+
 import { ChatMarkdownLinkProvider } from "@/components/chat/chat-markdown-link-provider";
 import {
   ChatForkDialog,
@@ -70,8 +71,6 @@ import { ChatRestoreProvider } from "@/components/chat/chat-restore-context";
 import { RevertOnEditDialog } from "@/components/chat/segments/revert-on-edit-dialog";
 import { SteerSettingsConflictDialog } from "@/components/chat/segments/steer-settings-conflict-dialog";
 import {
-  accumulatedChangeRows,
-  hostAccumulatedChangeRows,
   accumulatedSummarySetComplete,
   undeliveredHostChangeCount,
 } from "@/lib/chat/accumulated-change-rows";
@@ -95,8 +94,7 @@ import {
   type WorktreeStagingKey,
 } from "@/stores/worktree/worktree-intent-staging-store";
 import type { ChatRestoreContextValue } from "@/components/chat/chat-restore-context-core";
-import { buildPinnedTodoRenderState } from "@/components/chat/chat-pinned-todos";
-import { withholdUnpaintedRows } from "@/components/chat/chat-special-segment";
+
 import type { ChatMessageActions } from "@/components/chat/chat-message";
 import type { NextStepActionHandler } from "@/components/chat/segments/next-steps-action-group";
 import type {
@@ -126,6 +124,10 @@ import {
   worktreeBindingIsFolderless,
 } from "@/hooks/composer/use-workspace-mention-roots";
 import { useChatSessionHandle } from "@/lib/registries/chat-session-registry";
+import {
+  ChatPrewarmContext,
+  useChatPrewarmEligible,
+} from "@/lib/registries/chat-prewarm";
 import { notifyChatTileSessionAcquired } from "@/components/epic-canvas/chat-prewarm-handoff";
 import { useEpicParked } from "@/lib/epics/epic-parking";
 import { useEpicDraftGuard } from "@/lib/epics/use-epic-draft-guard";
@@ -137,10 +139,7 @@ import { useComposerDraftStore } from "@/stores/composer/composer-draft-store";
 import type { ChatMessage as ChatMessageModel } from "@/stores/composer/chat-store";
 import {
   dispatchedWorktreeIntentForDisplay,
-  isWindowedTranscript,
-  projectQueueWithPendingCancellations,
   unconfirmedSendActionIdsOf,
-  withdrawnMessageDeliveryId,
   type ChatSessionState,
   type ChatSessionStoreHandle,
   type PreSnapshotRetryEvidence,
@@ -151,10 +150,7 @@ import {
   QueuedMessageStagesContext,
   type QueuedMessageStages,
 } from "@/components/chat/queued-message-stages";
-import type {
-  OrdinalRange,
-  TranscriptWindow,
-} from "@/stores/chats/transcript-window";
+import type { OrdinalRange } from "@/stores/chats/transcript-window";
 import {
   chatTranscriptEventRowId,
   chatTranscriptJumpForTile,
@@ -172,11 +168,7 @@ import {
   type SubagentDrillIn,
 } from "@/components/chat/segments/subagent-open-as-chat";
 import { useToolOpenStore } from "@/stores/chats/tool-open-store";
-import {
-  transcriptShowsSetupCard,
-  useRenderedMessages,
-  type RenderedMessagesDisplayContext,
-} from "@/stores/chats/rendered-messages";
+import { type RenderedMessagesDisplayContext } from "@/stores/chats/rendered-messages";
 import { useAuthStore } from "@/stores/auth/auth-store";
 import { useOwnedByViewer } from "@/hooks/chats/use-owned-by-viewer";
 import { useTabHostId } from "@/components/epic-canvas/hooks/use-tab-host-id";
@@ -246,6 +238,7 @@ import {
   buildSubmittedChatJSONContent,
   type SlashCommandCatalog,
 } from "@/lib/composer/tiptap-json-content";
+import type { SlashCommand } from "@/lib/composer/types";
 import {
   buildChatRunSettings,
   importedChatSettingsSeed,
@@ -327,8 +320,6 @@ import {
   composerTurnStatus,
   resolvedTurnStatus,
   chatTileCanAct,
-  findPendingInterview,
-  findUnanswerableInterviews,
   selectContextUsage,
 } from "./chat-tile-session-state";
 import { toast } from "sonner";
@@ -343,6 +334,38 @@ import { tileIntent } from "@/lib/canvas/tile-open/intent";
 import type { UserMessageSender } from "@traycer/protocol/persistence/epic/schemas";
 
 const EMPTY_WORKSPACE_PATH_SET: ReadonlySet<string> = new Set();
+// One empty list: a fresh `[]` per render gave the tombstoned-profile
+// context a new resolver each time and re-rendered every user message.
+const NO_PROVIDERS: ReadonlyArray<ProviderCliState> = [];
+// True when `commands` would build a catalog equal to `catalog`, compared by
+// content: the commands list is rebuilt with new objects whenever its query
+// is re-enabled, so identity says nothing about whether it changed.
+interface HeldSlashCatalog {
+  /** The query scope the catalog was loaded for: host, harness, roots. */
+  readonly scope: string;
+  readonly catalog: SlashCommandCatalog;
+}
+
+function slashCatalogMatches(
+  catalog: SlashCommandCatalog,
+  commands: ReadonlyArray<SlashCommand>,
+): boolean {
+  if (catalog.size !== commands.length) return false;
+  return commands.every((command) => {
+    const held = catalog.get(command.name.toLowerCase());
+    return (
+      held !== undefined &&
+      (held === command ||
+        (held.source === command.source &&
+          held.harnessId === command.harnessId &&
+          held.name === command.name &&
+          held.description === command.description &&
+          held.argumentHint === command.argumentHint &&
+          held.kind === command.kind &&
+          JSON.stringify(held.metadata) === JSON.stringify(command.metadata)))
+    );
+  });
+}
 const EMPTY_BACKGROUND_STOP_TASK_IDS: ReadonlySet<string> = new Set();
 // How long a compact-conversation click stays locked out against a repeat
 // click. Not tied to the send settling - just long enough that a double-click
@@ -355,7 +378,6 @@ const COMPACT_ACTION_LOCK_MS = 1500;
  * A fresh `[]` per render would change the identity of a `useMemo` dependency
  * every time and re-partition the setup lifecycle on every streamed token.
  */
-const EMPTY_SETUP_CARD_WINDOWS: ReadonlyArray<SetupCardWindowIdentity> = [];
 
 /** Per-chat compact-conversation state, keyed by `handle.chatId` - see the comment on `compactConversation`. */
 interface CompactChatState {
@@ -565,6 +587,7 @@ function ChatTileForChat(props: ChatTileProps) {
     node.id,
     tabHostId,
     !epicParked && (chatRecord !== null || isCrossHostOpen || isCloudKnown),
+    "surface",
   );
   useEffect(() => {
     if (handle !== null) {
@@ -656,7 +679,7 @@ function ChatTileForChat(props: ChatTileProps) {
     <div className="flex h-full min-h-0 flex-col" data-node-id={node.id}>
       {deadTileBanner}
       <TombstonedProfileProvider
-        providers={providersList.data?.providers ?? []}
+        providers={providersList.data?.providers ?? NO_PROVIDERS}
         hostId={tabHostId}
       >
         <ChatTileSessionView
@@ -900,6 +923,11 @@ function useComposerNavigationHighlight(): {
 }
 
 export function ChatTileSessionView(props: ChatTileSessionViewProps) {
+  const prewarmEligible = useChatPrewarmEligible(
+    props.viewTabId,
+    props.node.instanceId,
+    props.handle,
+  );
   const {
     blockId: composerHighlightBlockId,
     generation: composerHighlightGeneration,
@@ -987,9 +1015,14 @@ export function ChatTileSessionView(props: ChatTileSessionViewProps) {
   // the view, and the lower dock stops offering the PARENT chat's composer,
   // model and running work as though they were that subagent's.
   const subagentDrillIn = useSubagentDrillIn(view.snapshotLoaded);
+  // The rows only while a card is open: the tile does not re-render per row
+  // otherwise (the transcript reads them from the row store itself).
+  const subagentDockMessages = useStore(view.handle.rows, (s) =>
+    subagentDrillIn.openId === null ? EMPTY_CHAT_MESSAGES : s.messages,
+  );
   const subagentDockView = useSubagentDockView(
     subagentDrillIn,
-    view.messages,
+    subagentDockMessages,
     view.lower.backgroundItems,
   );
   // "Continue as chat" for the open card. Built here, beside the drill-in,
@@ -997,7 +1030,7 @@ export function ChatTileSessionView(props: ChatTileSessionViewProps) {
   // notice - sit under this tile.
   const subagentContinueAsChat = useSubagentContinueAsChat({
     drillIn: subagentDrillIn,
-    messages: view.messages,
+    messages: subagentDockMessages,
     epicId: view.currentEpicId,
     chatId: view.node.id,
     hostId,
@@ -1020,22 +1053,23 @@ export function ChatTileSessionView(props: ChatTileSessionViewProps) {
     setElement: setLowerSurfacesElement,
     element: lowerSurfacesElement,
     height: lowerSurfacesHeight,
-  } = useMeasuredElementHeight();
+  } = useMeasuredElementHeight(true);
   // Shared transcript jump: resolve the owning message, expand the card via its
   // open-store, and bump the scroll request the messages surface watches. Both
   // the Background panel rows and the autonomous-resume marker route through
   // here so the two navigations behave identically.
   const scrollToBlock = useCallback(
     (blockId: string, card: ChatScrollCardKind): void => {
+      const messages = viewHandle.rows.getState().messages;
       if (
         pendingComposerInterviewBlockId === blockId ||
-        isStreamingInterviewBlock(view.messages, blockId)
+        isStreamingInterviewBlock(messages, blockId)
       ) {
         highlightComposerBlock(blockId);
         return;
       }
       clearComposerHighlight();
-      const messageId = messageIdForBlock(view.messages, blockId);
+      const messageId = messageIdForBlock(messages, blockId);
       if (messageId === null) return;
       if (card === "subagent") {
         useSubagentOpenStore
@@ -1060,17 +1094,20 @@ export function ChatTileSessionView(props: ChatTileSessionViewProps) {
       highlightComposerBlock,
       pendingComposerInterviewBlockId,
       props.node.instanceId,
-      view.messages,
+      viewHandle.rows,
     ],
   );
   const scrollToPage = useCallback(
     (pageRef: string): boolean => {
-      const blockId = pageBlockIdForRef(view.messages, pageRef);
+      const blockId = pageBlockIdForRef(
+        viewHandle.rows.getState().messages,
+        pageRef,
+      );
       if (blockId === null) return false;
       scrollToBlock(blockId, "plan");
       return true;
     },
-    [scrollToBlock, view.messages],
+    [scrollToBlock, viewHandle.rows],
   );
   const scrollToBackgroundItem = useCallback(
     (item: BackgroundItem): void => {
@@ -1114,6 +1151,14 @@ export function ChatTileSessionView(props: ChatTileSessionViewProps) {
       s.requestsByChatId[chatTranscriptJumpKey(hostId, props.node.id)],
       props.node.instanceId,
     ),
+  );
+  const jumpMessages = useStore(viewHandle.rows, (s) =>
+    transcriptJump === undefined ? EMPTY_CHAT_MESSAGES : s.messages,
+  );
+  const jumpWindow = useStore(viewHandle.store, (s) =>
+    transcriptJump === undefined || s.transcriptDerived === null
+      ? null
+      : s.transcriptWindow,
   );
   const consumeTranscriptJump = useChatTranscriptJumpStore(
     (s) => s.consumeJump,
@@ -1175,8 +1220,8 @@ export function ChatTileSessionView(props: ChatTileSessionViewProps) {
     if (!view.snapshotLoaded) return null;
     return hostLocatorForJumpTarget({
       target: transcriptJump.target,
-      transcriptWindow: view.transcriptWindow,
-      messages: view.messages,
+      transcriptWindow: jumpWindow,
+      messages: jumpMessages,
       pendingInterviewBlockId: pendingComposerInterviewBlockId,
       pendingApprovals: view.lower.approvals.pendingApprovals,
       pendingFileEditApprovals: view.lower.approvals.pendingFileEditApprovals,
@@ -1186,9 +1231,9 @@ export function ChatTileSessionView(props: ChatTileSessionViewProps) {
     transcriptJump,
     view.lower.approvals.pendingApprovals,
     view.lower.approvals.pendingFileEditApprovals,
-    view.messages,
+    jumpMessages,
     view.snapshotLoaded,
-    view.transcriptWindow,
+    jumpWindow,
   ]);
   const hostLocatedOrdinal = useChatLocateRow({
     client: attachmentHostClient,
@@ -1200,7 +1245,7 @@ export function ChatTileSessionView(props: ChatTileSessionViewProps) {
     // the legacy line, which has no ordinal space at all - and no cold rows
     // either, so `hostLocatorTarget` is never non-null there and the query
     // never runs. The epoch is then only ever part of a disabled query's key.
-    epoch: view.transcriptWindow?.epoch ?? 0,
+    epoch: jumpWindow?.epoch ?? 0,
   });
   // HOLD UNTIL THE TARGET RESOLVES, not merely until the snapshot loaded. The
   // chat transcript streams independently of the graph stream, so a warm tile
@@ -1209,7 +1254,7 @@ export function ChatTileSessionView(props: ChatTileSessionViewProps) {
   // transcript marks the request handled and only afterwards discovers it has
   // no index entry for that message, and the row arrives to find nothing
   // parked. So the request stays in the store until the row is actually
-  // present; `view.messages` changing re-runs this, which is the retry.
+  // present; `jumpMessages` changing re-runs this, which is the retry.
   useEffect(() => {
     if (transcriptJump === undefined) return;
     if (!view.snapshotLoaded) return;
@@ -1217,7 +1262,7 @@ export function ChatTileSessionView(props: ChatTileSessionViewProps) {
     if (
       target.kind === "block" &&
       (pendingComposerInterviewBlockId === target.blockId ||
-        isStreamingInterviewBlock(view.messages, target.blockId))
+        isStreamingInterviewBlock(jumpMessages, target.blockId))
     ) {
       queueMicrotask(() => {
         highlightComposerBlock(target.blockId);
@@ -1231,7 +1276,7 @@ export function ChatTileSessionView(props: ChatTileSessionViewProps) {
         approvalId: target.approvalId,
         pendingApprovals: view.lower.approvals.pendingApprovals,
         pendingFileEditApprovals: view.lower.approvals.pendingFileEditApprovals,
-        messages: view.messages,
+        messages: jumpMessages,
       });
       if (landing.kind === "hold") {
         // Not in the composer queue and no plan card in the hydrated
@@ -1241,7 +1286,7 @@ export function ChatTileSessionView(props: ChatTileSessionViewProps) {
         // holds; locate misses and the pending-approvals update is the
         // retry.
         requestTranscriptOrdinal(
-          coldJumpOrdinal(view.transcriptWindow, target, hostLocatedOrdinal),
+          coldJumpOrdinal(jumpWindow, target, hostLocatedOrdinal),
         );
         return;
       }
@@ -1280,23 +1325,23 @@ export function ChatTileSessionView(props: ChatTileSessionViewProps) {
     // A block or receipt target names a CARD, not a row: resolved once, up
     // front, because the landing below scrolls to that card rather than to
     // its owning row.
-    const landingBlockId = landingBlockIdForJumpTarget(view.messages, target);
+    const landingBlockId = landingBlockIdForJumpTarget(jumpMessages, target);
     const resolveTargetMessageId = (): string | null => {
       if (target.kind === "message") {
-        return messageIdForTranscriptTarget(view.messages, target.messageId);
+        return messageIdForTranscriptTarget(jumpMessages, target.messageId);
       }
       if (target.kind === "event") {
         const eventRowId = chatTranscriptEventRowId(target.eventId);
         return (
-          view.messages.find((message) => message.id === eventRowId)?.id ?? null
+          jumpMessages.find((message) => message.id === eventRowId)?.id ?? null
         );
       }
       if (target.kind === "sent-message") {
-        return sentMessageAnchorId(view.messages, target);
+        return sentMessageAnchorId(jumpMessages, target);
       }
       if (target.kind === "first-message") {
         // Ordinal 0 of the WHOLE transcript, not the first row this client
-        // happens to hold. On the windowed line `view.messages` is a bounded
+        // happens to hold. On the windowed line `jumpMessages` is a bounded
         // slice, so `messages[0]` is the top of the hydrated tail - and "jump
         // to the first message" then navigated confidently to the middle of
         // the chat, which is worse than not moving at all.
@@ -1306,17 +1351,17 @@ export function ChatTileSessionView(props: ChatTileSessionViewProps) {
         // this returns null and the effect re-runs when it is, which is the
         // same retry every other target kind relies on.
         const firstRowId =
-          view.transcriptWindow === null
-            ? (view.messages[0]?.id ?? null)
-            : (view.transcriptWindow.skeleton[0]?.rowId ?? null);
+          jumpWindow === null
+            ? (jumpMessages[0]?.id ?? null)
+            : (jumpWindow.skeleton[0]?.rowId ?? null);
         if (firstRowId === null) return null;
         return (
-          view.messages.find((message) => message.id === firstRowId)?.id ?? null
+          jumpMessages.find((message) => message.id === firstRowId)?.id ?? null
         );
       }
       return landingBlockId === null
         ? null
-        : messageIdForBlock(view.messages, landingBlockId);
+        : messageIdForBlock(jumpMessages, landingBlockId);
     };
     const messageId = resolveTargetMessageId();
     if (messageId === null) {
@@ -1333,7 +1378,7 @@ export function ChatTileSessionView(props: ChatTileSessionViewProps) {
       // is identified by walking rendered models, which a cold row has none of,
       // and resolving those needs the host to locate the row.
       requestTranscriptOrdinal(
-        coldJumpOrdinal(view.transcriptWindow, target, hostLocatedOrdinal),
+        coldJumpOrdinal(jumpWindow, target, hostLocatedOrdinal),
       );
       return;
     }
@@ -1362,7 +1407,7 @@ export function ChatTileSessionView(props: ChatTileSessionViewProps) {
     highlightComposerBlock,
     hostId,
     // The host's answer arrives asynchronously, so it is the retry signal for
-    // the two target kinds that need it - exactly as `view.messages` is for
+    // the two target kinds that need it - exactly as `jumpMessages` is for
     // every other kind.
     hostLocatedOrdinal,
     pendingComposerInterviewBlockId,
@@ -1375,9 +1420,9 @@ export function ChatTileSessionView(props: ChatTileSessionViewProps) {
     view.lower.approvals.pendingApprovals,
     view.lower.approvals.pendingFileEditApprovals,
     view.lower.backgroundItems,
-    view.messages,
+    jumpMessages,
     view.snapshotLoaded,
-    view.transcriptWindow,
+    jumpWindow,
   ]);
   // ...but a target that never arrives must not wait forever. One timer per
   // request id (transcript churn does not restart it): if the row has not shown
@@ -1530,6 +1575,7 @@ export function ChatTileSessionView(props: ChatTileSessionViewProps) {
 
   return (
     <ChatAttachmentScopeContext.Provider value={attachmentScope}>
+      <ChatQueueBlobRepair handle={view.handle} />
       <ChatDiffTargetContext.Provider value={diffOpener}>
         <ChatScrollToBlockContext.Provider value={scrollToBlock}>
           <ChatScrollToPageContext.Provider value={scrollToPage}>
@@ -1558,45 +1604,49 @@ export function ChatTileSessionView(props: ChatTileSessionViewProps) {
                   <TranscriptQueuePauseReasonSupportContext
                     value={queuePauseReasonSupport}
                   >
-                    <ChatSessionMessagesSurface
-                      snapshotLoaded={view.snapshotLoaded}
-                      thinkingTokensSource={view.handle.store}
-                      connectionStatus={view.connectionStatus}
-                      fatalClose={view.fatalClose}
-                      preSnapshotRetries={view.preSnapshotRetries}
-                      preSnapshotReloadStartedAt={
-                        view.preSnapshotReloadStartedAt
-                      }
-                      onRetry={view.onChatRetryFromUser}
-                      preContent={view.preContent}
-                      restoreContext={view.restoreContext}
-                      node={view.node}
-                      taskTitle={view.taskTitle}
-                      epicId={view.currentEpicId}
-                      viewTabId={view.viewTabId}
-                      tabHostId={view.tabHostId}
-                      workspaceRoots={view.linkResolutionRoots}
-                      messages={view.messages}
-                      activeTurnId={view.activeTurnId}
-                      transcriptWindow={view.transcriptWindow}
-                      onVisibleOrdinalRangeChange={onVisibleOrdinalRangeChange}
-                      onFindReadOrdinalChange={onFindReadOrdinalChange}
-                      baselineEpoch={view.transcriptBaselineEpoch}
-                      hydrationSequence={view.transcriptHydrationSequence}
-                      coldRewrittenMessageIds={view.coldRewrittenMessageIds}
-                      backgroundItems={view.lower.backgroundItems}
-                      scrollRequest={backgroundScrollRequest}
-                      onScrollRequestSettled={onScrollRequestSettled}
-                      surfaceVisible={view.surfaceVisible}
-                      systemOverlayActive={systemOverlayActive}
-                      getMessageActions={view.getMessageActions}
-                      nextStepActions={view.nextStepActions}
-                      planActions={view.planActions}
-                      composerOverlayHeight={
-                        lowerSurfacesElement === null ? 0 : lowerSurfacesHeight
-                      }
-                      subagentDrillIn={subagentDrillIn}
-                    />
+                    <ChatPrewarmContext.Provider value={prewarmEligible}>
+                      <ChatSessionMessagesSurface
+                        snapshotLoaded={view.snapshotLoaded}
+                        thinkingTokensSource={view.handle.store}
+                        connectionStatus={view.connectionStatus}
+                        fatalClose={view.fatalClose}
+                        preSnapshotRetries={view.preSnapshotRetries}
+                        preSnapshotReloadStartedAt={
+                          view.preSnapshotReloadStartedAt
+                        }
+                        onRetry={view.onChatRetryFromUser}
+                        preContent={view.preContent}
+                        restoreContext={view.restoreContext}
+                        node={view.node}
+                        taskTitle={view.taskTitle}
+                        epicId={view.currentEpicId}
+                        viewTabId={view.viewTabId}
+                        tabHostId={view.tabHostId}
+                        workspaceRoots={view.linkResolutionRoots}
+                        handle={view.handle}
+                        inlineEditMessage={view.inlineEditMessage}
+                        rowPresentation={view.rowPresentation}
+                        activeTurnId={view.activeTurnId}
+                        onVisibleOrdinalRangeChange={
+                          onVisibleOrdinalRangeChange
+                        }
+                        onFindReadOrdinalChange={onFindReadOrdinalChange}
+                        backgroundItems={view.lower.backgroundItems}
+                        scrollRequest={backgroundScrollRequest}
+                        onScrollRequestSettled={onScrollRequestSettled}
+                        surfaceVisible={view.surfaceVisible}
+                        systemOverlayActive={systemOverlayActive}
+                        getMessageActions={view.getMessageActions}
+                        nextStepActions={view.nextStepActions}
+                        planActions={view.planActions}
+                        composerOverlayHeight={
+                          lowerSurfacesElement === null
+                            ? 0
+                            : lowerSurfacesHeight
+                        }
+                        subagentDrillIn={subagentDrillIn}
+                      />
+                    </ChatPrewarmContext.Provider>
                   </TranscriptQueuePauseReasonSupportContext>
                   {/*
                    * SurfaceActivityProvider narrows catalog/provider query subscriptions
@@ -1819,7 +1869,10 @@ function useChatTileSessionViewModel(
   const currentUserId = profile?.userId ?? null;
   // The `/btw` side chat's create, on this tab's own host client: the fork is
   // bound to the source's host for life, like the source itself.
-  const createSideChat = useEpicCreateChatForHost();
+  // Only the stable `mutate`: the mutation result is a new object every
+  // render, and holding it in the side-chat callback's deps rebuilt the
+  // composer props, re-rendering the whole composer on every tile render.
+  const { mutate: createSideChat } = useEpicCreateChatForHost();
   const localSnapshotClearMarker = useLocalSnapshotClearStore((store) =>
     localSnapshotsClearedAt(
       store.clearedAtByScope,
@@ -1877,27 +1930,33 @@ function useChatTileSessionViewModel(
       // Written only by an automatic `retry()` on a LOADED session, which is
       // the same render that clears `snapshotLoaded` above.
       preSnapshotReloadStartedAt: s.preSnapshotReloadStartedAt,
-      transcriptBaselineEpoch: s.transcriptBaselineEpoch,
-      transcriptHydrationSequence: s.transcriptHydrationSequence,
-      coldRewrittenMessageIds: s.coldRewrittenMessageIds,
+      windowedTranscript: s.transcriptDerived !== null,
       chat: s.chat,
       access: s.access,
-      messages: s.messages,
-      events: s.events,
       // Written in the same `set` as the two arrays above, so subscribing costs
       // no extra render and no frame can render rows against the previous
       // hydration's context.
-      transcriptRowContext: s.transcriptRowContext,
       // Both already change identity on every windowed frame (they are rebuilt
       // from the window), so subscribing to the window itself costs no extra
       // render. The revert-scope resolution needs it to know whether the two
       // arrays are the whole transcript or a slice of one.
-      transcriptWindow: s.transcriptWindow,
-      transcriptDerived: s.transcriptDerived,
       queue: s.queue,
       messageDelivery: s.messageDelivery,
       runStatus: s.runStatus,
-      activeTurn: s.activeTurn,
+      activeTurnId: s.activeTurn?.turnId ?? null,
+      steerCapable: s.activeTurn?.sameTurnSteeringSupported ?? false,
+      composerActiveTurnStatus: resolvedTurnStatus(
+        s,
+        composerTurnStatus(s.runStatus),
+      ),
+      canModifyMessages: canModifyChatMessages({
+        canAct: chatTileCanAct(
+          s.connectionStatus,
+          s.access?.canAct === true,
+          profile !== null,
+        ),
+        state: s,
+      }),
       steerProtocolSupported: s.steerProtocolSupported,
       autoPermissionModeProtocolSupported:
         s.autoPermissionModeProtocolSupported,
@@ -1929,32 +1988,25 @@ function useChatTileSessionViewModel(
       pendingActions: s.pendingActions,
       unconfirmedSendActionIds: s.unconfirmedSendActionIds,
       acceptedActions: s.acceptedActions,
-      pendingUserMessages: s.pendingUserMessages,
       currentComposerSettings: s.currentComposerSettings,
-      liveAssistantMessage: s.liveAssistantMessage,
       worktreeBinding: s.worktreeBinding,
       missingWorktreePaths: s.missingWorktreePaths,
       refreshMissingWorktreePaths: s.refreshMissingWorktreePaths,
     })),
   );
-  const projectedQueue = useMemo(
-    () =>
-      queueWithoutPersistedPrompts(
-        projectQueueWithPendingCancellations(
-          state.queue,
-          state.pendingActions,
-          state.acceptedActions,
-        ),
-        state.messages,
-      ),
-    [state.acceptedActions, state.messages, state.pendingActions, state.queue],
+  const rowView = useStore(
+    handle.rows,
+    useShallow((s) => ({
+      queue: s.queue,
+      todo: s.todo,
+      pendingInterview: s.pendingInterview,
+      unanswerableInterviews: s.unanswerableInterviews,
+      accumulatedFileChanges: s.accumulatedFileChanges,
+      setupCardShown: s.setupCardShown,
+      importedSourceProvider: s.importedSourceProvider,
+    })),
   );
-  // The raw queue, including a row a pending cancel has hidden from the panel.
-  // The optimistic chat row yields to any host queue item for the same prompt.
-  const queuedPromptIds = useMemo(
-    () => queuedPromptMessageIds(state.queue.items),
-    [state.queue],
-  );
+  const projectedQueue = rowView.queue;
   const chatWorktreeStagingKeyId = useMemo(
     () =>
       worktreeStagingKeyString({
@@ -2099,7 +2151,11 @@ function useChatTileSessionViewModel(
     }),
     [displayContext],
   );
-  const activeTurnId = state.activeTurn?.turnId ?? null;
+  const rowPresentation = useMemo(
+    () => ({ display: renderedDisplayContext, viewTabId }),
+    [renderedDisplayContext, viewTabId],
+  );
+  const activeTurnId = state.activeTurnId;
   // In-progress UI (restore gating, owner-active, the per-row "Working…" /
   // "Stopping…" indicator below) is driven by the host-owned chat
   // `runStatus` - the single source of truth that covers the first turn and
@@ -2114,48 +2170,7 @@ function useChatTileSessionViewModel(
   // subagent / Monitor) - neither of which corresponds to an active turn
   // they can act on or attribute an indicator to. See
   // `resolvedTurnStatus`'s doc comment for the exact derivation.
-  const composerActiveTurnStatus = resolvedTurnStatus(state, activeTurnStatus);
-  const renderedMessages = useRenderedMessages(
-    {
-      messages: state.messages,
-      events: state.events,
-      // Published in the same `set` as `messages`, so the rows and what they
-      // render WITH can never be a frame apart - see `row-context.ts`.
-      rowContext: state.transcriptRowContext,
-      // Chat-level rather than per-row, and that is forced: a setup card's row
-      // id contains the window index, so a client that renumbered cannot look
-      // its own correction up by row id. See `adoptWholeLogIdentity`.
-      setupCardWindows:
-        state.transcriptDerived?.setupCardWindows ?? EMPTY_SETUP_CARD_WINDOWS,
-      pendingUserMessages: state.pendingUserMessages,
-      queuedPromptMessageIds: queuedPromptIds,
-      withdrawnMessageId: withdrawnMessageDeliveryId(state.messageDelivery),
-      liveAssistantMessage: state.liveAssistantMessage,
-      activeTurn: state.activeTurn,
-      pendingApprovals: state.pendingApprovals,
-      pendingFileEditApprovals: state.pendingFileEditApprovals,
-      pendingInterviews: state.pendingInterviews,
-      // Narrowed, not the raw `state.runStatus`: this drives the per-row
-      // "Working…"/"Stopping…" indicator, which belongs to a genuinely
-      // active turn - passing the raw value synthesizes a duplicate, live
-      // indicator row during background-only phase (no active turn) even
-      // after the real row has already settled to its "done" footer.
-      runStatus: composerActiveTurnStatus ?? "idle",
-      // The raw value this time, and for the one reader that wants it: a
-      // background-outcome note holds back its ending while the host still
-      // counts the chat as working.
-      chatWorking: state.runStatus !== "idle",
-      // Binding identity for the in-transcript setup card (replaces the old
-      // strip's mount-time tuple): epic + chat owner route the retry mutation
-      // and scope the terminal-liveness query; `viewTabId` rides the synthetic
-      // segment for the focus-terminal path.
-      epicId: currentEpicId,
-      ownerId: node.id,
-      ownerKind: "chat",
-      viewTabId,
-    },
-    renderedDisplayContext,
-  );
+  const composerActiveTurnStatus = state.composerActiveTurnStatus;
   // Only a prompt item can be loaded into the composer for editing, so narrow
   // here rather than at each consumer: this feeds the composer's settings seed
   // and its remount key, neither of which a content-free managed-command item
@@ -2168,8 +2183,7 @@ function useChatTileSessionViewModel(
     ) ?? null;
   const activeEditingQueueItemId = editingQueueItem?.queueItemId ?? null;
   const chatSettingsSeed = state.chat?.settings ?? null;
-  const importedSourceProvider =
-    importedProvenance(state.events)?.sourceProvider ?? null;
+  const importedSourceProvider = rowView.importedSourceProvider;
   const {
     composerFallbackSettingsSeed,
     initialComposerSettings,
@@ -2265,59 +2279,8 @@ function useChatTileSessionViewModel(
   const turnStopBusy = stopPending || composerActiveTurnStatus === "stopping";
   const stopDisabled = !canAct || turnStopBusy;
   const chatActions = useChatActions(handle);
-  // The queued-drain missing-hash arm. Mounted here because this is where the
-  // three things it needs already meet: the chat's durable `events`, its
-  // `queue`, and `resumeQueue`. Scoped to the TAB's host - the chat is bound to
-  // it for life, and the blob tier the re-upload has to land in is that host's.
-  const repairHostId = useTabHostId();
-  const repairHostClient = useTabHostClient();
-  useQueuedPromptBlobRepair({
-    hostId: repairHostId,
-    client: repairHostClient,
-    events: state.events,
-    queue: state.queue,
-    // The tile's own eligibility. Repairing is an OWNER action - it uploads
-    // into the author's staging tier and resumes the queue - so a read-only
-    // collaborator viewing this chat must not start one.
-    canAct,
-    resumeQueue: chatActions.resumeQueue,
-  });
-  const restoreActionPending = useMemo(
-    () =>
-      Object.values(state.pendingActions).some(
-        (action) =>
-          action.action === "restoreCheckpoint" ||
-          action.action === "revertFileChanges" ||
-          // A revert-on-edit runs its cumulative revert under the
-          // `editUserMessage` action (before the new turn starts), so include
-          // it here to keep the accumulated-changes panel locked during it.
-          action.action === "editUserMessage",
-      ),
-    [state.pendingActions],
-  );
-  const windowedTranscript = isWindowedTranscript(state);
-  const accumulatedHostRows = useMemo(
-    () =>
-      hostAccumulatedChangeRows({
-        windowed: windowedTranscript,
-        changes: state.accumulatedFileChanges,
-        summaries: state.accumulatedFileChangeSummaries,
-      }),
-    [
-      state.accumulatedFileChangeSummaries,
-      state.accumulatedFileChanges,
-      windowedTranscript,
-    ],
-  );
-  const accumulatedFileChanges = useMemo(
-    () =>
-      accumulatedChangeRows(
-        renderedMessages,
-        accumulatedHostRows,
-        activeTurnId,
-      ),
-    [accumulatedHostRows, activeTurnId, renderedMessages],
-  );
+  const windowedTranscript = state.windowedTranscript;
+  const accumulatedFileChanges = rowView.accumulatedFileChanges;
   const undeliveredChangeCount = undeliveredHostChangeCount({
     windowed: windowedTranscript,
     hostChangeCount: state.accumulatedFileChangeCount,
@@ -2335,6 +2298,12 @@ function useChatTileSessionViewModel(
     generationSeated: state.accumulatedSummaryGenerationSeated,
     assemblyStarted: state.accumulatedSummaryAssemblyStarted,
   });
+  const restoreActionPending = Object.values(state.pendingActions).some(
+    (action) =>
+      action.action === "restoreCheckpoint" ||
+      action.action === "revertFileChanges" ||
+      action.action === "editUserMessage",
+  );
   const restoreContext = useMemo(
     () => ({
       accessRole: state.access?.role ?? null,
@@ -2368,9 +2337,9 @@ function useChatTileSessionViewModel(
       chatActions.revertFileChanges,
       currentUserId,
       localSnapshotClearMarker,
-      restoreActionPending,
       state.access?.role,
       state.restore,
+      restoreActionPending,
     ],
   );
   // Memoize: `currentSettingsForChatTile` returns a fresh object every call, so
@@ -2476,29 +2445,48 @@ function useChatTileSessionViewModel(
   // commands" - and chip nothing while looking resolved. An unanswered query is
   // unresolved, not empty. The `$` then stays prose, which the host still
   // resolves lexically; the cost is the pill, never the skill.
-  const slashCatalog = useMemo<SlashCommandCatalog | null>(
-    () =>
-      activationQueries.discoverActionSlashCommands &&
-      !slashCommandsLoading &&
-      slashCommandsError === null
-        ? new Map(
-            slashCommands.map((command) => [
-              command.name.toLowerCase(),
-              command,
-            ]),
-          )
-        : null,
-    [
-      activationQueries.discoverActionSlashCommands,
-      slashCommands,
-      slashCommandsLoading,
-      slashCommandsError,
-    ],
-  );
-  const canModifyMessages = canModifyChatMessages({ canAct, state });
-  const activeInlineEdit = normalizeInlineEditForSession(
-    uiState.inlineEdit,
-    state,
+  // Held across focus loss. The catalog query is gated on focus, so without
+  // this every focus flip took the catalog to null and back to a new Map,
+  // and everything built on it (the inline-edit send, the next-step send,
+  // so every transcript row and the composer) re-rendered on both tiles of
+  // each tab step. Focused, the tile reads only the live list: the held
+  // catalog is reused only while its content equals that list, so a catalog
+  // that changed in the cache while unfocused is current the moment the tile
+  // is focused again, and the held one never outlives it. The hold is also
+  // fenced by the query's scope (host, harness, working roots): a settings or
+  // workspace change while unfocused drops it rather than letting an
+  // unfocused send chip against another scope's commands.
+  const slashCatalogScope = [
+    activeHostId,
+    currentComposerSettings.harnessId,
+    ...resolvedComposerMentionRoots,
+  ].join("\u0000");
+  const [heldSlashCatalog, setHeldSlashCatalog] =
+    useState<HeldSlashCatalog | null>(null);
+  const heldInScope =
+    heldSlashCatalog !== null && heldSlashCatalog.scope === slashCatalogScope
+      ? heldSlashCatalog.catalog
+      : null;
+  let slashCatalog: SlashCommandCatalog | null = null;
+  if (!activationQueries.discoverActionSlashCommands) {
+    slashCatalog = heldInScope;
+  } else if (!slashCommandsLoading && slashCommandsError === null) {
+    if (
+      heldInScope !== null &&
+      slashCatalogMatches(heldInScope, slashCommands)
+    ) {
+      slashCatalog = heldInScope;
+    } else {
+      slashCatalog = new Map(
+        slashCommands.map((command) => [command.name.toLowerCase(), command]),
+      );
+      setHeldSlashCatalog({ scope: slashCatalogScope, catalog: slashCatalog });
+    }
+  }
+  const canModifyMessages = state.canModifyMessages;
+  const activeInlineEdit = useStore(
+    handle.store,
+    useShallow((s) => normalizeInlineEditForSession(uiState.inlineEdit, s)),
   );
   // The park veto (`lib/epics/epic-draft-guard.ts`). An inline edit's
   // `currentContent` lives in this tile's own `chatTileUiReducer` state and is
@@ -2536,64 +2524,7 @@ function useChatTileSessionViewModel(
     };
   }, [activeInlineEdit, node.instanceId]);
 
-  const displayedMessages = useMemo(() => {
-    if (activeInlineEdit === null) return renderedMessages;
-    if (
-      renderedMessages.some(
-        (message) =>
-          message.persistentMessageId === activeInlineEdit.targetMessageId,
-      )
-    ) {
-      return renderedMessages;
-    }
-    return [...renderedMessages, activeInlineEdit.originalMessage];
-  }, [activeInlineEdit, renderedMessages]);
-  // Renderer policy, like the pinned-todo pass below: a row that paints
-  // nothing (`rowPaintsNothing`, today the legacy auto-mode judge notice)
-  // leaves the list here, so `transcriptListRows` omits its ordinal instead of
-  // the timeline framing an empty row. `useRenderedMessages` still enumerates
-  // it, because that list is held to the host's projection row for row.
-  const paintedMessages = useMemo(
-    () => withholdUnpaintedRows(displayedMessages),
-    [displayedMessages],
-  );
-  // On the legacy line the rendered rows are the full history, so the pinned
-  // snapshot derives from the same walk that strips the inline segments. On
-  // the windowed line the rows are the HYDRATED SUBSET and the fold's answer
-  // comes from the host's whole-transcript copy instead - a todo created
-  // outside the hydrated spans would otherwise vanish from the dock. The
-  // discriminator is `transcriptDerived` itself (null exactly on the legacy
-  // line), the same rule `isWindowedTranscript` names.
-  const pinnedTodoRenderState = useMemo(
-    () =>
-      buildPinnedTodoRenderState(
-        paintedMessages,
-        state.transcriptDerived === null
-          ? { kind: "derive" }
-          : {
-              kind: "host",
-              todo: state.transcriptDerived.pinnedTodo,
-              taskItems: state.transcriptDerived.pinnedTaskTodoItems,
-              activeTurnId,
-            },
-      ),
-    [paintedMessages, state.transcriptDerived, activeTurnId],
-  );
-  const hostPendingInterviewIds = useMemo(
-    () =>
-      new Set(state.pendingInterviews.map((interview) => interview.blockId)),
-    [state.pendingInterviews],
-  );
-  // First host-pending streaming interview block found in chat history.
-  // Rendered in the composer slot; inline rendering is suppressed in
-  // `chat-message-assistant-body.tsx`.
-  const pendingInterview = useMemo(
-    () =>
-      findPendingInterview(renderedMessages, (id) =>
-        hostPendingInterviewIds.has(id),
-      ),
-    [hostPendingInterviewIds, renderedMessages],
-  );
+  const pendingInterview = rowView.pendingInterview;
   // Block IDs whose answer/skip action is still in flight or accepted-but-
   // unresolved. Recomputes only when actions change (not per streaming token),
   // and yields a stable `false` whenever no interview is pending, so the
@@ -2620,17 +2551,7 @@ function useChatTileSessionViewModel(
   // On the windowed line the rendered scan is a scan of a SUBSET, so the host's
   // judgement decides which of its misses are real - see the function's own
   // doc. `null` is the legacy line, where absence in the transcript is proof.
-  const unanswerableInterviews = useMemo(
-    () =>
-      findUnanswerableInterviews(
-        renderedMessages,
-        state.pendingInterviews,
-        state.transcriptDerived === null
-          ? null
-          : state.transcriptDerived.interviewAnswerability,
-      ),
-    [renderedMessages, state.pendingInterviews, state.transcriptDerived],
-  );
+  const unanswerableInterviews = rowView.unanswerableInterviews;
   const unanswerableInterviewsBusy = unanswerableInterviews.some((interview) =>
     interviewActionBlockIds.has(interview.blockId),
   );
@@ -2665,10 +2586,7 @@ function useChatTileSessionViewModel(
     },
     [chatActions],
   );
-  const setupCardShown = useMemo(
-    () => transcriptShowsSetupCard(renderedMessages),
-    [renderedMessages],
-  );
+  const setupCardShown = rowView.setupCardShown;
   const { messageActionsFor, forkAtAssistantMessage, revertOnEdit } =
     useChatMessageActions({
       dispatchUi,
@@ -2686,17 +2604,9 @@ function useChatTileSessionViewModel(
       node,
       chatTitle: projectedChatTitle ?? state.chat?.title ?? null,
       chatParentId: state.chat?.parentId ?? null,
-      messages: state.messages,
+      sessionStore: handle.store,
       messageDelivery: state.messageDelivery,
       setupCardShown,
-      events: state.events,
-      // `transcriptDerived !== null` is the line discriminator: on the legacy
-      // line the window is an inert empty value and `messages`/`events` are
-      // already whole, so handing it over would make the revert scan think it
-      // was looking at an empty transcript and answer "unknown" forever.
-      transcriptWindow: isWindowedTranscript(state)
-        ? state.transcriptWindow
-        : null,
       profile,
       chatActions,
       pendingActions: state.pendingActions,
@@ -2943,7 +2853,7 @@ function useChatTileSessionViewModel(
         ),
         placement: sideChatPlacementForTile(viewTabId, node.id),
         createChat: (request, callbacks) =>
-          createSideChat.mutate(request, {
+          createSideChat(request, {
             ...callbacks,
             onSuccess: (result) => {
               // Consume the captured queue edit only after the fork exists;
@@ -3396,7 +3306,7 @@ function useChatTileSessionViewModel(
   // harness changes), so it never churns the memoized composer per streamed
   // token. `getActiveTurnForSteer` reads the live turn at submit time for the
   // settings-drift comparison, avoiding a reactive activeTurn prop.
-  const steerCapable = state.activeTurn?.sameTurnSteeringSupported ?? false;
+  const steerCapable = state.steerCapable;
   const steerProtocolSupported = state.steerProtocolSupported;
   // Same stability argument as `steerProtocolSupported`: fixed once the
   // handshake lands, so it never churns the memoized composer per token.
@@ -3690,9 +3600,6 @@ function useChatTileSessionViewModel(
     linkResolutionRoots,
     currentEpicId,
     snapshotLoaded: state.snapshotLoaded,
-    transcriptBaselineEpoch: state.transcriptBaselineEpoch,
-    transcriptHydrationSequence: state.transcriptHydrationSequence,
-    coldRewrittenMessageIds: state.coldRewrittenMessageIds,
     connectionStatus: state.connectionStatus,
     fatalClose: state.fatalClose,
     preSnapshotRetries: state.preSnapshotRetries,
@@ -3709,12 +3616,12 @@ function useChatTileSessionViewModel(
     onChatRetry: () => handle.store.getState().retry(),
     onChatRetryFromUser: () => handle.store.getState().retryFromUser(),
     restoreContext,
-    messages: pinnedTodoRenderState.messages,
+    rowPresentation,
+    inlineEditMessage: activeInlineEdit?.originalMessage ?? null,
     activeTurnId,
     // Same line discriminator as the revert-scope resolution above: on the
     // legacy line the window is an inert empty value whose `rowCount` of 0
     // would make the merge treat every rendered row as an unplaced tail row.
-    transcriptWindow: windowedTranscript ? state.transcriptWindow : null,
     surfaceVisible,
     surfaceFocused,
     getMessageActions: messageActionsFor,
@@ -3737,7 +3644,7 @@ function useChatTileSessionViewModel(
       backgroundSessionStopPending: state.pendingBackgroundSessionStop !== null,
       fallback: lowerProviderFallback,
     },
-    todo: pinnedTodoRenderState.todo,
+    todo: rowView.todo,
     revertOnEdit,
     steerRestart,
     teardownCommit: {
@@ -3856,25 +3763,21 @@ interface ChatSessionMessagesSurfaceProps {
   readonly viewTabId: string;
   readonly tabHostId: string | null;
   readonly workspaceRoots: ReadonlyArray<string>;
-  readonly messages: ReadonlyArray<ChatMessageModel>;
+  readonly handle: ChatSessionStoreHandle;
+  readonly inlineEditMessage: ChatMessageModel | null;
+  readonly rowPresentation: {
+    readonly display: RenderedMessagesDisplayContext;
+    readonly viewTabId: string;
+  };
   /**
    * The running turn's id, or `null`. Seeds the "thinking" verb - see the pick
    * below for why it is the turn and not a count over `messages`.
    */
   readonly activeTurnId: string | null;
-  /** The transcript index on the windowed line; `null` on the legacy line.
-   *  See `ChatMessagesProps.transcriptWindow`. */
-  readonly transcriptWindow: TranscriptWindow | null;
   /** Viewport-driven hydration report; see `ChatMessagesProps`. */
   readonly onVisibleOrdinalRangeChange: (range: OrdinalRange | null) => void;
   /** Chat find's index-read hydration; see `ChatMessagesProps`. */
   readonly onFindReadOrdinalChange: (ordinal: number | null) => void;
-  /** Which connection's snapshot established `messages`; see `ChatMessages`. */
-  readonly baselineEpoch: number;
-  /** Whether a range seated these rows; see `ChatMessages`. */
-  readonly hydrationSequence: number;
-  /** Rows rewritten while cold; see `ChatMessages`. */
-  readonly coldRewrittenMessageIds: ReadonlySet<string>;
   readonly backgroundItems: ReadonlyArray<BackgroundItem> | undefined;
   readonly scrollRequest: ChatMessageScrollRequest | null;
   readonly onScrollRequestSettled: (requestId: number) => void;
@@ -3929,6 +3832,32 @@ function ContextUsageChipForChat(props: {
 function ChatSessionMessagesSurface(
   props: ChatSessionMessagesSurfaceProps,
 ): ReactNode {
+  const transcript = useStore(
+    props.handle.store,
+    useShallow((s) => ({
+      window: s.transcriptDerived === null ? null : s.transcriptWindow,
+      baselineEpoch: s.transcriptBaselineEpoch,
+      hydrationSequence: s.transcriptHydrationSequence,
+      coldRewrittenMessageIds: s.coldRewrittenMessageIds,
+    })),
+  );
+  const rowSnapshot = useStore(
+    props.handle.rows,
+    useShallow((s) => ({ messages: s.messages, rows: s.rows })),
+  );
+  const rows = rowSnapshot.messages;
+  const messages = useMemo(
+    () =>
+      props.inlineEditMessage === null ||
+      rows.some(
+        (row) =>
+          row.persistentMessageId ===
+          props.inlineEditMessage?.persistentMessageId,
+      )
+        ? rows
+        : [...rows, props.inlineEditMessage],
+    [rows, props.inlineEditMessage],
+  );
   // Until the real `chat.subscribe` snapshot lands (~0.5s - the host is
   // local-first) the pre-content body owns this surface: the wait, the fatal
   // close the host will never follow with a snapshot, and the streak of failed
@@ -3969,47 +3898,91 @@ function ChatSessionMessagesSurface(
     `${props.node.id}:${props.activeTurnId ?? ""}`,
   );
   return (
-    <ChatRestoreProvider value={props.restoreContext}>
-      <MobileDrawerVisibleTilePaintReporter ready />
-      <ChatPlanActionsContext.Provider value={props.planActions}>
-        <WorkingVerbContext.Provider value={workingVerb}>
-          <ThinkingTokensSourceContext.Provider
-            value={props.thinkingTokensSource}
-          >
-            <ChatMarkdownLinkProvider
-              tabId={props.viewTabId}
-              workspaceRoots={props.workspaceRoots}
-            >
-              <ChatMessages
-                taskTitle={props.taskTitle}
-                taskId={props.node.id}
-                epicId={props.epicId}
-                hostId={props.tabHostId}
-                messages={props.messages}
-                transcriptWindow={props.transcriptWindow}
-                onVisibleOrdinalRangeChange={props.onVisibleOrdinalRangeChange}
-                onFindReadOrdinalChange={props.onFindReadOrdinalChange}
-                baselineEpoch={props.baselineEpoch}
-                hydrationSequence={props.hydrationSequence}
-                coldRewrittenMessageIds={props.coldRewrittenMessageIds}
-                backgroundItems={props.backgroundItems}
-                scrollRequest={props.scrollRequest}
-                onScrollRequestSettled={props.onScrollRequestSettled}
-                getMessageActions={props.getMessageActions}
-                nextStepActions={props.nextStepActions}
-                instanceId={props.node.instanceId}
-                visible={props.surfaceVisible}
-                systemOverlayActive={props.systemOverlayActive}
-                composerOverlayHeight={props.composerOverlayHeight}
-                subagentDrillIn={props.subagentDrillIn}
-              />
-            </ChatMarkdownLinkProvider>
-          </ThinkingTokensSourceContext.Provider>
-        </WorkingVerbContext.Provider>
-      </ChatPlanActionsContext.Provider>
-    </ChatRestoreProvider>
+    <ChatRowStoreContext value={props.handle.rows}>
+      <ChatRowPresentationContext value={props.rowPresentation}>
+        <ChatRestoreProvider value={props.restoreContext}>
+          <MobileDrawerVisibleTilePaintReporter ready />
+          <ChatPlanActionsContext.Provider value={props.planActions}>
+            <WorkingVerbContext.Provider value={workingVerb}>
+              <ThinkingTokensSourceContext.Provider
+                value={props.thinkingTokensSource}
+              >
+                <ChatMarkdownLinkProvider
+                  tabId={props.viewTabId}
+                  workspaceRoots={props.workspaceRoots}
+                >
+                  <ChatMessages
+                    taskTitle={props.taskTitle}
+                    taskId={props.node.id}
+                    epicId={props.epicId}
+                    hostId={props.tabHostId}
+                    messages={messages}
+                    projectedRows={
+                      messages === rows ? rowSnapshot.rows : undefined
+                    }
+                    transcriptWindow={transcript.window}
+                    onVisibleOrdinalRangeChange={
+                      props.onVisibleOrdinalRangeChange
+                    }
+                    onFindReadOrdinalChange={props.onFindReadOrdinalChange}
+                    baselineEpoch={transcript.baselineEpoch}
+                    hydrationSequence={transcript.hydrationSequence}
+                    coldRewrittenMessageIds={transcript.coldRewrittenMessageIds}
+                    backgroundItems={props.backgroundItems}
+                    scrollRequest={props.scrollRequest}
+                    onScrollRequestSettled={props.onScrollRequestSettled}
+                    getMessageActions={props.getMessageActions}
+                    nextStepActions={props.nextStepActions}
+                    instanceId={props.node.instanceId}
+                    visible={props.surfaceVisible}
+                    systemOverlayActive={props.systemOverlayActive}
+                    composerOverlayHeight={props.composerOverlayHeight}
+                    subagentDrillIn={props.subagentDrillIn}
+                  />
+                </ChatMarkdownLinkProvider>
+              </ThinkingTokensSourceContext.Provider>
+            </WorkingVerbContext.Provider>
+          </ChatPlanActionsContext.Provider>
+        </ChatRestoreProvider>
+      </ChatRowPresentationContext>
+    </ChatRowStoreContext>
   );
 }
+
+function ChatQueueBlobRepair({
+  handle,
+}: {
+  readonly handle: ChatSessionStoreHandle;
+}): null {
+  const hostId = useTabHostId();
+  const client = useTabHostClient();
+  const profile = useAuthStore((s) => s.profile);
+  const state = useStore(
+    handle.store,
+    useShallow((s) => ({
+      events: s.events,
+      queue: s.queue,
+      connectionStatus: s.connectionStatus,
+      access: s.access,
+    })),
+  );
+  const actions = useChatActions(handle);
+  useQueuedPromptBlobRepair({
+    hostId,
+    client,
+    events: state.events,
+    queue: state.queue,
+    canAct: chatTileCanAct(
+      state.connectionStatus,
+      state.access?.canAct === true,
+      profile !== null,
+    ),
+    resumeQueue: actions.resumeQueue,
+  });
+  return null;
+}
+
+const EMPTY_CHAT_MESSAGES: ReadonlyArray<ChatMessageModel> = [];
 
 function useChatTileComposerSettingsSeeds(input: {
   readonly currentEpicId: string;

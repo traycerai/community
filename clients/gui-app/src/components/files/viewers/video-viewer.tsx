@@ -188,7 +188,6 @@ function useVideoSource(
 ): VideoSourceMachine {
   const [source, setSource] = useState<VideoSource>("url");
   const [refreshUsed, setRefreshUsed] = useState(false);
-  const [refreshAskedAt, setRefreshAskedAt] = useState<number | null>(null);
   const [activeUrl, setActiveUrl] = useState<string | null>(null);
   const [reloads, setReloads] = useState(0);
   // Set when the fallback was "no URL yet": the URL is then still watched, and
@@ -215,16 +214,6 @@ function useVideoSource(
     setAwaitingUrl(false);
     setSource("url");
   }, [awaitingUrl, source, latestUrl, playbackRef]);
-  // The refresh a media error asked for has answered.
-  if (refreshAskedAt !== null && url.dataUpdatedAt > refreshAskedAt) {
-    setRefreshAskedAt(null);
-    if (latestUrl === null) setSource("blob");
-    // The same URL again: only a reload makes the element try it again.
-    else if (latestUrl === activeUrl) setReloads(reloads + 1);
-  } else if (refreshAskedAt !== null && url.errorUpdatedAt > refreshAskedAt) {
-    setRefreshAskedAt(null);
-    setSource("blob");
-  }
 
   return {
     source,
@@ -236,13 +225,18 @@ function useVideoSource(
         return;
       }
       setRefreshUsed(true);
-      setRefreshAskedAt(Date.now());
-      void url.refetch();
+      // The refetch's own answer decides, never a timestamp compared against
+      // the ask: a wall clock can tie, or step back, between the two.
+      void url.refetch().then((refreshed) => {
+        const refreshedUrl = readUrlAnswer(refreshed).latestUrl;
+        if (refreshed.isError || refreshedUrl === null) setSource("blob");
+        // The same URL again: only a reload makes the element try it again.
+        else if (refreshedUrl === activeUrl) setReloads((count) => count + 1);
+      });
     },
     endRecovery: () => setRefreshUsed(false),
     retry: () => {
       setRefreshUsed(false);
-      setRefreshAskedAt(null);
       setActiveUrl(null);
       setAwaitingUrl(false);
       setSource("url");

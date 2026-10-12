@@ -38,8 +38,14 @@ import {
 } from "@/components/chat/chat-attachment-scope-context";
 import { AppMessageDraftPill } from "@/components/chat/composer/app-message-draft-pill";
 import { McpAppRow } from "@/components/chat/segments/mcp-app-row";
+import { TabBodySelectedContext } from "@/components/epic-canvas/canvas/tab-body-selected-context";
+import { PaneVisibilityContext } from "@/components/epic-tabs/pane-visibility-context";
 import { blockingLayerClaimed } from "@/components/layout/shell/blocking-layer-claim";
 import { setPhoneLayoutOnly } from "@/lib/mobile-app";
+import {
+  SurfaceDemandContext,
+  type ActiveSurfaceDemand,
+} from "@/stores/tabs/surface-demand";
 import {
   EpicFileRpcContext,
   type EpicFileRpc,
@@ -270,12 +276,12 @@ const THEME: ResolvedThemeContextValue = {
   themePreset: "traycer-green",
 };
 
-function renderRow(
+function rowTree(
   fileRpc: EpicFileRpc,
   mcpRpc: McpAppRpc,
   scope: ChatAttachmentScopeValue | null,
   app: ToolCallMcpAppStamp,
-): void {
+): ReactNode {
   const client = new QueryClient({
     defaultOptions: { queries: { gcTime: Infinity } },
   });
@@ -292,18 +298,25 @@ function renderRow(
       </ResolvedThemeContext.Provider>
     </QueryClientProvider>
   );
-  render(
-    wrap(
-      <>
-        <McpAppRow
-          id={BLOCK_ID}
-          app={app}
-          fallback={<div data-testid="ordinary-tool-row" />}
-        />
-        <AppMessageDraftPill chatId={CHAT_ID} />
-      </>,
-    ),
+  return wrap(
+    <>
+      <McpAppRow
+        id={BLOCK_ID}
+        app={app}
+        fallback={<div data-testid="ordinary-tool-row" />}
+      />
+      <AppMessageDraftPill chatId={CHAT_ID} />
+    </>,
   );
+}
+
+function renderRow(
+  fileRpc: EpicFileRpc,
+  mcpRpc: McpAppRpc,
+  scope: ChatAttachmentScopeValue | null,
+  app: ToolCallMcpAppStamp,
+): void {
+  render(rowTree(fileRpc, mcpRpc, scope, app));
 }
 
 /** What the app inside the frame does: one JSON-RPC request to the host. */
@@ -390,6 +403,109 @@ describe("<McpAppRow /> running the app", () => {
     expect(
       screen.getByTestId("sandbox-frame").parentElement?.className,
     ).toMatch(/\bborder\b/);
+  });
+});
+
+interface TileVisibility {
+  readonly pane: boolean;
+  readonly tab: boolean;
+}
+
+const TILE_SHOWN: TileVisibility = { pane: true, tab: true };
+
+/** The two contexts `useTileBodyVisible()` composes, as a tile body provides. */
+function TileBody(props: {
+  readonly visibility: TileVisibility;
+  readonly children: ReactNode;
+}): ReactNode {
+  return (
+    <PaneVisibilityContext.Provider value={props.visibility.pane}>
+      <TabBodySelectedContext.Provider value={props.visibility.tab}>
+        {props.children}
+      </TabBodySelectedContext.Provider>
+    </PaneVisibilityContext.Provider>
+  );
+}
+
+describe("<McpAppRow /> in a tile body that is not on screen", () => {
+  const HIDDEN: ReadonlyArray<readonly [string, TileVisibility]> = [
+    ["its pane is not the shown pane", { pane: false, tab: true }],
+    ["its tab is not the front tab", { pane: true, tab: false }],
+  ];
+
+  it.each(HIDDEN)(
+    "reads and runs nothing while %s, loads once shown, and keeps the live app when hidden again",
+    async (_case, hidden) => {
+      const fileRpc = makeFileRpc(HTML_RESPONSE);
+      const tree = rowTree(fileRpc, makeMcpRpc(), SCOPE, STAMP);
+      const settle = () =>
+        act(async () => {
+          await new Promise((resolve) => setTimeout(resolve, 0));
+        });
+
+      const view = render(<TileBody visibility={hidden}>{tree}</TileBody>);
+      await settle();
+      expect(fileRpc.readFile).not.toHaveBeenCalled();
+      expect(screen.queryByTestId("sandbox-frame")).toBeNull();
+      expect(mocks.frame.mounts).toBe(0);
+
+      view.rerender(<TileBody visibility={TILE_SHOWN}>{tree}</TileBody>);
+      const frame = await screen.findByTestId("sandbox-frame");
+      expect(fileRpc.readFile).toHaveBeenCalledTimes(1);
+      expect(mocks.frame.mounts).toBe(1);
+
+      // A running app is not torn down and reloaded for a tab switch.
+      view.rerender(<TileBody visibility={hidden}>{tree}</TileBody>);
+      await settle();
+      expect(screen.getByTestId("sandbox-frame")).toBe(frame);
+      expect(fileRpc.readFile).toHaveBeenCalledTimes(1);
+      expect(mocks.frame.mounts).toBe(1);
+    },
+  );
+});
+
+/** A shown, selected tile body whose surface demand a test steers. */
+function DemandBody(props: {
+  readonly demand: ActiveSurfaceDemand;
+  readonly children: ReactNode;
+}): ReactNode {
+  return (
+    <TileBody visibility={TILE_SHOWN}>
+      <SurfaceDemandContext.Provider value={props.demand}>
+        {props.children}
+      </SurfaceDemandContext.Provider>
+    </TileBody>
+  );
+}
+
+describe("<McpAppRow /> in a tile body a held tab cycle is only previewing", () => {
+  it("shows the fallback and starts nothing while previewed, runs once settled, and keeps the live app through a later preview", async () => {
+    const fileRpc = makeFileRpc(HTML_RESPONSE);
+    const tree = rowTree(fileRpc, makeMcpRpc(), SCOPE, STAMP);
+    const settle = () =>
+      act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+      });
+
+    const view = render(<DemandBody demand="preview">{tree}</DemandBody>);
+    await settle();
+    // Shown and selected, yet only passed through.
+    expect(screen.getByTestId("ordinary-tool-row")).toBeTruthy();
+    expect(fileRpc.readFile).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("sandbox-frame")).toBeNull();
+    expect(mocks.frame.mounts).toBe(0);
+
+    view.rerender(<DemandBody demand="settled">{tree}</DemandBody>);
+    const frame = await screen.findByTestId("sandbox-frame");
+    expect(fileRpc.readFile).toHaveBeenCalledTimes(1);
+    expect(mocks.frame.mounts).toBe(1);
+
+    // A running app is not torn down for a later preview.
+    view.rerender(<DemandBody demand="preview">{tree}</DemandBody>);
+    await settle();
+    expect(screen.getByTestId("sandbox-frame")).toBe(frame);
+    expect(fileRpc.readFile).toHaveBeenCalledTimes(1);
+    expect(mocks.frame.mounts).toBe(1);
   });
 });
 

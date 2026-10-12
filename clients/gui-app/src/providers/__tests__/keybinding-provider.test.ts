@@ -4,17 +4,31 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createMemoryHistory } from "@tanstack/react-router";
 import {
   dispatchAction,
+  dispatchKeydownAction,
   findActionForChord,
+  flushTabCycle,
   matchDigitAction,
   registerBaseLeaderScope,
   registerDynamicActionHandler,
+  resetTabCycle,
   resolveLeaderOwner,
   type KeybindingRouter,
 } from "@/lib/keybindings/dispatch";
+import { registerLeaderScope } from "@/lib/keybindings/leader-scope";
 import type { KeybindingRouterSource } from "@/lib/keybindings/router-adapter";
+import {
+  hasPreviewDemand,
+  paneDemand,
+  topLevelDemand,
+  useSurfaceDemandStore,
+} from "@/stores/tabs/surface-demand";
 import { paneTabRefs } from "@/stores/epics/canvas/actions";
-import { collectPanes } from "@/stores/epics/canvas/tile-tree";
+import { collectPanes, findPaneById } from "@/stores/epics/canvas/tile-tree";
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
+import {
+  RETAINED_PANE_CHAT_CAP,
+  retainedPaneChatInstanceIds,
+} from "@/stores/epics/canvas/retained-pane-chats";
 import { useLandingDraftStore } from "@/stores/home/landing-draft-store";
 import { setSystemTabModalApi } from "@/stores/tabs/system-tab-modal-bridge";
 import type {
@@ -22,7 +36,11 @@ import type {
   SystemOverlayKind,
 } from "@/stores/tabs/system-overlay-types";
 import { useTabsStore } from "@/stores/tabs/store";
-import { tabItemId } from "@/stores/tabs/layout";
+import {
+  tabActivationHistory,
+  tabItemId,
+  tabRefKey,
+} from "@/stores/tabs/layout";
 import { useKeybindingStore } from "@/stores/settings/keybinding-store";
 import { getDefaultBindings } from "@/lib/keybindings/actions";
 import { isMac } from "@/lib/keybindings/platform";
@@ -44,6 +62,7 @@ interface NavigateCall {
 interface MockRouter {
   readonly router: KeybindingRouter;
   readonly calls: Array<NavigateCall>;
+  readonly demands: Array<"preview" | "settled" | undefined>;
   readonly setPath: (next: string) => void;
 }
 
@@ -59,12 +78,33 @@ function setActiveSystemOverlay(kind: SystemOverlayKind): void {
   });
 }
 
+// Preview demand is process-global transient state; a hold a test abandons must
+// not leak into the next test, and activations write it through the shared
+// coordinator, so every test also starts from the initial store.
+beforeEach(() => {
+  useSurfaceDemandStore.setState(useSurfaceDemandStore.getInitialState(), true);
+});
+
+afterEach(() => {
+  useSurfaceDemandStore.setState(useSurfaceDemandStore.getInitialState(), true);
+});
+
 function specRef(id: "spec-a" | "spec-b"): EpicNodeRef {
   return {
     id,
     instanceId: `${id}-instance`,
     type: "spec",
     name: id === "spec-a" ? "Spec A" : "Spec B",
+    hostId: "host-a",
+  };
+}
+
+function chatRef(id: string): EpicNodeRef {
+  return {
+    id,
+    instanceId: `${id}-instance`,
+    type: "chat",
+    name: id,
     hostId: "host-a",
   };
 }
@@ -80,6 +120,7 @@ function canvasTabIds(tabId: string): ReadonlyArray<string> {
 function buildRouter(initialPath: string): MockRouter {
   synchronizeLayoutForRoute(initialPath);
   const calls: Array<NavigateCall> = [];
+  const demands: Array<"preview" | "settled" | undefined> = [];
   let pathname = initialPath;
   const router: KeybindingRouter = {
     getPathname: () => pathname,
@@ -108,6 +149,7 @@ function buildRouter(initialPath: string): MockRouter {
       pathname = `/settings/${sectionId}`;
     },
     navigateToTabIntent: (intent) => {
+      demands.push(intent.demand);
       if (intent.kind === "epic") {
         calls.push({ kind: "epic", epicId: intent.epicId, sectionId: null });
         pathname = `/epics/${intent.epicId}/${intent.tabId}`;
@@ -143,6 +185,9 @@ function buildRouter(initialPath: string): MockRouter {
         });
         pathname = `/settings/${intent.section}`;
       }
+      // Mirrors the real activation authority's synchronous store update, so
+      // header tab cycling (which reads live focus, not pathname) sees it.
+      synchronizeLayoutForRoute(pathname);
     },
     goBack: () => {
       calls.push({ kind: "back", epicId: null, sectionId: null });
@@ -157,7 +202,7 @@ function buildRouter(initialPath: string): MockRouter {
   const setPath = (next: string) => {
     pathname = next;
   };
-  return { router, calls, setPath };
+  return { router, calls, demands, setPath };
 }
 
 function synchronizeLayoutForRoute(pathname: string): void {
@@ -916,6 +961,925 @@ describe("<KeybindingProvider /> inside a Diffs editor boundary", () => {
     });
 
     expect(useEpicCanvasStore.getState().activeTabId).toBe(tabIds[11]);
+  });
+});
+
+function paneState(tabId: string): {
+  readonly ids: ReadonlyArray<string>;
+  readonly activeId: string | null;
+} {
+  const canvas = useEpicCanvasStore.getState().canvasByTabId[tabId];
+  const activePaneId = canvas?.activePaneId ?? null;
+  const pane =
+    canvas === undefined || activePaneId === null
+      ? null
+      : findPaneById(canvas.root, activePaneId);
+  return {
+    ids: pane?.tabInstanceIds ?? [],
+    activeId: pane?.activeTabId ?? null,
+  };
+}
+
+// Physical press commits immediately; held repeats only advance an in-memory
+// cursor until flush (the audit's Cmd+Shift+] hold regression).
+describe("dispatchKeydownAction tab-cycle repeat coalescing", () => {
+  // jsdom has no native requestAnimationFrame; stub one that schedules
+  // without firing, so a repeat's scheduling call doesn't throw.
+  let rafId = 0;
+  const originalRaf = window.requestAnimationFrame;
+  const originalCancelRaf = window.cancelAnimationFrame;
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    useKeybindingStore.setState({ bindings: getDefaultBindings() });
+    seedEpicTabs();
+    window.requestAnimationFrame = () => ++rafId;
+    window.cancelAnimationFrame = () => undefined;
+  });
+
+  afterEach(() => {
+    useEpicCanvasStore.setState(useEpicCanvasStore.getInitialState(), true);
+    vi.restoreAllMocks();
+    window.requestAnimationFrame = originalRaf;
+    window.cancelAnimationFrame = originalCancelRaf;
+  });
+
+  it("coalesces repeated tab.next presses into a single commit at flush, landing on the final target", () => {
+    const tabId = useEpicCanvasStore
+      .getState()
+      .openEpicTab("epic-pane-cycle", "Pane Cycle");
+    // 4 tiles: with press + 2 repeats (3 steps total), start/after-press/final
+    // land on 3 distinct indices - a 2-tile pane can alias these under mod 2.
+    ["p1", "p2", "p3", "p4"].forEach((id) => {
+      useEpicCanvasStore.getState().openTileInTab(tabId, {
+        id,
+        instanceId: `${id}-instance`,
+        type: "spec",
+        name: id,
+        hostId: "host-a",
+      });
+    });
+    const { router } = buildRouter(`/epics/epic-pane-cycle/${tabId}`);
+    const commitSpy = vi.spyOn(
+      useEpicCanvasStore.getState(),
+      "prepareSetActiveTileTabFocusTarget",
+    );
+    const paneId =
+      useEpicCanvasStore.getState().canvasByTabId[tabId]?.activePaneId;
+    if (paneId === undefined || paneId === null) {
+      throw new Error("expected an active pane");
+    }
+    const historyOf = (): ReadonlyArray<string> => {
+      const canvas = useEpicCanvasStore.getState().canvasByTabId[tabId];
+      const pane =
+        canvas === undefined ? null : findPaneById(canvas.root, paneId);
+      return pane?.activationHistory ?? [];
+    };
+
+    const start = paneState(tabId);
+    if (start.activeId === null) throw new Error("expected an active pane tab");
+    const startIndex = start.ids.indexOf(start.activeId);
+    const expectedAfter = (steps: number) =>
+      start.ids[(startIndex + steps) % start.ids.length];
+
+    // Physical press: commits immediately (1st commit).
+    expect(dispatchKeydownAction("tab.next", router, false)).toBe(true);
+    expect(paneState(tabId).activeId).toBe(expectedAfter(1));
+    expect(commitSpy).toHaveBeenCalledTimes(1);
+
+    // Held repeat 1: cursor moves, no new commit.
+    expect(dispatchKeydownAction("tab.next", router, true)).toBe(true);
+    expect(paneState(tabId).activeId).toBe(expectedAfter(1));
+    expect(commitSpy).toHaveBeenCalledTimes(1);
+
+    // Held repeat 2: cursor moves again, still no new commit.
+    expect(dispatchKeydownAction("tab.next", router, true)).toBe(true);
+    expect(paneState(tabId).activeId).toBe(expectedAfter(1));
+    expect(commitSpy).toHaveBeenCalledTimes(1);
+
+    // A repeat-driven flush (what an rAF tick triggers while still held)
+    // previews the target - it moves the pane's visible selection and marks
+    // it as preview demand without touching activationHistory, and never
+    // calls the real, history-recording commit.
+    const historyBeforePreview = historyOf();
+    expect(hasPreviewDemand()).toBe(false);
+    flushTabCycle(router);
+    expect(expectedAfter(3)).not.toBe(expectedAfter(1));
+    expect(expectedAfter(3)).not.toBe(start.activeId);
+    expect(paneState(tabId).activeId).toBe(expectedAfter(3));
+    expect(paneDemand(paneId)).toBe("preview");
+    expect(historyOf()).toEqual(historyBeforePreview);
+    expect(commitSpy).toHaveBeenCalledTimes(1);
+
+    // Release (what keyup triggers): settles the previewed target through the
+    // real, history-recording activation - exactly once, at the final target -
+    // and drops the preview demand.
+    resetTabCycle(router);
+    expect(paneState(tabId).activeId).toBe(expectedAfter(3));
+    expect(paneDemand(paneId)).toBe("settled");
+    expect(hasPreviewDemand()).toBe(false);
+    expect(historyOf()[0]).toBe(expectedAfter(3));
+    expect(commitSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it("commits a held repeat via the 100ms fallback timer when the animation frame never fires (occluded window)", () => {
+    const firstTabId = useEpicCanvasStore.getState().openTabOrder[0];
+    const { router, calls, demands } = buildRouter(`/epics/e1/${firstTabId}`);
+
+    vi.useFakeTimers();
+    // Simulate an occluded/hidden window: rAF is scheduled but never fires.
+    window.requestAnimationFrame = () => 0;
+    try {
+      expect(dispatchKeydownAction("epic.next", router, false)).toBe(true);
+      expect(calls.length).toBe(1);
+      expect(calls[0].epicId).toBe("e2");
+
+      expect(dispatchKeydownAction("epic.next", router, true)).toBe(true);
+      // The repeat only schedules - no frame ever runs to flush it.
+      expect(calls.length).toBe(1);
+
+      vi.advanceTimersByTime(100);
+      expect(calls.length).toBe(2);
+      expect(calls[1].epicId).toBe("e3");
+      // The press activates normally; the scheduled flush only previews.
+      expect(demands).toEqual(["settled", "preview"]);
+      // A scheduled flush does not settle - only an explicit reset
+      // (keyup/pointerdown/etc.) does, and it settles the previewed target.
+      resetTabCycle(router);
+      expect(demands).toEqual(["settled", "preview", "settled"]);
+      expect(calls[2].epicId).toBe("e3");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  function openCyclingPane(epicId: string): {
+    readonly tabId: string;
+    readonly paneId: string;
+    readonly router: KeybindingRouter;
+    readonly historyOf: () => ReadonlyArray<string>;
+    readonly expectedAfter: (steps: number) => string;
+  } {
+    const tabId = useEpicCanvasStore.getState().openEpicTab(epicId, epicId);
+    ["p1", "p2", "p3", "p4"].forEach((id) => {
+      useEpicCanvasStore.getState().openTileInTab(tabId, {
+        id,
+        instanceId: `${id}-instance`,
+        type: "spec",
+        name: id,
+        hostId: "host-a",
+      });
+    });
+    const { router } = buildRouter(`/epics/${epicId}/${tabId}`);
+    const paneId =
+      useEpicCanvasStore.getState().canvasByTabId[tabId]?.activePaneId;
+    if (paneId === undefined || paneId === null) {
+      throw new Error("expected an active pane");
+    }
+    const historyOf = (): ReadonlyArray<string> => {
+      const canvas = useEpicCanvasStore.getState().canvasByTabId[tabId];
+      const pane =
+        canvas === undefined ? null : findPaneById(canvas.root, paneId);
+      return pane?.activationHistory ?? [];
+    };
+    const start = paneState(tabId);
+    if (start.activeId === null) throw new Error("expected an active pane tab");
+    const startIndex = start.ids.indexOf(start.activeId);
+    return {
+      tabId,
+      paneId,
+      router,
+      historyOf,
+      expectedAfter: (steps) => start.ids[(startIndex + steps) % 4],
+    };
+  }
+
+  describe("a held cycle whose key release never arrives", () => {
+    // macOS withholds the keyup of a non-modifier key pressed with Cmd, so a
+    // hold ends on the repeat stream going quiet instead.
+    const REPEAT_GAP_MS = 33;
+
+    function holdUntilPreviewing(epicId: string) {
+      const pane = openCyclingPane(epicId);
+      // Press, then two repeats one OS repeat period apart; the frame flush
+      // is what turns the cursor into a visible preview.
+      expect(dispatchKeydownAction("tab.next", pane.router, false)).toBe(true);
+      expect(dispatchKeydownAction("tab.next", pane.router, true)).toBe(true);
+      vi.advanceTimersByTime(REPEAT_GAP_MS);
+      expect(dispatchKeydownAction("tab.next", pane.router, true)).toBe(true);
+      flushTabCycle(pane.router);
+      expect(paneState(pane.tabId).activeId).toBe(pane.expectedAfter(3));
+      expect(paneDemand(pane.paneId)).toBe("preview");
+      return pane;
+    }
+
+    it("settles the previewed tab once repeats stop for longer than three measured repeat gaps, floored at 150ms", () => {
+      vi.useFakeTimers();
+      try {
+        const pane = holdUntilPreviewing("epic-idle-settle");
+
+        // Inside the window: 3 x 33ms floors at 150ms, so 140ms is still a hold.
+        vi.advanceTimersByTime(140);
+        expect(paneDemand(pane.paneId)).toBe("preview");
+        expect(hasPreviewDemand()).toBe(true);
+
+        // Past it: the quiet repeat stream is the release.
+        vi.advanceTimersByTime(11);
+        expect(paneDemand(pane.paneId)).toBe("settled");
+        expect(hasPreviewDemand()).toBe(false);
+        expect(paneState(pane.tabId).activeId).toBe(pane.expectedAfter(3));
+        expect(pane.historyOf()[0]).toBe(pane.expectedAfter(3));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("keeps previewing when a repeat lands inside the window, and re-measures the window from that gap", () => {
+      vi.useFakeTimers();
+      try {
+        const pane = holdUntilPreviewing("epic-idle-keeps-previewing");
+
+        // A slow repeat (140ms) still inside the 150ms window: no settle.
+        vi.advanceTimersByTime(140);
+        expect(dispatchKeydownAction("tab.next", pane.router, true)).toBe(true);
+        flushTabCycle(pane.router);
+        expect(paneState(pane.tabId).activeId).toBe(pane.expectedAfter(4));
+        expect(paneDemand(pane.paneId)).toBe("preview");
+
+        // The window now follows the 140ms gap (3 x 140ms = 420ms), so the
+        // time that settled the earlier cycle does not settle this one.
+        vi.advanceTimersByTime(300);
+        expect(paneDemand(pane.paneId)).toBe("preview");
+
+        vi.advanceTimersByTime(121);
+        expect(paneDemand(pane.paneId)).toBe("settled");
+        expect(pane.historyOf()[0]).toBe(pane.expectedAfter(4));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("waits the full 2s cap for the first repeat's gap to be measured", () => {
+      vi.useFakeTimers();
+      try {
+        const pane = openCyclingPane("epic-idle-first-repeat");
+        expect(dispatchKeydownAction("tab.next", pane.router, false)).toBe(
+          true,
+        );
+        expect(dispatchKeydownAction("tab.next", pane.router, true)).toBe(true);
+        flushTabCycle(pane.router);
+        expect(paneDemand(pane.paneId)).toBe("preview");
+
+        vi.advanceTimersByTime(1990);
+        expect(paneDemand(pane.paneId)).toBe("preview");
+        vi.advanceTimersByTime(11);
+        expect(paneDemand(pane.paneId)).toBe("settled");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("keeps one session through a slow 900ms repeat cadence, settling only after the 2s cap once repeats stop", () => {
+      vi.useFakeTimers();
+      try {
+        const pane = openCyclingPane("epic-idle-slow-cadence");
+        const SLOW_REPEAT_GAP_MS = 900;
+        expect(dispatchKeydownAction("tab.next", pane.router, false)).toBe(
+          true,
+        );
+        expect(paneState(pane.tabId).activeId).toBe(pane.expectedAfter(1));
+        const historyAfterPress = pane.historyOf();
+
+        // Four repeats, each one a full OS repeat period of 900ms apart. The
+        // first window is unmeasured, so it must outlast the gap: a shorter one
+        // fires between repeats and ends the session, and the next repeat then
+        // starts a new one with no measured gap, settling every single repeat.
+        for (let repeat = 1; repeat <= 4; repeat += 1) {
+          if (repeat > 1) {
+            vi.advanceTimersByTime(SLOW_REPEAT_GAP_MS - 1);
+            // Right before the next repeat: still the same hold.
+            expect(paneDemand(pane.paneId)).toBe("preview");
+            vi.advanceTimersByTime(1);
+          }
+          expect(dispatchKeydownAction("tab.next", pane.router, true)).toBe(
+            true,
+          );
+          flushTabCycle(pane.router);
+          // The cursor keeps advancing from where the hold left it, a preview
+          // that records nothing, never a fresh session from the committed tab.
+          expect(paneState(pane.tabId).activeId).toBe(
+            pane.expectedAfter(1 + repeat),
+          );
+          expect(paneDemand(pane.paneId)).toBe("preview");
+          expect(pane.historyOf()).toEqual(historyAfterPress);
+        }
+
+        // Repeats stop. Three measured gaps would be 2.7s, capped at 2s.
+        vi.advanceTimersByTime(1990);
+        expect(paneDemand(pane.paneId)).toBe("preview");
+        expect(pane.historyOf()).toEqual(historyAfterPress);
+        vi.advanceTimersByTime(11);
+        expect(paneDemand(pane.paneId)).toBe("settled");
+        expect(hasPreviewDemand()).toBe(false);
+        expect(paneState(pane.tabId).activeId).toBe(pane.expectedAfter(5));
+        expect(pane.historyOf()[0]).toBe(pane.expectedAfter(5));
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  it("records a cancelled pane preview as an activation, so the tab the pane still shows keeps its retention", () => {
+    const pane = openCyclingPane("epic-cancelled-preview");
+    const activePaneBefore =
+      useEpicCanvasStore.getState().canvasByTabId[pane.tabId]?.activePaneId;
+
+    expect(dispatchKeydownAction("tab.next", pane.router, false)).toBe(true);
+    expect(dispatchKeydownAction("tab.next", pane.router, true)).toBe(true);
+    flushTabCycle(pane.router);
+    const previewed = pane.expectedAfter(2);
+    expect(paneState(pane.tabId).activeId).toBe(previewed);
+    expect(paneDemand(pane.paneId)).toBe("preview");
+    // A preview records nothing: the press's tab is the latest activation.
+    expect(pane.historyOf()[0]).toBe(pane.expectedAfter(1));
+
+    // A tile the cursor is not on closes mid-hold: a real membership change.
+    const closing = pane.expectedAfter(3);
+    useEpicCanvasStore
+      .getState()
+      .closeCanvasTab(pane.tabId, pane.paneId, closing);
+    expect(paneState(pane.tabId).ids).not.toContain(closing);
+
+    resetTabCycle(pane.router);
+
+    expect(paneDemand(pane.paneId)).toBe("settled");
+    expect(paneState(pane.tabId).activeId).toBe(previewed);
+    expect(pane.historyOf()[0]).toBe(previewed);
+    expect(
+      useEpicCanvasStore.getState().canvasByTabId[pane.tabId]?.activePaneId,
+    ).toBe(activePaneBefore);
+  });
+
+  it("invalidates a held repeat when a pane tile actually closes mid-hold (not this dispatch), instead of committing a stale target", () => {
+    const tabId = useEpicCanvasStore
+      .getState()
+      .openEpicTab("epic-pane-close", "Pane Close");
+    ["p1", "p2", "p3"].forEach((id) => {
+      useEpicCanvasStore.getState().openTileInTab(tabId, {
+        id,
+        instanceId: `${id}-instance`,
+        type: "spec",
+        name: id,
+        hostId: "host-a",
+      });
+    });
+    const pathname = `/epics/epic-pane-close/${tabId}`;
+    const { router } = buildRouter(pathname);
+    const before = paneState(tabId);
+
+    expect(dispatchKeydownAction("tab.next", router, false)).toBe(true);
+    expect(dispatchKeydownAction("tab.next", router, true)).toBe(true);
+
+    // A different router/window closes the active tile mid-hold - a real
+    // membership change, not a mutation of the held session's own router.
+    const { router: otherRouter } = buildRouter(pathname);
+    expect(dispatchAction("tab.close", otherRouter)).toBe(true);
+    const afterClose = paneState(tabId);
+    expect(afterClose.ids.length).toBe(before.ids.length - 1);
+
+    flushTabCycle(router);
+    expect(paneState(tabId)).toEqual(afterClose);
+    resetTabCycle(router);
+  });
+});
+
+// Owner-boundary coverage: the held-cycle preview `dispatchKeydownAction`
+// drives (repeat -> preview, keyup/reset -> real activation) is what
+// `retainedPaneChatInstanceIds` reads through `pane.activationHistory` /
+// `pane.activeTabId` and the pane's preview demand.
+// These tests exercise both real stores together, the way
+// `use-mounted-pane-tabs.ts` and `tile-surface-membership.ts` actually call
+// them - a bug in either side's contract (dispatch writing history it
+// shouldn't, or retention reading a stale/lost signal) would only show up at
+// this boundary, not inside either module's own unit tests.
+describe("held Cmd+] cycling vs chat retention (owner boundary)", () => {
+  let rafId = 0;
+  const originalRaf = window.requestAnimationFrame;
+  const originalCancelRaf = window.cancelAnimationFrame;
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    useKeybindingStore.setState({ bindings: getDefaultBindings() });
+    seedEpicTabs();
+    window.requestAnimationFrame = () => ++rafId;
+    window.cancelAnimationFrame = () => undefined;
+  });
+
+  afterEach(() => {
+    useEpicCanvasStore.setState(useEpicCanvasStore.getInitialState(), true);
+    vi.restoreAllMocks();
+    window.requestAnimationFrame = originalRaf;
+    window.cancelAnimationFrame = originalCancelRaf;
+  });
+
+  function retainedChatsFor(
+    tabId: string,
+    paneId: string,
+  ): ReadonlyArray<string> {
+    const canvas = useEpicCanvasStore.getState().canvasByTabId[tabId];
+    if (canvas === undefined) throw new Error("expected canvas");
+    const pane = findPaneById(canvas.root, paneId);
+    if (pane === null) throw new Error("expected pane");
+    return retainedPaneChatInstanceIds({
+      pane,
+      cap: RETAINED_PANE_CHAT_CAP,
+      demand: paneDemand(paneId),
+      tileFor: (instanceId) => canvas.tilesByInstanceId[instanceId],
+    });
+  }
+
+  function activationHistoryFor(
+    tabId: string,
+    paneId: string,
+  ): ReadonlyArray<string> {
+    const canvas = useEpicCanvasStore.getState().canvasByTabId[tabId];
+    const pane =
+      canvas === undefined ? null : findPaneById(canvas.root, paneId);
+    return pane?.activationHistory ?? [];
+  }
+
+  it("keeps both settled chats retained while a hold previews ten other chats, never growing past the cap", () => {
+    const tabId = useEpicCanvasStore
+      .getState()
+      .openEpicTab("epic-chat-hold", "Chat Hold");
+    const chatIds = Array.from(
+      { length: 12 },
+      (_, index) => `chat${index + 1}`,
+    );
+    chatIds.forEach((id) => {
+      useEpicCanvasStore.getState().openTileInTab(tabId, chatRef(id));
+    });
+    const paneId =
+      useEpicCanvasStore.getState().canvasByTabId[tabId]?.activePaneId;
+    if (paneId === undefined || paneId === null) {
+      throw new Error("expected an active pane");
+    }
+
+    const { router } = buildRouter(`/epics/epic-chat-hold/${tabId}`);
+
+    // Physical press (non-repeat): ordinary activation, same as any single
+    // Cmd+]. This is the pair the hold below must never evict.
+    expect(dispatchKeydownAction("tab.next", router, false)).toBe(true);
+    const settled = retainedChatsFor(tabId, paneId);
+    expect(settled).toHaveLength(2);
+    const [settledA, settledB] = settled;
+    const settledHistory = activationHistoryFor(tabId, paneId);
+
+    // Hold: ten repeats, flushing after each one (an rAF tick per held key),
+    // previewing a different chat every time.
+    for (let step = 0; step < 10; step++) {
+      expect(dispatchKeydownAction("tab.next", router, true)).toBe(true);
+      flushTabCycle(router);
+      const duringHold = retainedChatsFor(tabId, paneId);
+      // The passing preview target takes no slot of its own.
+      expect(duringHold).toEqual(settled);
+      expect(duringHold).toContain(settledA);
+      expect(duringHold).toContain(settledB);
+      expect(activationHistoryFor(tabId, paneId)).toEqual(settledHistory);
+    }
+
+    resetTabCycle(router);
+  });
+
+  it("settles the held-cycle target through real activation on keyup, then retains the target as an ordinary settled chat", () => {
+    const tabId = useEpicCanvasStore
+      .getState()
+      .openEpicTab("epic-chat-settle", "Chat Settle");
+    ["chat1", "chat2", "chat3", "chat4"].forEach((id) => {
+      useEpicCanvasStore.getState().openTileInTab(tabId, chatRef(id));
+    });
+    const paneId =
+      useEpicCanvasStore.getState().canvasByTabId[tabId]?.activePaneId;
+    if (paneId === undefined || paneId === null) {
+      throw new Error("expected an active pane");
+    }
+    const { router } = buildRouter(`/epics/epic-chat-settle/${tabId}`);
+
+    // Physical press: chat4 (last opened, so active) -> chat1 (wrap). Real
+    // activation - the settled pair going into the hold is {chat1, chat4}.
+    expect(dispatchKeydownAction("tab.next", router, false)).toBe(true);
+    expect(retainedChatsFor(tabId, paneId)).toEqual([
+      "chat1-instance",
+      "chat4-instance",
+    ]);
+    const settledHistory = activationHistoryFor(tabId, paneId);
+
+    // Hold through chat2, then chat3 - each a preview, never committed.
+    expect(dispatchKeydownAction("tab.next", router, true)).toBe(true);
+    flushTabCycle(router);
+    expect(dispatchKeydownAction("tab.next", router, true)).toBe(true);
+    flushTabCycle(router);
+    expect(paneDemand(paneId)).toBe("preview");
+    expect(retainedChatsFor(tabId, paneId)).toEqual([
+      "chat1-instance",
+      "chat4-instance",
+    ]);
+
+    // Keyup: flush (no-op here, nothing pending) then reset settles chat3.
+    // Observe every intermediate state the settle publishes: the tab the pane
+    // shows must never be evicted from retention once its demand is settled,
+    // and the settled window must never lose its most recent chat.
+    const observed: Array<{
+      readonly demand: "preview" | "settled";
+      readonly active: string | null;
+      readonly retained: ReadonlyArray<string>;
+    }> = [];
+    const record = (): void => {
+      const canvas = useEpicCanvasStore.getState().canvasByTabId[tabId];
+      const pane =
+        canvas === undefined ? null : findPaneById(canvas.root, paneId);
+      observed.push({
+        demand: paneDemand(paneId),
+        active: pane?.activeTabId ?? null,
+        retained: retainedChatsFor(tabId, paneId),
+      });
+    };
+    const unsubscribeCanvas = useEpicCanvasStore.subscribe(record);
+    const unsubscribeDemand = useSurfaceDemandStore.subscribe(record);
+    flushTabCycle(router);
+    resetTabCycle(router);
+    unsubscribeCanvas();
+    unsubscribeDemand();
+
+    expect(observed.length).toBeGreaterThan(0);
+    for (const state of observed) {
+      expect(state.retained).toContain("chat1-instance");
+      if (state.demand === "settled" && state.active !== null) {
+        expect(state.retained).toContain(state.active);
+      }
+    }
+
+    expect(hasPreviewDemand()).toBe(false);
+    expect(activationHistoryFor(tabId, paneId)).toEqual([
+      "chat3-instance",
+      ...settledHistory.filter((id) => id !== "chat3-instance"),
+    ]);
+    expect(retainedChatsFor(tabId, paneId)).toEqual([
+      "chat3-instance",
+      "chat1-instance",
+    ]);
+  });
+
+  it("a membership change that cancels a held cycle never resurrects its preview target into activation history", () => {
+    const tabId = useEpicCanvasStore
+      .getState()
+      .openEpicTab("epic-chat-cancel", "Chat Cancel");
+    ["chat1", "chat2", "chat3", "chat4"].forEach((id) => {
+      useEpicCanvasStore.getState().openTileInTab(tabId, chatRef(id));
+    });
+    const paneId =
+      useEpicCanvasStore.getState().canvasByTabId[tabId]?.activePaneId;
+    if (paneId === undefined || paneId === null) {
+      throw new Error("expected an active pane");
+    }
+    const pathname = `/epics/epic-chat-cancel/${tabId}`;
+    const { router } = buildRouter(pathname);
+
+    // Physical press (chat4 -> chat1), then hold into a preview of chat2 -
+    // never committed to activationHistory.
+    expect(dispatchKeydownAction("tab.next", router, false)).toBe(true);
+    expect(dispatchKeydownAction("tab.next", router, true)).toBe(true);
+    flushTabCycle(router);
+
+    // External cancellation: a different router closes the previewed tab
+    // (chat2) out from under the held session - a real membership change,
+    // not anything this session's own dispatch did.
+    const { router: otherRouter } = buildRouter(pathname);
+    expect(dispatchAction("tab.close", otherRouter)).toBe(true);
+    const afterCloseHistory = activationHistoryFor(tabId, paneId);
+    const afterCloseRetained = retainedChatsFor(tabId, paneId);
+    expect(afterCloseHistory).not.toContain("chat2-instance");
+
+    // The stale session's own flush must see the membership change and
+    // refuse to settle chat2 as a real activation.
+    flushTabCycle(router);
+    resetTabCycle(router);
+
+    // The aborted cursor releases the preview it owned, so retention returns
+    // to the ordinary settled policy instead of staying pinned to a tab that
+    // no longer exists.
+    expect(paneDemand(paneId)).toBe("settled");
+    expect(hasPreviewDemand()).toBe(false);
+    expect(activationHistoryFor(tabId, paneId)).toEqual(afterCloseHistory);
+    expect(retainedChatsFor(tabId, paneId)).toEqual(afterCloseRetained);
+  });
+});
+
+function fireWindowKeyboardEvent(
+  type: "keydown" | "keyup",
+  init: KeyboardEventInit,
+): void {
+  window.dispatchEvent(
+    new KeyboardEvent(type, { bubbles: true, cancelable: true, ...init }),
+  );
+}
+
+function renderHeaderCycleProvider(initialPathname: string): {
+  readonly navigateCalls: ReadonlyArray<unknown>;
+  readonly pathname: () => string;
+} {
+  // Mirrors `buildRouter`: seeds the real tabs-store focus to match the
+  // initial route, since header cycling reads live focus, not the pathname.
+  synchronizeLayoutForRoute(initialPathname);
+  const history = createMemoryHistory({ initialEntries: [initialPathname] });
+  const navigateCalls: Array<unknown> = [];
+  const navigate: KeybindingRouterSource["navigate"] = (
+    ...args: Array<unknown>
+  ) => {
+    navigateCalls.push(args);
+    return Promise.resolve();
+  };
+  const router: KeybindingRouterSource = {
+    get state() {
+      return { location: { pathname: history.location.pathname } };
+    },
+    history,
+    navigate,
+  };
+  render(createElement(KeybindingProvider, { router, children: null }));
+  return { navigateCalls, pathname: () => history.location.pathname };
+}
+
+// Same coalescing, through the real provider's event wiring (keydown/keyup/
+// pointerdown/focusin), with a router whose `navigate` never resolves the URL.
+describe("<KeybindingProvider /> held-key tab cycling (header)", () => {
+  const primaryModifier = isMac() ? { metaKey: true } : { ctrlKey: true };
+  const headerNextInit: KeyboardEventInit = {
+    code: "BracketRight",
+    key: "]",
+    shiftKey: true,
+    ...primaryModifier,
+  };
+
+  // jsdom has no native requestAnimationFrame; stub one that schedules
+  // without firing (matches a real browser, which fires on next paint, after
+  // this synchronous test already released the key).
+  let rafId = 0;
+  const originalRaf = window.requestAnimationFrame;
+  const originalCancelRaf = window.cancelAnimationFrame;
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    useKeybindingStore.setState({ bindings: getDefaultBindings() });
+    __resetTabNavigationControllerForTesting();
+    seedEpicTabs();
+    window.requestAnimationFrame = () => ++rafId;
+    window.cancelAnimationFrame = () => undefined;
+  });
+
+  afterEach(() => {
+    cleanup();
+    document.body.innerHTML = "";
+    useEpicCanvasStore.setState(useEpicCanvasStore.getInitialState(), true);
+    useLandingDraftStore.setState({ drafts: [], activeDraftId: null });
+    useTabsStore.setState({
+      stripOrder: [],
+      systemTabs: { history: null, settings: null },
+    });
+    window.requestAnimationFrame = originalRaf;
+    window.cancelAnimationFrame = originalCancelRaf;
+  });
+
+  it("commits the physical press immediately, then coalesces a held repeat into one commit on keyup, without waiting on the router's own pathname", () => {
+    const firstTabId = useEpicCanvasStore.getState().openTabOrder[0];
+    const initialPathname = `/epics/e1/${firstTabId}`;
+    const { navigateCalls, pathname } =
+      renderHeaderCycleProvider(initialPathname);
+
+    act(() => fireWindowKeyboardEvent("keydown", headerNextInit));
+    const afterPress = useEpicCanvasStore.getState().activeTabId;
+    expect(afterPress).not.toBe(firstTabId);
+    expect(navigateCalls.length).toBe(1);
+    // `navigate` never resolved the URL - the router's own pathname lags.
+    expect(pathname()).toBe(initialPathname);
+
+    act(() =>
+      fireWindowKeyboardEvent("keydown", { ...headerNextInit, repeat: true }),
+    );
+    expect(useEpicCanvasStore.getState().activeTabId).toBe(afterPress);
+    expect(navigateCalls.length).toBe(1);
+
+    act(() => fireWindowKeyboardEvent("keyup", headerNextInit));
+    expect(useEpicCanvasStore.getState().activeTabId).not.toBe(afterPress);
+    expect(navigateCalls.length).toBe(2);
+  });
+
+  it("settles a still-owned held preview through the controller when membership changes mid-hold, leaving route, history and demand consistent", () => {
+    const [aTabId, bTabId, cTabId] = useEpicCanvasStore.getState().openTabOrder;
+    const { navigateCalls } = renderHeaderCycleProvider(`/epics/e1/${aTabId}`);
+    vi.useFakeTimers();
+    try {
+      // Held from a settled A: the first event is a repeat, so B is only a
+      // preview - no route write, no history.
+      act(() =>
+        fireWindowKeyboardEvent("keydown", { ...headerNextInit, repeat: true }),
+      );
+      act(() => {
+        vi.advanceTimersByTime(100);
+      });
+      expect(useEpicCanvasStore.getState().activeTabId).toBe(bTabId);
+      expect(topLevelDemand(`epic:${bTabId}`)).toBe("preview");
+      expect(navigateCalls.length).toBe(0);
+
+      // An unrelated header tab disappears while B is still focused.
+      act(() => {
+        useTabsStore.setState((state) => ({
+          ...state,
+          items: state.items.filter(
+            (item) => !(item.kind === "tab" && item.ref.id === cTabId),
+          ),
+          stripOrder: state.stripOrder.filter((ref) => ref.id !== cTabId),
+        }));
+        window.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+      });
+      act(() => fireWindowKeyboardEvent("keyup", headerNextInit));
+    } finally {
+      vi.useRealTimers();
+    }
+
+    // The cursor still owned B, so B settles through ordinary activation.
+    expect(useEpicCanvasStore.getState().activeTabId).toBe(bTabId);
+    expect(hasPreviewDemand()).toBe(false);
+    expect(navigateCalls.length).toBe(1);
+    const navigateArgs = navigateCalls[0];
+    if (!Array.isArray(navigateArgs)) throw new Error("expected navigate args");
+    expect(navigateArgs[0]).toMatchObject({ params: { tabId: bTabId } });
+    expect(
+      tabActivationHistory(useTabsStore.getState()).map(tabRefKey)[0],
+    ).toBe(`epic:${bTabId}`);
+  });
+
+  it("cancels an in-flight held repeat on pointerdown, before it can commit", () => {
+    const firstTabId = useEpicCanvasStore.getState().openTabOrder[0];
+    renderHeaderCycleProvider(`/epics/e1/${firstTabId}`);
+
+    act(() => fireWindowKeyboardEvent("keydown", headerNextInit));
+    const afterPress = useEpicCanvasStore.getState().activeTabId;
+
+    act(() =>
+      fireWindowKeyboardEvent("keydown", { ...headerNextInit, repeat: true }),
+    );
+    act(() => {
+      window.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+    });
+    act(() => fireWindowKeyboardEvent("keyup", headerNextInit));
+
+    expect(useEpicCanvasStore.getState().activeTabId).toBe(afterPress);
+  });
+
+  it("cancels a pending held-repeat commit if a blocking dialog opens before the key is released", () => {
+    const firstTabId = useEpicCanvasStore.getState().openTabOrder[0];
+    renderHeaderCycleProvider(`/epics/e1/${firstTabId}`);
+
+    act(() => fireWindowKeyboardEvent("keydown", headerNextInit));
+    const afterPress = useEpicCanvasStore.getState().activeTabId;
+
+    act(() =>
+      fireWindowKeyboardEvent("keydown", { ...headerNextInit, repeat: true }),
+    );
+
+    const dialog = document.createElement("div");
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("data-state", "open");
+    document.body.append(dialog);
+
+    act(() => fireWindowKeyboardEvent("keyup", headerNextInit));
+
+    expect(useEpicCanvasStore.getState().activeTabId).toBe(afterPress);
+  });
+
+  it("never commits a held-repeat cycle onto a header whose live tab order changed underneath it", () => {
+    const firstTabId = useEpicCanvasStore.getState().openTabOrder[0];
+    renderHeaderCycleProvider(`/epics/e1/${firstTabId}`);
+
+    act(() => fireWindowKeyboardEvent("keydown", headerNextInit));
+    const afterPress = useEpicCanvasStore.getState().activeTabId;
+
+    act(() =>
+      fireWindowKeyboardEvent("keydown", { ...headerNextInit, repeat: true }),
+    );
+
+    // The header's live order changes mid-hold (e.g. a tab reordered
+    // elsewhere) without touching which tab is focused.
+    act(() => {
+      useTabsStore.setState((state) => ({
+        ...state,
+        stripOrder: [...state.stripOrder].reverse(),
+      }));
+      window.dispatchEvent(new FocusEvent("focusin", { bubbles: true }));
+    });
+    act(() => fireWindowKeyboardEvent("keyup", headerNextInit));
+
+    expect(useEpicCanvasStore.getState().activeTabId).toBe(afterPress);
+  });
+
+  it("holds preview demand only between the first committed repeat and the keyup or cancellation that settles it", () => {
+    const firstTabId = useEpicCanvasStore.getState().openTabOrder[0];
+    renderHeaderCycleProvider(`/epics/e1/${firstTabId}`);
+    vi.useFakeTimers();
+    try {
+      // A single physical press is an ordinary activation: never a preview.
+      act(() => fireWindowKeyboardEvent("keydown", headerNextInit));
+      const afterPress = useEpicCanvasStore.getState().activeTabId;
+      expect(hasPreviewDemand()).toBe(false);
+
+      // Repeats only move the cursor: nothing is previewed until a frame (or
+      // the 100ms fallback, since no frame fires here) commits the target.
+      act(() =>
+        fireWindowKeyboardEvent("keydown", { ...headerNextInit, repeat: true }),
+      );
+      act(() =>
+        fireWindowKeyboardEvent("keydown", { ...headerNextInit, repeat: true }),
+      );
+      expect(hasPreviewDemand()).toBe(false);
+      act(() => {
+        vi.advanceTimersByTime(100);
+      });
+      expect(hasPreviewDemand()).toBe(true);
+
+      // keyup settles the final target and releases the demand.
+      act(() => fireWindowKeyboardEvent("keyup", headerNextInit));
+      const afterRelease = useEpicCanvasStore.getState().activeTabId;
+      expect(hasPreviewDemand()).toBe(false);
+      expect(afterRelease).not.toBe(afterPress);
+      expect(topLevelDemand(`epic:${afterRelease}`)).toBe("settled");
+
+      // A second hold, cancelled by pointerdown before it commits, never
+      // previews at all and leaves nothing behind.
+      act(() => fireWindowKeyboardEvent("keydown", headerNextInit));
+      const afterSecondPress = useEpicCanvasStore.getState().activeTabId;
+      act(() =>
+        fireWindowKeyboardEvent("keydown", { ...headerNextInit, repeat: true }),
+      );
+      expect(hasPreviewDemand()).toBe(false);
+
+      act(() => {
+        window.dispatchEvent(
+          new PointerEvent("pointerdown", { bubbles: true }),
+        );
+      });
+      act(() => {
+        vi.advanceTimersByTime(100);
+      });
+      expect(hasPreviewDemand()).toBe(false);
+
+      // The cancelled session leaves nothing pending for keyup to flush.
+      act(() => fireWindowKeyboardEvent("keyup", headerNextInit));
+      expect(useEpicCanvasStore.getState().activeTabId).toBe(afterSecondPress);
+      expect(hasPreviewDemand()).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a held preview a preview when a leader scope registers or unregisters mid-hold", () => {
+    const firstTabId = useEpicCanvasStore.getState().openTabOrder[0];
+    renderHeaderCycleProvider(`/epics/e1/${firstTabId}`);
+    vi.useFakeTimers();
+    try {
+      act(() => fireWindowKeyboardEvent("keydown", headerNextInit));
+      act(() =>
+        fireWindowKeyboardEvent("keydown", { ...headerNextInit, repeat: true }),
+      );
+      act(() => {
+        vi.advanceTimersByTime(100);
+      });
+      expect(hasPreviewDemand()).toBe(true);
+      const previewed = useEpicCanvasStore.getState().activeTabId;
+
+      // Every surface a hold previews registers its own leader scopes as it
+      // mounts. That must not settle the preview a beat after it showed.
+      let unregister: (() => void) | undefined;
+      act(() => {
+        unregister = registerLeaderScope({ id: "mid-hold-scope", actions: [] });
+      });
+      expect(hasPreviewDemand()).toBe(true);
+      expect(useEpicCanvasStore.getState().activeTabId).toBe(previewed);
+
+      act(() => {
+        unregister?.();
+      });
+      expect(hasPreviewDemand()).toBe(true);
+      expect(useEpicCanvasStore.getState().activeTabId).toBe(previewed);
+
+      // keyup still settles the previewed target as before.
+      act(() => fireWindowKeyboardEvent("keyup", headerNextInit));
+      expect(hasPreviewDemand()).toBe(false);
+      expect(useEpicCanvasStore.getState().activeTabId).toBe(previewed);
+      expect(topLevelDemand(`epic:${previewed}`)).toBe("settled");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

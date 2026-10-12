@@ -1,3 +1,5 @@
+import { useSurfaceDemand } from "@/stores/tabs/surface-demand";
+import { SurfacePreviewShell } from "@/components/layout/surface-preview-shell";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
 
 /**
@@ -8,6 +10,8 @@ import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
  * live xterm rather than a sequence of placeholder strings.
  */
 export function TerminalLoadingSkeleton() {
+  const demand = useSurfaceDemand();
+  if (demand !== "settled") return <SurfacePreviewShell />;
   return (
     <div className="flex h-full w-full items-center justify-center gap-2 bg-canvas text-ui-sm text-muted-foreground">
       <span>Starting terminal</span>

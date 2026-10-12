@@ -1,4 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MockHostMessenger } from "@traycer-clients/shared/host-client/mock/mock-host-messenger";
@@ -174,6 +182,12 @@ vi.mock("@/components/epics/history-surface", () => ({
 }));
 
 import { AppShell } from "@/components/layout/app-shell";
+// The Home tab draws this view from an on-demand module
+// (`homeSurfaceModule`). Imported here so the module graph is transformed at
+// collection time, and loaded through its own loader in `beforeAll`: the
+// lookups below then wait for the view to render, not for its module to load.
+import "@/components/home-focus/home-focus-view";
+import { homeSurfaceModule } from "@/stores/tabs/kinds/surface-modules";
 import {
   hostRpcRegistry,
   HostRuntimeProvider,
@@ -259,6 +273,10 @@ describe("<AppShell />", () => {
   // error that stopped the render, and a binding that survived the test would
   // let a test that forgets to render clear the PREVIOUS test's client.
   let queryClient: QueryClient | undefined;
+
+  beforeAll(async () => {
+    await homeSurfaceModule.load();
+  });
 
   beforeEach(() => {
     windowHost.runnerHost = {};

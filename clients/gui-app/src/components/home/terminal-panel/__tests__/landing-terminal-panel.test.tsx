@@ -58,6 +58,10 @@ import { pointerEvent } from "@/components/epic-canvas/canvas/__tests__/test-poi
 import { setSystemTabModalApi } from "@/stores/tabs/system-tab-modal-bridge";
 import type { SystemTabModalApi } from "@/stores/tabs/use-system-tab-modal";
 import { useTabsStore } from "@/stores/tabs/store";
+import {
+  SurfaceDemandContext,
+  type ActiveSurfaceDemand,
+} from "@/stores/tabs/surface-demand";
 import type { StripItem, TabStripItem } from "@/stores/tabs/layout";
 import { useThemeLibraryStore } from "@/stores/settings/theme-library-store";
 
@@ -89,6 +93,7 @@ const mocks = vi.hoisted(() => {
   // tombstone alone - which is what every terminal-only case here wants.
   const browserSessionsByHost: Partial<Record<string, BrowserSessionsState>> =
     {};
+  const browserSessionsListeners = new Set<() => void>();
   return {
     // React reactive host (useAddressableHostId) vs client host (getActiveHostId).
     // Kept in lockstep for ordinary tests; the host-switch race test diverges them.
@@ -118,6 +123,18 @@ const mocks = vi.hoisted(() => {
     plainCloseAsync: vi.fn(),
     plainImportAsync: vi.fn(),
     browserSessionsByHost,
+    // The fleet mock reads the map at render, so a mid-run change has to reach
+    // it as a subscription rather than as a parent re-render it may skip.
+    subscribeBrowserSessions: (listener: () => void): (() => void) => {
+      browserSessionsListeners.add(listener);
+      return () => browserSessionsListeners.delete(listener);
+    },
+    setBrowserSessionsByHost(
+      next: Partial<Record<string, BrowserSessionsState>>,
+    ): void {
+      this.browserSessionsByHost = next;
+      browserSessionsListeners.forEach((listener) => listener());
+    },
     browserCloseTab: vi.fn(() => Promise.resolve()),
     browserStreamHostIds: [] as readonly string[],
     // Whether the SHELL has native browser capability. True is a desktop, the
@@ -129,6 +146,15 @@ const mocks = vi.hoisted(() => {
       cancelQueries: vi.fn(() => Promise.resolve()),
       fetchQuery: vi.fn(),
       getQueryData: vi.fn(() => mocks.plainCollection),
+      // Reads of the MUTATION cache (`useIsMutatingKey`) must see the cache
+      // `useMutation` writes to, which is the provider's real client below,
+      // not this hand-rolled one.
+      isMutating: (filters: MutationFilters): number =>
+        mocks.liveQueryClient().isMutating(filters),
+      getMutationCache: () => mocks.liveQueryClient().getMutationCache(),
+    },
+    liveQueryClient: (): QueryClient => {
+      throw new Error("the suite's real query client is not set up yet");
     },
     onChangeListeners: [] as Array<
       (event: {
@@ -297,7 +323,7 @@ vi.mock(
 vi.mock(
   "@/components/home/terminal-panel/landing-terminal-authority-fleet",
   async () => {
-    const { useEffect } = await import("react");
+    const { useEffect, useSyncExternalStore } = await import("react");
     return {
       LandingTerminalAuthorityFleet: (props: {
         readonly hostIds: readonly string[];
@@ -315,9 +341,10 @@ vi.mock(
         const browserHostKey = props.browserHostIds.join("\u0000");
         // Which devices have published one, so a test that fills the map
         // mid-run re-publishes on the next render rather than staying silent.
-        const browserSessionsKey = Object.keys(mocks.browserSessionsByHost)
-          .sort()
-          .join("\u0000");
+        const browserSessionsKey = useSyncExternalStore(
+          mocks.subscribeBrowserSessions,
+          () => Object.keys(mocks.browserSessionsByHost).sort().join("\u0000"),
+        );
         useEffect(() => {
           const browserHostIds =
             browserHostKey.length === 0 ? [] : browserHostKey.split("\u0000");
@@ -414,7 +441,11 @@ import { LandingTerminalPanel } from "@/components/home/terminal-panel/landing-t
 import { LANDING_BROWSER_WATCHED_HOST_CAP } from "@/components/home/terminal-panel/landing-browser-presentation";
 import { LandingTerminalGestureProvider } from "@/components/home/terminal-panel/landing-terminal-gesture-provider";
 import { useLandingPaneAnchorStore } from "@/components/home/terminal-panel/landing-pane-anchor-store";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  QueryClient,
+  QueryClientProvider,
+  type MutationFilters,
+} from "@tanstack/react-query";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { requestLandingTerminalClose } from "@/lib/terminals/landing-terminal-close-coordinator";
 
@@ -451,6 +482,7 @@ function panelUi() {
  * `useIsMutating` counts across the whole client.
  */
 let testQueryClient = new QueryClient();
+mocks.liveQueryClient = () => testQueryClient;
 
 function panelUiForDraft(draftId: string | null) {
   return (
@@ -2188,7 +2220,7 @@ describe("<LandingTerminalPanel />", () => {
     mocks.freshProbeData = mocks.probeData;
     mocks.plainAuthorityStatus = "unknown";
     useLandingPanelStore.getState().setPanelOpen(TEST_LANDING_PAGE_ID, true);
-    const view = render(panelUi());
+    render(panelUi());
 
     await screen.findByTestId("landing-new-tab-chooser");
     await waitFor(() => {
@@ -2207,10 +2239,11 @@ describe("<LandingTerminalPanel />", () => {
 
     // The device answers for browsers first: its card goes live on its own,
     // without waiting for the terminal probe it has nothing to do with.
-    mocks.browserSessionsByHost = {
-      "host-a": browserSessionsState({}),
-    };
-    view.rerender(panelUi());
+    act(() => {
+      mocks.setBrowserSessionsByHost({
+        "host-a": browserSessionsState({}),
+      });
+    });
 
     await waitFor(() => {
       expect(
@@ -2376,6 +2409,61 @@ describe("<LandingTerminalPanel />", () => {
     // reads the same one.
     await waitFor(() => {
       expect(mocks.browserStreamHostIds).toEqual(["host-a"]);
+    });
+  });
+
+  it("watches no browser host while the Start Page is only previewed by a held tab cycle, and takes its streams when it settles", async () => {
+    mocks.activeHostId = "host-a";
+    mocks.clientActiveHostId = "host-a";
+    mocks.primaryWorkspacePath = "/workspace/project";
+    mocks.probeData = emptyList("/Users/dev");
+    mocks.freshProbeData = mocks.probeData;
+    useLandingPanelStore.getState().addTab({
+      kind: "browser",
+      instanceId: "browser-a",
+      hostId: "host-a",
+      sessionId: "session-a",
+      tabId: "tab-a",
+      name: "a.example",
+      titleSource: "default",
+    });
+    useLandingPanelStore.getState().addTab({
+      kind: "browser",
+      instanceId: "browser-b",
+      hostId: "host-b",
+      sessionId: "session-b",
+      tabId: "tab-b",
+      name: "b.example",
+      titleSource: "default",
+    });
+    useLandingPanelStore.getState().setPanelOpen(TEST_LANDING_PAGE_ID, true);
+    const underDemand = (demand: ActiveSurfaceDemand): ReactNode => (
+      <SurfaceDemandContext.Provider value={demand}>
+        {panelUi()}
+      </SurfaceDemandContext.Provider>
+    );
+    const view = render(underDemand("preview"));
+
+    // On screen with the panel open, yet only previewed: the step the cursor is
+    // about to leave must not cost the window a stream.
+    await waitFor(() => {
+      expect(screen.getByTestId("landing-terminal-panel")).toBeTruthy();
+    });
+    expect(mocks.browserStreamHostIds).toEqual([]);
+
+    view.rerender(underDemand("settled"));
+
+    await waitFor(() => {
+      expect([...mocks.browserStreamHostIds].sort()).toEqual([
+        "host-a",
+        "host-b",
+      ]);
+    });
+
+    view.rerender(underDemand("preview"));
+
+    await waitFor(() => {
+      expect(mocks.browserStreamHostIds).toEqual([]);
     });
   });
 

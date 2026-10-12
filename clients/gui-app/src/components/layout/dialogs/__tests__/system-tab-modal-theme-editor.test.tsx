@@ -20,6 +20,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SystemTabModalHost } from "@/components/layout/dialogs/system-tab-modal-host";
 import { ThemeEditorHost } from "@/components/settings/themes/theme-editor-host";
+// `ThemeEditorHost` loads this panel as a lazy chunk when a draft opens.
+// Imported here so it is loaded before any test runs: the dialog lookups
+// below then wait for the editor to render, not for its module to load.
+import "@/components/settings/themes/theme-editor-panel";
 import { ThemeProvider } from "@/providers/theme-provider";
 import {
   useSystemTabModalController,

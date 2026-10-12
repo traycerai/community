@@ -90,6 +90,7 @@ import type { SandboxPermission } from "@/lib/sandbox/sandbox-url";
 import { deriveToolInputSummary } from "@/lib/segment-summary";
 import { cn } from "@/lib/utils";
 import { insertAppMessageDraft } from "@/stores/composer/app-message-draft-store";
+import { useSurfaceDemand } from "@/stores/tabs/surface-demand";
 import { TouchActionsSheet } from "./touch-actions-sheet";
 
 export interface McpAppRowProps {
@@ -139,7 +140,11 @@ function grantedPermissions(
  */
 export function McpAppRow(props: McpAppRowProps): ReactNode {
   const scope = useChatAttachmentScope();
-  if (scope === null) return props.fallback;
+  // A held tab cycle's preview must not start the app; settling does.
+  const settled = useSurfaceDemand() === "settled";
+  const [loaded, setLoaded] = useState(false);
+  if (!loaded && settled && scope !== null) setLoaded(true);
+  if (scope === null || (!settled && !loaded)) return props.fallback;
   return (
     <LiveMcpApp
       id={props.id}

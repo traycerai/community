@@ -6,7 +6,7 @@ import {
 import type { HarnessModelRow } from "@/components/home/data/harness-model-search";
 import type { GuiHarnessCatalogEntry } from "@/hooks/harnesses/use-gui-harness-catalog";
 import { HarnessModelPickerItem } from "@/components/home/pickers/harness-model-picker-item";
-import { ModelRowsState } from "@/components/home/pickers/harness-model-picker-empty";
+import { modelRowsState } from "@/components/home/pickers/harness-model-picker-empty";
 import type { ProviderTerminalLoginSurface } from "@/lib/providers/provider-terminal-login-surface";
 import type { ProviderCliState } from "@traycer/protocol/host/provider-schemas";
 import type { ReactNode, RefObject } from "react";
@@ -64,7 +64,7 @@ export function HarnessModelPickerList(
     onClosePicker,
   } = props;
 
-  const stateRow = ModelRowsState({
+  const stateRow = modelRowsState({
     catalogLoading,
     catalogError,
     hostUnavailableLabel,

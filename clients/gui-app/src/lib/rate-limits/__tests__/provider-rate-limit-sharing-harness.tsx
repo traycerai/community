@@ -33,7 +33,12 @@ interface RateLimitSharingHarness {
 // A minimal valid `host.getRateLimitUsage @1.2` response - only fetch timing
 // matters to these tests, not the payload.
 function response() {
-  return { totalTokens: 0, remainingTokens: 0, providerRateLimits: null };
+  return {
+    totalTokens: 0,
+    remainingTokens: 0,
+    providerRateLimits: null,
+    usageUpdatedAt: null,
+  };
 }
 
 export function createRateLimitSharingHarness(): RateLimitSharingHarness {

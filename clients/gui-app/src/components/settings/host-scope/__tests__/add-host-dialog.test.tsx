@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -24,9 +25,33 @@ import { useAddHostDialogStore } from "@/stores/settings/add-host-dialog-store";
  *     hosts were announced as the new machine when the retry landed.
  */
 
-const scopeMocks: { scope: Partial<HostScope> } = vi.hoisted(() => ({
-  scope: {},
-}));
+// Reactive like the real `useHostScope`: the dialog body takes no props, so a
+// mid-test scope change reaches it through a subscription, not a re-render of
+// the parent (`act(() => scopeMocks.set(next))`).
+const scopeMocks = vi.hoisted(
+  (): {
+    scope: Partial<HostScope>;
+    subscribe: (listener: () => void) => () => void;
+    set(next: Partial<HostScope>): void;
+  } => {
+    const listeners = new Set<() => void>();
+    return {
+      scope: {},
+      subscribe: (listener: () => void): (() => void) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+      set(next: Partial<HostScope>): void {
+        this.scope = next;
+        listeners.forEach((listener) => {
+          listener();
+        });
+      },
+    };
+  },
+);
 const navigationMocks = vi.hoisted(() => ({
   navigateToSettingsSection: vi.fn(),
 }));
@@ -34,8 +59,12 @@ const navigationMocks = vi.hoisted(() => ({
 vi.mock("@/components/settings/host-scope/use-host-scope", async () => {
   const { hostScopeFixture } =
     await import("@/components/settings/host-scope/host-scope-fixture");
+  const { useSyncExternalStore } = await import("react");
   return {
-    useHostScope: () => hostScopeFixture(scopeMocks.scope),
+    useHostScope: () =>
+      hostScopeFixture(
+        useSyncExternalStore(scopeMocks.subscribe, () => scopeMocks.scope),
+      ),
   };
 });
 
@@ -128,16 +157,17 @@ describe("<AddHostDialog /> arrival", () => {
     scopeMocks.scope = { hosts: [], isLoading: false, listsFailed: true };
     useAddHostDialogStore.getState().openDialog([]);
 
-    const { rerender } = render(<AddHostDialog />);
+    render(<AddHostDialog />);
     expect(screen.queryByTestId("add-host-arrived")).toBeNull();
 
     // The retry lands: the union now holds the pre-existing host.
-    scopeMocks.scope = {
-      hosts: [preExisting],
-      isLoading: false,
-      listsFailed: false,
-    };
-    rerender(<AddHostDialog />);
+    act(() => {
+      scopeMocks.set({
+        hosts: [preExisting],
+        isLoading: false,
+        listsFailed: false,
+      });
+    });
 
     // Not an arrival — it forms the baseline. Still watching.
     expect(screen.queryByTestId("add-host-arrived")).toBeNull();
@@ -149,12 +179,13 @@ describe("<AddHostDialog /> arrival", () => {
       registered: true,
       connectable: true,
     });
-    scopeMocks.scope = {
-      hosts: [preExisting, newcomer],
-      isLoading: false,
-      listsFailed: false,
-    };
-    rerender(<AddHostDialog />);
+    act(() => {
+      scopeMocks.set({
+        hosts: [preExisting, newcomer],
+        isLoading: false,
+        listsFailed: false,
+      });
+    });
 
     expect(screen.getByTestId("add-host-arrived")).not.toBeNull();
     expect(
@@ -203,17 +234,18 @@ describe("<AddHostDialog /> arrival", () => {
     scopeMocks.scope = { hosts: [], isLoading: false, listsFailed: true };
     useAddHostDialogStore.getState().openDialog([]);
 
-    const { rerender } = render(<AddHostDialog />);
+    render(<AddHostDialog />);
     expect(screen.queryByTestId("add-host-arrived")).toBeNull();
 
     // The retry lands with BOTH: the failed list's pre-existing host and the
     // machine that enrolled during the failure window.
-    scopeMocks.scope = {
-      hosts: [preExisting, fastEnroller],
-      isLoading: false,
-      listsFailed: false,
-    };
-    rerender(<AddHostDialog />);
+    act(() => {
+      scopeMocks.set({
+        hosts: [preExisting, fastEnroller],
+        isLoading: false,
+        listsFailed: false,
+      });
+    });
 
     expect(screen.getByTestId("add-host-arrived")).not.toBeNull();
     expect(

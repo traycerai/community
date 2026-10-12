@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { toast } from "sonner";
 import { useStore } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 import type { JsonContent } from "@traycer/protocol/common/registry";
@@ -399,13 +400,20 @@ function applyInitialChatHandoffStep(
       // XOR stated, never neither - with the composer going to whichever text
       // the user is actually looking at.
       if (composerDraftIsEmpty(input.nodeId)) {
-        input.replaceDraftContent(input.nodeId, input.step.content, null);
-        useComposerDraftStore
-          .getState()
-          .restoreBrowserAnnotations(
-            input.nodeId,
-            input.step.browserAnnotations,
-          );
+        try {
+          input.replaceDraftContent(input.nodeId, input.step.content, null);
+          useComposerDraftStore
+            .getState()
+            .restoreBrowserAnnotations(
+              input.nodeId,
+              input.step.browserAnnotations,
+            );
+        } catch {
+          toast.error("Couldn't save the restored message.", {
+            description: "Your text is still in this window.",
+          });
+          return;
+        }
         input.state.ackFailedSendRestoration(input.step.clientActionId);
         return;
       }

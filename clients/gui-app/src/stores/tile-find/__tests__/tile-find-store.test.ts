@@ -981,3 +981,125 @@ describe("ticket 15 review round 4 (F5 deletion): reopen-after-close restores qu
     expect(reopenedAdapter.nextMock.mock.calls).toHaveLength(0);
   });
 });
+
+describe("tile-find eligibility without re-registration", () => {
+  beforeEach(() => {
+    tileLiveness.live = false;
+  });
+
+  afterEach(() => {
+    tileLiveness.live = false;
+    useTileFindStore.getState().resetForTests();
+  });
+
+  function registerTile(tileInstanceId: string, isEligible: boolean): void {
+    register(
+      createTestAdapter({
+        tileInstanceId,
+        tileKind: "chat",
+        capabilities: FIND_CAPABILITY,
+      }),
+      isEligible,
+    );
+  }
+
+  it("keeps the activeOwner object identity when an unrelated target registers or unregisters", () => {
+    registerTile("owner", true);
+    const ownerBefore = useTileFindStore.getState().activeOwner;
+    expect(ownerBefore?.tileInstanceId).toBe("owner");
+
+    const unregisterOther = register(
+      createTestAdapter({
+        tileInstanceId: "other",
+        tileKind: "chat",
+        capabilities: FIND_CAPABILITY,
+      }),
+      false,
+    );
+    expect(useTileFindStore.getState().activeOwner).toBe(ownerBefore);
+
+    unregisterOther();
+    expect(useTileFindStore.getState().activeOwner).toBe(ownerBefore);
+
+    useTileFindStore.getState().setOwnerBlocker({
+      reason: "command-palette",
+      ownerId: "command-palette",
+    });
+    useTileFindStore.getState().setOwnerBlocker(null);
+    // A new owner is only built once the blocker has actually cleared it.
+    expect(useTileFindStore.getState().activeOwner).toEqual(ownerBefore);
+  });
+
+  it("writes nothing and notifies nobody when eligibility is unchanged", () => {
+    registerTile("tile-a", true);
+    registerTile("tile-b", false);
+    const stateBefore = useTileFindStore.getState();
+    const listener = vi.fn();
+    const unsubscribe = useTileFindStore.subscribe(listener);
+
+    useTileFindStore.getState().setTargetEligibility("tile-a", true);
+    useTileFindStore.getState().setTargetEligibility("tile-b", false);
+
+    unsubscribe();
+    expect(listener).not.toHaveBeenCalled();
+    expect(useTileFindStore.getState()).toBe(stateBefore);
+  });
+
+  it("writes nothing and notifies nobody for an unregistered target", () => {
+    registerTile("tile-a", true);
+    const stateBefore = useTileFindStore.getState();
+    const listener = vi.fn();
+    const unsubscribe = useTileFindStore.subscribe(listener);
+
+    useTileFindStore.getState().setTargetEligibility("never-registered", true);
+    useTileFindStore.getState().setTargetEligibility("never-registered", false);
+
+    unsubscribe();
+    expect(listener).not.toHaveBeenCalled();
+    expect(useTileFindStore.getState()).toBe(stateBefore);
+  });
+
+  it("updates isEligible in place and recomputes the active owner on a change", () => {
+    registerTile("tile-a", false);
+    expect(useTileFindStore.getState().activeOwner).toBeNull();
+
+    useTileFindStore.getState().setTargetEligibility("tile-a", true);
+    expect(
+      useTileFindStore.getState().targetsByTileInstanceId["tile-a"]?.isEligible,
+    ).toBe(true);
+    expect(useTileFindStore.getState().activeOwner?.tileInstanceId).toBe(
+      "tile-a",
+    );
+
+    useTileFindStore.getState().setTargetEligibility("tile-a", false);
+    expect(
+      useTileFindStore.getState().targetsByTileInstanceId["tile-a"]?.isEligible,
+    ).toBe(false);
+    expect(useTileFindStore.getState().activeOwner).toBeNull();
+  });
+
+  it("hands ownership to the most recently ELIGIBLE target, not the most recently registered", () => {
+    registerTile("first", true);
+    registerTile("second", true);
+    expect(useTileFindStore.getState().activeOwner?.tileInstanceId).toBe(
+      "second",
+    );
+
+    // `first` loses then regains eligibility without re-registering: it is now
+    // the most recently eligible, although `second` registered later.
+    useTileFindStore.getState().setTargetEligibility("first", false);
+    expect(useTileFindStore.getState().activeOwner?.tileInstanceId).toBe(
+      "second",
+    );
+    useTileFindStore.getState().setTargetEligibility("first", true);
+    expect(useTileFindStore.getState().activeOwner?.tileInstanceId).toBe(
+      "first",
+    );
+
+    useTileFindStore.getState().setTargetEligibility("second", false);
+    useTileFindStore.getState().setTargetEligibility("second", true);
+    expect(useTileFindStore.getState().activeOwner?.tileInstanceId).toBe(
+      "second",
+    );
+  });
+});

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
-import { render, waitFor } from "@testing-library/react";
+import { act, render, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { parsePatchFiles } from "@pierre/diffs";
 import { FileDiffContent } from "@/components/epic-canvas/git-diff/file-diff-content";
@@ -23,14 +23,35 @@ vi.mock("@pierre/diffs", async () => {
   };
 });
 
-// Mock the resolved theme provider
-const mockResolvedTheme: MockResolvedTheme = {
-  resolvedTheme: "light",
-  themePreset: "default",
-};
-vi.mock("@/providers/use-resolved-theme", () => ({
-  useResolvedTheme: () => mockResolvedTheme,
-}));
+// The real hook reads a context, so a theme flip arrives as a new value object.
+// The mock is reactive too: `set` replaces the value and notifies subscribers.
+const themeMock = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  const initial: MockResolvedTheme = {
+    resolvedTheme: "light",
+    themePreset: "default",
+  };
+  return {
+    current: initial,
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    set(next: MockResolvedTheme): void {
+      this.current = next;
+      listeners.forEach((listener) => listener());
+    },
+  };
+});
+vi.mock("@/providers/use-resolved-theme", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useResolvedTheme: () =>
+      useSyncExternalStore(themeMock.subscribe, () => themeMock.current),
+  };
+});
 
 describe("theme-flip-reparse: theme toggle triggers re-parse with new cache key", () => {
   let queryClient: QueryClient;
@@ -56,7 +77,7 @@ describe("theme-flip-reparse: theme toggle triggers re-parse with new cache key"
       isBinary: false,
     };
 
-    const { rerender } = render(
+    render(
       <QueryClientProvider client={queryClient}>
         <FileDiffContent
           diff={diff}
@@ -91,26 +112,9 @@ describe("theme-flip-reparse: theme toggle triggers re-parse with new cache key"
     expect(firstCacheKey).toContain("light");
 
     // Simulate theme change to dark
-    mockResolvedTheme.resolvedTheme = "dark";
-
-    rerender(
-      <QueryClientProvider client={queryClient}>
-        <FileDiffContent
-          diff={diff}
-          fileIdentity={null}
-          isEmptyFile={false}
-          mode="unified"
-          wordWrap={false}
-          backgrounds
-          lineNumbers
-          indicatorStyle="bars"
-          sizing="fill"
-          scrollContainerRef={null}
-          onScroll={null}
-          onLoadFull={() => {}}
-        />
-      </QueryClientProvider>,
-    );
+    act(() => {
+      themeMock.set({ resolvedTheme: "dark", themePreset: "default" });
+    });
 
     // parsePatchFiles should be called again with dark theme cache key
     await waitFor(() => {

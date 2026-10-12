@@ -18,6 +18,7 @@ import type {
 } from "@traycer-clients/shared/epic-lanes";
 import {
   ARTIFACT_TOMBSTONE_REMOVE_REASON,
+  COMMENT_THREAD_REMOVE_REASON,
   EPIC_META_ROW_ID,
   EPIC_STATE_LANE_ID,
   FILES_ROW_ID,
@@ -28,11 +29,13 @@ import {
 } from "@traycer-clients/shared/epic-lanes";
 import type {
   LaneCursor,
+  RecordChange,
   RecordRow,
 } from "@traycer-clients/shared/replica-runtime";
 import {
   createEpicLaneStateReplica,
   type EpicLaneStateReplica,
+  type EpicLaneStateSlices,
 } from "../epic-lane-state-replica";
 import { selectLaneCommentThreads } from "@/hooks/comments/use-lane-comment-threads";
 import type { EpicStateFileRecord } from "@traycer/protocol/host/epic/files";
@@ -425,6 +428,53 @@ describe("epic.state.subscribe read model - row rules", () => {
       ],
       barrier: null,
     });
+    expect(replica.slices().epicHeader).toEqual({
+      title: "Renamed",
+      updatedAt: 30,
+    });
+  });
+
+  it("composes two epic-meta-patch changes within ONE transaction, not just across separate ones", () => {
+    // Each patch's fold must see the other's within one batched transaction,
+    // not just across separate ones.
+    const { replica } = newReplica();
+    replica.apply(
+      snapshotEvent({
+        rows: metaRows({ title: "Original", updatedAt: 10, revision: 1 }),
+        position: 1,
+        epoch: EPOCH,
+        trust: "reconciled-with-cloud",
+        cause: "initial",
+      }),
+    );
+
+    replica.apply({
+      kind: "record-transaction",
+      cursor: cursorAt(2, EPOCH),
+      changes: [
+        {
+          kind: "upsert",
+          row: {
+            rowId: EPIC_META_ROW_ID,
+            revision: 2,
+            row: { kind: "epic-meta-patch", meta: { title: "Renamed" } },
+          },
+        },
+        {
+          kind: "upsert",
+          row: {
+            rowId: EPIC_META_ROW_ID,
+            revision: 3,
+            row: { kind: "epic-meta-patch", meta: { updatedAt: 30 } },
+          },
+        },
+      ],
+      barrier: null,
+    });
+
+    // Both patches landed: the title from the first, the recency from the
+    // second, folded onto each other rather than either one alone winning by
+    // replacing the whole row.
     expect(replica.slices().epicHeader).toEqual({
       title: "Renamed",
       updatedAt: 30,
@@ -957,5 +1007,429 @@ describe("epic.state.subscribe read model - files", () => {
       expect(replica.slices().files.records).toEqual([record]);
       expect(changes()).toBe(afterSnapshot + 1);
     });
+  });
+});
+
+describe("epic.state.subscribe read model - population-specific updates", () => {
+  const seedFile = fileRecord({
+    path: "files/big.mov",
+    title: "Report",
+    localState: { kind: "downloading", received: 10, total: 100 },
+  });
+
+  /** A thread row and the wire record inside it, built through the schema. */
+  function thread(args: {
+    readonly rowArtifactId: string;
+    readonly recordArtifactId: string;
+    readonly threadId: string;
+    readonly revision: number;
+    readonly resolved: boolean;
+  }) {
+    const record = parseSnapshotFrame({
+      kind: "snapshot",
+      hasBinaryPayload: false,
+      authorityEpoch: EPOCH,
+      basis: "cold",
+      position: 1,
+      reconciledWithCloud: true,
+      artifactRecords: [],
+      deletedArtifacts: [],
+      commentThreads: [
+        {
+          artifactId: args.recordArtifactId,
+          threadId: args.threadId,
+          resolved: args.resolved,
+          createdAt: 5,
+          comments: [],
+          data: { createdByUserId: "user-a" },
+          revision: args.revision,
+        },
+      ],
+      roleClaims: { revision: 1, claims: [] },
+      epicMeta: { revision: 1, meta: { title: "Epic", updatedAt: 10 } },
+    }).commentThreads[0];
+    const row: RecordRow<EpicStateRow> = {
+      rowId: commentThreadRowId(args.rowArtifactId, args.threadId),
+      revision: args.revision,
+      row: { kind: "comment-thread", record },
+    };
+    return { row, record };
+  }
+
+  /** Three artifacts, one thread on `a` and one on `b`, and a files row. */
+  function seedRows(): RecordRow<EpicStateRow>[] {
+    return [
+      artifactRow({ id: "a", title: "A", revision: 1, parentId: null }),
+      artifactRow({ id: "b", title: "B", revision: 1, parentId: null }),
+      artifactRow({ id: "c", title: "C", revision: 1, parentId: null }),
+      ...metaRows({ title: "Epic", updatedAt: 10, revision: 1 }),
+      thread({
+        rowArtifactId: "a",
+        recordArtifactId: "a",
+        threadId: "t-a",
+        revision: 1,
+        resolved: false,
+      }).row,
+      thread({
+        rowArtifactId: "b",
+        recordArtifactId: "b",
+        threadId: "t-b",
+        revision: 1,
+        resolved: false,
+      }).row,
+      filesRow(1, [seedFile]),
+    ];
+  }
+
+  function seeded() {
+    const { replica, changes } = newReplica();
+    replica.apply(
+      snapshotEvent({
+        rows: seedRows(),
+        position: 1,
+        epoch: EPOCH,
+        trust: "reconciled-with-cloud",
+        cause: "initial",
+      }),
+    );
+    return { replica, changes, before: replica.slices() };
+  }
+
+  function transaction(
+    position: number,
+    changes: readonly RecordChange<EpicStateRow>[],
+  ): EpicStateLaneEvent {
+    return {
+      kind: "record-transaction",
+      cursor: cursorAt(position, EPOCH),
+      changes,
+      barrier: null,
+    };
+  }
+
+  function upsert(row: RecordRow<EpicStateRow>): RecordChange<EpicStateRow> {
+    return { kind: "upsert", row };
+  }
+
+  /**
+   * What a FRESH replica holds when handed the seed with these changes already
+   * folded in: the full build, which is the oracle every patched population
+   * has to equal.
+   */
+  function freshSlices(
+    upserts: readonly RecordRow<EpicStateRow>[],
+    removedRowIds: readonly string[],
+  ): EpicLaneStateSlices {
+    const replacements = new Map(upserts.map((row) => [row.rowId, row]));
+    const kept = seedRows()
+      .filter((row) => !removedRowIds.includes(row.rowId))
+      .map((row) => replacements.get(row.rowId) ?? row);
+    const heldIds = new Set(kept.map((row) => row.rowId));
+    const { replica } = newReplica();
+    replica.apply(
+      snapshotEvent({
+        rows: [...kept, ...upserts.filter((row) => !heldIds.has(row.rowId))],
+        position: 1,
+        epoch: EPOCH,
+        trust: "reconciled-with-cloud",
+        cause: "initial",
+      }),
+    );
+    return replica.slices();
+  }
+
+  function expectSame(
+    after: EpicLaneStateSlices,
+    before: EpicLaneStateSlices,
+    keys: readonly (keyof EpicLaneStateSlices)[],
+  ): void {
+    for (const key of keys) expect(after[key]).toBe(before[key]);
+  }
+
+  function metaUpsert(
+    row: Extract<EpicStateRow, { kind: "epic-meta" | "epic-meta-patch" }>,
+  ): RecordChange<EpicStateRow> {
+    return upsert({ rowId: EPIC_META_ROW_ID, revision: 2, row });
+  }
+
+  it.each<
+    readonly [
+      string,
+      Extract<EpicStateRow, { kind: "epic-meta" | "epic-meta-patch" }>,
+      { readonly title: string; readonly updatedAt: number },
+    ]
+  >([
+    [
+      "epic-meta",
+      { kind: "epic-meta", meta: { title: "Renamed epic", updatedAt: 30 } },
+      { title: "Renamed epic", updatedAt: 30 },
+    ],
+    [
+      "epic-meta-patch",
+      { kind: "epic-meta-patch", meta: { title: "Patched epic" } },
+      { title: "Patched epic", updatedAt: 10 },
+    ],
+  ])(
+    "an %s change replaces the header and leaves every other population alone",
+    (_kind, row, header) => {
+      const { replica, before } = seeded();
+
+      replica.apply(transaction(2, [metaUpsert(row)]));
+
+      const after = replica.slices();
+      expect(after.epicHeader).toEqual(header);
+      expectSame(after, before, [
+        "artifacts",
+        "commentThreads",
+        "files",
+        "roleClaims",
+        "deletedArtifacts",
+      ]);
+    },
+  );
+
+  it.each([
+    [
+      "a changed manifest field",
+      fileRecord({
+        path: "files/big.mov",
+        title: "Renamed",
+        localState: { kind: "downloading", received: 10, total: 100 },
+      }),
+    ],
+    [
+      "a download-progress tick",
+      fileRecord({
+        path: "files/big.mov",
+        title: "Report",
+        localState: { kind: "downloading", received: 40, total: 100 },
+      }),
+    ],
+  ])("%s replaces the files set and nothing else", (_name, record) => {
+    const { replica, before } = seeded();
+
+    replica.apply(filesTransaction(2, filesRow(2, [record])));
+
+    const after = replica.slices();
+    expect(after.files).not.toBe(before.files);
+    expect(after.files).toEqual({ served: true, records: [record] });
+    expectSame(after, before, ["artifacts", "commentThreads", "epicHeader"]);
+  });
+
+  it("a thread revised in place replaces that one thread and no other list", () => {
+    const { replica, before } = seeded();
+    const revised = thread({
+      rowArtifactId: "a",
+      recordArtifactId: "a",
+      threadId: "t-a",
+      revision: 2,
+      resolved: true,
+    });
+
+    replica.apply(transaction(2, [upsert(revised.row)]));
+
+    const after = replica.slices();
+    expect(after.commentThreads.byArtifactId.a).toHaveLength(1);
+    expect(after.commentThreads.byArtifactId.a[0]).toBe(revised.record);
+    expect(after.commentThreads.byArtifactId.b).toBe(
+      before.commentThreads.byArtifactId.b,
+    );
+    expect(after.artifacts).toBe(before.artifacts);
+    expect(after).toEqual(freshSlices([revised.row], []));
+  });
+
+  it("a thread whose record names another artifact is regrouped, and the old list is authoritatively empty", () => {
+    const { replica } = seeded();
+    // Same row id, record now on `b`: the shape the in-place path must refuse.
+    const moved = thread({
+      rowArtifactId: "a",
+      recordArtifactId: "b",
+      threadId: "t-a",
+      revision: 2,
+      resolved: false,
+    });
+
+    replica.apply(transaction(2, [upsert(moved.row)]));
+
+    const { byArtifactId } = replica.slices().commentThreads;
+    expect(Object.hasOwn(byArtifactId, "a")).toBe(true);
+    expect(byArtifactId.a).toEqual([]);
+    expect(byArtifactId.b).toHaveLength(2);
+    expect(replica.slices()).toEqual(freshSlices([moved.row], []));
+  });
+
+  it("a thread removed from one artifact and added to another equals a fresh build", () => {
+    const { replica } = seeded();
+    const added = thread({
+      rowArtifactId: "b",
+      recordArtifactId: "b",
+      threadId: "t-a",
+      revision: 1,
+      resolved: false,
+    });
+    const removedRowId = commentThreadRowId("a", "t-a");
+
+    replica.apply(
+      transaction(2, [
+        {
+          kind: "remove",
+          rowId: removedRowId,
+          revision: 2,
+          reason: COMMENT_THREAD_REMOVE_REASON,
+        },
+        upsert(added.row),
+      ]),
+    );
+
+    const { byArtifactId } = replica.slices().commentThreads;
+    expect(byArtifactId.a).toEqual([]);
+    expect(byArtifactId.b).toHaveLength(2);
+    expect(replica.slices()).toEqual(freshSlices([added.row], [removedRowId]));
+  });
+
+  it("an artifact rename replaces that one row and leaves the id list and threads alone", () => {
+    const { replica, before } = seeded();
+    const renamed = artifactRow({
+      id: "a",
+      title: "A renamed",
+      revision: 2,
+      parentId: null,
+    });
+
+    replica.apply(transaction(2, [upsert(renamed)]));
+
+    const after = replica.slices();
+    expect(after.artifacts.byId.a.title).toBe("A renamed");
+    expect(after.artifacts.byId.b).toBe(before.artifacts.byId.b);
+    expect(after.artifacts.byId.c).toBe(before.artifacts.byId.c);
+    expect(after.artifacts.allIds).toBe(before.artifacts.allIds);
+    expect(after.commentThreads).toBe(before.commentThreads);
+    expect(after).toEqual(freshSlices([renamed], []));
+  });
+
+  it("an artifact rename, a header change and a thread change in one transaction each land in their own population", () => {
+    const { replica, before } = seeded();
+    const renamed = artifactRow({
+      id: "a",
+      title: "A renamed",
+      revision: 2,
+      parentId: null,
+    });
+    const header: RecordRow<EpicStateRow> = {
+      rowId: EPIC_META_ROW_ID,
+      revision: 2,
+      row: {
+        kind: "epic-meta",
+        meta: { title: "Renamed epic", updatedAt: 30 },
+      },
+    };
+    const revised = thread({
+      rowArtifactId: "b",
+      recordArtifactId: "b",
+      threadId: "t-b",
+      revision: 2,
+      resolved: true,
+    });
+
+    replica.apply(
+      transaction(2, [upsert(renamed), upsert(header), upsert(revised.row)]),
+    );
+
+    const after = replica.slices();
+    expect(after).toEqual(freshSlices([renamed, header, revised.row], []));
+    expect(after.artifacts.byId.c).toBe(before.artifacts.byId.c);
+    expect(after.commentThreads.byArtifactId.a).toBe(
+      before.commentThreads.byArtifactId.a,
+    );
+  });
+
+  it("a role-claim change takes the full build and equals it", () => {
+    const { replica } = seeded();
+    const claims: RecordRow<EpicStateRow> = {
+      rowId: ROLE_CLAIMS_ROW_ID,
+      revision: 2,
+      row: {
+        kind: "role-claims",
+        claims: [
+          {
+            claimId: "6f1c7a52-62f1-4d0e-9a53-0b2e5f1c9d11",
+            agentId: "agent-1",
+            userId: "user-a",
+            role: "Planner",
+            scope: "Auth",
+            claimedAt: 5,
+          },
+        ],
+      },
+    };
+
+    replica.apply(transaction(2, [upsert(claims)]));
+
+    expect(replica.slices().roleClaims).toHaveLength(1);
+    expect(replica.slices()).toEqual(freshSlices([claims], []));
+  });
+
+  it("a new tombstone takes the full build and equals it", () => {
+    const { replica } = seeded();
+    const tombstone = parseDeltaFrame({
+      kind: "delta",
+      hasBinaryPayload: false,
+      authorityEpoch: EPOCH,
+      seq: 2,
+      artifactUpserts: [],
+      artifactTombstones: [
+        {
+          kind: "spec",
+          id: "c",
+          title: "C",
+          deletedAt: "2026-01-01T00:00:00.000Z",
+          revision: 3,
+        },
+      ],
+      commentThreadUpserts: [],
+      commentThreadRemovals: [],
+      roleClaims: null,
+      epicMeta: null,
+    }).artifactTombstones[0];
+    const tombstoneRow: RecordRow<EpicStateRow> = {
+      rowId: artifactTombstoneRowId("c"),
+      revision: tombstone.revision,
+      row: { kind: "artifact-tombstone", record: tombstone },
+    };
+
+    replica.apply(
+      transaction(2, [
+        {
+          kind: "remove",
+          rowId: artifactRowId("c"),
+          revision: tombstone.revision,
+          reason: ARTIFACT_TOMBSTONE_REMOVE_REASON,
+        },
+        upsert(tombstoneRow),
+      ]),
+    );
+
+    expect(replica.slices().artifacts.allIds).toEqual(["a", "b"]);
+    expect(replica.slices().deletedArtifacts.byId.c.title).toBe("C");
+    expect(replica.slices()).toEqual(
+      freshSlices([tombstoneRow], [artifactRowId("c")]),
+    );
+  });
+
+  it("a header restated at a higher revision with the same values publishes nothing", () => {
+    const { replica, changes, before } = seeded();
+    const afterSeed = changes();
+
+    replica.apply(
+      transaction(2, [
+        metaUpsert({
+          kind: "epic-meta",
+          meta: { title: "Epic", updatedAt: 10 },
+        }),
+      ]),
+    );
+
+    expect(changes()).toBe(afterSeed);
+    expect(replica.slices()).toBe(before);
   });
 });

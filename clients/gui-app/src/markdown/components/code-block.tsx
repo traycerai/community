@@ -1,10 +1,11 @@
 import { Check, Copy } from "lucide-react";
-import { useCallback, type ReactNode } from "react";
-import { useThrottledHighlight } from "@tailmark/react";
+import { useTileBodyVisible } from "@/components/epic-canvas/hooks/use-tile-body-visible";
+import { useCallback, useMemo, type ReactNode } from "react";
+import { useIsMarkdownStreaming, useThrottledHighlight } from "@tailmark/react";
 import { useClipboardCopy } from "@/hooks/ui/use-clipboard-copy";
 import { cn } from "@/lib/utils";
 import { extractText } from "./extract-react-node-text";
-import { getTraycerStreamingHighlighter } from "../traycer-streaming-highlighter";
+import { createTraycerBlockHighlighter } from "../traycer-streaming-highlighter";
 
 interface CodeBlockProps {
   children?: ReactNode;
@@ -51,16 +52,27 @@ function FencedCodeBlock({
   code: string;
   containerClassName: string | undefined;
 }) {
-  // Module singleton also passed to StreamingMarkdown as `highlighter` so
-  // throttle/subscribe share one readiness bus with the wrapper.
-  const highlighter = getTraycerStreamingHighlighter();
+  const visible = useTileBodyVisible();
+  const isStreaming = useIsMarkdownStreaming();
+  // Keep the displayed prefix across hidden updates and deferred completion.
+  const lastHighlight = useMemo<{ node: ReactNode | null }>(
+    () => ({ node: null }),
+    [],
+  );
+  const highlighter = useMemo(
+    () =>
+      createTraycerBlockHighlighter(code, language, isStreaming, lastHighlight),
+    [code, language, isStreaming, lastHighlight],
+  );
   // Empty fence info stays unhighlighted (plain path) but still quoteable.
   const highlightLang = language.length > 0 ? language : null;
+  const blockHighlighter = visible ? highlighter : highlighter.inactive;
   const highlightedNodes = useThrottledHighlight(
     code,
     highlightLang ?? "text",
-    highlightLang === null ? null : highlighter,
+    highlightLang === null ? null : blockHighlighter,
   );
+  const displayedHighlight = highlightedNodes ?? lastHighlight.node;
 
   const { copied, copy } = useClipboardCopy({
     resetMs: 2000,
@@ -114,8 +126,8 @@ function FencedCodeBlock({
       </div>
 
       <div className="overflow-x-auto px-3.5 py-3 font-mono text-code">
-        {highlightedNodes !== null ? (
-          <div className="traycer-md-shiki">{highlightedNodes}</div>
+        {displayedHighlight !== null ? (
+          <div className="traycer-md-shiki">{displayedHighlight}</div>
         ) : (
           <pre className="m-0 bg-transparent p-0">
             <code className="font-mono text-code text-foreground">{code}</code>

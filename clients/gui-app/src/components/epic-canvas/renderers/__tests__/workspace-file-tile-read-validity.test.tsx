@@ -2,6 +2,7 @@ import "../../../../../__tests__/test-browser-apis";
 import type { ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -56,15 +57,41 @@ vi.mock("@/hooks/host/use-host-supports-method", () => ({
   useHostSupportsMethod: () => true,
 }));
 
-vi.mock("@/hooks/workspace/use-read-file-query", () => ({
-  useWorkspaceReadFile: () => ({
-    data: state.data,
-    isLoading: state.isLoading,
-    isError: state.isError,
-    error: state.error,
-    refetch: vi.fn(),
-  }),
-}));
+// The real query is reactive (a cache subscription), so the mock is too: a
+// mid-test change to `state` goes through `bump`, which notifies the mocked
+// hook's subscribers.
+const readSeam = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  return {
+    version: 0,
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    bump(): void {
+      this.version += 1;
+      listeners.forEach((listener) => listener());
+    },
+  };
+});
+
+vi.mock("@/hooks/workspace/use-read-file-query", async () => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    useWorkspaceReadFile: () => {
+      useSyncExternalStore(readSeam.subscribe, () => readSeam.version);
+      return {
+        data: state.data,
+        isLoading: state.isLoading,
+        isError: state.isError,
+        error: state.error,
+        refetch: vi.fn(),
+      };
+    },
+  };
+});
 
 vi.mock("@/hooks/workspace/use-workspace-write-file-mutation", () => ({
   useWorkspaceWriteFile: () => ({ mutateAsync: vi.fn() }),
@@ -168,25 +195,29 @@ describe("<WorkspaceFileTile /> read validity", () => {
       error: null,
       truncated: false,
     };
-    const harness = renderTile();
+    renderTile();
     fireEvent.click(screen.getByRole("button", { name: "Click source" }));
     await waitFor(() => {
       expect(currentRuntimeState()?.ownerSurfaceId).not.toBeNull();
     });
     await screen.findByRole("button", { name: "Type without blur" });
-    state.rendererContent.mockClear();
 
     // TanStack retains the last successful payload on a failed background
     // refetch - `data` stays the same good response, only `isError`/`error`
     // flip. This must not be conflated with a payload error.
     state.isError = true;
     state.error = new Error("network unreachable");
-    harness.rerender();
+    act(() => {
+      readSeam.bump();
+    });
 
     expect(
       screen.getByRole("button", { name: "Type without blur" }),
     ).toBeTruthy();
-    expect(state.rendererContent).toHaveBeenCalledWith("const value = 1;\n");
+    // The renderer's latest content is still the good payload, not the error.
+    expect(state.rendererContent).toHaveBeenLastCalledWith(
+      "const value = 1;\n",
+    );
     expect(screen.queryByText("network unreachable")).toBeNull();
   });
 
@@ -196,7 +227,7 @@ describe("<WorkspaceFileTile /> read validity", () => {
       error: null,
       truncated: false,
     };
-    const harness = renderTile();
+    renderTile();
     fireEvent.click(screen.getByRole("button", { name: "Click source" }));
     fireEvent.click(
       await screen.findByRole("button", { name: "Type without blur" }),
@@ -207,7 +238,6 @@ describe("<WorkspaceFileTile /> read validity", () => {
         isDirty: true,
       });
     });
-    state.rendererContent.mockClear();
 
     // A refetch that succeeds at the transport level but reports a payload
     // error (e.g. the file became unreadable mid-edit).
@@ -216,10 +246,12 @@ describe("<WorkspaceFileTile /> read validity", () => {
       error: "Could not read /work/repo/src/index.ts",
       truncated: false,
     };
-    harness.rerender();
+    act(() => {
+      readSeam.bump();
+    });
 
     // Draft is untouched - never replaced by the error screen.
-    expect(state.rendererContent).toHaveBeenCalledWith("X");
+    expect(state.rendererContent).toHaveBeenLastCalledWith("X");
     expect(currentRuntimeState()).toMatchObject({
       draftContent: "X",
       isDirty: true,
@@ -244,27 +276,15 @@ function currentRuntimeState() {
     ?.store.getState();
 }
 
-function renderTile() {
+function renderTile(): void {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  const result = render(
+  render(
     <QueryClientProvider client={queryClient}>
       <TabHostProvider hostId="host-A">
         <WorkspaceFileTile node={NODE} viewTabId="view-1" isActive />
       </TabHostProvider>
     </QueryClientProvider>,
   );
-  return {
-    ...result,
-    rerender: (): void => {
-      result.rerender(
-        <QueryClientProvider client={queryClient}>
-          <TabHostProvider hostId="host-A">
-            <WorkspaceFileTile node={NODE} viewTabId="view-1" isActive />
-          </TabHostProvider>
-        </QueryClientProvider>,
-      );
-    },
-  };
 }

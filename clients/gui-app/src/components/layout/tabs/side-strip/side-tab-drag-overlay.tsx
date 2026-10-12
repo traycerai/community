@@ -8,7 +8,10 @@ import {
   useEpicDndStore,
   type HeaderTabDragGhost,
 } from "@/components/epic-canvas/dnd/dnd-store";
-import { useSurfaceNotificationIndicatorState } from "@/components/notifications/notification-indicator-context";
+import {
+  useSurfaceNotificationIndicatorState,
+  useSurfaceNotificationWaitingProbe,
+} from "@/components/notifications/notification-indicator-context";
 import { useEpicActivityStatus } from "@/hooks/epic/use-epic-activity-status";
 import { useRegisteredEpicTitleGenerating } from "@/lib/epic-selectors";
 import { useSideStripCollapsed } from "@/stores/layout/side-tab-strip-store";
@@ -265,6 +268,10 @@ function OverlayTabRow(props: {
   const joined = useSideTabJoin(props.active && props.join, null, tab);
   const epicId = tab.kind === "epic" ? tab.epicId : null;
   const { resolvedTabName, displayName } = useHeaderTabTitle(tab);
+  const readCommittedWaiting = useSurfaceNotificationWaitingProbe(
+    { epicId: epicId ?? tab.id },
+    null,
+  );
   const liveIndicator = useSurfaceNotificationIndicatorState(
     { epicId: epicId ?? tab.id },
     null,
@@ -302,6 +309,7 @@ function OverlayTabRow(props: {
         fallback: leading,
       })}
       badge={railBadgeOf(indicatorState)}
+      readCommittedWaiting={readCommittedWaiting}
       agents={agents}
       status={taskStatusOf({
         row,

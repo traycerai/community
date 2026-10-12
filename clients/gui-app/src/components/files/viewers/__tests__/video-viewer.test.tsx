@@ -118,6 +118,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
 });
 
 describe("<VideoViewer /> recovery", () => {
@@ -132,6 +133,34 @@ describe("<VideoViewer /> recovery", () => {
     await waitFor(() => expect(video()).not.toBe(first));
     expect(video().getAttribute("src")).toBe(URL_A);
     expect(rangeReads(rpc)).toBe(0);
+  });
+
+  it("reloads on a refresh that answers in the same millisecond it was asked", async () => {
+    // The wall clock can tie, or step back, between the ask and the answer.
+    vi.spyOn(Date, "now").mockReturnValue(1_800_000_000_000);
+    const rpc = host([answer(signed(URL_A))]);
+    renderViewer(rpc);
+    const first = await screen.findByTestId("epic-file-video");
+
+    fireEvent.error(first);
+
+    await waitFor(() => expect(video()).not.toBe(first));
+    expect(video().getAttribute("src")).toBe(URL_A);
+  });
+
+  it("falls through to the Blob on a failed refresh that settles in the same millisecond it was asked", async () => {
+    vi.spyOn(Date, "now").mockReturnValue(1_800_000_000_000);
+    const rpc = host([
+      answer(signed(URL_A)),
+      () => Promise.reject(new Error("relay dropped")),
+    ]);
+    renderViewer(rpc);
+
+    fireEvent.error(await screen.findByTestId("epic-file-video"));
+
+    await waitFor(() =>
+      expect(video().getAttribute("src")).toMatch(/^blob:video-/),
+    );
   });
 
   it("swaps a refreshed URL into the same element", async () => {

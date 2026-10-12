@@ -37,20 +37,39 @@ const IDLE_MIGRATION: EpicMigrationSlice = {
 // Only the per-epic store reads are faked - the modal itself, the swipe
 // recognizer, the shared actions and the router are all real. Partial, so every
 // other selector in that module stays intact for the rest of the graph.
-const migrationState = vi.hoisted((): { current: EpicMigrationSlice } => ({
-  current: {
+const migrationState = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  const initial: EpicMigrationSlice = {
     status: "idle",
     phase: null,
     chunksDone: 0,
     chunksTotal: 0,
-  },
-}));
+  };
+  return {
+    current: initial,
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    // A mid-test change; the real selector is a store read, so the fake is
+    // reactive too and the change needs no parent re-render to arrive.
+    set(next: EpicMigrationSlice): void {
+      this.current = next;
+      listeners.forEach((listener) => listener());
+    },
+  };
+});
 
 vi.mock("@/lib/epic-selectors", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/epic-selectors")>();
+  const { useSyncExternalStore } = await import("react");
   return {
     ...actual,
-    useEpicMigrationState: () => migrationState.current,
+    useEpicMigrationState: () =>
+      useSyncExternalStore(
+        migrationState.subscribe,
+        () => migrationState.current,
+      ),
     useEpicRetryMigration: () => () => {},
   };
 });
@@ -104,24 +123,13 @@ function swipeFromEdge(edge: "leading" | "trailing"): void {
   });
 }
 
-function renderUnderMigration(history: RouterHistory): {
-  rerender: () => void;
-} {
+function renderUnderMigration(history: RouterHistory): void {
   const router = makeRouter(history);
-  const view = render(
+  render(
     <RouterContextProvider router={router}>
       <SwipesUnderMigration />
     </RouterContextProvider>,
   );
-  return {
-    rerender: () => {
-      view.rerender(
-        <RouterContextProvider router={router}>
-          <SwipesUnderMigration />
-        </RouterContextProvider>,
-      );
-    },
-  };
 }
 
 beforeEach(() => {
@@ -235,12 +243,9 @@ describe("edge swipes under the epic migration modal", () => {
     };
     const history = createMemoryHistory({ initialEntries: ["/", "/epics"] });
     const backSpy = vi.spyOn(history, "back");
-    const view = renderUnderMigration(history);
+    renderUnderMigration(history);
 
-    migrationState.current = IDLE_MIGRATION;
-    act(() => {
-      view.rerender();
-    });
+    act(() => migrationState.set(IDLE_MIGRATION));
     expect(blockingLayerClaimed()).toBe(false);
     swipeFromEdge("leading");
 

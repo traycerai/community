@@ -1,4 +1,12 @@
-import { useLayoutEffect, useState } from "react";
+import { observedBorderBox } from "@/lib/resize-observer-box";
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import { useTileBodyVisible } from "@/components/epic-canvas/hooks/use-tile-body-visible";
 
 export interface UseMeasuredElementHeightResult {
   readonly setElement: (element: HTMLDivElement | null) => void;
@@ -15,20 +23,45 @@ export interface UseMeasuredElementHeightResult {
  * ignored (height keeps its last known value) rather than collapsing
  * reserved layout space to zero.
  */
-export function useMeasuredElementHeight(): UseMeasuredElementHeightResult {
-  const [element, setElement] = useState<HTMLDivElement | null>(null);
+export function useMeasuredElementHeight(
+  measureOnAttach: boolean,
+): UseMeasuredElementHeightResult {
+  const [element, updateElement] = useState<HTMLDivElement | null>(null);
   const [height, setHeight] = useState(0);
+  const visible = useTileBodyVisible();
+  const initiallyMeasured = useRef(new WeakSet<HTMLDivElement>());
+  const attached = useRef<HTMLDivElement | null>(null);
+  const setElement = useCallback((next: HTMLDivElement | null): void => {
+    attached.current = next;
+    updateElement(next);
+  }, []);
+  // A layout effect, not the ref callback: a callback that closes over
+  // `visible` is a new ref on every hide and show, so React detaches and
+  // re-attaches it and the owner renders once more on each tab switch. The
+  // node is read from the ref, which the commit that attaches it has already
+  // set, so the first reading lands in the same render as the element.
   useLayoutEffect(() => {
-    if (!element) return;
-    const updateHeight = () => {
-      const nextHeight = Math.ceil(element.getBoundingClientRect().height);
+    const node = attached.current;
+    if (!measureOnAttach || !visible || node === null) return;
+    if (initiallyMeasured.current.has(node)) return;
+    initiallyMeasured.current.add(node);
+    // The chat dock needs its inset before first paint. History has a CSS
+    // fallback and stays observer-only; warm switches never re-read either.
+    const nextHeight = Math.ceil(node.getBoundingClientRect().height);
+    if (nextHeight > 0) setHeight(nextHeight);
+  }, [measureOnAttach, visible, element]);
+  useEffect(() => {
+    if (!element || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries.find((entry) => entry.target === element);
+      if (!entry) return;
+      // Observer-delivered border-box sizes include padding without forcing
+      // layout in the commit that shows or hides a retained surface.
+      const nextHeight = Math.ceil(observedBorderBox(entry).blockSize);
       if (nextHeight <= 0) return;
       setHeight((current) => (current === nextHeight ? current : nextHeight));
-    };
-    updateHeight();
-    if (typeof ResizeObserver === "undefined") return;
-    const observer = new ResizeObserver(updateHeight);
-    observer.observe(element);
+    });
+    observer.observe(element, { box: "border-box" });
     return () => observer.disconnect();
   }, [element]);
   return { setElement, element, height };

@@ -147,6 +147,7 @@ function goodResponse(): RateLimitUsageResponse {
       modelScoped: [],
       extraUsage: null,
     },
+    usageUpdatedAt: null,
   };
 }
 

@@ -19,6 +19,10 @@ import * as Y from "yjs";
 import { Awareness } from "y-protocols/awareness";
 import { buildArtifactExtensions, deriveCollabUser } from "@/editor-core";
 import { ArtifactToolbar } from "@/editor-core/toolbar/artifact-toolbar";
+// The image lightbox loads this viewer as a lazy chunk when an SVG opens.
+// Imported here so it is loaded before any test runs: the lookups below then
+// wait for the viewer to render, not for its module to load.
+import "@/components/chat/segments/untrusted-svg-lightbox";
 
 interface AttachmentBlobState {
   readonly status: "loading" | "ready" | "unavailable";

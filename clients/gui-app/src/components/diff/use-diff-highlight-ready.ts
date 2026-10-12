@@ -18,6 +18,7 @@ import {
   type DiffWorkerPoolAvailability,
 } from "@/lib/diff/diff-worker-pool-demand";
 import { useTileBodyVisible } from "@/components/epic-canvas/hooks/use-tile-body-visible";
+import { readOnSignal } from "@/lib/read-on-signal";
 
 /**
  * Holds a lease on the worker pool for as long as this surface is on screen
@@ -138,8 +139,7 @@ export function useDiffsFileHighlightReady(props: {
   const prepareHighlight = useCallback(async (): Promise<void> => {
     // The provider owns render options; theme makes this callback a distinct
     // cache-prewarm generation when that provider changes its namespace.
-    void theme;
-    await pool?.primeFileHighlightCache(file);
+    await readOnSignal(() => pool?.primeFileHighlightCache(file), theme);
   }, [file, pool, theme]);
   return useInitialHighlightReady({
     enabled: props.enabled,
@@ -164,9 +164,12 @@ export function useDiffsDiffHighlightReady(props: {
   const { fileDiffs, theme } = props;
   const prepareHighlight = useCallback(async (): Promise<void> => {
     if (pool === undefined) return;
-    void theme;
-    await Promise.all(
-      fileDiffs.map((fileDiff) => pool.primeDiffHighlightCache(fileDiff)),
+    await readOnSignal(
+      () =>
+        Promise.all(
+          fileDiffs.map((fileDiff) => pool.primeDiffHighlightCache(fileDiff)),
+        ),
+      theme,
     );
   }, [fileDiffs, pool, theme]);
   return useInitialHighlightReady({

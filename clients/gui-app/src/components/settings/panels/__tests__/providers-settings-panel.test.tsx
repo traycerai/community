@@ -211,6 +211,52 @@ const providerMocks = vi.hoisted(() => ({
   openLink: vi.fn(),
 }));
 
+// The submit-code and rename mutation hooks are reactive like the real
+// observers: each reads their flags as a snapshot of this store, and whatever
+// changes one of the flags (a test, or a mocked `mutate` / `reset`) calls
+// `notify()` so the mounted components follow. React cannot see a bare
+// assignment to `providerMocks`, and the compiler keeps a hook result built
+// from such reads for the life of its component.
+interface MutationFlags {
+  readonly submitPending: boolean;
+  readonly submitSuccess: boolean;
+  readonly submitData:
+    | { readonly outcome: "accepted" | "noActiveLogin" }
+    | undefined;
+  readonly submitError: Error | null;
+  readonly renamePending: boolean;
+  readonly renameError: Error | null;
+}
+const mutationStore = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  function read(): MutationFlags {
+    return {
+      submitPending: providerMocks.submitLoginCodePending,
+      submitSuccess: providerMocks.submitLoginCodeSuccess,
+      submitData: providerMocks.submitLoginCodeData,
+      submitError: providerMocks.submitLoginCodeError,
+      renamePending: providerMocks.renameProfilePending,
+      renameError: providerMocks.renameProfileError,
+    };
+  }
+  let snapshot = read();
+  return {
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    getSnapshot: (): MutationFlags => snapshot,
+    notify(): void {
+      snapshot = read();
+      listeners.forEach((listener) => {
+        listener();
+      });
+    },
+  };
+});
+
 // The auto-judge row the panel now renders reaches TanStack Query for the
 // harness catalog and the set-judge mutation. This suite renders the panel
 // without a `QueryClientProvider` (every other data hook it uses is mocked at
@@ -483,20 +529,30 @@ vi.mock("@/hooks/providers/use-providers-cancel-login-mutation", () => {
   };
 });
 
-vi.mock("@/hooks/providers/use-providers-submit-login-code-mutation", () => {
-  const useProvidersSubmitLoginCode = () => ({
-    mutate: providerMocks.submitLoginCodeMutate,
-    isPending: providerMocks.submitLoginCodePending,
-    isSuccess: providerMocks.submitLoginCodeSuccess,
-    data: providerMocks.submitLoginCodeData,
-    error: providerMocks.submitLoginCodeError,
-    reset: providerMocks.submitLoginCodeReset,
-  });
-  return {
-    useProvidersSubmitLoginCode,
-    useProvidersSubmitLoginCodeForClient: useProvidersSubmitLoginCode,
-  };
-});
+vi.mock(
+  "@/hooks/providers/use-providers-submit-login-code-mutation",
+  async () => {
+    const { useSyncExternalStore } = await import("react");
+    const useProvidersSubmitLoginCode = () => {
+      const flags = useSyncExternalStore(
+        mutationStore.subscribe,
+        mutationStore.getSnapshot,
+      );
+      return {
+        mutate: providerMocks.submitLoginCodeMutate,
+        isPending: flags.submitPending,
+        isSuccess: flags.submitSuccess,
+        data: flags.submitData,
+        error: flags.submitError,
+        reset: providerMocks.submitLoginCodeReset,
+      };
+    };
+    return {
+      useProvidersSubmitLoginCode,
+      useProvidersSubmitLoginCodeForClient: useProvidersSubmitLoginCode,
+    };
+  },
+);
 
 vi.mock("@/hooks/providers/use-providers-touch-login-mutation", () => {
   const useProvidersTouchLogin = () => ({
@@ -511,12 +567,19 @@ vi.mock("@/hooks/providers/use-providers-touch-login-mutation", () => {
   };
 });
 
-vi.mock("@/hooks/providers/use-rename-provider-profile-mutation", () => {
-  const useRenameProviderProfile = () => ({
-    mutate: providerMocks.renameProfileMutate,
-    isPending: providerMocks.renameProfilePending,
-    error: providerMocks.renameProfileError,
-  });
+vi.mock("@/hooks/providers/use-rename-provider-profile-mutation", async () => {
+  const { useSyncExternalStore } = await import("react");
+  const useRenameProviderProfile = () => {
+    const flags = useSyncExternalStore(
+      mutationStore.subscribe,
+      mutationStore.getSnapshot,
+    );
+    return {
+      mutate: providerMocks.renameProfileMutate,
+      isPending: flags.renamePending,
+      error: flags.renameError,
+    };
+  };
   return {
     useRenameProviderProfile,
     useRenameProviderProfileForClient: useRenameProviderProfile,
@@ -1593,6 +1656,7 @@ describe("<ProvidersSettingsPanel />", () => {
       providerMocks.submitLoginCodeSuccess = false;
       providerMocks.submitLoginCodeData = undefined;
       providerMocks.submitLoginCodeError = null;
+      mutationStore.notify();
     });
     providerMocks.submitLoginCodeReset.mockReset();
     providerMocks.submitLoginCodeReset.mockImplementation(() => {
@@ -1600,6 +1664,7 @@ describe("<ProvidersSettingsPanel />", () => {
       providerMocks.submitLoginCodeSuccess = false;
       providerMocks.submitLoginCodeData = undefined;
       providerMocks.submitLoginCodeError = null;
+      mutationStore.notify();
     });
     providerMocks.touchLoginMutate.mockReset();
     providerMocks.touchLoginReset.mockClear();
@@ -1607,6 +1672,7 @@ describe("<ProvidersSettingsPanel />", () => {
     providerMocks.renameProfileMutate.mockReset();
     providerMocks.renameProfilePending = false;
     providerMocks.renameProfileError = null;
+    mutationStore.notify();
     providerMocks.recolorProfileMutate.mockReset();
     providerMocks.removeProfileMutate.mockReset();
     providerMocks.refreshProviders.mockClear();
@@ -4358,7 +4424,7 @@ describe("<ProvidersSettingsPanel />", () => {
       ],
     };
 
-    const view = render(
+    render(
       <TooltipProvider>
         <ProvidersSettingsPanel />
       </TooltipProvider>,
@@ -4383,14 +4449,6 @@ describe("<ProvidersSettingsPanel />", () => {
       clipboardData: { getData: () => "abc123#xyz789" },
     });
 
-    // The real mutation subscription rerenders the parent. The lightweight
-    // mock stores its flags outside React, so explicitly replay that render.
-    view.rerender(
-      <TooltipProvider>
-        <ProvidersSettingsPanel />
-      </TooltipProvider>,
-    );
-
     // "submitting": mutation.isPending locks the field immediately and owns
     // the visible status.
     expect(input).toHaveProperty("readOnly", true);
@@ -4401,13 +4459,9 @@ describe("<ProvidersSettingsPanel />", () => {
       providerMocks.submitLoginCodePending = false;
       providerMocks.submitLoginCodeSuccess = true;
       providerMocks.submitLoginCodeData = { outcome: "accepted" };
+      mutationStore.notify();
       submitOptions.onSuccess({ outcome: "accepted" });
     });
-    view.rerender(
-      <TooltipProvider>
-        <ProvidersSettingsPanel />
-      </TooltipProvider>,
-    );
 
     // "verifying": the relay succeeded, but `awaitLogin` hasn't settled this
     // attempt yet - the real exchange window `submitPending` alone never
@@ -4429,7 +4483,7 @@ describe("<ProvidersSettingsPanel />", () => {
     providerMocks.listResult.data = {
       providers: [codePasteCreateProviderState()],
     };
-    const view = render(
+    render(
       <TooltipProvider>
         <ProvidersSettingsPanel />
       </TooltipProvider>,
@@ -4457,13 +4511,9 @@ describe("<ProvidersSettingsPanel />", () => {
       providerMocks.submitLoginCodePending = false;
       providerMocks.submitLoginCodeSuccess = true;
       providerMocks.submitLoginCodeData = { outcome: "noActiveLogin" };
+      mutationStore.notify();
       submitOptions.onSuccess({ outcome: "noActiveLogin" });
     });
-    view.rerender(
-      <TooltipProvider>
-        <ProvidersSettingsPanel />
-      </TooltipProvider>,
-    );
 
     expect(screen.queryByText("Checking approval…")).toBeNull();
     expect(
@@ -4480,7 +4530,7 @@ describe("<ProvidersSettingsPanel />", () => {
       providers: [codePasteReauthProviderState()],
     };
 
-    const view = render(
+    render(
       <TooltipProvider>
         <ProvidersSettingsPanel />
       </TooltipProvider>,
@@ -4508,11 +4558,6 @@ describe("<ProvidersSettingsPanel />", () => {
     fireEvent.paste(input, {
       clipboardData: { getData: () => "abc123#xyz789" },
     });
-    view.rerender(
-      <TooltipProvider>
-        <ProvidersSettingsPanel />
-      </TooltipProvider>,
-    );
     expect(
       screen.getByRole("button", { name: "Cancel sign-in" }),
     ).toHaveProperty("disabled", true);
@@ -6984,7 +7029,7 @@ describe("<ProvidersSettingsPanel />", () => {
       ],
     };
 
-    const view = render(
+    render(
       <TooltipProvider>
         <ProvidersSettingsPanel />
       </TooltipProvider>,
@@ -7020,15 +7065,11 @@ describe("<ProvidersSettingsPanel />", () => {
     expect(providerMocks.renameProfileMutate).toHaveBeenCalledTimes(1);
 
     // Simulate a failed rename mutation: no onSuccess, surface the error
-    // the dialog reads from the rename hook, then re-render.
+    // the dialog reads from the rename hook.
     act(() => {
       providerMocks.renameProfileError = new Error("rename failed");
+      mutationStore.notify();
     });
-    view.rerender(
-      <TooltipProvider>
-        <ProvidersSettingsPanel />
-      </TooltipProvider>,
-    );
 
     expect(screen.getByRole("dialog")).toBeDefined();
     expect(
@@ -7040,12 +7081,8 @@ describe("<ProvidersSettingsPanel />", () => {
     // Retry: clear the prior error and let the second Save succeed.
     act(() => {
       providerMocks.renameProfileError = null;
+      mutationStore.notify();
     });
-    view.rerender(
-      <TooltipProvider>
-        <ProvidersSettingsPanel />
-      </TooltipProvider>,
-    );
     fireEvent.click(screen.getByRole("button", { name: "Save profile" }));
     expect(providerMocks.renameProfileMutate).toHaveBeenCalledTimes(2);
     const [, retryRenameOptions] =

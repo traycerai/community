@@ -1,6 +1,12 @@
+import { SurfacePreviewShell } from "@/components/layout/surface-preview-shell";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useSurfaceDemand } from "@/stores/tabs/surface-demand";
 
 export function CanvasSkeleton() {
+  // A tab a held cycle only passes over shows no loading indicator: its
+  // mounted body stays where it is, and this is the loader inside it.
+  const demand = useSurfaceDemand();
+  if (demand !== "settled") return <SurfacePreviewShell />;
   return (
     <div
       className="h-full min-h-0 w-full overflow-hidden p-6"

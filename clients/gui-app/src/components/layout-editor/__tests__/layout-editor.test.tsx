@@ -27,15 +27,32 @@ import {
  * signal is what `merged-notifications` classifies as blocking, and standing
  * up a host feed to produce one would test that store, not this root.
  */
-const feed = vi.hoisted(() => ({ blocking: 0 }));
+const feed = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  return {
+    blocking: 0,
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    set(next: number): void {
+      this.blocking = next;
+      listeners.forEach((listener) => listener());
+    },
+  };
+});
 vi.mock(
   "@/stores/notifications/merged-notifications",
-  async (importOriginal) => ({
-    ...(await importOriginal<
-      typeof import("@/stores/notifications/merged-notifications")
-    >()),
-    useBlockingAttentionCount: () => feed.blocking,
-  }),
+  async (importOriginal) => {
+    const { useSyncExternalStore } = await import("react");
+    return {
+      ...(await importOriginal<
+        typeof import("@/stores/notifications/merged-notifications")
+      >()),
+      useBlockingAttentionCount: () =>
+        useSyncExternalStore(feed.subscribe, () => feed.blocking),
+    };
+  },
 );
 
 /**
@@ -483,10 +500,7 @@ describe("the mounted editor root", () => {
       "An agent is waiting for you",
     );
 
-    feed.blocking = 1;
-    act(() => {
-      view.rerender(<LayoutEditor column={column} />);
-    });
+    act(() => feed.set(1));
 
     expect(view.container.textContent).toContain("An agent is waiting for you");
   });

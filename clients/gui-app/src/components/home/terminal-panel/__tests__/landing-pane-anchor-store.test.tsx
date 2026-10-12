@@ -17,6 +17,7 @@ import {
   useLandingPaneAnchorStore,
   usePublishLandingPanelCoverage,
   type LandingPanelCoverage,
+  type LandingPanePresentation,
 } from "../landing-pane-anchor-store";
 
 function coverageOf(landingPageId: string): LandingPanelCoverage | undefined {
@@ -146,6 +147,53 @@ describe("setPanelCoverage", () => {
     expect(after.anchors).toBe(before.anchors);
     expect(after.presentations).toBe(before.presentations);
   });
+});
+
+describe("setPresentation", () => {
+  const PORTAL_CONTAINER = document.createElement("div");
+  const PANE_FOCUSED_NOW = (): boolean => true;
+
+  function presentationWith(
+    overrides: Partial<LandingPanePresentation>,
+  ): LandingPanePresentation {
+    return {
+      activity: { visible: true, focused: true },
+      demand: "settled",
+      portalContainer: PORTAL_CONTAINER,
+      isPaneFocusedNow: PANE_FOCUSED_NOW,
+      ...overrides,
+    };
+  }
+
+  it("keeps the same state object when an equal presentation is written again", () => {
+    const { setPresentation } = useLandingPaneAnchorStore.getState();
+    setPresentation("draft-a", presentationWith({}));
+    const before = useLandingPaneAnchorStore.getState();
+
+    // A fresh object with the same fields: this runs on every anchor render.
+    setPresentation("draft-a", presentationWith({}));
+
+    expect(useLandingPaneAnchorStore.getState()).toBe(before);
+  });
+
+  it.each([
+    { from: "settled", to: "preview" },
+    { from: "preview", to: "settled" },
+  ] as const)(
+    "publishes a change of nothing but the demand ($from -> $to)",
+    ({ from, to }) => {
+      const { setPresentation } = useLandingPaneAnchorStore.getState();
+      setPresentation("draft-a", presentationWith({ demand: from }));
+      const before = useLandingPaneAnchorStore.getState();
+
+      setPresentation("draft-a", presentationWith({ demand: to }));
+
+      const after = useLandingPaneAnchorStore.getState();
+      expect(after).not.toBe(before);
+      expect(after.presentations).not.toBe(before.presentations);
+      expect(after.presentations.get("draft-a")?.demand).toBe(to);
+    },
+  );
 });
 
 interface PublishProps {

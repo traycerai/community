@@ -50,6 +50,8 @@ const hookState = vi.hoisted(() => ({
   hostClient: {
     getRequestContext: () => ({ credentials: null }),
     getRequestContextUserId: () => "user-test",
+    // The request context is read as a subscription; this one never changes.
+    onChange: () => () => undefined,
   },
   transportKey: "authenticated-host-test",
   ownerIdentityKey: "local\u0000host-test\u0000user-test",

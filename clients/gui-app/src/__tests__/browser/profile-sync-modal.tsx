@@ -1,6 +1,13 @@
 import { useLayoutEffect, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  createMemoryHistory,
+  createRootRoute,
+  createRoute,
+  createRouter,
+  RouterProvider,
+} from "@tanstack/react-router";
 import { MockHostMessenger } from "@traycer-clients/shared/host-client/mock/mock-host-messenger";
 import { MockRunnerHost } from "@traycer-clients/shared/host-client/mock/mock-runner-host";
 import type { HostDirectoryEntry } from "@traycer-clients/shared/host-client/host-directory";
@@ -344,5 +351,20 @@ export function Page(): ReactNode {
   );
 }
 
+// The dialog's "Sign in on <device>" button reads the router while it renders,
+// as it can anywhere in the app. A bare memory history with no app routes is
+// enough: nothing here navigates.
+const rootRoute = createRootRoute({ component: Page });
+const indexRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/",
+  component: () => null,
+});
+const router = createRouter({
+  routeTree: rootRoute.addChildren([indexRoute]),
+  history: createMemoryHistory({ initialEntries: ["/"] }),
+});
+
 const container = document.getElementById("root");
-if (container !== null) createRoot(container).render(<Page />);
+if (container !== null)
+  createRoot(container).render(<RouterProvider router={router} />);

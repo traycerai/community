@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -31,6 +32,10 @@ import {
 } from "./comment-composer";
 import { CommentContent } from "./comment-content-renderer";
 import { deriveInitials } from "./mention-utils";
+import {
+  formatFullTimestamp,
+  useCompactRelativeTime,
+} from "@/lib/relative-time";
 
 export interface CommentThreadCardProps {
   readonly epicId: string;
@@ -334,12 +339,7 @@ function CommentEntry(props: CommentEntryProps) {
           <AvatarFallback>{deriveInitials(authorLabel)}</AvatarFallback>
         </Avatar>
         <span className="truncate text-ui-sm font-medium">{authorLabel}</span>
-        <time
-          className="text-ui-xs text-muted-foreground"
-          dateTime={new Date(comment.createdAt).toISOString()}
-        >
-          {formatRelativeTime(comment.createdAt)}
-        </time>
+        <CommentTimestamp createdAt={comment.createdAt} />
         {comment.updatedAt !== null ? (
           <span className="text-ui-xs text-muted-foreground">(edited)</span>
         ) : null}
@@ -385,21 +385,27 @@ function CommentEntry(props: CommentEntryProps) {
 }
 
 /**
- * Approximate `now - timestamp` formatter used by both the sidebar and the
- * hover popover. Keeps the bundle small (no `date-fns` for one helper) and
- * aligns with the granularity Views uses ("just now / 5m / 2h / 3d / Apr 12").
+ * A comment's age on the app's compact ladder ("now / 5m / 2h / 3d / Apr 12"),
+ * for the sidebar and the hover popover alike. Its own leaf on the shared
+ * minute clock, so the label moves on without a render of the entry, and the
+ * tick repaints this one text node. The exact time is the hover tooltip, as
+ * on a chat message's stamp.
  */
-function formatRelativeTime(timestamp: number): string {
-  const now = Date.now();
-  const diff = Math.max(0, now - timestamp);
-  const seconds = Math.floor(diff / 1000);
-  if (seconds < 45) return "just now";
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h`;
-  const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d`;
-  const date = new Date(timestamp);
-  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+function CommentTimestamp({ createdAt }: { readonly createdAt: number }) {
+  const label = useCompactRelativeTime(createdAt);
+  return (
+    <TooltipWrapper
+      label={formatFullTimestamp(createdAt)}
+      side="top"
+      align="center"
+      sideOffset={undefined}
+    >
+      <time
+        className="text-ui-xs text-muted-foreground"
+        dateTime={new Date(createdAt).toISOString()}
+      >
+        {label}
+      </time>
+    </TooltipWrapper>
+  );
 }

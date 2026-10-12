@@ -57,12 +57,17 @@ vi.mock("@/lib/host/stream-auth-revalidator", () => ({
   useStreamAuthRevalidator: () => null,
 }));
 
-vi.mock("@/lib/host", () => ({
-  // Only this object's IDENTITY matters here - it flows straight into the
-  // mocked `authenticatedOwnerIdentityKey` below, which this file also
-  // controls, so the real derivation is never exercised.
-  useHostClient: () => ({}),
-}));
+vi.mock("@/lib/host", () => {
+  // Its IDENTITY is what flows into the mocked
+  // `authenticatedOwnerIdentityKey` below, which this file also controls, so
+  // the real derivation is never exercised. The binding subscribes to the
+  // request context too; this one never changes.
+  const ambientClient = {
+    getRequestContextUserId: () => "user-test",
+    onChange: () => () => undefined,
+  };
+  return { useHostClient: () => ambientClient };
+});
 
 vi.mock("@/hooks/host/use-host-stream-client-for", () => ({
   useHostStreamClientBindingFor: () => refs.binding,

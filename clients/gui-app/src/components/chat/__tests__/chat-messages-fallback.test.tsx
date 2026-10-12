@@ -66,10 +66,10 @@ import type {
   ProviderNoticeSegment,
 } from "@/stores/composer/chat-store";
 import {
-  useRenderedMessages,
   type RenderedMessagesDisplayContext,
   type RenderedMessagesInput,
 } from "@/stores/chats/rendered-messages";
+import { useRenderedMessages } from "@/stores/chats/__tests__/rendered-messages-test-utils";
 import { FRESH_SESSION_HELPER } from "@/components/chat/fallback/fallback-copy";
 import { usePublishConfirmedManualFallbackAction } from "@/components/chat/fallback/use-confirmed-manual-action";
 import { usePublishUnattendedFallbackOutcome } from "@/components/chat/fallback/use-unattended-fallback-outcome";
@@ -842,14 +842,34 @@ const modelLabelOverride = vi.hoisted(() => ({
  * `settledFor` is a STABLE function identity (replaced only when a test mints
  * a new one) so a layout-effect re-observation is a deliberate settle, not an
  * accidental new arrow on every render.
+ *
+ * The real catalogue answers through a query, so it is reactive: a settle
+ * reaches the components that asked. The mocked hook subscribes through
+ * `subscribe` and re-renders on `publish`, which a mid-test settle calls (inside
+ * `act`). A write to `value` alone is invisible to React.
  */
 const catalogueSettled = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
   const state: {
     value: boolean;
+    version: number;
     settledFor: (harnessId: string) => boolean;
+    subscribe: (listener: () => void) => () => void;
+    publish: () => void;
   } = {
     value: true,
+    version: 0,
     settledFor: (_harnessId: string): boolean => state.value,
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    publish: () => {
+      state.version += 1;
+      listeners.forEach((listener) => listener());
+    },
   };
   return state;
 });
@@ -865,6 +885,7 @@ vi.mock(
       await importOriginal<
         typeof import("@/components/chat/fallback/fallback-identity")
       >();
+    const { useSyncExternalStore } = await import("react");
     const labelFor = (harnessId: string, model: string): string =>
       modelLabelOverride.value?.get(`${harnessId}:${model}`) ?? model;
     // One resolver per asked-for set, so its identity is as stable as the
@@ -903,6 +924,10 @@ vi.mock(
         harnessIdsInPlay: ReadonlyArray<string | null>,
         enabled: boolean,
       ) => {
+        useSyncExternalStore(
+          catalogueSettled.subscribe,
+          () => catalogueSettled.version,
+        );
         modelLabelOverride.calls.push({
           harnessIds: harnessIdsInPlay.flatMap((id) =>
             id === null ? [] : [id],
@@ -3497,14 +3522,18 @@ describe("ChatMessages fallback announcer (real store, real observer, real ident
       });
     }
 
+    // Both publish, so a settle taken mid-test reaches the mounted hook. Call
+    // a mid-test one inside `act` (e.g. from `captureLiveRegionCommits`).
     function settleCatalogue(): void {
       catalogueSettled.value = true;
       catalogueSettled.settledFor = mintCatalogueSettledFor();
+      catalogueSettled.publish();
     }
 
     function unsettleCatalogue(): void {
       catalogueSettled.value = false;
       catalogueSettled.settledFor = mintCatalogueSettledFor();
+      catalogueSettled.publish();
     }
 
     it("holds the confirmed switch and does not announce while the catalogue is unsettled", async () => {
@@ -3534,7 +3563,7 @@ describe("ChatMessages fallback announcer (real store, real observer, real ident
       const harness = createHarness();
       registerHarness(harness);
       const baselineEpoch = bootstrap(harness, undefined, undefined, undefined);
-      const chat = renderChat(baselineEpoch, undefined);
+      renderChat(baselineEpoch, undefined);
       publishHeldSwitch(harness);
       await flushAnnouncer();
       expect(liveRegionText()).not.toContain("Switched this chat to");
@@ -3551,9 +3580,8 @@ describe("ChatMessages fallback announcer (real store, real observer, real ident
           RESOLVED_MANUAL_MODEL_LABEL,
         ],
       ]);
-      settleCatalogue();
       const commits = await captureLiveRegionCommits(() => {
-        chat.rerenderWith({});
+        settleCatalogue();
       });
       expect(
         countSentenceOccurrences(commits, SWITCHED_RESOLVED_SENTENCE),
@@ -3733,7 +3761,7 @@ describe("ChatMessages fallback announcer (real store, real observer, real ident
       const harness = createHarness();
       registerHarness(harness);
       const baselineEpoch = bootstrap(harness, undefined, undefined, undefined);
-      const chat = renderChat(baselineEpoch, undefined);
+      renderChat(baselineEpoch, undefined);
       // Published while READY, so this event is genuine news and the hold is
       // legitimately taken. That is what separates this case from the one
       // above; the difference is not the settle, it is whose news it is.
@@ -3750,9 +3778,8 @@ describe("ChatMessages fallback announcer (real store, real observer, real ident
           RESOLVED_MANUAL_MODEL_LABEL,
         ],
       ]);
-      settleCatalogue();
       const whileUnready = await captureLiveRegionCommits(() => {
-        chat.rerenderWith({});
+        settleCatalogue();
       });
       expect(
         countSentenceOccurrences(whileUnready, SWITCHED_RESOLVED_SENTENCE),

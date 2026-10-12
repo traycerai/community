@@ -99,11 +99,18 @@ export function SideStripRowList(props: {
   );
   const handlers = useSideStripHandlers(controller);
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
+  const sectioned = useSectionedStrip();
+  // Only the expanded list has section headers to stick, fold and scroll to,
+  // and group blocks (the rail's groups are columns).
+  const expanded = variant === "expanded";
+  const sectionedList = sectioned && expanded;
+  const { scroll, onGeometry } = useSectionScroll(sectionedList);
   const setScrollerNode = useStripScroller({
     axis: VERTICAL_STRIP_AXIS,
     activeItemId,
     itemCount: headerItemIds.length,
     extraRef: setScroller,
+    onGeometry,
   });
   // The drop's line is placed among the rows that are drawn, which is how the
   // drag model counts them: a collapsed group's rows are not.
@@ -119,12 +126,6 @@ export function SideStripRowList(props: {
       sourceIndex < 0 ? null : sourceIndex,
     );
   }, [drawn, dropIndicatorIndex, dropGroupId, dragSourceItemId]);
-  const sectioned = useSectionedStrip();
-  // Only the expanded list has section headers to stick, fold and scroll to,
-  // and group blocks (the rail's groups are columns).
-  const expanded = variant === "expanded";
-  const sectionedList = sectioned && expanded;
-  const scroll = useSectionScroll(sectionedList ? scroller : null);
   // A grouped row sits in its group's block or column, which carries the colour.
   const item = (row: StripRow): ReactNode =>
     row.hidden ? null : (
@@ -256,7 +257,7 @@ function prepareSplitMotion(tab: HeaderTab): void {
         ),
     );
   if (pair === undefined) return;
-  armHeaderStripCommitHandoff();
+  armHeaderStripCommitHandoff(VERTICAL_STRIP_AXIS);
   for (const ref of flattenStripItemRefs(pair)) {
     seedHeaderStripItemFrom(tabItemId(ref), pair.id, VERTICAL_STRIP_AXIS);
   }

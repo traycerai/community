@@ -17,6 +17,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 import {
   LandingTerminalHost,
@@ -41,6 +42,11 @@ import { useLandingDraftStore } from "@/stores/home/landing-draft-store";
 import { useAuthStore } from "@/stores/auth/auth-store";
 import { useLayoutStore } from "@/stores/layout/layout-store";
 import { useTabsStore } from "@/stores/tabs/store";
+import { draftSurfaceModule } from "@/stores/tabs/kinds/surface-modules";
+import {
+  setTopLevelDemand,
+  useSurfaceDemandStore,
+} from "@/stores/tabs/surface-demand";
 import { tabCommandCoordinator } from "@/stores/tabs/tab-command-coordinator";
 import type { HeaderTab, TabRef } from "@/stores/tabs/types";
 
@@ -137,8 +143,14 @@ function releaseHeldTabBodyImport(load: {
 vi.mock("@tanstack/react-router", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("@tanstack/react-router")>();
+  // No `RouterProvider` here, and a file-level mock that spreads the original
+  // module does not get the suite setup's inert `useRouter`. The system-tab
+  // modal hooks read `router.navigate` at render under the React Compiler, so
+  // the null the real hook answers throws.
+  const inertRouter = { navigate: () => Promise.resolve() };
   return {
     ...actual,
+    useRouter: () => inertRouter,
     useRouterState: (options: {
       readonly select?: (state: {
         readonly location: {
@@ -490,23 +502,26 @@ function setSingle(ref: TabRef, refs: ReadonlyArray<TabRef>) {
   }));
 }
 
+// Demand is process-global and the shared coordinator writes it on every
+// activation; each test starts from the initial store.
+beforeEach(() => {
+  useSurfaceDemandStore.setState(useSurfaceDemandStore.getInitialState(), true);
+});
+
 describe("<TopLevelTabHost />", () => {
-  // The draft tab kind renders through TWO chained `React.lazy()` boundaries
-  // (`draft-surface-provider` wrapping `landing-draft-surface`), each a real
-  // dynamic `import()` that must transform and evaluate before its Suspense
-  // fallback (`null`) is replaced by content - so a test that queries a draft
-  // pane's content is racing that resolution. Awaiting the SAME module
-  // specifiers here, once, up front, is the deterministic fact this suite
-  // needs: ESM caches by specifier, so by the time `render()` runs inside any
-  // `it`, `lazy()`'s own `import()` call resolves against an already-loaded
-  // module instead of paying transform+eval under whatever load the runner is
-  // under. This is not a longer wait - it moves the real async work earlier,
-  // to a point this file can already `await`.
+  // The draft tab kind draws from ONE on-demand module entry
+  // (`draftSurfaceModule`: `draft-surface-provider` wrapping
+  // `landing-draft-surface`), each a real dynamic `import()` that must
+  // transform and evaluate before the tab can draw anything but its pending
+  // state - so a test that queries a draft pane's content is racing that
+  // load. Loading the entry here, once, up front, through its own loader is
+  // the deterministic fact this suite needs: by the time `render()` runs
+  // inside any `it`, the module is loaded and the surface is drawn in the
+  // first commit instead of paying transform+eval under whatever load the
+  // runner is under. This is not a longer wait - it moves the real async
+  // work earlier, to a point this file can already `await`.
   beforeAll(async () => {
-    await Promise.all([
-      import("@/components/home/landing-draft-surface"),
-      import("@/providers/draft-surface-provider"),
-    ]);
+    await draftSurfaceModule.load();
   });
 
   beforeEach(() => {
@@ -520,6 +535,10 @@ describe("<TopLevelTabHost />", () => {
 
   afterEach(() => {
     cleanup();
+    useSurfaceDemandStore.setState(
+      useSurfaceDemandStore.getInitialState(),
+      true,
+    );
     useTabsStore.setState(useTabsStore.getInitialState(), true);
     useEpicCanvasStore.setState(useEpicCanvasStore.getInitialState(), true);
     useLandingDraftStore.setState(useLandingDraftStore.getInitialState(), true);
@@ -634,6 +653,102 @@ describe("<TopLevelTabHost />", () => {
     );
 
     expect(screen.getByTestId("epic-surface-content-epic-a")).toBeTruthy();
+  });
+
+  it("a cold surface under preview demand mounts only the static shell, and settling mounts its body", () => {
+    seedSources([EPIC_A, EPIC_B]);
+    setSingle(EPIC_A, [EPIC_A, EPIC_B]);
+    render(<TopLevelTabHost />);
+    expect(screen.getByTestId("epic-surface-content-epic-a")).toBeTruthy();
+    expect(screen.queryByTestId("epic-surface-content-epic-b")).toBeNull();
+
+    // The cursor lands on a never-mounted tab: it shows, but owns no resources.
+    act(() => {
+      setTopLevelDemand([tabRefKey(EPIC_B)], "preview");
+      setSingle(EPIC_B, [EPIC_A, EPIC_B]);
+    });
+    expect(surfaceRef(EPIC_B).dataset.visible).toBe("true");
+    expect(
+      within(surfaceRef(EPIC_B)).getByTestId("surface-preview-shell"),
+    ).toBeTruthy();
+    expect(screen.queryByTestId("epic-surface-content-epic-b")).toBeNull();
+
+    act(() => setTopLevelDemand([tabRefKey(EPIC_B)], "settled"));
+    expect(screen.getByTestId("epic-surface-content-epic-b")).toBeTruthy();
+    expect(
+      within(surfaceRef(EPIC_B)).queryByTestId("surface-preview-shell"),
+    ).toBeNull();
+  });
+
+  it("previewing an already-mounted surface keeps its body instance and local state", () => {
+    seedSources([EPIC_A, EPIC_B]);
+    setSingle(EPIC_A, [EPIC_A, EPIC_B]);
+    render(<TopLevelTabHost />);
+    act(() => setSingle(EPIC_B, [EPIC_A, EPIC_B]));
+    const bodyBefore = screen.getByTestId("epic-surface-body-epic-a");
+    bodyBefore.setAttribute("data-local-value", "retained");
+
+    act(() => {
+      setTopLevelDemand([tabRefKey(EPIC_A)], "preview");
+      setSingle(EPIC_A, [EPIC_A, EPIC_B]);
+    });
+
+    const bodyAfter = screen.getByTestId("epic-surface-body-epic-a");
+    expect(bodyAfter).toBe(bodyBefore);
+    expect(bodyAfter.dataset.localValue).toBe("retained");
+    expect(
+      within(surfaceRef(EPIC_A)).queryByTestId("surface-preview-shell"),
+    ).toBeNull();
+  });
+
+  it("mounts a cold previewed tab at its strip position, so settling it never re-inserts the warm tabs after it", () => {
+    const EPIC_X: TabRef = { kind: "epic", id: "epic-x" };
+    const strip = [EPIC_A, EPIC_X, EPIC_B];
+    const surfaceOrder = (): ReadonlyArray<string | undefined> =>
+      Array.from(document.querySelectorAll("[data-surface-ref]")).map(
+        (element) =>
+          element instanceof HTMLElement
+            ? element.dataset.surfaceRef
+            : undefined,
+      );
+    seedSources(strip);
+    setSingle(EPIC_A, strip);
+    render(<TopLevelTabHost />);
+    // B is warm too: both ends of the strip have been settled on once, X never.
+    act(() => setSingle(EPIC_B, strip));
+    act(() => setSingle(EPIC_A, strip));
+    expect(screen.queryByTestId("epic-surface-content-epic-x")).toBeNull();
+    const warmB = surfaceRef(EPIC_B);
+    expect(surfaceOrder()).toEqual(
+      strip.map(tabRefKey).filter((key) => key !== tabRefKey(EPIC_X)),
+    );
+
+    // The cursor lands on the cold middle tab: it joins the DOM, in strip order.
+    act(() => {
+      setTopLevelDemand([tabRefKey(EPIC_X)], "preview");
+      setSingle(EPIC_X, strip);
+    });
+    expect(surfaceOrder()).toEqual(strip.map(tabRefKey));
+    expect(surfaceRef(EPIC_B)).toBe(warmB);
+
+    // Settling changes who is retained, never where a mounted tab sits, so the
+    // warm tab after it keeps the very same element and is never detached and
+    // re-inserted (which reloads its iframes).
+    const observer = new MutationObserver(() => undefined);
+    observer.observe(document.body, { childList: true, subtree: true });
+    act(() => setTopLevelDemand([tabRefKey(EPIC_X)], "settled"));
+    const movedWarmB = observer
+      .takeRecords()
+      .some(
+        (record) =>
+          Array.from(record.removedNodes).includes(warmB) ||
+          Array.from(record.addedNodes).includes(warmB),
+      );
+    observer.disconnect();
+    expect(screen.getByTestId("epic-surface-content-epic-x")).toBeTruthy();
+    expect(surfaceOrder()).toEqual(strip.map(tabRefKey));
+    expect(surfaceRef(EPIC_B)).toBe(warmB);
+    expect(movedWarmB).toBe(false);
   });
 
   it("keeps split partner keys mounted while swapping their slots", () => {

@@ -46,9 +46,26 @@ const forkCreateTestState = vi.hoisted(() => ({
   mutate: vi.fn<(input: ForkCreateRequest, options: object) => void>(),
   reset: vi.fn<() => void>(),
 }));
-const cloudChatListTestState = vi.hoisted(() => ({
-  knownChatIds: new Set<string>(),
-}));
+// The real list is a query, so the mocked hook is reactive too: a mid-test
+// change goes through `addKnownChat`, which notifies the hook's subscribers.
+const cloudChatListTestState = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  return {
+    knownChatIds: new Set<string>(),
+    version: 0,
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    addKnownChat(chatId: string): void {
+      this.knownChatIds.add(chatId);
+      this.version += 1;
+      listeners.forEach((listener) => listener());
+    },
+  };
+});
 // The tile's own next-step/compact/implement-plan sends read this catalog to
 // clamp a sticky `auto` permission to what the selected harness row actually
 // honors (chat-tile.tsx's `nextStepSettings`). `MOCK_HOST_CLIENT.request`
@@ -319,36 +336,45 @@ vi.mock("@/hooks/host/use-effective-host-id", () => ({
 // "not the viewer's", silently re-closing the gate this exists to open. The
 // return annotation is the gate: the next field the row gains fails
 // `compile` here instead of quietly turning these tests red in CI.
-vi.mock("@/hooks/chats/use-cloud-chat-queries", async (importActual) => ({
-  ...(await importActual<
-    typeof import("@/hooks/chats/use-cloud-chat-queries")
-  >()),
-  useCloudChatList: () => ({
-    data: {
-      chats: [...cloudChatListTestState.knownChatIds].map(
-        (chatId): CloudChatSummary => ({
-          identity: { taskId: EPIC_ID, chatId, ownerUserId: "owner-1" },
-          ownerHostId: HOST_ID,
-          createdAt: 1,
-          visibility: "task",
-          title: null,
-          isTitleEditedByUser: false,
-          parentChatId: null,
-          isArchived: false,
-          runSettingsSummary: null,
-          metadataUpdatedAt: 1,
-          headSha256: null,
-          publishedAt: null,
-          throughRecordSeq: null,
-          isOwnedByViewer: true,
-        }),
-      ),
+vi.mock("@/hooks/chats/use-cloud-chat-queries", async (importActual) => {
+  const { useSyncExternalStore } = await import("react");
+  return {
+    ...(await importActual<
+      typeof import("@/hooks/chats/use-cloud-chat-queries")
+    >()),
+    useCloudChatList: () => {
+      useSyncExternalStore(
+        cloudChatListTestState.subscribe,
+        () => cloudChatListTestState.version,
+      );
+      return {
+        data: {
+          chats: [...cloudChatListTestState.knownChatIds].map(
+            (chatId): CloudChatSummary => ({
+              identity: { taskId: EPIC_ID, chatId, ownerUserId: "owner-1" },
+              ownerHostId: HOST_ID,
+              createdAt: 1,
+              visibility: "task",
+              title: null,
+              isTitleEditedByUser: false,
+              parentChatId: null,
+              isArchived: false,
+              runSettingsSummary: null,
+              metadataUpdatedAt: 1,
+              headSha256: null,
+              publishedAt: null,
+              throughRecordSeq: null,
+              isOwnedByViewer: true,
+            }),
+          ),
+        },
+        isError: false,
+        isPending: false,
+        isFetching: false,
+      };
     },
-    isError: false,
-    isPending: false,
-    isFetching: false,
-  }),
-}));
+  };
+});
 
 // Only `useGuiHarnessCatalogForClient` is overridden - every other export
 // (including `useGuiHarnessCatalog`, whose own body calls the real,
@@ -1715,7 +1741,7 @@ describe("<ChatTile />", () => {
     chatHarness.teardown();
     harness.install(null, "editor");
     chatHarness.installDeferred();
-    const rendered = renderSwitchableChatTile();
+    renderSwitchableChatTile();
     await advanceLegendListTime(0);
 
     const before = screen.getByTestId("chat-tile-pre-content-chat-1");
@@ -1725,8 +1751,9 @@ describe("<ChatTile />", () => {
 
     await advanceLegendListTime(5_000);
     // The record-less chat becomes cloud-known, which opens the session gate.
-    cloudChatListTestState.knownChatIds.add(CHAT_ARTIFACT.id);
-    rendered.setChatVisible(true);
+    act(() => {
+      cloudChatListTestState.addKnownChat(CHAT_ARTIFACT.id);
+    });
     await waitFor(() => {
       expect(chatHarness.streamCreations()).toBe(1);
     });
@@ -2619,7 +2646,9 @@ describe("<ChatTile />", () => {
           {chatTileTestTree(queryClient, true, CHAT_ARTIFACT)}
         </PaneVisibilityContext.Provider>
       );
-      const { rerender } = render(tree(false));
+      // Shown first, so its chat session opens (a tile that was never shown
+      // opens none), then sent behind another task.
+      const { rerender } = render(tree(true));
       await waitForChatTileLoaded();
       act(() => {
         emitChatSnapshotWithMessages({
@@ -2632,6 +2661,7 @@ describe("<ChatTile />", () => {
           pendingInterviews: [{ blockId: "question-1", requestedAt: 3 }],
         });
       });
+      rerender(tree(false));
       const highlighted = (): string | null =>
         screen
           .getByTestId("interview-card")

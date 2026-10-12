@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { PlainTerminalProjection } from "@traycer/protocol/host/terminal/plain-schemas";
 import {
+  activatePaneTab,
   adoptHostTerminalProjection,
   closeAllTabs,
   closeOtherTabs,
@@ -22,6 +23,7 @@ import {
   resizeSplit,
   setActivePane,
   setActiveTab,
+  settlePaneTabPreview,
   splitPaneAtEdge,
   splitPaneEmpty,
   rebindPendingBrowserTile,
@@ -1049,6 +1051,168 @@ describe("setActiveTab", () => {
     if (pane === null) throw new Error("expected pane");
     expect(activationContentIds(next, pane)).toEqual([SPEC_A.id, SPEC_B.id]);
     expect(next.activePaneId).toBe(paneId);
+  });
+});
+
+describe("activatePaneTab (demand)", () => {
+  function threeTabs(): { state: EpicCanvasState; paneId: string } {
+    let state = openPinned(createEmptyCanvas(), SPEC_A);
+    state = openPinned(state, SPEC_B);
+    state = openPinned(state, SPEC_C);
+    const paneId = rootPane(state).id;
+    // Settle on A so the history is [A, C, B] before any preview.
+    state = activatePaneTab(state, paneId, SPEC_A.instanceId, "settled");
+    return { state, paneId };
+  }
+
+  it("a preview moves the visible selection without recording activation history", () => {
+    const { state, paneId } = threeTabs();
+    const historyBefore = paneById(state, paneId).activationHistory;
+
+    const previewed = activatePaneTab(
+      state,
+      paneId,
+      SPEC_B.instanceId,
+      "preview",
+    );
+
+    const pane = paneById(previewed, paneId);
+    expect(pane.activeTabId).toBe(SPEC_B.instanceId);
+    expect(pane.activationHistory).toEqual(historyBefore);
+    expect(previewed.activePaneId).toBe(paneId);
+  });
+
+  it("previewing across several tabs never leaks any of them into history, and settling the last records only it", () => {
+    const { state, paneId } = threeTabs();
+    const historyBefore = paneById(state, paneId).activationHistory;
+
+    let next = activatePaneTab(state, paneId, SPEC_B.instanceId, "preview");
+    next = activatePaneTab(next, paneId, SPEC_C.instanceId, "preview");
+    expect(paneById(next, paneId).activationHistory).toEqual(historyBefore);
+
+    next = activatePaneTab(next, paneId, SPEC_C.instanceId, "settled");
+    expect(paneById(next, paneId).activationHistory).toEqual([
+      SPEC_C.instanceId,
+      ...historyBefore.filter((id) => id !== SPEC_C.instanceId),
+    ]);
+  });
+
+  it("settling the tab that a preview already selected still records it (the keyup path)", () => {
+    const { state, paneId } = threeTabs();
+    const previewed = activatePaneTab(
+      state,
+      paneId,
+      SPEC_B.instanceId,
+      "preview",
+    );
+    expect(paneById(previewed, paneId).activationHistory[0]).toBe(
+      SPEC_A.instanceId,
+    );
+
+    const settled = activatePaneTab(
+      previewed,
+      paneId,
+      SPEC_B.instanceId,
+      "settled",
+    );
+
+    expect(paneById(settled, paneId).activationHistory[0]).toBe(
+      SPEC_B.instanceId,
+    );
+  });
+
+  it("repeating an identical preview or settle returns the same state; unknown targets are ignored", () => {
+    const { state, paneId } = threeTabs();
+    expect(activatePaneTab(state, paneId, SPEC_A.instanceId, "settled")).toBe(
+      state,
+    );
+    const previewed = activatePaneTab(
+      state,
+      paneId,
+      SPEC_B.instanceId,
+      "preview",
+    );
+    expect(
+      activatePaneTab(previewed, paneId, SPEC_B.instanceId, "preview"),
+    ).toBe(previewed);
+    expect(activatePaneTab(state, paneId, "missing", "preview")).toBe(state);
+    expect(
+      activatePaneTab(state, "missing-pane", SPEC_B.instanceId, "settled"),
+    ).toBe(state);
+  });
+});
+
+describe("settlePaneTabPreview", () => {
+  function previewedSecondTab(): { state: EpicCanvasState; paneId: string } {
+    let state = openPinned(createEmptyCanvas(), SPEC_A);
+    state = openPinned(state, SPEC_B);
+    state = openPinned(state, SPEC_C);
+    const paneId = rootPane(state).id;
+    state = activatePaneTab(state, paneId, SPEC_A.instanceId, "settled");
+    state = activatePaneTab(state, paneId, SPEC_B.instanceId, "preview");
+    return { state, paneId };
+  }
+
+  it("records the tab the pane is showing as the latest activation, in place", () => {
+    const { state, paneId } = previewedSecondTab();
+    expect(paneById(state, paneId).activationHistory[0]).toBe(
+      SPEC_A.instanceId,
+    );
+
+    const next = settlePaneTabPreview(state, paneId, SPEC_B.instanceId);
+
+    const pane = paneById(next, paneId);
+    expect(pane.activeTabId).toBe(SPEC_B.instanceId);
+    expect(pane.activationHistory[0]).toBe(SPEC_B.instanceId);
+    expect(next.root).not.toBe(state.root);
+  });
+
+  it("leaves the globally active pane alone, since a cancellation can arrive after focus moved", () => {
+    const { state: previewed, paneId } = previewedSecondTab();
+    let state = splitPaneAtEdge(previewed, paneId, "right", {
+      kind: "node",
+      node: CHAT_A,
+    });
+    const otherPaneId = collectPanes(state.root).find(
+      (pane) => pane.id !== paneId,
+    )?.id;
+    if (otherPaneId === undefined) throw new Error("expected a second pane");
+    state = setActivePane(state, otherPaneId);
+
+    const next = settlePaneTabPreview(state, paneId, SPEC_B.instanceId);
+
+    expect(paneById(next, paneId).activationHistory[0]).toBe(SPEC_B.instanceId);
+    expect(next.activePaneId).toBe(otherPaneId);
+  });
+
+  it("returns the same state when the pane no longer shows that tab, or the tab or pane is gone", () => {
+    const { state, paneId } = previewedSecondTab();
+    // The pane moved on to C, so B's cancelled preview has nothing to record.
+    const movedOn = activatePaneTab(
+      state,
+      paneId,
+      SPEC_C.instanceId,
+      "preview",
+    );
+    expect(settlePaneTabPreview(movedOn, paneId, SPEC_B.instanceId)).toBe(
+      movedOn,
+    );
+    expect(settlePaneTabPreview(state, paneId, "missing")).toBe(state);
+    expect(settlePaneTabPreview(state, "missing-pane", SPEC_B.instanceId)).toBe(
+      state,
+    );
+    expect(
+      settlePaneTabPreview(createEmptyCanvas(), paneId, SPEC_B.instanceId),
+    ).toEqual(createEmptyCanvas());
+  });
+
+  it("returns the same state once the shown tab is already the latest activation", () => {
+    const { state, paneId } = previewedSecondTab();
+    const settled = settlePaneTabPreview(state, paneId, SPEC_B.instanceId);
+
+    expect(settlePaneTabPreview(settled, paneId, SPEC_B.instanceId)).toBe(
+      settled,
+    );
   });
 });
 

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import { MoreHorizontal } from "lucide-react";
 import { EpicFileDownloadButton } from "@/components/files/epic-file-download-button";
@@ -24,6 +24,7 @@ import type { EpicFileAddress } from "@/hooks/files/use-epic-file-text-query";
 import { useClipboardCopy } from "@/hooks/ui/use-clipboard-copy";
 import { epicFileViewer } from "@/lib/files/viewer-registry";
 import type { EpicFileTileRef } from "@/stores/epics/canvas/types";
+import { useSurfaceDemand } from "@/stores/tabs/surface-demand";
 
 interface EpicFileTileProps {
   readonly node: EpicFileTileRef;
@@ -60,6 +61,14 @@ export function EpicFileTile(props: EpicFileTileProps): ReactNode {
     via: node.via,
   };
   const viewer = epicFileViewer(node.path);
+  const settled = useSurfaceDemand() === "settled";
+  const [pageLoaded, setPageLoaded] = useState(false);
+  // Restored retention history is not a page viewed in this window session.
+  // Load it on first settled show (a held tab cycle's preview is not one),
+  // then keep its running document through tab switches.
+  if (!pageLoaded && settled && viewer.kind === "html") {
+    setPageLoaded(true);
+  }
   // The manifest's title names the file where it has one (a page, an app).
   const title = useEpicFileRecord(node.path)?.entry.title?.trim() ?? "";
   const download = useEpicFileDownload(hostId, address);
@@ -110,14 +119,16 @@ export function EpicFileTile(props: EpicFileTileProps): ReactNode {
             versionNav={versionNav}
             actions={fileActions}
           >
-            <HtmlViewer
-              // A new version is a new document, with fresh frame state.
-              key={node.sha256}
-              hostId={hostId}
-              address={address}
-              title={title.length > 0 ? title : node.name}
-              initialHeight={null}
-            />
+            {settled || pageLoaded ? (
+              <HtmlViewer
+                // A new version is a new document, with fresh frame state.
+                key={node.sha256}
+                hostId={hostId}
+                address={address}
+                title={title.length > 0 ? title : node.name}
+                initialHeight={null}
+              />
+            ) : null}
           </PathBar>
         );
       case "image":

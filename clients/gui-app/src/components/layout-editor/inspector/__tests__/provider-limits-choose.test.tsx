@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -37,16 +38,49 @@ import {
  * `isWindowedRateLimitProvider` check inside `ProviderLimitsPick`) holds even
  * when fed live windows, rather than only because the reader withheld them.
  */
-const live = vi.hoisted(() => ({
-  windows: [] as ReadonlyArray<StatusBarRateLimitWindow>,
-  drawnKeys: [] as ReadonlyArray<string>,
-}));
-vi.mock("@/components/layout-editor/inspector/provider-limit-windows", () => ({
-  ProviderLimitWindowsReader: (props: {
-    readonly providerId: RateLimitProviderId;
-    readonly children: (limits: typeof live) => ReactNode;
-  }) => props.children(live),
-}));
+const live = vi.hoisted(() => {
+  const listeners = new Set<() => void>();
+  return {
+    windows: [] as ReadonlyArray<StatusBarRateLimitWindow>,
+    drawnKeys: [] as ReadonlyArray<string>,
+    version: 0,
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    /** A mid-test change; the real reader is a cache read, so the mock is reactive. */
+    set(
+      windows: ReadonlyArray<StatusBarRateLimitWindow>,
+      drawnKeys: ReadonlyArray<string>,
+    ): void {
+      this.windows = windows;
+      this.drawnKeys = drawnKeys;
+      this.version += 1;
+      listeners.forEach((listener) => listener());
+    },
+  };
+});
+vi.mock(
+  "@/components/layout-editor/inspector/provider-limit-windows",
+  async () => {
+    const { useSyncExternalStore } = await import("react");
+    return {
+      ProviderLimitWindowsReader: (props: {
+        readonly providerId: RateLimitProviderId;
+        readonly children: (limits: {
+          readonly windows: ReadonlyArray<StatusBarRateLimitWindow>;
+          readonly drawnKeys: ReadonlyArray<string>;
+        }) => ReactNode;
+      }) => {
+        useSyncExternalStore(live.subscribe, () => live.version);
+        return props.children({
+          windows: live.windows,
+          drawnKeys: live.drawnKeys,
+        });
+      },
+    };
+  },
+);
 
 const navigation = vi.hoisted(() => ({
   navigateToLayoutRegion: vi.fn(),
@@ -245,18 +279,19 @@ describe('the provider row\'s "Choose..." checklist (L-96, I-14)', () => {
     });
     live.windows = [];
     live.drawnKeys = [];
-    const { rerender } = render(
-      <ProviderLimitsControl providerId={PROVIDER} />,
-    );
+    render(<ProviderLimitsControl providerId={PROVIDER} />);
     expect(limitsMode()).toBe("Automatic (recommended)");
     expect(screen.queryByRole("group", { name: "Limits to draw" })).toBeNull();
     // Untouched: an empty reading must not rewrite or clear the arrangement,
     // only change what is DRAWN from it.
     expect(selection()).toEqual({ limitKeys: ["5h", "week"] });
 
-    live.windows = [limitWindow("5h", "5h"), limitWindow("week", "Weekly")];
-    live.drawnKeys = ["5h"];
-    rerender(<ProviderLimitsControl providerId={PROVIDER} />);
+    act(() =>
+      live.set(
+        [limitWindow("5h", "5h"), limitWindow("week", "Weekly")],
+        ["5h"],
+      ),
+    );
 
     expect(limitsMode()).toBe("Choose...");
     const list = screen.getByRole("group", { name: "Limits to draw" });

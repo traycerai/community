@@ -1,4 +1,11 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useRef } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+} from "react";
 import {
   TileFindContext,
   type TileFindContextValue,
@@ -26,6 +33,21 @@ export function TileFindScope(props: TileFindScopeProps): ReactNode {
   const { node, viewTabId, tileId, epicId, isActive, children } = props;
   const paneFocused = usePaneFocused();
   const registerTarget = useTileFindStore((state) => state.registerTarget);
+  const setTargetEligibility = useTileFindStore(
+    (state) => state.setTargetEligibility,
+  );
+  // Eligibility is read through a ref at registration and pushed separately
+  // below. Folding it into the registration made every pane focus or
+  // activation flip unregister and re-register the target (and, through the
+  // context value, every adapter under it): three store writes per tile per
+  // tab-cycle step, each waking every tile-find reader in the app.
+  const isEligible = isActive && paneFocused;
+  const isEligibleRef = useRef(isEligible);
+  // A layout effect runs before every passive effect, the children's adapter
+  // registrations included, so a registration always reads this commit's value.
+  useLayoutEffect(() => {
+    isEligibleRef.current = isEligible;
+  }, [isEligible]);
   const unregisterTargetRef = useRef<(() => void) | null>(null);
   const activeAdapterRef = useRef<TileFindAdapter | null>(null);
   const adapterRegistrationIdRef = useRef(0);
@@ -56,23 +78,25 @@ export function TileFindScope(props: TileFindScopeProps): ReactNode {
         tileId,
         epicId,
         tileKind: node.type,
-        isEligible: isActive && paneFocused,
+        isEligible: isEligibleRef.current,
         adapter: nextAdapter,
       });
     },
     [
       epicId,
-      isActive,
       node.id,
       node.instanceId,
       node.type,
-      paneFocused,
       registerTarget,
       tileId,
       unregisterCurrentTarget,
       viewTabId,
     ],
   );
+
+  useEffect(() => {
+    setTargetEligibility(node.instanceId, isEligible);
+  }, [isEligible, node.instanceId, setTargetEligibility]);
 
   const registerAdapter = useCallback(
     (nextAdapter: TileFindAdapter) => {

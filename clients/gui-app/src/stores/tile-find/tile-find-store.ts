@@ -31,6 +31,14 @@ export interface TileFindState {
     tileInstanceId: string,
     registeredAt: number | null,
   ) => void;
+  /**
+   * Updates a registered target's eligibility in place. A no-op (no write,
+   * no notification) when it is unchanged or the target is not registered.
+   */
+  readonly setTargetEligibility: (
+    tileInstanceId: string,
+    isEligible: boolean,
+  ) => void;
   readonly setOwnerBlocker: (blocker: TileFindOwnerBlocker | null) => void;
   readonly openForTile: (tileInstanceId: string) => boolean;
   readonly openActiveOwner: () => boolean;
@@ -200,6 +208,7 @@ export const useTileFindStore = create<TileFindState>((set, get) => ({
       const target: TileFindTargetRecord = {
         ...registration,
         registeredAt,
+        eligibleOrder: registeredAt,
       };
       const targetsByTileInstanceId = {
         ...state.targetsByTileInstanceId,
@@ -222,6 +231,7 @@ export const useTileFindStore = create<TileFindState>((set, get) => ({
         activeOwner: resolveActiveOwner(
           targetsByTileInstanceId,
           state.ownerBlocker,
+          state.activeOwner,
         ),
         nextRegistrationId: registeredAt + 1,
       };
@@ -260,10 +270,38 @@ export const useTileFindStore = create<TileFindState>((set, get) => ({
         activeOwner: resolveActiveOwner(
           targetsByTileInstanceId,
           state.ownerBlocker,
+          state.activeOwner,
         ),
       };
     });
     scheduleUiReclaim(tileInstanceId);
+  },
+
+  setTargetEligibility: (tileInstanceId, isEligible) => {
+    set((state) => {
+      const target = state.targetsByTileInstanceId[tileInstanceId];
+      if (target === undefined || target.isEligible === isEligible) {
+        return state;
+      }
+      const eligibleOrder = isEligible
+        ? state.nextRegistrationId
+        : target.eligibleOrder;
+      const targetsByTileInstanceId = {
+        ...state.targetsByTileInstanceId,
+        [tileInstanceId]: { ...target, isEligible, eligibleOrder },
+      };
+      return {
+        targetsByTileInstanceId,
+        activeOwner: resolveActiveOwner(
+          targetsByTileInstanceId,
+          state.ownerBlocker,
+          state.activeOwner,
+        ),
+        nextRegistrationId: isEligible
+          ? state.nextRegistrationId + 1
+          : state.nextRegistrationId,
+      };
+    });
   },
 
   setOwnerBlocker: (blocker) => {
@@ -271,7 +309,11 @@ export const useTileFindStore = create<TileFindState>((set, get) => ({
       if (sameOwnerBlocker(state.ownerBlocker, blocker)) return state;
       return {
         ownerBlocker: blocker,
-        activeOwner: resolveActiveOwner(state.targetsByTileInstanceId, blocker),
+        activeOwner: resolveActiveOwner(
+          state.targetsByTileInstanceId,
+          blocker,
+          state.activeOwner,
+        ),
       };
     });
   },
@@ -632,11 +674,14 @@ function replayRegisteredAdapterSearch(
   );
 }
 
+// `previous` keeps the owner's identity when nothing about it changed, so a
+// write that leaves the owner where it was does not re-render its readers.
 function resolveActiveOwner(
   targetsByTileInstanceId: Readonly<
     Record<string, TileFindTargetRecord | undefined>
   >,
   ownerBlocker: TileFindOwnerBlocker | null,
+  previous: TileFindActiveOwner | null,
 ): TileFindActiveOwner | null {
   if (ownerBlocker !== null) return null;
   const target = Object.values(
@@ -644,9 +689,22 @@ function resolveActiveOwner(
   ).reduce<TileFindTargetRecord | null>((current, candidate) => {
     if (candidate === undefined || !candidate.isEligible) return current;
     if (current === null) return candidate;
-    return candidate.registeredAt > current.registeredAt ? candidate : current;
+    return candidate.eligibleOrder > current.eligibleOrder
+      ? candidate
+      : current;
   }, null);
   if (target === null) return null;
+  if (
+    previous !== null &&
+    previous.tileInstanceId === target.tileInstanceId &&
+    previous.contentId === target.contentId &&
+    previous.viewTabId === target.viewTabId &&
+    previous.tileId === target.tileId &&
+    previous.epicId === target.epicId &&
+    previous.tileKind === target.tileKind
+  ) {
+    return previous;
+  }
   return {
     tileInstanceId: target.tileInstanceId,
     contentId: target.contentId,

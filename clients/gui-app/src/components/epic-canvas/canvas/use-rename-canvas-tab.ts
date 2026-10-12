@@ -57,11 +57,15 @@ export function useRenameCanvasTab(
 ): (tab: EpicCanvasTileRef, title: string) => void {
   const epicHandle = useOpenEpicHandle();
   const renameArtifactInTab = useEpicCanvasStore((s) => s.renameArtifactInTab);
-  const renameChat = useEpicRenameChat();
-  const renameTerminalAgent = useEpicRenameTuiAgent();
+  // Only the stable `mutateAsync` of each mutation: the result objects are
+  // new on every render, and holding them in `commit`'s deps changed the
+  // returned callback every render, which re-rendered every canvas tab
+  // through the strip's menu handlers.
+  const { mutateAsync: renameChat } = useEpicRenameChat();
+  const { mutateAsync: renameTerminalAgent } = useEpicRenameTuiAgent();
   // `null`, same reason as the mobile twin: the tab this commits for is an
   // argument to the returned callback, and no caller reads `isPending`.
-  const renameArtifact = useEpicRenameArtifact(null, true);
+  const { mutateAsync: renameArtifact } = useEpicRenameArtifact(null, true);
 
   // ASYNC because the replica moved: the doc write's verdict and the
   // rename-stamp check are both round trips now.
@@ -105,49 +109,47 @@ export function useRenameCanvasTab(
       }
       if (tab.type !== "chat" && tab.type !== "terminal-agent") {
         settleDetachedEpicMutation(
-          renameArtifact
-            .mutateAsync({ epicId, artifactId: id, title: trimmed })
-            .then(
-              () => renameArtifactInTab(viewTabId, id, trimmed, null),
-              () => {
-                // SUPERSEDED IS NOT LOST. `enqueueAndWait` throws for every
-                // non-committed terminal state, so a rename whose own
-                // authoritative echo beat its RPC ack arrives here having
-                // actually succeeded - and a bare swallow left the persisted tab
-                // snapshot holding the stale title, which a cold render then
-                // showed.
-                //
-                // The resolution cannot tell us which happened: the dead sweep
-                // fires both when this rename's echo landed and when a peer
-                // overwrote the row, and `metadata-overlay-store.ts` says so in
-                // as many words - "chain membership cannot [tell them apart],
-                // because the chain is gone in both". The authoritative ROW can.
-                // If it carries the title we sent, the write landed and the
-                // snapshot must follow it; if a peer won with a different title,
-                // theirs stands and ours must not be persisted over it; if a
-                // peer won with the same title, writing is a no-op.
-                //
-                // This reads the PROJECTED slice, which carries the optimistic
-                // overlay (`projection-helpers.ts` lands it on the union outputs
-                // components read). It is authoritative here only because the
-                // overlay entry is already retired by the time this microtask
-                // runs - by the dead sweep on `superseded`, by the rollback on
-                // `rejected`. If either retirement were ever deferred past
-                // settlement, a REJECTED rename would read back its own
-                // optimistic title and persist a title the host refused into the
-                // durable tab snapshot. That ordering is pinned by test.
-                //
-                // `noUncheckedIndexedAccess` is off, so the own-key check is
-                // what distinguishes a missing row from a present one.
-                const artifacts = epicHandle.store.getState().artifacts.byId;
-                if (
-                  Object.hasOwn(artifacts, id) &&
-                  artifacts[id].title === trimmed
-                ) {
-                  renameArtifactInTab(viewTabId, id, trimmed, null);
-                }
-              },
-            ),
+          renameArtifact({ epicId, artifactId: id, title: trimmed }).then(
+            () => renameArtifactInTab(viewTabId, id, trimmed, null),
+            () => {
+              // SUPERSEDED IS NOT LOST. `enqueueAndWait` throws for every
+              // non-committed terminal state, so a rename whose own
+              // authoritative echo beat its RPC ack arrives here having
+              // actually succeeded - and a bare swallow left the persisted tab
+              // snapshot holding the stale title, which a cold render then
+              // showed.
+              //
+              // The resolution cannot tell us which happened: the dead sweep
+              // fires both when this rename's echo landed and when a peer
+              // overwrote the row, and `metadata-overlay-store.ts` says so in
+              // as many words - "chain membership cannot [tell them apart],
+              // because the chain is gone in both". The authoritative ROW can.
+              // If it carries the title we sent, the write landed and the
+              // snapshot must follow it; if a peer won with a different title,
+              // theirs stands and ours must not be persisted over it; if a
+              // peer won with the same title, writing is a no-op.
+              //
+              // This reads the PROJECTED slice, which carries the optimistic
+              // overlay (`projection-helpers.ts` lands it on the union outputs
+              // components read). It is authoritative here only because the
+              // overlay entry is already retired by the time this microtask
+              // runs - by the dead sweep on `superseded`, by the rollback on
+              // `rejected`. If either retirement were ever deferred past
+              // settlement, a REJECTED rename would read back its own
+              // optimistic title and persist a title the host refused into the
+              // durable tab snapshot. That ordering is pinned by test.
+              //
+              // `noUncheckedIndexedAccess` is off, so the own-key check is
+              // what distinguishes a missing row from a present one.
+              const artifacts = epicHandle.store.getState().artifacts.byId;
+              if (
+                Object.hasOwn(artifacts, id) &&
+                artifacts[id].title === trimmed
+              ) {
+                renameArtifactInTab(viewTabId, id, trimmed, null);
+              }
+            },
+          ),
           "canvas tab",
           "artifact rename settlement",
         );
@@ -257,13 +259,12 @@ export function useRenameCanvasTab(
       // rejects the promise `.then` returns, which nothing above consumes.
       if (tab.type === "chat") {
         settleDetachedEpicMutation(
-          renameChat
-            .mutateAsync({
-              epicId,
-              chatId: id,
-              title: trimmed,
-              hostId: tab.hostId,
-            })
+          renameChat({
+            epicId,
+            chatId: id,
+            title: trimmed,
+            hostId: tab.hostId,
+          })
             .then(landed, failed)
             .finally(clearSnapshotRename),
           "canvas tab",
@@ -271,13 +272,12 @@ export function useRenameCanvasTab(
         );
       } else {
         settleDetachedEpicMutation(
-          renameTerminalAgent
-            .mutateAsync({
-              epicId,
-              tuiAgentId: id,
-              title: trimmed,
-              hostId: tab.hostId,
-            })
+          renameTerminalAgent({
+            epicId,
+            tuiAgentId: id,
+            title: trimmed,
+            hostId: tab.hostId,
+          })
             .then(landed, failed)
             .finally(clearSnapshotRename),
           "canvas tab",

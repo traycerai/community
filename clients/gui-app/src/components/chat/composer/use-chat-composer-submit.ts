@@ -318,14 +318,22 @@ export function useChatComposerSubmit(
   // Everything an ACCEPTED submit does to the composer, shared by the send and
   // the side-chat paths so a refused one leaves the text in place on both.
   const clearAcceptedDraft = useCallback((): void => {
-    void submitComposerDraft(taskId);
+    void submitComposerDraft(taskId).catch((error: unknown) => {
+      appLogger.error(
+        "[chat-composer] submitted draft cleanup failed",
+        { taskId },
+        error,
+      );
+      toast.error("Message sent, but its saved draft couldn't be cleared.");
+    });
     pickerStore.getState().reset();
     // The inherited queue-edit document is gone with the send, so its
     // host-custody claim goes with it. Hygiene only - a stale entry would leave
     // a hash bare on a later send, which is what this composer did before any
     // of this existed.
     clearHostHeldImageHashes(taskId);
-    editorRef.current?.clear();
+    if (readComposerDraftSnapshot(taskId).draftId === null)
+      editorRef.current?.clear();
     // A rejected send leaves the text in place, and dropping the keyboard
     // there would take the user away from the message they still have to fix.
     // On a phone the keyboard covers most of the screen, so holding it open

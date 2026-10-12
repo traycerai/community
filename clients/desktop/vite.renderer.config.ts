@@ -1,12 +1,12 @@
-import babel from "@rolldown/plugin-babel";
 import { sentryVitePlugin } from "@sentry/vite-plugin";
 import tailwindcss from "@tailwindcss/vite";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
-import react, { reactCompilerPreset } from "@vitejs/plugin-react";
+import react from "@vitejs/plugin-react";
 import { resolve } from "path";
 import { defineConfig, type HtmlTagDescriptor, type UserConfig } from "vite";
 import { asciiOnlyOutput } from "../gui-app/vite/ascii-only-output";
 import { pdfjsAssets } from "../gui-app/vite/pdfjs-assets";
+import { reactCompiler } from "../gui-app/vite/react-compiler";
 import { sandboxAssets } from "../gui-app/vite/sandbox-assets";
 import { CONTENT_SECURITY_POLICY } from "./src/shared/content-security-policy";
 
@@ -78,10 +78,7 @@ export default defineConfig((): UserConfig => {
       // Emitted JS as pure ASCII: one character above U+00FF makes the engine
       // keep a whole chunk's source as UTF-16 (see the plugin).
       asciiOnlyOutput(),
-      babel({ presets: [reactCompilerPreset()] }).then((plugin) => ({
-        ...plugin,
-        enforce: "post" as const,
-      })),
+      reactCompiler(),
       sentryVitePlugin({
         org: process.env.SENTRY_ORG,
         project: process.env.SENTRY_PROJECT,

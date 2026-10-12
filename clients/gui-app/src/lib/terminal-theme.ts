@@ -1,8 +1,9 @@
-import { useMemo } from "react";
 import { formatRgb, oklch, parse } from "culori";
 import type { ITheme } from "@xterm/xterm";
-import { useResolvedTheme } from "@/providers/use-resolved-theme";
-import { useThemeRevision } from "@/providers/use-theme-revision";
+import {
+  createCascadeSnapshot,
+  useCascadeSnapshot,
+} from "@/providers/use-theme-revision";
 import { readCssVar, resolveCssColor, rgbify } from "@/lib/css-color";
 
 const ANSI_NAMES = [
@@ -125,17 +126,12 @@ function buildTerminalTheme(doc: Document): ITheme {
  * mount-then-effect flash of default colors.
  */
 export function useTerminalTheme(): ITheme {
-  const themeRevision = useThemeRevision();
-  const { resolvedTheme, themePreset } = useResolvedTheme();
-  return useMemo(() => {
-    // `resolvedTheme` and `themePreset` are part of the memo's cache identity
-    // but their values flow in through the CSS cascade (the `.dark` and
-    // `[data-theme="X"]` selectors that `getComputedStyle` resolves below)
-    // rather than appearing in the closure body. Reference them here so
-    // `react-hooks/exhaustive-deps` can verify the deps array is complete.
-    resolvedTheme;
-    themePreset;
-    themeRevision;
-    return buildTerminalTheme(document);
-  }, [resolvedTheme, themePreset, themeRevision]);
+  return useCascadeSnapshot(terminalThemeSnapshot);
 }
+
+// The mode and the preset reach `buildTerminalTheme` through the cascade
+// (the `.dark` and `[data-theme="X"]` selectors `getComputedStyle` resolves),
+// never as values, so the theme revision is the one thing that names them.
+const terminalThemeSnapshot = createCascadeSnapshot(() =>
+  buildTerminalTheme(document),
+);

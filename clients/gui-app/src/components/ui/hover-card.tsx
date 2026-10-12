@@ -295,9 +295,6 @@ export function HoverCard(props: HoverCardProps): ReactNode {
   }, [suppressed, controlledOpen, onOpenChange]);
   const grouped = use(HoverCardGroupContext);
   const motionEnabled = useMotionEnabled();
-  // Concealed region (see `portal-concealment-context`): un-present with the
-  // region - the anchor is display:none and cannot deliver the close events.
-  const concealed = usePortalConcealed();
   // The device insets are the collision padding, as for every other overlay
   // (see `safe-area-collision-padding.ts`).
   const safeArea = useSafeAreaCollisionPadding();
@@ -393,8 +390,8 @@ export function HoverCard(props: HoverCardProps): ReactNode {
       <Slot.Root ref={setReference} {...getReferenceProps()}>
         {props.trigger}
       </Slot.Root>
-      {isMounted && !concealed ? (
-        <FloatingPortal>
+      {isMounted ? (
+        <PresentedHoverCard>
           <DismissableLayer.Root
             ref={setFloating}
             style={floatingStyles}
@@ -427,8 +424,15 @@ export function HoverCard(props: HoverCardProps): ReactNode {
               {props.content}
             </div>
           </DismissableLayer.Root>
-        </FloatingPortal>
+        </PresentedHoverCard>
       ) : null}
     </>
   );
+}
+
+function PresentedHoverCard(props: {
+  readonly children: ReactNode;
+}): ReactNode {
+  const concealed = usePortalConcealed();
+  return concealed ? null : <FloatingPortal>{props.children}</FloatingPortal>;
 }

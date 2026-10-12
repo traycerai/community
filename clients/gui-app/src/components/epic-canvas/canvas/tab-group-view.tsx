@@ -1,3 +1,9 @@
+import { use as useContextValue } from "react";
+import {
+  SurfaceDemandContext,
+  useSurfaceDemandStore,
+} from "@/stores/tabs/surface-demand";
+import { SurfacePreviewShell } from "@/components/layout/surface-preview-shell";
 import { browserSessionTileId } from "@/stores/epics/canvas/tile-schema/browser-tile";
 import { requestPaneOpenerFocus } from "@/lib/canvas/focus-pane-opener";
 import {
@@ -101,7 +107,10 @@ import {
   useSurfaceHostSelectionStore,
 } from "@/stores/host/surface-host-selection-store";
 
-import { TabStrip } from "@/components/epic-canvas/canvas/tab-strip";
+import {
+  TabStrip,
+  type TabStripProps,
+} from "@/components/epic-canvas/canvas/tab-strip";
 import { useRenameCanvasTab } from "@/components/epic-canvas/canvas/use-rename-canvas-tab";
 import { useLeftPanelStore } from "@/stores/epics/left-panel-store";
 import { type LeftPanelId } from "@/lib/left-panel-ids";
@@ -411,6 +420,42 @@ export const TabGroupView = memo(function TabGroupView(
     [tabs, renameTab],
   );
 
+  // One object for the strip's context menus, built once per input change:
+  // the strip hands it to every tab, and a fresh object per render
+  // re-rendered every tab in every strip on each tab step.
+  const menuHandlers = useMemo<TabStripProps["menuHandlers"]>(
+    () => ({
+      onClose: handleCloseTab,
+      onCloseOthers: (gid, tid) =>
+        navigateNested(epicId, tabId, () =>
+          prepareCloseOtherCanvasTabsFocusTarget(tabId, gid, tid),
+        ),
+      onCloseRight: (gid, tid) =>
+        navigateNested(epicId, tabId, () =>
+          prepareCloseRightCanvasTabsFocusTarget(tabId, gid, tid),
+        ),
+      onCloseAll: (gid) =>
+        navigateNested(epicId, tabId, () =>
+          prepareCloseAllCanvasTabsFocusTarget(tabId, gid),
+        ),
+      onSplit: handleSplitFromMenu,
+      onRevealInSidebar: handleRevealInSidebar,
+      onRename: handleRename,
+    }),
+    [
+      epicId,
+      handleCloseTab,
+      handleRename,
+      handleRevealInSidebar,
+      handleSplitFromMenu,
+      navigateNested,
+      prepareCloseAllCanvasTabsFocusTarget,
+      prepareCloseOtherCanvasTabsFocusTarget,
+      prepareCloseRightCanvasTabsFocusTarget,
+      tabId,
+    ],
+  );
+
   const activeTab = useMemo<EpicCanvasTileRef | null>(() => {
     if (tabs.length === 0) return null;
     const activeInstanceId = resolveActivePaneTab(
@@ -429,6 +474,11 @@ export const TabGroupView = memo(function TabGroupView(
   // retained chats; a hidden pane collapses the LRU to active-only
   // (+terminals, +chats). See use-mounted-pane-tabs.ts.
   const paneVisible = usePaneVisible();
+  const parentDemand = useContextValue(SurfaceDemandContext);
+  const preview = useSurfaceDemandStore(
+    (state) => state.panePreviewTargets[pane.id] !== undefined,
+  );
+  const demand = parentDemand === "preview" || preview ? "preview" : "settled";
   const mountedTabIds = useMountedPaneTabs({
     activeTabId: activeTab?.instanceId ?? null,
     pane,
@@ -436,8 +486,13 @@ export const TabGroupView = memo(function TabGroupView(
     paneVisible,
   });
   const mountedTabs = useMemo(
-    () => tabs.filter((tab) => mountedTabIds.has(tab.instanceId)),
-    [tabs, mountedTabIds],
+    () =>
+      tabs.filter(
+        (tab) =>
+          mountedTabIds.has(tab.instanceId) ||
+          tab.instanceId === activeTab?.instanceId,
+      ),
+    [tabs, mountedTabIds, activeTab],
   );
 
   return (
@@ -471,24 +526,7 @@ export const TabGroupView = memo(function TabGroupView(
                 onCloseGroup={handleCloseGroup}
                 onOpenBlankTab={handleOpenBlankTab}
                 canRenameTabs={canRenameTabs}
-                menuHandlers={{
-                  onClose: handleCloseTab,
-                  onCloseOthers: (gid, tid) =>
-                    navigateNested(epicId, tabId, () =>
-                      prepareCloseOtherCanvasTabsFocusTarget(tabId, gid, tid),
-                    ),
-                  onCloseRight: (gid, tid) =>
-                    navigateNested(epicId, tabId, () =>
-                      prepareCloseRightCanvasTabsFocusTarget(tabId, gid, tid),
-                    ),
-                  onCloseAll: (gid) =>
-                    navigateNested(epicId, tabId, () =>
-                      prepareCloseAllCanvasTabsFocusTarget(tabId, gid),
-                    ),
-                  onSplit: handleSplitFromMenu,
-                  onRevealInSidebar: handleRevealInSidebar,
-                  onRename: handleRename,
-                }}
+                menuHandlers={menuHandlers}
               />
             ) : null}
             <div
@@ -531,14 +569,20 @@ export const TabGroupView = memo(function TabGroupView(
                         aria-hidden={selected ? undefined : true}
                       >
                         <TabBodySelectedContext.Provider value={selected}>
-                          <ActiveTabBody
-                            activeTab={tab}
-                            epicId={epicId}
-                            groupId={pane.id}
-                            tabId={tabId}
-                            selected={selected}
-                            globallyActive={globallyActive}
-                          />
+                          <SurfaceDemandContext.Provider value={demand}>
+                            {mountedTabIds.has(tab.instanceId) ? (
+                              <ActiveTabBody
+                                activeTab={tab}
+                                epicId={epicId}
+                                groupId={pane.id}
+                                tabId={tabId}
+                                selected={selected}
+                                globallyActive={globallyActive}
+                              />
+                            ) : (
+                              <SurfacePreviewShell />
+                            )}
+                          </SurfaceDemandContext.Provider>
                         </TabBodySelectedContext.Provider>
                       </div>
                     );

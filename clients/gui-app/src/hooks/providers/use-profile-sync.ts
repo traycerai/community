@@ -1,5 +1,4 @@
 import {
-  useIsMutating,
   useMutationState,
   useQueryClient,
   type QueryClient,
@@ -12,6 +11,7 @@ import type {
   ProfileSyncProvider,
 } from "@traycer/protocol/host/profile-sync-link-schemas";
 import { useHostClientForHostId } from "@/hooks/host/use-host-client-for-host-id";
+import { useIsMutatingKey } from "@/hooks/use-is-mutating-key";
 import {
   useHostMutation,
   useHostQueryWithResponseMap,
@@ -187,11 +187,9 @@ export function useProfileSyncNowPending(
   sourceHostId: string,
   destinationHostId: string,
 ): boolean {
-  return (
-    useIsMutating({
-      mutationKey: profileSyncKeys.syncNow(sourceHostId, destinationHostId),
-      exact: true,
-    }) > 0
+  return useIsMutatingKey(
+    profileSyncKeys.syncNow(sourceHostId, destinationHostId),
+    true,
   );
 }
 
@@ -201,16 +199,14 @@ export function useProfileSyncAcceptAccountPending(
   providerId: ProfileSyncProvider,
   sourceProfileId: string,
 ): boolean {
-  return (
-    useIsMutating({
-      mutationKey: profileSyncKeys.acceptAccount(
-        sourceHostId,
-        destinationHostId,
-        providerId,
-        sourceProfileId,
-      ),
-      exact: true,
-    }) > 0
+  return useIsMutatingKey(
+    profileSyncKeys.acceptAccount(
+      sourceHostId,
+      destinationHostId,
+      providerId,
+      sourceProfileId,
+    ),
+    true,
   );
 }
 

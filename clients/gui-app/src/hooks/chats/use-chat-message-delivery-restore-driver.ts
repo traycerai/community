@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { toast } from "sonner";
 import { useStore } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 import type { JsonContent } from "@traycer/protocol/common/registry";
@@ -71,7 +72,14 @@ export function useChatMessageDeliveryRestoreDriver(
     // Read live, never through a subscription: the draft that counts is the
     // one in the composer at the moment the prompt lands in it.
     const draft = readComposerDraftSnapshot(nodeId).content;
-    replaceDraft(nodeId, mergedIntoDraft(restoration.content, draft), null);
+    try {
+      replaceDraft(nodeId, mergedIntoDraft(restoration.content, draft), null);
+    } catch {
+      toast.error("Couldn't save the restored message.", {
+        description: "Your text is still in this window.",
+      });
+      return;
+    }
     store.messageDeliveryRestored({
       messageId: restoration.messageId,
       expectedRevision: restoration.revision,

@@ -21,12 +21,14 @@ import {
   type IRemoteSession,
   type RemoteHostTransport,
 } from "@traycer-clients/shared/host-transport/remote/index";
+import { installPersistentUnaryHostStore } from "@traycer-clients/shared/host-transport/persistent-unary-hosts";
 import { DEFAULT_DIAL_TIMEOUT_MS } from "@traycer-clients/shared/host-transport/transport-config";
 import { createWhatwgStreamWebSocketFactory } from "@traycer-clients/shared/host-transport/whatwg-stream-ws-factory";
 import { createWhatwgWebSocketFactory } from "@traycer-clients/shared/host-transport/whatwg-ws-factory";
 import { transportEvidenceRelay } from "@/lib/host/transport-evidence";
 import { appServerClock } from "@/lib/clock/app-server-clock";
 import { getGuiClientIdentity } from "@/lib/host/client-identity";
+import { sessionPersistentUnaryHostStore } from "@/lib/host/persistent-unary-host-store";
 import {
   authorizesCloudCapability,
   useAuthStore,
@@ -47,6 +49,12 @@ import {
 
 const DEFAULT_HOST_RPC_FRAME_TIMEOUT_MS = 30_000;
 const TRANSPORT_KEY_SEPARATOR = "\u0000";
+
+// Seeds the unary cold-burst memo from this window's previous page, before
+// any messenger below can dial. A host recorded as offering
+// `unary.persistentSession` then gets one handshake for the boot burst rather
+// than one per call. See `persistent-unary-hosts.ts`.
+installPersistentUnaryHostStore(sessionPersistentUnaryHostStore);
 
 /**
  * How long a host's terminal-fatal verdict keeps the runtime messenger from

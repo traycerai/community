@@ -2,10 +2,11 @@ import {
   act,
   cleanup,
   fireEvent,
-  render,
+  render as renderBase,
   screen,
   waitFor,
   within,
+  type RenderResult,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { domMax, LazyMotion } from "motion/react";
@@ -43,6 +44,66 @@ import {
   useSidebarNodeRevealStore,
 } from "@/stores/epics/sidebar-node-reveal-store";
 import { RAIL_REGION_BY_PANEL } from "@/lib/layout/rail";
+
+/**
+ * Testing Library's `render`, with `rerender` also notifying `testStateSeam`:
+ * the tests change `testState` and then re-render to say "the data moved", and
+ * the mocked hooks that read it need that notification to render again.
+ */
+function render(ui: ReactNode): RenderResult {
+  const result = renderBase(ui);
+  return {
+    ...result,
+    rerender: (next: ReactNode): void => {
+      act(() => {
+        testStateSeam.bump();
+      });
+      result.rerender(next);
+    },
+  };
+}
+
+// `testState` is plain data React cannot see, and the compiler keeps a child
+// element whose props are equal, so a parent re-render no longer carries a
+// `testState` change down to the hooks that read it. Every mocked hook below is
+// therefore wrapped by `reactiveHooks`, which subscribes it to `testStateSeam`,
+// and the local `render` notifies the seam from `rerender`.
+const { testStateSeam, reactiveHooks } = await vi.hoisted(async () => {
+  const { useSyncExternalStore } = await import("react");
+  const listeners = new Set<() => void>();
+  const seam = {
+    version: 0,
+    subscribe: (listener: () => void): (() => void) => {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
+    bump(): void {
+      this.version += 1;
+      listeners.forEach((listener) => listener());
+    },
+  };
+  function reactiveHooks(
+    mod: Readonly<Record<string, unknown>>,
+  ): Record<string, unknown> {
+    const wrapped: Record<string, unknown> = {};
+    for (const [name, value] of Object.entries(mod)) {
+      if (!/^use[A-Z]/u.test(name) || typeof value !== "function") {
+        wrapped[name] = value;
+        continue;
+      }
+      const hook = function useReactiveHook(...args: unknown[]): unknown {
+        useSyncExternalStore(seam.subscribe, () => seam.version);
+        return Reflect.apply(value, undefined, args);
+      };
+      // Keep static members a store hook carries (`getState`, `setState`).
+      wrapped[name] = Object.assign(hook, value);
+    }
+    return wrapped;
+  }
+  return { testStateSeam: seam, reactiveHooks };
+});
 
 const writeText = vi.hoisted(() =>
   vi.fn((_value: string) => Promise.resolve()),
@@ -294,11 +355,11 @@ vi.mock("@/lib/registries/chat-session-registry", async (importOriginal) => {
     await importOriginal<
       typeof import("@/lib/registries/chat-session-registry")
     >();
-  return {
+  return reactiveHooks({
     ...actual,
     useExistingChatSessionHandle: (_epicId: string, chatId: string) =>
       testState.sessionHandleByChatId[chatId] ?? null,
-  };
+  });
 });
 
 // The artifact panel now hosts a search box; keep its host query inert so these
@@ -383,27 +444,29 @@ vi.mock("@/components/worktree/worktree-owner-metadata", () => ({
     props.trigger,
 }));
 
-vi.mock("@/hooks/notifications/use-host-notification-indicators-query", () => ({
-  useHostNotificationIndicators: (args: {
-    readonly hostId: string | null;
-  }) => ({
-    data: {
-      epics: {},
-      chats:
-        (args.hostId === null
-          ? undefined
-          : testState.indicatorChatsByHost[args.hostId]) ??
-        testState.indicatorChats,
-    },
-    isPending: false,
-    isFetching: false,
-    error: null,
-    refetch: () => Promise.resolve(),
-    // The host that ANSWERED - the query files its rows under this origin, so
-    // an omitted field (undefined, not null) would scope them to no host.
-    hostId: "host-1",
+vi.mock("@/hooks/notifications/use-host-notification-indicators-query", () =>
+  reactiveHooks({
+    useHostNotificationIndicators: (args: {
+      readonly hostId: string | null;
+    }) => ({
+      data: {
+        epics: {},
+        chats:
+          (args.hostId === null
+            ? undefined
+            : testState.indicatorChatsByHost[args.hostId]) ??
+          testState.indicatorChats,
+      },
+      isPending: false,
+      isFetching: false,
+      error: null,
+      refetch: () => Promise.resolve(),
+      // The host that ANSWERED - the query files its rows under this origin, so
+      // an omitted field (undefined, not null) would scope them to no host.
+      hostId: "host-1",
+    }),
   }),
-}));
+);
 
 // Pass-through by default, so every entry is in the DOM without opening its
 // menu. The overflow-to-search focus tests switch to the real Radix menu: what
@@ -573,12 +636,14 @@ vi.mock("@/hooks/host/use-addressable-host-id", () => ({
 // at the hook boundary. "reachable" everywhere = the pre-lock rendering, so
 // every existing assertion is exercised unchanged; the lock's own behavior is
 // pinned where the directory is faked per-entry (host-binding.test.ts).
-vi.mock("@/hooks/agent/use-host-reachability", () => ({
-  useHostReachability: (hostId: string) => ({
-    status: testState.rowHostReachability,
-    hostLabel: hostId,
+vi.mock("@/hooks/agent/use-host-reachability", () =>
+  reactiveHooks({
+    useHostReachability: (hostId: string) => ({
+      status: testState.rowHostReachability,
+      hostLabel: hostId,
+    }),
   }),
-}));
+);
 
 vi.mock("@/hooks/worktree/use-latest-conversation-workspace-seed", () => ({
   useLatestConversationWorkspaceSeed: () => null,
@@ -592,66 +657,68 @@ vi.mock("@/hooks/worktree/use-worktree-get-binding-query", () => ({
   }),
 }));
 
-vi.mock("@/hooks/epic/use-epic-chat-mutations", () => ({
-  useEpicArchiveChats: () => ({
-    isPending: testState.archiveBatchPending,
-    mutate: (
-      variables: {
-        readonly epicId: string;
-        readonly chats: ReadonlyArray<{
-          readonly chatId: string;
-          readonly hostId: string | null;
-        }>;
-        readonly archived: boolean;
+vi.mock("@/hooks/epic/use-epic-chat-mutations", () =>
+  reactiveHooks({
+    useEpicArchiveChats: () => ({
+      isPending: testState.archiveBatchPending,
+      mutate: (
+        variables: {
+          readonly epicId: string;
+          readonly chats: ReadonlyArray<{
+            readonly chatId: string;
+            readonly hostId: string | null;
+          }>;
+          readonly archived: boolean;
+        },
+        options: {
+          readonly onSuccess: (
+            results: readonly PromiseSettledResult<unknown>[],
+          ) => void;
+        },
+      ) => {
+        testState.archiveBatchPending = true;
+        void Promise.allSettled(
+          variables.chats.map((chat) =>
+            testState.archiveMutateAsync({
+              epicId: variables.epicId,
+              chatId: chat.chatId,
+              hostId: chat.hostId,
+              archived: variables.archived,
+            }),
+          ),
+        ).then((results) => {
+          testState.archiveBatchPending = false;
+          options.onSuccess(results);
+        });
       },
-      options: {
-        readonly onSuccess: (
-          results: readonly PromiseSettledResult<unknown>[],
-        ) => void;
-      },
-    ) => {
-      testState.archiveBatchPending = true;
-      void Promise.allSettled(
-        variables.chats.map((chat) =>
-          testState.archiveMutateAsync({
-            epicId: variables.epicId,
-            chatId: chat.chatId,
-            hostId: chat.hostId,
-            archived: variables.archived,
-          }),
-        ),
-      ).then((results) => {
-        testState.archiveBatchPending = false;
-        options.onSuccess(results);
-      });
-    },
+    }),
+    useEpicArchiveChat: () => ({
+      mutate: testState.archiveMutate,
+      mutateAsync: testState.archiveMutateAsync,
+      isPending: testState.archiveRowPending,
+    }),
+    useEpicCreateChatForHostClient: () => ({
+      mutate: testState.createChatMutate,
+      isPending: false,
+    }),
+    useEpicDeleteChat: () => ({
+      mutate: vi.fn(),
+      mutateAsync: testState.deleteChatMutateAsync,
+      isPending: false,
+    }),
+    useEpicRenameChat: () => ({
+      mutate: vi.fn(),
+      mutateAsync: testState.renameChatMutateAsync,
+      // Honest pending, derived from the spy: every call returns a promise that
+      // never settles, so once one has been issued the rename IS in flight. A
+      // hardcoded `false` makes any "second rename while the first is pending"
+      // assertion VACUOUS - a re-introduced pending guard would never see a
+      // pending state under it, so the test would pass against the very code it
+      // exists to reject. Cleared per test by `vi.clearAllMocks()`.
+      isPending: testState.renameChatMutateAsync.mock.calls.length > 0,
+    }),
   }),
-  useEpicArchiveChat: () => ({
-    mutate: testState.archiveMutate,
-    mutateAsync: testState.archiveMutateAsync,
-    isPending: testState.archiveRowPending,
-  }),
-  useEpicCreateChatForHostClient: () => ({
-    mutate: testState.createChatMutate,
-    isPending: false,
-  }),
-  useEpicDeleteChat: () => ({
-    mutate: vi.fn(),
-    mutateAsync: testState.deleteChatMutateAsync,
-    isPending: false,
-  }),
-  useEpicRenameChat: () => ({
-    mutate: vi.fn(),
-    mutateAsync: testState.renameChatMutateAsync,
-    // Honest pending, derived from the spy: every call returns a promise that
-    // never settles, so once one has been issued the rename IS in flight. A
-    // hardcoded `false` makes any "second rename while the first is pending"
-    // assertion VACUOUS - a re-introduced pending guard would never see a
-    // pending state under it, so the test would pass against the very code it
-    // exists to reject. Cleared per test by `vi.clearAllMocks()`.
-    isPending: testState.renameChatMutateAsync.mock.calls.length > 0,
-  }),
-}));
+);
 
 vi.mock("@/hooks/agent/use-create-tui-agent", () => ({
   useCreateTuiAgentForClient: () => ({
@@ -729,39 +796,49 @@ vi.mock("@/hooks/chats/use-chat-search-message-hits", () => ({
   }),
 }));
 
-vi.mock("@/lib/host/runtime", () => ({
-  useHostClient: () => testState.activeHostClient,
-  // The SPINE, a separate export since redesign P2.1.
-  useHostRuntimeClient: () => testState.activeHostClient,
-}));
-
-vi.mock("@/hooks/host/use-host-client-for", () => ({
-  useHostClientFor: () => testState.rowHostClient,
-}));
-
-vi.mock("@/hooks/host/use-host-directory-entry", () => ({
-  useHostDirectoryEntry: () => testState.rowHostEntry,
-}));
-
-vi.mock("@/hooks/epic/use-epic-node-mutations", () => ({
-  useEpicCreateArtifact: () => ({
-    mutate: testState.createArtifactMutate,
-    isPending: false,
+vi.mock("@/lib/host/runtime", () =>
+  reactiveHooks({
+    useHostClient: () => testState.activeHostClient,
+    // The SPINE, a separate export since redesign P2.1.
+    useHostRuntimeClient: () => testState.activeHostClient,
   }),
-  useEpicDeleteArtifact: () => ({
-    mutate: vi.fn(),
-    mutateAsync: testState.deleteArtifactMutateAsync,
-    isPending: false,
-  }),
-  useEpicRenameArtifact: () => ({ mutate: vi.fn(), isPending: false }),
-}));
+);
 
-vi.mock("@/hooks/epic/use-epic-export-artifacts-mutation", () => ({
-  useEpicExportArtifacts: () => ({
-    mutate: testState.exportArtifactsMutate,
-    isPending: false,
+vi.mock("@/hooks/host/use-host-client-for", () =>
+  reactiveHooks({
+    useHostClientFor: () => testState.rowHostClient,
   }),
-}));
+);
+
+vi.mock("@/hooks/host/use-host-directory-entry", () =>
+  reactiveHooks({
+    useHostDirectoryEntry: () => testState.rowHostEntry,
+  }),
+);
+
+vi.mock("@/hooks/epic/use-epic-node-mutations", () =>
+  reactiveHooks({
+    useEpicCreateArtifact: () => ({
+      mutate: testState.createArtifactMutate,
+      isPending: false,
+    }),
+    useEpicDeleteArtifact: () => ({
+      mutate: vi.fn(),
+      mutateAsync: testState.deleteArtifactMutateAsync,
+      isPending: false,
+    }),
+    useEpicRenameArtifact: () => ({ mutate: vi.fn(), isPending: false }),
+  }),
+);
+
+vi.mock("@/hooks/epic/use-epic-export-artifacts-mutation", () =>
+  reactiveHooks({
+    useEpicExportArtifacts: () => ({
+      mutate: testState.exportArtifactsMutate,
+      isPending: false,
+    }),
+  }),
+);
 
 // `pruneRecoveryTiles` spied so its PREDICATE can be inspected directly -
 // the fact under test ("terminal agents are excluded from this broad prune,
@@ -780,56 +857,60 @@ vi.mock("@/lib/tab-recovery/history", async (importOriginal) => ({
 // `useEpicDeleteTuiAgent` itself (`discardDeletedTuiAgentPayloads` is a
 // private, unexported detail of that module) - this suite only pins that the
 // SIDEBAR never does that work itself, so the hook is a plain mock.
-vi.mock("@/hooks/epic/use-epic-tui-agent-mutations", () => ({
-  useEpicDeleteTuiAgent: () => ({
-    mutate: vi.fn(),
-    mutateAsync: testState.deleteTuiAgentMutateAsync,
-    isPending: false,
+vi.mock("@/hooks/epic/use-epic-tui-agent-mutations", () =>
+  reactiveHooks({
+    useEpicDeleteTuiAgent: () => ({
+      mutate: vi.fn(),
+      mutateAsync: testState.deleteTuiAgentMutateAsync,
+      isPending: false,
+    }),
+    useEpicRenameTuiAgent: () => ({
+      mutate: vi.fn(),
+      mutateAsync: testState.renameTuiAgentMutateAsync,
+      // Honest pending, for the same reason as `useEpicRenameChat` above.
+      isPending: testState.renameTuiAgentMutateAsync.mock.calls.length > 0,
+    }),
   }),
-  useEpicRenameTuiAgent: () => ({
-    mutate: vi.fn(),
-    mutateAsync: testState.renameTuiAgentMutateAsync,
-    // Honest pending, for the same reason as `useEpicRenameChat` above.
-    isPending: testState.renameTuiAgentMutateAsync.mock.calls.length > 0,
-  }),
-}));
+);
 
-vi.mock("@/providers/use-open-epic-handle", () => ({
-  // The chat write-routing gate reads the session through the
-  // NON-throwing accessor. `null` here is the honest double: this suite
-  // mounts no epic store, and no session means no epic write path to gate.
-  useMaybeOpenEpicHandle: () => null,
-  useOpenEpicHandle: () => {
-    if (!testState.sessionReady) {
-      throw new Error(
-        "useOpenEpicHandle must be called inside <EpicSessionProvider>.",
-      );
-    }
-    return {
-      epicId: "epic-1",
-      store: {
-        getState: () => ({
-          deleteArtifact: testState.localDeleteArtifact,
-          // The unread marker computes its variant from BOTH stores, reading
-          // the tree non-reactively through this handle so a body-write stamp
-          // cannot re-render the row. That makes `tree` part of the state this
-          // double has to carry.
-          tree: testState.tree,
-          renameArtifact: vi.fn(),
-          // The rename path stamps an optimistic overlay patch before firing
-          // the RPC, and reads the stamp tombstone back on settle. An empty
-          // `tuiAgents` map is the doc-resident reading for an agent row,
-          // which is what an absent union entry means.
-          beginRenameMutation: testState.beginRenameMutation,
-          retirePendingMutation: testState.retirePendingMutation,
-          isLatestRenameStamp: () => true,
-          tuiAgents: { byId: {} },
-        }),
-        subscribe: () => () => undefined,
-      },
-    };
-  },
-}));
+vi.mock("@/providers/use-open-epic-handle", () =>
+  reactiveHooks({
+    // The chat write-routing gate reads the session through the
+    // NON-throwing accessor. `null` here is the honest double: this suite
+    // mounts no epic store, and no session means no epic write path to gate.
+    useMaybeOpenEpicHandle: () => null,
+    useOpenEpicHandle: () => {
+      if (!testState.sessionReady) {
+        throw new Error(
+          "useOpenEpicHandle must be called inside <EpicSessionProvider>.",
+        );
+      }
+      return {
+        epicId: "epic-1",
+        store: {
+          getState: () => ({
+            deleteArtifact: testState.localDeleteArtifact,
+            // The unread marker computes its variant from BOTH stores, reading
+            // the tree non-reactively through this handle so a body-write stamp
+            // cannot re-render the row. That makes `tree` part of the state this
+            // double has to carry.
+            tree: testState.tree,
+            renameArtifact: vi.fn(),
+            // The rename path stamps an optimistic overlay patch before firing
+            // the RPC, and reads the stamp tombstone back on settle. An empty
+            // `tuiAgents` map is the doc-resident reading for an agent row,
+            // which is what an absent union entry means.
+            beginRenameMutation: testState.beginRenameMutation,
+            retirePendingMutation: testState.retirePendingMutation,
+            isLatestRenameStamp: () => true,
+            tuiAgents: { byId: {} },
+          }),
+          subscribe: () => () => undefined,
+        },
+      };
+    },
+  }),
+);
 
 /** Records what the tile-open executor prepared, for the routing assertions. */
 function recordPreparedOpen(
@@ -844,133 +925,147 @@ function recordPreparedOpen(
   return null;
 }
 
-vi.mock("@/stores/epics/canvas/store", () => ({
-  findOpenArtifactInTab: (_tabId: string, nodeId: string) =>
-    testState.openArtifactById[nodeId] ?? null,
-  // Keyed by id AND host, like the real selector: a same-id tile on another
-  // host is a different identity and must never be returned for a lookup
-  // naming this one.
-  findOpenTileInTab: (
-    _tabId: string,
-    node: { readonly id: string; readonly hostId?: string | null },
-  ) => testState.openTileByIdentity[`${node.id}::${node.hostId ?? ""}`] ?? null,
-  useActiveEpicArtifactId: () => testState.activeArtifactId,
-  useEpicCanvasStore: Object.assign(
-    (selector: (state: unknown) => unknown) =>
-      selector({
-        closeCanvasTab: testState.closeCanvasTab,
-        markArtifactSelfDeleted: testState.markArtifactSelfDeleted,
-        openTilePreviewInTab: vi.fn(),
-        pendingRootCreatesByEpic: {},
-        preAckRootCreatesByEpic: {},
-        promotePreviewInTab: vi.fn(),
-        renameArtifactInTab: vi.fn(),
-        unmarkArtifactSelfDeleted: testState.unmarkArtifactSelfDeleted,
-      }),
-    {
-      // `openTileWithNavigation` reads the store imperatively: `canvasByTabId`
-      // for the resolver, `tabsById[tabId].epicId` to decide whether to wrap
-      // the prepare in `navigateNested`, and the `*FromSource` actions the
-      // executor dispatches into. Only the boundary functions are exposed -
-      // never a raw `openTileInTab` - so a regression to a direct canvas
-      // mutation throws instead of silently passing.
-      getState: () => ({
-        canvasByTabId: {},
-        tabsById: { [TAB_ID]: { epicId: EPIC_ID } },
-        prepareOpenTileInTabFocusTargetFromSource: recordPreparedOpen,
-        prepareOpenTilePreviewInTabFocusTargetFromSource: recordPreparedOpen,
-        prepareOpenTileInBackgroundTabFocusTargetFromSource: recordPreparedOpen,
-        closedTilePayloadsByTabId: {},
-        discardClosedTilePayload: vi.fn(),
-      }),
-    },
-  ),
-  useIsActiveEpicArtifact: () => false,
-  useOpenTileContentIds: () => testState.openTileContentIds,
-}));
+vi.mock("@/stores/epics/canvas/store", () =>
+  reactiveHooks({
+    findOpenArtifactInTab: (_tabId: string, nodeId: string) =>
+      testState.openArtifactById[nodeId] ?? null,
+    // Keyed by id AND host, like the real selector: a same-id tile on another
+    // host is a different identity and must never be returned for a lookup
+    // naming this one.
+    findOpenTileInTab: (
+      _tabId: string,
+      node: { readonly id: string; readonly hostId?: string | null },
+    ) =>
+      testState.openTileByIdentity[`${node.id}::${node.hostId ?? ""}`] ?? null,
+    useActiveEpicArtifactId: () => testState.activeArtifactId,
+    useEpicCanvasStore: Object.assign(
+      (selector: (state: unknown) => unknown) =>
+        selector({
+          closeCanvasTab: testState.closeCanvasTab,
+          markArtifactSelfDeleted: testState.markArtifactSelfDeleted,
+          openTilePreviewInTab: vi.fn(),
+          pendingRootCreatesByEpic: {},
+          preAckRootCreatesByEpic: {},
+          promotePreviewInTab: vi.fn(),
+          renameArtifactInTab: vi.fn(),
+          unmarkArtifactSelfDeleted: testState.unmarkArtifactSelfDeleted,
+        }),
+      {
+        // `openTileWithNavigation` reads the store imperatively: `canvasByTabId`
+        // for the resolver, `tabsById[tabId].epicId` to decide whether to wrap
+        // the prepare in `navigateNested`, and the `*FromSource` actions the
+        // executor dispatches into. Only the boundary functions are exposed -
+        // never a raw `openTileInTab` - so a regression to a direct canvas
+        // mutation throws instead of silently passing.
+        getState: () => ({
+          canvasByTabId: {},
+          tabsById: { [TAB_ID]: { epicId: EPIC_ID } },
+          prepareOpenTileInTabFocusTargetFromSource: recordPreparedOpen,
+          prepareOpenTilePreviewInTabFocusTargetFromSource: recordPreparedOpen,
+          prepareOpenTileInBackgroundTabFocusTargetFromSource:
+            recordPreparedOpen,
+          closedTilePayloadsByTabId: {},
+          discardClosedTilePayload: vi.fn(),
+        }),
+      },
+    ),
+    useIsActiveEpicArtifact: () => false,
+    useOpenTileContentIds: () => testState.openTileContentIds,
+  }),
+);
 
-vi.mock("@/stores/epics/epic-sidebar-expansion-store", () => ({
-  useEpicSidebarEffectiveExpanded: () => testState.expandedIds,
-  useEpicSidebarExpansionStore: (selector: (state: unknown) => unknown) =>
-    selector({
-      collapse: vi.fn(),
-      collapseAll: vi.fn(),
-      expand: vi.fn(),
-    }),
-}));
+vi.mock("@/stores/epics/epic-sidebar-expansion-store", () =>
+  reactiveHooks({
+    useEpicSidebarEffectiveExpanded: () => testState.expandedIds,
+    useEpicSidebarExpansionStore: (selector: (state: unknown) => unknown) =>
+      selector({
+        collapse: vi.fn(),
+        collapseAll: vi.fn(),
+        expand: vi.fn(),
+      }),
+  }),
+);
 
 // The rail's shape and its per-panel Hide/Show live beside the bijection
 // now, not on the panel store (G1-09), so the sidebar's two reads are
 // stubbed where they are actually imported from.
-vi.mock("@/lib/layout/rail-view", () => ({
-  useLayoutRail: () => [
-    { kind: "panel", id: RAIL_REGION_BY_PANEL[testState.activePanelId] },
-  ],
-  usePanelVisibilityOverrides: () => ({}),
-}));
-vi.mock("@/stores/epics/left-panel-store", () => ({
-  CHAT_ARCHIVE_VISIBILITY: {
-    Unarchived: "unarchived",
-    Archived: "archived",
-    All: "all",
-  },
-  CHAT_OWNERSHIP: {
-    All: "all",
-    Mine: "mine",
-    Others: "others",
-  },
-  CHAT_ORIGIN: {
-    All: "all",
-    Gui: "gui",
-    Tui: "tui",
-  },
-  DEFAULT_LEFT_PANEL_ID: "chats",
-  isArtifactFilterActive: () => testState.artifactFilterKinds.length > 0,
-  isChatFilterActive: () =>
-    testState.chatFilterOrigin !== "all" ||
-    testState.chatFilterOwnership !== "all",
-  matchesChatOwnershipFilter: (
-    isOwnedByViewer: boolean,
-    ownership: "all" | "mine" | "others",
-  ) =>
-    ownership === "all" ||
-    (ownership === "mine" ? isOwnedByViewer : !isOwnedByViewer),
-  useAcknowledgedRootCreatePending: () => null,
-  useActiveLeftPanelId: () => testState.activePanelId,
-  useArtifactFilter: () => ({
-    statuses: [],
-    kinds: testState.artifactFilterKinds,
-    read: "all",
+vi.mock("@/lib/layout/rail-view", () =>
+  reactiveHooks({
+    useLayoutRail: () => [
+      { kind: "panel", id: RAIL_REGION_BY_PANEL[testState.activePanelId] },
+    ],
+    usePanelVisibilityOverrides: () => ({}),
   }),
-  useArtifactSort: () => ({ field: "updated", direction: "desc" }),
-  useChatFilter: () => ({
-    origin: testState.chatFilterOrigin,
-    ownership: testState.chatFilterOwnership,
-  }),
-  useChatArchiveVisibility: () => testState.archiveVisibility,
-  useChatSort: () => ({ field: "updated", direction: "desc" }),
-  useCommentsPanelRevealed: () => false,
-  useEpicLeftPanelStore: (selector: (state: unknown) => unknown) =>
-    selector({
-      clearAcknowledgedRootCreatePending: vi.fn(),
-      clearLocalRootCreatePending: vi.fn(),
-      setAcknowledgedRootCreatePending: vi.fn(),
-      setActivePanelId: vi.fn(),
-      setLocalRootCreatePending: vi.fn(),
+);
+vi.mock("@/stores/epics/left-panel-store", () =>
+  reactiveHooks({
+    CHAT_ARCHIVE_VISIBILITY: {
+      Unarchived: "unarchived",
+      Archived: "archived",
+      All: "all",
+    },
+    CHAT_OWNERSHIP: {
+      All: "all",
+      Mine: "mine",
+      Others: "others",
+    },
+    CHAT_ORIGIN: {
+      All: "all",
+      Gui: "gui",
+      Tui: "tui",
+    },
+    DEFAULT_LEFT_PANEL_ID: "chats",
+    isArtifactFilterActive: () => testState.artifactFilterKinds.length > 0,
+    isChatFilterActive: () =>
+      testState.chatFilterOrigin !== "all" ||
+      testState.chatFilterOwnership !== "all",
+    matchesChatOwnershipFilter: (
+      isOwnedByViewer: boolean,
+      ownership: "all" | "mine" | "others",
+    ) =>
+      ownership === "all" ||
+      (ownership === "mine" ? isOwnedByViewer : !isOwnedByViewer),
+    useAcknowledgedRootCreatePending: () => null,
+    useActiveLeftPanelId: () => testState.activePanelId,
+    useArtifactFilter: () => ({
+      statuses: [],
+      kinds: testState.artifactFilterKinds,
+      read: "all",
     }),
-  useLocalRootCreatePending: () => null,
-}));
+    useArtifactSort: () => ({ field: "updated", direction: "desc" }),
+    useChatFilter: () => ({
+      origin: testState.chatFilterOrigin,
+      ownership: testState.chatFilterOwnership,
+    }),
+    useChatArchiveVisibility: () => testState.archiveVisibility,
+    useChatSort: () => ({ field: "updated", direction: "desc" }),
+    useCommentsPanelRevealed: () => false,
+    useEpicLeftPanelStore: (selector: (state: unknown) => unknown) =>
+      selector({
+        clearAcknowledgedRootCreatePending: vi.fn(),
+        clearLocalRootCreatePending: vi.fn(),
+        setAcknowledgedRootCreatePending: vi.fn(),
+        setActivePanelId: vi.fn(),
+        setLocalRootCreatePending: vi.fn(),
+      }),
+    useLocalRootCreatePending: () => null,
+  }),
+);
 
-vi.mock("@/hooks/epic/use-chat-archive-support", () => ({
-  SET_CHAT_ARCHIVED_METHOD: "epic.setChatArchived",
-  useChatArchiveSupported: () => testState.archiveSupport === true,
-  useChatArchiveSupportState: () => testState.archiveSupport,
-}));
+vi.mock("@/hooks/epic/use-chat-archive-support", () =>
+  reactiveHooks({
+    SET_CHAT_ARCHIVED_METHOD: "epic.setChatArchived",
+    useChatArchiveSupported: () => testState.archiveSupport === true,
+    useChatArchiveSupportState: () => testState.archiveSupport,
+  }),
+);
 
-vi.mock("@/hooks/host/use-host-supports-method", () => ({
-  useHostSupportsMethod: () => testState.archiveSupport === true,
-  useHostMethodSupport: () => testState.archiveSupport,
-}));
+vi.mock("@/hooks/host/use-host-supports-method", () =>
+  reactiveHooks({
+    useHostSupportsMethod: () => testState.archiveSupport === true,
+    useHostMethodSupport: () => testState.archiveSupport,
+  }),
+);
 
 const ARCHIVE_SUPPORTED_METHODS = vi.hoisted(
   () => new Set(["epic.setChatArchived"]),
@@ -1024,98 +1119,114 @@ vi.mock("@/hooks/epics/use-epic-collaborators-query", () => ({
   }),
 }));
 
-vi.mock("@/lib/epic-selectors", () => ({
-  useAncestorIds: () => new Set<string>(),
-  useChildIds: (parentId: string) =>
-    testState.tree.childrenByParent[parentId] ?? [],
-  useEpicActiveAgentIds: () => testState.activeAgentIds,
-  useEpicAgentRoleClaims: () => [],
-  // The row's session facet, sourced from the same `tuiAgentById` fixture the
-  // `useEpicStore` mock builds `tuiAgents.byId` from - one source, so the
-  // badge (this selector) and the row's aria-label (which reads the same
-  // facet through `useEpicStore`, per the production comment on that read)
-  // cannot disagree in a fixture.
-  useEpicAgentSessionFacet: (nodeId: string) => {
-    const agent = testState.tuiAgentById[nodeId];
-    return {
-      sessionState: agent?.sessionState ?? null,
-      lastExit: agent?.lastExit ?? null,
-    };
-  },
-  // Awareness reports a tier per working agent. An agent whose host did not
-  // classify it reads as "turn", so tests that only set `activeAgentIds` keep
-  // their pre-tier behaviour.
-  useEpicAgentActivityTiers: () =>
-    new Map(
-      [...testState.activeAgentIds].map((id) => [
-        id,
-        testState.activityTierById.get(id) ?? "turn",
-      ]),
-    ),
-  // ChatProgressIcon reads the REGISTERED (keyed, non-throwing) selector for
-  // the same data, so a whole-module mock has to answer that form too.
-  useRegisteredEpicAgentActivityTiers: () =>
-    new Map(
-      [...testState.activeAgentIds].map((id) => [
-        id,
-        testState.activityTierById.get(id) ?? "turn",
-      ]),
-    ),
-  useEpicArtifact: (artifactId: string | null) => {
-    if (artifactId === null) return null;
-    const node = testState.tree.nodeById[artifactId];
-    if (node === undefined) return null;
-    return {
-      id: node.id,
-      kind: node.type,
-      title: node.title,
-      updatedAt: node.updatedAt,
-    };
-  },
-  useEpicArchivedNodeIds: () => testState.archivedIds,
-  // The sidebar's archive-hidden and chat-order hooks read the tree and the
-  // archived ids through the PROVIDER-OPTIONAL selectors, so the picker can
-  // also resolve on the Start Page where there is no epic session. A
-  // whole-module mock has to answer those forms too, with the same test state
-  // as their strict twins below - a fake that disagreed would make the panel
-  // and the picker read different trees.
-  useMaybeEpicArchivedNodeIds: () => testState.archivedIds,
-  useMaybeEpicTreeIndex: () => testState.tree,
-  useEpicArtifactRecords: () => testState.records,
-  // Dedup input for the cloud-chat section. Empty: this suite is about the
-  // LOCAL tree, and the section hides itself when the cloud list has nothing
-  // to add - which, with no host client bound here, it never does.
-  useEpicChatIds: () => [],
-  useEpicArtifactStatus: (artifactId: string) =>
-    testState.tree.nodeById[artifactId]?.status ?? null,
-  useEpicChatHarnessId: (nodeId: string) =>
-    testState.chatHarnessIds[nodeId] ?? null,
-  useEpicConnectionStatus: () => "open",
-  useEpicNodeArchived: (nodeId: string) =>
-    testState.archivedIds.includes(nodeId),
-  useEpicNodeHostId: () => testState.rowHostId,
-  useEpicNodeHostIds: (nodeIds: ReadonlyArray<string>) =>
-    nodeIds.map(() => testState.rowHostId ?? "host-1"),
-  useEpicNodeOwnerUserId: () => "user-1",
-  useEpicNodeOwnerKind: () => "chat",
-  // The row's last-activity time. Production reads the chat/TUI PROJECTION
-  // rather than the tree node (the node's copy lags - see the selector's doc),
-  // but these fixtures only ever set it on the node, so the fake sources it
-  // from there. Rows without one read 0, which the row renders as no time.
-  useEpicNodeUpdatedAt: (nodeId: string) =>
-    testState.tree.nodeById[nodeId]?.updatedAt ?? 0,
-  // Stable empty array (reference-stable across renders) so the chat-row seed
-  // effect's dependency never changes and it never seeds in these tests.
-  useEpicNodeWorkspaceFolders: () => EMPTY_WORKSPACE_FOLDERS,
-  useEpicPermissionRole: () => testState.permissionRole,
-  useRegisteredEpicPermissionRole: () => testState.permissionRole,
-  useEpicSnapshotMeta: () => ({ epicLight: { title: "Test epic" } }),
-  useEpicTreeIndex: () => testState.tree,
-  useEpicTreeNode: (nodeId: string) => testState.tree.nodeById[nodeId] ?? null,
-  useMaybeEpicTuiAgentHarnessId: (nodeId: string) =>
-    testState.tuiHarnessIds[nodeId] ?? null,
-  useRootIds: () => testState.tree.rootIds,
-}));
+vi.mock("@/lib/epic-selectors", () =>
+  reactiveHooks({
+    useAncestorIds: () => new Set<string>(),
+    useChildIds: (parentId: string) =>
+      testState.tree.childrenByParent[parentId] ?? [],
+    useEpicActiveAgentIds: () => testState.activeAgentIds,
+    useEpicAgentRoleClaims: () => [],
+    // The row's session facet, sourced from the same `tuiAgentById` fixture the
+    // `useEpicStore` mock builds `tuiAgents.byId` from - one source, so the
+    // badge (this selector) and the row's aria-label (which reads the same
+    // facet through `useEpicStore`, per the production comment on that read)
+    // cannot disagree in a fixture.
+    useEpicAgentSessionFacet: (nodeId: string) => {
+      const agent = testState.tuiAgentById[nodeId];
+      return {
+        sessionState: agent?.sessionState ?? null,
+        lastExit: agent?.lastExit ?? null,
+      };
+    },
+    // Awareness reports a tier per working agent. An agent whose host did not
+    // classify it reads as "turn", so tests that only set `activeAgentIds` keep
+    // their pre-tier behaviour.
+    useEpicAgentActivityTiers: () =>
+      new Map(
+        [...testState.activeAgentIds].map((id) => [
+          id,
+          testState.activityTierById.get(id) ?? "turn",
+        ]),
+      ),
+    // ChatProgressIcon reads the REGISTERED (keyed, non-throwing) selector for
+    // the same data, so a whole-module mock has to answer that form too.
+    useRegisteredEpicAgentActivityTiers: () =>
+      new Map(
+        [...testState.activeAgentIds].map((id) => [
+          id,
+          testState.activityTierById.get(id) ?? "turn",
+        ]),
+      ),
+    // Per-agent narrowed siblings of the two map-returning selectors above -
+    // same source, one id looked up instead of the whole map handed back.
+    useEpicAgentActivityTier: (agentId: string) =>
+      testState.activeAgentIds.has(agentId)
+        ? (testState.activityTierById.get(agentId) ?? "turn")
+        : undefined,
+    useRegisteredEpicAgentActivityTier: (
+      _epicId: string | null,
+      agentId: string,
+    ) =>
+      testState.activeAgentIds.has(agentId)
+        ? (testState.activityTierById.get(agentId) ?? "turn")
+        : undefined,
+    useEpicArtifact: (artifactId: string | null) => {
+      if (artifactId === null) return null;
+      const node = testState.tree.nodeById[artifactId];
+      if (node === undefined) return null;
+      return {
+        id: node.id,
+        kind: node.type,
+        title: node.title,
+        updatedAt: node.updatedAt,
+      };
+    },
+    useEpicArchivedNodeIds: () => testState.archivedIds,
+    // The sidebar's archive-hidden and chat-order hooks read the tree and the
+    // archived ids through the PROVIDER-OPTIONAL selectors, so the picker can
+    // also resolve on the Start Page where there is no epic session. A
+    // whole-module mock has to answer those forms too, with the same test state
+    // as their strict twins below - a fake that disagreed would make the panel
+    // and the picker read different trees.
+    useMaybeEpicArchivedNodeIds: () => testState.archivedIds,
+    useMaybeEpicTreeIndex: () => testState.tree,
+    useEpicArtifactRecords: () => testState.records,
+    // Dedup input for the cloud-chat section. Empty: this suite is about the
+    // LOCAL tree, and the section hides itself when the cloud list has nothing
+    // to add - which, with no host client bound here, it never does.
+    useEpicChatIds: () => [],
+    useEpicArtifactStatus: (artifactId: string) =>
+      testState.tree.nodeById[artifactId]?.status ?? null,
+    useEpicChatHarnessId: (nodeId: string) =>
+      testState.chatHarnessIds[nodeId] ?? null,
+    useEpicConnectionStatus: () => "open",
+    useEpicNodeArchived: (nodeId: string) =>
+      testState.archivedIds.includes(nodeId),
+    useEpicNodeHostId: () => testState.rowHostId,
+    useEpicNodeHostIds: (nodeIds: ReadonlyArray<string>) =>
+      nodeIds.map(() => testState.rowHostId ?? "host-1"),
+    useEpicNodeOwnerUserId: () => "user-1",
+    useEpicNodeOwnerKind: () => "chat",
+    // The row's last-activity time. Production reads the chat/TUI PROJECTION
+    // rather than the tree node (the node's copy lags - see the selector's doc),
+    // but these fixtures only ever set it on the node, so the fake sources it
+    // from there. Rows without one read 0, which the row renders as no time.
+    useEpicNodeUpdatedAt: (nodeId: string) =>
+      testState.tree.nodeById[nodeId]?.updatedAt ?? 0,
+    // Stable empty array (reference-stable across renders) so the chat-row seed
+    // effect's dependency never changes and it never seeds in these tests.
+    useEpicNodeWorkspaceFolders: () => EMPTY_WORKSPACE_FOLDERS,
+    useEpicPermissionRole: () => testState.permissionRole,
+    useRegisteredEpicPermissionRole: () => testState.permissionRole,
+    useEpicSnapshotMeta: () => ({ epicLight: { title: "Test epic" } }),
+    useEpicTreeIndex: () => testState.tree,
+    useEpicTreeNode: (nodeId: string) =>
+      testState.tree.nodeById[nodeId] ?? null,
+    useMaybeEpicTuiAgentHarnessId: (nodeId: string) =>
+      testState.tuiHarnessIds[nodeId] ?? null,
+    useRootIds: () => testState.tree.rootIds,
+  }),
+);
 
 function fakeEpicStoreState() {
   const tuiAgentEntries = Object.entries(testState.tuiAgentById).flatMap(
@@ -1184,50 +1295,56 @@ function fakeEpicStoreState() {
   };
 }
 
-vi.mock("@/hooks/use-epic-store", () => ({
-  useEpicStore: (selector: (state: unknown) => unknown) =>
-    selector(fakeEpicStoreState()),
-  useMaybeEpicStore: (selector: (state: unknown) => unknown) =>
-    selector(fakeEpicStoreState()),
-}));
-
-vi.mock("@/hooks/host/use-host-client-for-host-id", () => ({
-  useHostClientForHostId: () => testState.rowHostClient,
-}));
-
-vi.mock("@/hooks/providers/use-providers-list-query", () => ({
-  useProvidersListForClient: () => ({
-    data: {
-      providers: [
-        {
-          // Wire id for the `claude` / `codex` harnesses used in identity tests.
-          // Codex is not multi-profile here; claude-code carries the profiles
-          // the managed-badge case resolves against.
-          providerId: "claude-code",
-          profiles: testState.tuiProviderProfiles.map((entry) => ({
-            profileId: entry.profileId,
-            kind: entry.kind,
-            authType: "oauth",
-            label: entry.label,
-            auth: {
-              status: "authenticated",
-              badgeText: null,
-              label: null,
-              detail: null,
-            },
-            identity: null,
-            usageUpdatedAt: null,
-            rateLimitStatus: "unknown",
-            rateLimitLimitedScopes: null,
-            duplicateOfProfileId: null,
-            accentColor: null,
-            ambientDriftNotice: null,
-          })),
-        },
-      ],
-    },
+vi.mock("@/hooks/use-epic-store", () =>
+  reactiveHooks({
+    useEpicStore: (selector: (state: unknown) => unknown) =>
+      selector(fakeEpicStoreState()),
+    useMaybeEpicStore: (selector: (state: unknown) => unknown) =>
+      selector(fakeEpicStoreState()),
   }),
-}));
+);
+
+vi.mock("@/hooks/host/use-host-client-for-host-id", () =>
+  reactiveHooks({
+    useHostClientForHostId: () => testState.rowHostClient,
+  }),
+);
+
+vi.mock("@/hooks/providers/use-providers-list-query", () =>
+  reactiveHooks({
+    useProvidersListForClient: () => ({
+      data: {
+        providers: [
+          {
+            // Wire id for the `claude` / `codex` harnesses used in identity tests.
+            // Codex is not multi-profile here; claude-code carries the profiles
+            // the managed-badge case resolves against.
+            providerId: "claude-code",
+            profiles: testState.tuiProviderProfiles.map((entry) => ({
+              profileId: entry.profileId,
+              kind: entry.kind,
+              authType: "oauth",
+              label: entry.label,
+              auth: {
+                status: "authenticated",
+                badgeText: null,
+                label: null,
+                detail: null,
+              },
+              identity: null,
+              usageUpdatedAt: null,
+              rateLimitStatus: "unknown",
+              rateLimitLimitedScopes: null,
+              duplicateOfProfileId: null,
+              accentColor: null,
+              ambientDriftNotice: null,
+            })),
+          },
+        ],
+      },
+    }),
+  }),
+);
 
 const seedEpicArtifacts = vi.hoisted(() => vi.fn());
 const markRead = vi.hoisted(() => vi.fn());
@@ -1253,11 +1370,13 @@ const useArtifactReadStateStoreMock = vi.hoisted(() => {
   return store;
 });
 
-vi.mock("@/stores/epics/artifact-read-state-store", () => ({
-  isArtifactUnread: (args: { readonly artifactId: string }) =>
-    testState.unreadArtifactIds.has(args.artifactId),
-  useArtifactReadStateStore: useArtifactReadStateStoreMock,
-}));
+vi.mock("@/stores/epics/artifact-read-state-store", () =>
+  reactiveHooks({
+    isArtifactUnread: (args: { readonly artifactId: string }) =>
+      testState.unreadArtifactIds.has(args.artifactId),
+    useArtifactReadStateStore: useArtifactReadStateStoreMock,
+  }),
+);
 
 // `importOriginal` keeps the real `tilePlacement` defaults: a row click runs
 // the real `openTile` seam, which reads placement off `getState()`.
