@@ -48,6 +48,7 @@ vi.mock("@/lib/auth-error-toast", () => ({
 
 import { useSandboxCreate } from "@/hooks/sandboxes/use-sandbox-create-mutation";
 import { useAuthStore } from "@/stores/auth/auth-store";
+import { useSandboxAutomationOpen } from "@/hooks/sandboxes/use-sandbox-automation-open-mutation";
 import { useSandboxDestroy } from "@/hooks/sandboxes/use-sandbox-destroy-mutation";
 import { useSandboxVerb } from "@/hooks/sandboxes/use-sandbox-verb-mutation";
 
@@ -186,6 +187,93 @@ describe("useSandboxVerb", () => {
       );
     });
     expect(state.requestFleetRefresh).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("useSandboxAutomationOpen", () => {
+  const OPENED = {
+    kind: "ok",
+    sandbox: sandboxSummaryFixture({ kind: "automation" }),
+  } as const;
+
+  beforeEach(() => {
+    state.binding = createFakeSandboxBinding();
+    state.requestFleetRefresh.mockClear();
+    state.toastFromAuthError.mockClear();
+  });
+  afterEach(cleanup);
+
+  it("opens through the auth service and resolves true when settled, refreshing the directory and the registered-hosts prefix", async () => {
+    state.binding?.auth.openSandboxAutomation.mockResolvedValue({
+      ...OPENED,
+      settled: true,
+    });
+    const { wrapper, invalidate } = setup();
+    const { result } = renderHook(() => useSandboxAutomationOpen(), {
+      wrapper,
+    });
+
+    let outcome: boolean | null = null;
+    await act(async () => {
+      outcome = await result.current.mutateAsync();
+    });
+
+    expect(outcome).toBe(true);
+    expect(state.binding?.auth.openSandboxAutomation).toHaveBeenCalledTimes(1);
+    expect(state.binding?.directory.refresh).toHaveBeenCalledTimes(1);
+    expect(invalidatedKeys(invalidate)).toEqual([REGISTERED_HOSTS_KEY]);
+    expect(state.toastFromAuthError).not.toHaveBeenCalled();
+  });
+
+  it("resolves false while the row is still moving (202)", async () => {
+    state.binding?.auth.openSandboxAutomation.mockResolvedValue({
+      ...OPENED,
+      settled: false,
+    });
+    const { wrapper } = setup();
+    const { result } = renderHook(() => useSandboxAutomationOpen(), {
+      wrapper,
+    });
+
+    let outcome: boolean | null = null;
+    await act(async () => {
+      outcome = await result.current.mutateAsync();
+    });
+    expect(outcome).toBe(false);
+  });
+
+  it("toasts on a refusal and still refreshes", async () => {
+    state.binding?.auth.openSandboxAutomation.mockResolvedValue(
+      refusal(503, "provider_unavailable"),
+    );
+    const { wrapper, invalidate } = setup();
+    const { result } = renderHook(() => useSandboxAutomationOpen(), {
+      wrapper,
+    });
+
+    await act(async () => {
+      await expect(result.current.mutateAsync()).rejects.toThrow();
+    });
+
+    expect(state.toastFromAuthError).toHaveBeenCalledTimes(1);
+    expect(state.toastFromAuthError.mock.calls[0][1]).toBe(
+      "Couldn't start Automations.",
+    );
+    expect(state.binding?.directory.refresh).toHaveBeenCalledTimes(1);
+    expect(invalidatedKeys(invalidate)).toEqual([REGISTERED_HOSTS_KEY]);
+  });
+
+  it("fails with a sign-in message, calling nothing, when no one is signed in", async () => {
+    state.binding = null;
+    const { wrapper } = setup();
+    const { result } = renderHook(() => useSandboxAutomationOpen(), {
+      wrapper,
+    });
+    await act(async () => {
+      await expect(result.current.mutateAsync()).rejects.toThrow(
+        "Sign in to start Automations.",
+      );
+    });
   });
 });
 

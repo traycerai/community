@@ -104,6 +104,33 @@ describe("sandboxCardActions", () => {
     }
   });
 
+  it("offers the Automations row stop/destroy awake and start/destroy released, never suspend", () => {
+    expect(sandboxCardActions("awake", false, "automation")).toEqual([
+      "stop",
+      "destroy",
+    ]);
+    expect(sandboxCardActions("released", false, "automation")).toEqual([
+      "start",
+      "destroy",
+    ]);
+    for (const state of HOST_SANDBOX_STATES) {
+      expect(sandboxCardActions(state, false, "automation")).not.toContain(
+        "suspend",
+      );
+    }
+  });
+
+  it("keeps the frozen rule for the Automations row", () => {
+    expect(sandboxCardActions("released", true, "automation")).toEqual([
+      "destroy",
+    ]);
+    expect(sandboxCardActions("creating", true, "automation")).toEqual([]);
+  });
+
+  it("leaves an agent row's released offer at destroy only", () => {
+    expect(sandboxCardActions("released", false, "agent")).toEqual(["destroy"]);
+  });
+
   it("offers an unknown state nothing, frozen or not", () => {
     expect(sandboxCardActions(null, false, "agent")).toEqual([]);
     expect(sandboxCardActions(null, true, "agent")).toEqual([]);
@@ -123,6 +150,15 @@ describe("sandboxStateLine", () => {
     expect(sandboxStateLine("awake", false, null)).toContain("awake rate");
     expect(sandboxStateLine("suspended", false, null)).toContain(
       "storage rate",
+    );
+  });
+
+  it("says an awake Automations row is not billed, and only that row", () => {
+    expect(
+      sandboxStateLine("awake", false, summaryOf({ kind: "automation" })),
+    ).toBe("Running. Automations aren't billed.");
+    expect(sandboxStateLine("awake", false, summaryOf({ kind: "agent" }))).toContain(
+      "awake rate",
     );
   });
 
@@ -178,6 +214,12 @@ describe("sandboxFrozenLine", () => {
 });
 
 describe("sandboxIdleLine", () => {
+  it("states the release rule for an Automations row, not its idle period", () => {
+    expect(
+      sandboxIdleLine(summaryOf({ kind: "automation", idleMinutes: 30 })),
+    ).toBe("Released after a day with no shell");
+  });
+
   it("says Suspends for a normal row and Destroyed for a burst row", () => {
     expect(sandboxIdleLine(summaryOf({ burst: false, idleMinutes: 30 }))).toBe(
       "Suspends after 30 min idle",
@@ -290,6 +332,15 @@ describe("sandboxTileOverlay", () => {
     });
   });
 
+  it("offers a released row a Start overlay", () => {
+    expect(sandboxTileOverlay("released", false)).toEqual({
+      kind: "asleep",
+      message: "Released",
+      verb: "start",
+      label: "Start",
+    });
+  });
+
   it("shows none for the states the tile already renders itself", () => {
     for (const state of [
       "creating",
@@ -297,7 +348,6 @@ describe("sandboxTileOverlay", () => {
       "destroying",
       "destroyed",
       "failed",
-      "released",
     ] as const) {
       expect(sandboxTileOverlay(state, false)).toBeNull();
     }

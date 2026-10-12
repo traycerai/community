@@ -101,6 +101,36 @@ const UNKNOWN_BURST = sandboxOption({
   sandbox: { state: "awake", frozen: false, summary: null },
 });
 
+const POD_AWAKE = sandboxOption({
+  hostId: "pod-awake",
+  name: "Automations",
+  connectable: true,
+  sandbox: {
+    state: "awake",
+    frozen: false,
+    summary: sandboxSummaryFixture({
+      id: "sbx-pod-awake",
+      hostId: "pod-awake",
+      kind: "automation",
+    }),
+  },
+});
+const POD_RELEASED = sandboxOption({
+  hostId: "pod-released",
+  name: "Automations",
+  connectable: false,
+  sandbox: {
+    state: "released",
+    frozen: false,
+    summary: sandboxSummaryFixture({
+      id: "sbx-pod-released",
+      hostId: "pod-released",
+      state: "released",
+      kind: "automation",
+    }),
+  },
+});
+
 const PICKER_ACTION: HostSwitcherAction = {
   kind: "manage-hosts",
   onSelect: () => undefined,
@@ -116,6 +146,18 @@ function renderSwitcher(input: {
   readonly action: HostSwitcherAction;
   readonly intent: HostPickIntent;
 }): void {
+  renderSwitcherOffering(input, false);
+}
+
+function renderSwitcherOffering(
+  input: {
+    readonly hosts: readonly HostScopeOption[];
+    readonly selected: HostScopeOption;
+    readonly action: HostSwitcherAction;
+    readonly intent: HostPickIntent;
+  },
+  offersAutomations: boolean,
+): void {
   render(
     <HostSwitcher
       refusalByHostId={NO_HOST_OPTION_REFUSALS}
@@ -132,7 +174,7 @@ function renderSwitcher(input: {
       listsFailed={false}
       onRetryLists={() => undefined}
       updateViewForHost={null}
-      offersAutomations={false}
+      offersAutomations={offersAutomations}
     />,
   );
   fireEvent.click(screen.getByTestId("settings-host-switcher"));
@@ -318,5 +360,69 @@ describe("<HostSwitcher /> picking a sleeping sandbox", () => {
 
     expect(wakeSandboxOnPick).not.toHaveBeenCalled();
     expect(onSelect).not.toHaveBeenCalled();
+  });
+});
+
+describe("<HostSwitcher /> the Automations pod", () => {
+  it("hides the pod from a picker that does not offer automations", () => {
+    renderSwitcher({
+      hosts: [PERSONAL, POD_AWAKE, POD_RELEASED],
+      selected: PERSONAL,
+      action: PICKER_ACTION,
+      intent: "pin",
+    });
+    expect(
+      screen.queryByTestId("settings-host-switcher-option-pod-awake"),
+    ).toBeNull();
+    expect(
+      screen.queryByTestId("settings-host-switcher-option-pod-released"),
+    ).toBeNull();
+  });
+
+  it("lists the pod with the sandboxes when the picker offers automations", () => {
+    renderSwitcherOffering(
+      {
+        hosts: [PERSONAL, POD_AWAKE, POD_RELEASED],
+        selected: PERSONAL,
+        action: PICKER_ACTION,
+        intent: "pin",
+      },
+      true,
+    );
+    const group = screen.getByTestId("settings-host-switcher-sandboxes");
+    expect(group.contains(row("pod-awake"))).toBe(true);
+    expect(group.contains(row("pod-released"))).toBe(true);
+    expect(row("pod-released").getAttribute("aria-disabled")).not.toBe("true");
+  });
+
+  it("wakes a released pod on a pin pick and hands its id to the surface", () => {
+    renderSwitcherOffering(
+      {
+        hosts: [PERSONAL, POD_RELEASED],
+        selected: PERSONAL,
+        action: PICKER_ACTION,
+        intent: "pin",
+      },
+      true,
+    );
+    fireEvent.click(row("pod-released"));
+    expect(wakeSandboxOnPick).toHaveBeenCalledTimes(1);
+    expect(wakeSandboxOnPick).toHaveBeenCalledWith(POD_RELEASED);
+    expect(onSelect).toHaveBeenCalledWith("pod-released");
+  });
+
+  it("does not wake an awake pod on a pick", () => {
+    renderSwitcherOffering(
+      {
+        hosts: [PERSONAL, POD_AWAKE],
+        selected: PERSONAL,
+        action: PICKER_ACTION,
+        intent: "pin",
+      },
+      true,
+    );
+    fireEvent.click(row("pod-awake"));
+    expect(wakeSandboxOnPick).not.toHaveBeenCalled();
+    expect(onSelect).toHaveBeenCalledWith("pod-awake");
   });
 });

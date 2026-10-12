@@ -642,6 +642,40 @@ describe("<SandboxCard /> verbs", () => {
   });
 });
 
+describe("<SandboxCard /> Automations row", () => {
+  it("offers an awake row stop and destroy, never suspend, and says it is free", () => {
+    renderCard(sandboxOf("awake", false, { kind: "automation" }));
+    expect(actionTestIds()).toEqual([
+      "sandbox-card-stop",
+      "sandbox-card-destroy",
+    ]);
+    expect(screen.getByTestId("sandbox-card-rate").textContent).toBe("Free");
+    expect(screen.getByTestId("sandbox-card-state-line").textContent).toBe(
+      "Running. Automations aren't billed.",
+    );
+    expect(screen.getByTestId("sandbox-card-idle").textContent).toBe(
+      "Released after a day with no shell",
+    );
+  });
+
+  it("offers a released row start and destroy; Start sends the start verb", async () => {
+    renderCard(sandboxOf("released", false, { kind: "automation" }));
+    expect(actionTestIds()).toEqual([
+      "sandbox-card-start",
+      "sandbox-card-destroy",
+    ]);
+    fireEvent.click(screen.getByTestId("sandbox-card-start"));
+    await waitFor(() => {
+      expect(mocks.binding?.auth.runSandboxVerb).toHaveBeenCalledTimes(1);
+    });
+    expect(mocks.binding?.auth.runSandboxVerb).toHaveBeenCalledWith(
+      "sbx_1",
+      "start",
+      SANDBOX_VERB_FETCH_TIMEOUT_MS,
+    );
+  });
+});
+
 describe("<SandboxCard /> destroy", () => {
   function openDestroy(): void {
     fireEvent.click(screen.getByTestId("sandbox-card-destroy"));
