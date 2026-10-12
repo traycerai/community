@@ -315,13 +315,21 @@ describe("keeping the host's recogniser warm while a composer is focused", () =>
         { hostId: "host-1" },
       );
     });
-    // The control for this bounce is "does not re-send for a focus that
-    // comes back while the last warm is recent" above: without the failure
-    // it sends nothing.
-    rerender({ isActive: false });
-    advance(60_000);
-    rerender({ isActive: true });
+    // The retry is scheduled for thirty seconds later with no focus change
+    // at all (the previous good warm may already be four minutes old, and
+    // the host frees the worker at five); the control is "does not re-send
+    // for a focus that comes back while the last warm is recent" above.
+    advance(30_000 - 1);
+    expect(host.ensureModel).toHaveBeenCalledTimes(1);
+    advance(1);
     expect(host.ensureModel).toHaveBeenCalledTimes(2);
+
+    // A retry that succeeds falls back to the normal cadence.
+    advance(WARM_INTERVAL_MS - 1);
+    expect(host.ensureModel).toHaveBeenCalledTimes(2);
+    advance(1);
+    expect(host.ensureModel).toHaveBeenCalledTimes(3);
+    rerender({ isActive: true });
   });
 
   it("stops while the window is in the background and warms again when it returns", () => {

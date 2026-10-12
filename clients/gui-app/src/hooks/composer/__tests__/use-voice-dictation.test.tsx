@@ -913,8 +913,9 @@ describe("useVoiceDictation late final transcript", () => {
     expect(client.closeCalls).toBe(1);
   });
 
-  it("drops a late final, closes the session and stays idle when the draft was sent after the fallback", async () => {
+  it("does not insert a late final when the draft was sent after the fallback, but keeps the session for its flushed", async () => {
     vi.spyOn(appLogger, "warn").mockImplementation(() => undefined);
+    const trackSpy = vi.spyOn(Analytics.getInstance(), "track");
     const { result, onText } = renderWithText();
     const client = await recordThenStop(result);
     advance(FINALIZE_FALLBACK_MS);
@@ -931,16 +932,28 @@ describe("useVoiceDictation late final transcript", () => {
     });
 
     expect(onText).not.toHaveBeenCalled();
-    expect(client.closeCalls).toBe(1);
+    // Not inserted, but not closed either: the host's `flushed` still
+    // records the outcome of this decode, text and all.
+    expect(client.closeCalls).toBe(0);
     expect(result.current.state).toBe("idle");
 
-    // Nothing is left armed: the cap timer died with the session.
-    advance(LATE_FINAL_CAP_MS * 2);
+    act(() => {
+      client.callbacks.onFlushed();
+    });
     expect(client.closeCalls).toBe(1);
     expect(onText).not.toHaveBeenCalled();
+    const succeeded = trackSpy.mock.calls.filter(
+      ([event]) => event === AnalyticsEvent.VoiceTranscriptionSucceeded,
+    );
+    expect(succeeded).toHaveLength(1);
+    expect(succeeded[0][1]).toMatchObject({ had_text: true });
+
+    // Nothing is left armed once the session closed.
+    advance(LATE_FINAL_CAP_MS * 2);
+    expect(client.closeCalls).toBe(1);
   });
 
-  it("drops a final that arrives while transcribing once the draft was sent, and closes the session", async () => {
+  it("does not insert a final that arrives while transcribing once the draft was sent, and the flushed still closes the session", async () => {
     const { result, onText } = renderWithText();
     const client = await recordThenStop(result);
     expect(result.current.state).toBe("transcribing");
@@ -951,14 +964,34 @@ describe("useVoiceDictation late final transcript", () => {
     });
 
     expect(onText).not.toHaveBeenCalled();
-    expect(client.closeCalls).toBe(1);
-    expect(result.current.state).toBe("idle");
+    expect(client.closeCalls).toBe(0);
+    expect(result.current.state).toBe("transcribing");
 
-    // The session is gone, so the flushed that follows is ignored.
     act(() => {
       client.callbacks.onFlushed();
     });
     expect(client.closeCalls).toBe(1);
+    expect(result.current.state).toBe("idle");
+  });
+
+  it("classifies a start with no host stream client after a completed dictation as a capture failure", async () => {
+    const { result, rerender } = renderWithText();
+    const client = await recordThenStop(result);
+    act(() => {
+      client.callbacks.onFlushed();
+    });
+    expect(result.current.state).toBe("idle");
+
+    // The host went away between two dictations.
+    streamRuntimeState.wsStreamClient = null;
+    rerender();
+    const track = vi.spyOn(Analytics.getInstance(), "track");
+    act(() => {
+      result.current.start();
+    });
+    const events = track.mock.calls.map(([event]) => event);
+    expect(events).toContain(AnalyticsEvent.VoiceCaptureFailed);
+    expect(events).not.toContain(AnalyticsEvent.VoiceTranscriptionFailed);
   });
 
   it("still inserts a final that arrives while transcribing when the draft is unchanged", async () => {

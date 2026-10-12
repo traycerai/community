@@ -17,6 +17,11 @@ const MAX_ENSURE_ATTEMPTS = 3;
 // focus - or a window that goes to the background - stops sending and lets
 // the host free it.
 const WARM_INTERVAL_MS = 4 * 60_000;
+// A warm whose RPC failed is tried again this soon, not at the next
+// interval: the previous good warm may already be four minutes old, and the
+// host frees the worker at five. Bounded, so a host that is down is asked
+// twice a minute at most, not in a loop.
+const WARM_RETRY_DELAY_MS = 30_000;
 // When each host was last warmed, shared by every composer in this window:
 // a focus moving between composers, or coming back to one, sends nothing
 // while the last warm is recent, and the next warm is always due exactly one
@@ -130,6 +135,8 @@ export function useDictationAvailability(
     },
   });
 
+  // Bumped by a failed warm so the warm effect re-arms its timer.
+  const [failedWarms, setFailedWarms] = useState(0);
   const ensureMutation = useHostMutation<
     HostRpcRegistry,
     "speech.ensureModel",
@@ -143,10 +150,15 @@ export function useDictationAvailability(
       onMutate: () => ({ hostId: client.getActiveHostId() }),
       onError: (_error, _variables, context) => {
         // A warm that did not reach the host (restarting, disconnected) is
-        // no warm: forget it so the next focus or tick sends again instead
-        // of waiting out an interval the worker's idle may expire inside.
+        // no warm: make the next one due in a short while, and wake the
+        // effect so its timer is re-armed for that rather than for the next
+        // interval, which the worker's idle could expire inside.
         if (context !== undefined && context.hostId !== null) {
-          lastWarmAtByHost.delete(context.hostId);
+          lastWarmAtByHost.set(
+            context.hostId,
+            Date.now() - WARM_INTERVAL_MS + WARM_RETRY_DELAY_MS,
+          );
+          setFailedWarms((count) => count + 1);
         }
       },
       onSuccess: (_result, _variables, context) => {
@@ -235,7 +247,7 @@ export function useDictationAvailability(
     return () => {
       if (timer !== null) window.clearTimeout(timer);
     };
-  }, [focused, windowFocused, ready, ensure, activeHostId]);
+  }, [focused, windowFocused, ready, ensure, activeHostId, failedWarms]);
 
   if (!available || !engineAvailable) return { ready: false, preparing: null };
   if (downloadState === "ready") return { ready: true, preparing: null };

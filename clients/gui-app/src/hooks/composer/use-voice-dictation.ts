@@ -579,6 +579,12 @@ export function useVoiceDictation(
     // telling the user to grant microphone access.
     recordingStartedAtRef.current = null;
     lastConnectionStatusRef.current = null;
+    // The previous session's flush marker too, before the not-connected
+    // branch: a failure there is a capture failure of THIS attempt, not a
+    // transcription failure of a flush that already completed.
+    flushRequestedAtRef.current = null;
+    draftAtStopRef.current = null;
+    receivedTextRef.current = false;
     setErrorMessage(null);
     setFailureClass(null);
     setPermissionDenied(false);
@@ -597,9 +603,6 @@ export function useVoiceDictation(
     // stream still open, and its cap timer would later finalize() THIS one.
     if (speechClientRef.current !== null) finalize();
     clearFinalizeTimers();
-    flushRequestedAtRef.current = null;
-    draftAtStopRef.current = null;
-    receivedTextRef.current = false;
     setState("requesting");
     readyRef.current = false;
     audioGraphReadyRef.current = false;
@@ -663,17 +666,19 @@ export function useVoiceDictation(
           // "transcribing", are still wanted, so this isn't gated on closing.)
           if (frame.isFinal && speechClientRef.current === client) {
             // After stop, a final belongs to the draft the mic stopped over.
-            // Sent or replaced since, it would land in the next message:
-            // drop it and close the session it was the last word of.
+            // Sent or replaced since, it would land in the next message, so
+            // it is not inserted. The session stays open for the host's
+            // `flushed`, which still records the outcome (the text WAS
+            // produced) and closes it; `start`, the cap or the host closing
+            // the stream do otherwise.
+            if (frame.text.length > 0) receivedTextRef.current = true;
             const draftAtStop = draftAtStopRef.current;
             if (
               draftAtStop !== null &&
               handlersRef.current.draftGeneration() !== draftAtStop
             ) {
-              finalize();
               return;
             }
-            if (frame.text.length > 0) receivedTextRef.current = true;
             handlersRef.current.onText(frame.text);
           }
         },
