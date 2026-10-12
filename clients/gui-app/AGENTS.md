@@ -349,9 +349,13 @@ other way.
 - **One frame, one loader.** The frame is `sandbox="allow-scripts
 allow-forms"`, never `allow-same-origin`, on the loader's own origin
   (`lib/sandbox/sandbox-url.ts`: `traycer-sandbox:` on desktop, `/sandbox/`
-  elsewhere). The loader (`lib/sandbox/sandbox-loader.ts`, built alone into a
-  classic script) waits for the resource, then `document.write`s it over
-  itself in the same frame; there is no inner frame.
+  elsewhere). The loader (`lib/sandbox/sandbox-loader.ts`, built alone and
+  inlined into `sandbox/index.html` as a classic script) waits for the
+  resource, then `document.write`s it over itself in the same frame; there is
+  no inner frame. That document is the only file the sandbox origin serves,
+  and it fetches nothing: WebKit's `*` does not admit iOS's `capacitor:`
+  scheme from an opaque frame, so a script or font file there never loads.
+  `lib/sandbox/__tests__/sandbox-index.test.ts` holds this.
 - **Policies.** A page's network policy (`open` / `https-only`) comes from
   the host's `epic.readFile` answer and is passed through unchanged. An app's
   CSP is built deny-by-default from normalized metadata (`lib/sandbox/mcp-csp.ts`);

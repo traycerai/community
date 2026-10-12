@@ -11,11 +11,11 @@ import { log } from "./logger";
  * `<iframe sandbox="allow-scripts allow-forms">`, and the loader there writes
  * the page over itself (gui-app `lib/sandbox/`).
  *
- * The scheme serves exactly two files - the loader page and its script (which
- * carries the Figtree face pages are offered, as a `data:` URL) - and nothing
- * else. They are the files
- * gui-app's `vite/sandbox-assets.ts` emits into `dist/renderer/sandbox/`; in
- * dev they come from the Vite dev server that plugin also serves them from.
+ * The scheme serves exactly one file, the loader page, and nothing else. It
+ * fetches nothing: its script and the Figtree face pages are offered (as a
+ * `data:` URL) are inlined into it. It is the file gui-app's
+ * `vite/sandbox-assets.ts` emits into `dist/renderer/sandbox/`; in dev it
+ * comes from the Vite dev server that plugin also serves it from.
  */
 export const SANDBOX_SCHEME = "traycer-sandbox";
 export const SANDBOX_HOST = "page";
@@ -42,11 +42,6 @@ export const SANDBOX_SCHEME_PRIVILEGES: CustomScheme = {
  */
 export const SANDBOX_CONTENT_SECURITY_POLICY =
   "default-src * data: blob: 'unsafe-inline' 'unsafe-eval'; form-action 'none'; base-uri 'none'";
-
-const SANDBOX_FILES: ReadonlyMap<string, string> = new Map([
-  ["/index.html", "text/html; charset=utf-8"],
-  ["/loader.js", "text/javascript; charset=utf-8"],
-]);
 
 /**
  * Permissions a sandbox loader URL may declare in `?perm=`, mapped to the
@@ -105,7 +100,7 @@ function sandboxFileUrl(fileName: string): string {
   ).toString();
 }
 
-/** Post-`whenReady`: serves the two sandbox files, and 404 for anything else. */
+/** Post-`whenReady`: serves the loader page, and 404 for anything else. */
 export function installSandboxProtocolHandler(): void {
   protocol.handle(SANDBOX_SCHEME, async (request) => {
     let url: URL;
@@ -114,8 +109,7 @@ export function installSandboxProtocolHandler(): void {
     } catch {
       return new Response("bad request", { status: 400 });
     }
-    const contentType = SANDBOX_FILES.get(url.pathname);
-    if (url.host !== SANDBOX_HOST || contentType === undefined) {
+    if (url.host !== SANDBOX_HOST || url.pathname !== SANDBOX_LOADER_PATH) {
       return new Response("not found", { status: 404 });
     }
     const fileName = url.pathname.slice(1);
@@ -130,7 +124,7 @@ export function installSandboxProtocolHandler(): void {
     }
     return new Response(body, {
       headers: {
-        "Content-Type": contentType,
+        "Content-Type": "text/html; charset=utf-8",
         "Content-Security-Policy": SANDBOX_CONTENT_SECURITY_POLICY,
         "X-Content-Type-Options": "nosniff",
         "Cache-Control": "no-cache",
