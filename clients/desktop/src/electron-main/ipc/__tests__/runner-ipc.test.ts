@@ -39,6 +39,10 @@ import type {
   openSandboxAutomationViaHttp,
   runSandboxVerbViaHttp,
 } from "@traycer-clients/shared/host-client/sandbox-control";
+import type {
+  decideSecretRequestViaHttp,
+  fetchSandboxGrantsViaHttp,
+} from "@traycer-clients/shared/host-client/sandbox-secrets";
 import { config } from "../../../config";
 import { FakeHostController } from "./fake-host-controller";
 import { setAppliedLocalHostCapability } from "../../host/local-host-capability";
@@ -69,6 +73,19 @@ const openSandboxAutomationViaHttpMock = vi.hoisted(() =>
     detail: "unscripted",
   })),
 );
+/** The secrets broker's grants read and decide the two handlers make, observed. */
+const fetchSandboxGrantsViaHttpMock = vi.hoisted(() =>
+  vi.fn<typeof fetchSandboxGrantsViaHttp>(async () => ({
+    kind: "ok",
+    summary: { version: 3, grants: [], github: null },
+  })),
+);
+const decideSecretRequestViaHttpMock = vi.hoisted(() =>
+  vi.fn<typeof decideSecretRequestViaHttp>(async () => ({
+    kind: "ok",
+    status: "approved",
+  })),
+);
 vi.mock(
   "@traycer-clients/shared/host-client/sandbox-control",
   async (importOriginal) => ({
@@ -80,6 +97,10 @@ vi.mock(
     openSandboxAutomationViaHttp: openSandboxAutomationViaHttpMock,
   }),
 );
+vi.mock("@traycer-clients/shared/host-client/sandbox-secrets", () => ({
+  fetchSandboxGrantsViaHttp: fetchSandboxGrantsViaHttpMock,
+  decideSecretRequestViaHttp: decideSecretRequestViaHttpMock,
+}));
 /**
  * `app`-level event listeners, recorded rather than discarded so a test can
  * drive them. `epic-visibility-ipc.ts` registers a `render-process-gone`
@@ -644,6 +665,9 @@ describe("RunnerIpcBridge", () => {
           RunnerHostInvoke.runSandboxVerb,
           RunnerHostInvoke.getSandboxAutomation,
           RunnerHostInvoke.openSandboxAutomation,
+          // The secrets broker, on authn.
+          RunnerHostInvoke.getSandboxGrants,
+          RunnerHostInvoke.decideSecretRequest,
           RunnerHostInvoke.listUserSessions,
           RunnerHostInvoke.revokeUserSession,
           RunnerHostInvoke.revokeAllSessions,
@@ -1027,6 +1051,70 @@ describe("RunnerIpcBridge", () => {
     }
     expect(getSandboxAutomationViaHttpMock).toHaveBeenCalledTimes(1);
     expect(openSandboxAutomationViaHttpMock).toHaveBeenCalledTimes(1);
+    bridge.dispose();
+  });
+
+  it("routes the grants read and the grant decision to the secrets broker on authn with the bearer, and rejects a malformed argument before any request", async () => {
+    const mod = await import("../register-runner-ipc");
+    const bridge = new mod.RunnerIpcBridge({
+      host: new FakeHost(),
+      hostController: new FakeHostController(),
+      authnBaseUrl: "http://localhost:5005",
+      authRedirectUri: null,
+      tray: null,
+      zoomController: undefined,
+      authTokenStore: undefined,
+      window: buildWindow(),
+    });
+    bridge.install();
+    const grants = ipcMainState.handlers.get(RunnerHostInvoke.getSandboxGrants);
+    const decide = ipcMainState.handlers.get(
+      RunnerHostInvoke.decideSecretRequest,
+    );
+    if (grants === undefined || decide === undefined) {
+      throw new Error("a secrets handler is missing");
+    }
+
+    await expect(grants(bareEvent(), "bearer-1", "host-1")).resolves.toEqual({
+      kind: "ok",
+      summary: { version: 3, grants: [], github: null },
+    });
+    expect(fetchSandboxGrantsViaHttpMock).toHaveBeenCalledWith(
+      "http://localhost:5005",
+      "bearer-1",
+      "host-1",
+    );
+
+    await expect(
+      decide(bareEvent(), "bearer-2", "request-1", "approve_default"),
+    ).resolves.toEqual({ kind: "ok", status: "approved" });
+    expect(decideSecretRequestViaHttpMock).toHaveBeenCalledWith(
+      "http://localhost:5005",
+      "bearer-2",
+      "request-1",
+      "approve_default",
+    );
+
+    for (const bad of [null, undefined, 7, {}]) {
+      await expect(grants(bareEvent(), bad, "host-1")).rejects.toThrow(
+        "getSandboxGrants.bearerToken",
+      );
+      await expect(grants(bareEvent(), "bearer-1", bad)).rejects.toThrow(
+        "getSandboxGrants.hostId",
+      );
+      await expect(
+        decide(bareEvent(), bad, "request-1", "approve"),
+      ).rejects.toThrow("decideSecretRequest.bearerToken");
+      await expect(
+        decide(bareEvent(), "bearer-2", bad, "approve"),
+      ).rejects.toThrow("decideSecretRequest.requestId");
+    }
+    // A decision outside the three is refused in the main process.
+    await expect(
+      decide(bareEvent(), "bearer-2", "request-1", "approve_once"),
+    ).rejects.toThrow();
+    expect(fetchSandboxGrantsViaHttpMock).toHaveBeenCalledTimes(1);
+    expect(decideSecretRequestViaHttpMock).toHaveBeenCalledTimes(1);
     bridge.dispose();
   });
 
