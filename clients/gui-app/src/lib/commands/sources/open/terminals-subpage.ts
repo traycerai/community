@@ -18,6 +18,8 @@ import { useActiveEpicSurfaceHostPin } from "@/lib/commands/sources/open/use-act
 import { useHostClientForHostId } from "@/hooks/host/use-host-client-for-host-id";
 import { useActiveEpicHostId } from "@/lib/commands/sources/open/use-active-epic-projection";
 import { useHostDirectoryList } from "@/hooks/host/use-host-directory-list-query";
+import { useHostOptions } from "@/components/settings/host-scope/use-host-options";
+import { groupHostOptions } from "@/components/settings/host-scope/host-option-model";
 import { useRefreshHostDirectoryOnOpen } from "@/hooks/host/use-refresh-host-directory-on-open";
 import { useRemoteSessionsPollReadiness } from "@/hooks/host/use-remote-sessions-poll-readiness";
 import {
@@ -365,6 +367,17 @@ function useNewTerminalWorkspaceItems(
   // workspace chooser the same freshly-reachable host list as the old dialog.
   useRefreshHostDirectoryOnOpen(true, binding?.directory ?? null);
   const directory = useHostDirectoryList();
+  // The new terminal picker's own host rule (`hostOptionPickerGroup` with
+  // `offersAutomations`): personal hosts, the user's sandboxes and the
+  // Automations host, never an agent's burst sandbox or a sandbox whose
+  // control-plane row has not answered.
+  const hostOptions = useHostOptions().hosts;
+  const offeredHostIds = useMemo(() => {
+    const groups = groupHostOptions(hostOptions, false, true, null);
+    return new Set(
+      [...groups.personal, ...groups.sandboxes].map((host) => host.hostId),
+    );
+  }, [hostOptions]);
   // Dialability depends on the pull-only session cache, so a memo keyed on
   // directory state alone freezes the row list while the palette is open: a
   // session dying under an `offline` host would keep offering a
@@ -406,6 +419,7 @@ function useNewTerminalWorkspaceItems(
       .filter(
         (entry) =>
           entry.hostId !== resolvedHostId &&
+          offeredHostIds.has(entry.hostId) &&
           dialableHostEndpointFor(entry, hasReadySessionFor(entry.hostId)) !==
             null,
       )
@@ -430,6 +444,7 @@ function useNewTerminalWorkspaceItems(
     directory.data,
     hasReadySessionFor,
     hostClient,
+    offeredHostIds,
   ]);
 }
 
