@@ -1,5 +1,5 @@
 import { createElement } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import type {
   WorktreeBindingSelectorRowV12,
@@ -7,6 +7,7 @@ import type {
 } from "@traycer/protocol/host/worktree-schemas";
 import type { BrowserSessionInfo } from "@traycer/protocol/host/browser/contracts";
 import type { HostListItem } from "@traycer/protocol/host/host-status";
+import type { SandboxSummary } from "@traycer/protocol/host/sandbox-control";
 import type { HostDirectoryEntry } from "@traycer-clients/shared/host-client/host-directory";
 import { hostListItemToDirectoryEntry } from "@traycer-clients/shared/host-client/remote-fetcher";
 import type { BrowserSessionsLifecycle } from "@traycer-clients/shared/platform/browser-view";
@@ -15,6 +16,9 @@ import {
   tabInfo,
 } from "@/lib/browser-view/sessions/__tests__/browser-session-test-kit";
 import { BROWSERS_UNSUPPORTED_MESSAGE } from "@traycer-clients/shared/platform/browser-view";
+import { hostScopeOptionFixture } from "@/components/settings/host-scope/host-scope-fixture";
+import type { HostScopeOption } from "@/components/settings/host-scope/host-scope-model";
+import { sandboxSummaryFixture } from "@/hooks/sandboxes/__tests__/sandbox-fixtures";
 import type { CommandContext, CommandItem } from "@/lib/commands/types";
 import type { KeybindingRouter } from "@/lib/keybindings/dispatch";
 import type { OpenTileIntoTargetGroupArgs } from "@/lib/commands/actions/open-into-target";
@@ -54,6 +58,15 @@ const hostEntryOverride = vi.hoisted<{ current: HostDirectoryEntry | null }>(
 const activeHostIdMock = vi.hoisted<{ current: string | null }>(() => ({
   current: "default-host",
 }));
+/**
+ * Extra hosts a test adds to BOTH the directory and the host-options rows, so
+ * the two stay in step: the CMD-T other-host list is the directory's dialable
+ * entries filtered through the host-options picker rule.
+ */
+const extraHostsMock = vi.hoisted<{
+  directory: HostDirectoryEntry[];
+  options: HostScopeOption[];
+}>(() => ({ directory: [], options: [] }));
 const remoteHostAvailableMock = vi.hoisted<{ current: boolean }>(() => ({
   current: true,
 }));
@@ -400,6 +413,7 @@ vi.mock("@/components/settings/host-scope/use-host-options", () => ({
         sandbox: null,
         health: { state: "online" },
       },
+      ...extraHostsMock.options,
     ],
     activeHostId: "default-host",
     isLoading: false,
@@ -509,6 +523,7 @@ vi.mock("@/hooks/host/use-host-directory-list-query", () => ({
         version: null,
         transportDialability: "dialable",
       },
+      ...extraHostsMock.directory,
     ],
   }),
 }));
@@ -684,6 +699,8 @@ afterEach(() => {
   browserLifecycleMock.current = "live";
   browserInventoryReadyMock.current = true;
   remoteHostAvailableMock.current = true;
+  extraHostsMock.directory = [];
+  extraHostsMock.options = [];
   terminalBindingsMock.active.data.rows = ACTIVE_ROWS;
   terminalBindingsMock.active.data.folderlessCwd = "/work/default-cwd";
   terminalBindingsMock.active.isPending = false;
@@ -839,6 +856,20 @@ describe("Agents opener sub-page", () => {
 });
 
 describe("Terminals opener sub-page", () => {
+  // The other-host list keeps only hosts the picker rule offers, so the
+  // directory's remote terminal host needs its matching host-options row.
+  beforeEach(() => {
+    extraHostsMock.options = [
+      hostScopeOptionFixture({
+        hostId: "terminal-host",
+        name: "Remote Terminal Mac",
+        isLocalMachine: false,
+        isActive: false,
+        connectable: true,
+      }),
+    ];
+  });
+
   it("keeps new-terminal creation in cmdk and launches from the selected active-host workspace", () => {
     const items = renderItems(useTerminalsOpenerItems);
     const newTerminal = items[0];
@@ -902,6 +933,64 @@ describe("Terminals opener sub-page", () => {
     }
     expect(isHostEpicTerminalRef(opened.ref)).toBe(true);
     expect(launchedTerminalCwd(opened.ref)).toBe("/remote/feature-worktree");
+  });
+
+  it("offers the personal host and the Automations pod, never an agent's burst sandbox or an unanswered sandbox", () => {
+    const dialable = (hostId: string, label: string): HostDirectoryEntry => ({
+      hostId,
+      label,
+      kind: "remote",
+      websocketUrl: `ws://${hostId}.test`,
+      version: null,
+      transportDialability: "dialable",
+    });
+    const sandboxOption = (
+      hostId: string,
+      name: string,
+      summary: SandboxSummary | null,
+    ): HostScopeOption =>
+      hostScopeOptionFixture({
+        hostId,
+        name,
+        isLocalMachine: false,
+        isActive: false,
+        connectable: true,
+        kind: "sandbox",
+        sandbox: { state: "awake", frozen: false, summary },
+      });
+    extraHostsMock.directory = [
+      dialable("burst-host", "Task box"),
+      dialable("pod-host", "Automations"),
+      dialable("unanswered-host", "Unanswered box"),
+    ];
+    extraHostsMock.options = [
+      ...extraHostsMock.options,
+      sandboxOption(
+        "burst-host",
+        "Task box",
+        sandboxSummaryFixture({ hostId: "burst-host", burst: true }),
+      ),
+      sandboxOption(
+        "pod-host",
+        "Automations",
+        sandboxSummaryFixture({ hostId: "pod-host", kind: "automation" }),
+      ),
+      sandboxOption("unanswered-host", "Unanswered box", null),
+    ];
+
+    const items = renderItems(useTerminalsOpenerItems);
+    const newTerminal = items[0];
+    if (newTerminal.subpage === null) {
+      throw new Error("expected terminal workspace subpage");
+    }
+    const labels = renderItems(newTerminal.subpage.useItems).map(
+      (item) => item.subpage?.title ?? null,
+    );
+
+    expect(labels).toContain("Create terminal on Remote Terminal Mac");
+    expect(labels).toContain("Create terminal on Automations");
+    expect(labels).not.toContain("Create terminal on Task box");
+    expect(labels).not.toContain("Create terminal on Unanswered box");
   });
 
   it("rechecks remote host reachability when a workspace leaf is invoked", () => {

@@ -27,6 +27,8 @@ import type {
 } from "../host-client/host-version-policy-fetcher";
 import type { DeregisterHostFetchResult } from "../host-client/host-deregister-fetcher";
 import type {
+  SandboxAutomationFetchResult,
+  SandboxAutomationOpenFetchResult,
   SandboxCatalogueFetchResult,
   SandboxCostsFetchResult,
   SandboxCreateFetchResult,
@@ -362,9 +364,10 @@ export interface IRunnerHost {
   /**
    * The sandbox control plane (traycer-server `/api/sandboxes`) with the user
    * bearer: the user's sandboxes, their cost and the user's awake burn, the
-   * catalogue the create form prices from, create, destroy, and the lifecycle
+   * catalogue the create form prices from, create, destroy, the lifecycle
    * verbs (the card's suspend / resume / stop / start, and the wake a tab open
-   * calls before dialing a suspended or stopped sandbox). Each shell owns its traycer-server base URL
+   * calls before dialing a suspended or stopped sandbox), and the user's
+   * Automations host (its read, and the open that creates or wakes it). Each shell owns its traycer-server base URL
    * the way it owns `authnBaseUrl`. Desktop runs these in Electron main
    * (traycer-server's CORS allow-list is the web dashboard origin); mobile
    * goes through the native HTTP layer; browser/dev shells call the shared
@@ -390,6 +393,12 @@ export interface IRunnerHost {
     verb: SandboxLifecycleVerb,
     timeoutMs: number,
   ): Promise<SandboxVerbFetchResult>;
+  getSandboxAutomation(
+    bearerToken: string,
+  ): Promise<SandboxAutomationFetchResult>;
+  openSandboxAutomation(
+    bearerToken: string,
+  ): Promise<SandboxAutomationOpenFetchResult>;
   /**
    * The secrets broker (authn), with the user's bearer: the grants one
    * sandbox host holds, and the answer to an agent's grant request. See

@@ -286,7 +286,6 @@ describe("<SandboxTileStateFrame />", () => {
       "failed",
       "destroying",
       "destroyed",
-      "released",
     ] as const) {
       setSandboxEntry(state, false);
       renderFrame(false);
@@ -294,6 +293,18 @@ describe("<SandboxTileStateFrame />", () => {
       expect(bodyWrapper().hasAttribute("inert")).toBe(false);
       cleanup();
     }
+  });
+
+  it("overlays a released sandbox with Released and Start", () => {
+    setSandboxEntry("released", false);
+    renderFrame(false);
+
+    const overlay = screen.getByTestId("sandbox-tile-overlay");
+    expect(overlay.getAttribute("data-kind")).toBe("asleep");
+    expect(overlay.textContent).toContain("Released");
+    expect(screen.getByTestId("sandbox-tile-overlay-wake").textContent).toBe(
+      "Start",
+    );
   });
 
   it("overlays a suspended sandbox with its copy and Resume, and makes the body inert", () => {

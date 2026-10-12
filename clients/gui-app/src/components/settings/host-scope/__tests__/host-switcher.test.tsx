@@ -45,6 +45,7 @@ function renderEmpty(props: {
       listsFailed={props.listsFailed}
       onRetryLists={props.onRetryLists ?? (() => undefined)}
       updateViewForHost={null}
+      offersAutomations={false}
     />,
   );
 }
@@ -115,6 +116,7 @@ describe("<HostSwitcher /> empty vs failed", () => {
         listsFailed
         onRetryLists={() => undefined}
         updateViewForHost={null}
+        offersAutomations={false}
       />,
     );
 
@@ -148,6 +150,7 @@ describe("<HostSwitcher /> empty vs failed", () => {
         listsFailed
         onRetryLists={onRetryLists}
         updateViewForHost={null}
+        offersAutomations={false}
       />,
     );
 
@@ -180,6 +183,7 @@ describe("<HostSwitcher /> empty vs failed", () => {
           listsFailed={false}
           onRetryLists={() => undefined}
           updateViewForHost={null}
+          offersAutomations={false}
         />,
       );
       fireEvent.click(
@@ -226,6 +230,7 @@ describe("<HostSwitcher /> empty vs failed", () => {
           listsFailed={false}
           onRetryLists={() => undefined}
           updateViewForHost={null}
+          offersAutomations={false}
         />,
       );
     }
@@ -316,6 +321,7 @@ describe("<HostSwitcher /> empty vs failed", () => {
         listsFailed={false}
         onRetryLists={() => undefined}
         updateViewForHost={null}
+        offersAutomations={false}
       />,
     );
 
@@ -346,6 +352,7 @@ describe("<HostSwitcher /> trigger status", () => {
       listsFailed: false,
       onRetryLists: () => undefined,
       updateViewForHost: null,
+      offersAutomations: false,
     };
     const { rerender } = render(
       <HostSwitcher hosts={[healthy]} selected={healthy} {...common} />,
@@ -401,6 +408,7 @@ describe("<HostSwitcher /> trailing action", () => {
         listsFailed={false}
         onRetryLists={() => undefined}
         updateViewForHost={null}
+        offersAutomations={false}
       />,
     );
 
@@ -437,6 +445,7 @@ describe("<HostSwitcher /> trailing action", () => {
         listsFailed={false}
         onRetryLists={() => undefined}
         updateViewForHost={null}
+        offersAutomations={false}
       />,
     );
 
@@ -482,6 +491,7 @@ describe("<HostSwitcher /> setting-up status word (M5)", () => {
         listsFailed={false}
         onRetryLists={() => undefined}
         updateViewForHost={null}
+        offersAutomations={false}
       />,
     );
 

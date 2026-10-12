@@ -3,8 +3,12 @@ import {
   destroySandboxViaHttp,
   fetchSandboxCatalogueViaHttp,
   fetchSandboxCostsViaHttp,
+  getSandboxAutomationViaHttp,
   listSandboxesViaHttp,
+  openSandboxAutomationViaHttp,
   runSandboxVerbViaHttp,
+  type SandboxAutomationFetchResult,
+  type SandboxAutomationOpenFetchResult,
   type SandboxCatalogueFetchResult,
   type SandboxCostsFetchResult,
   type SandboxCreateFetchResult,
@@ -654,6 +658,18 @@ export class MockRunnerHost implements IRunnerHost {
       verb,
       timeoutMs,
     );
+  }
+
+  getSandboxAutomation(
+    bearerToken: string,
+  ): Promise<SandboxAutomationFetchResult> {
+    return getSandboxAutomationViaHttp(this.serverBaseUrl, bearerToken);
+  }
+
+  openSandboxAutomation(
+    bearerToken: string,
+  ): Promise<SandboxAutomationOpenFetchResult> {
+    return openSandboxAutomationViaHttp(this.serverBaseUrl, bearerToken);
   }
 
   getSandboxGrants(

@@ -1,7 +1,7 @@
 /**
  * A build that cannot reach the sandbox control plane (staging: its server is
  * fronted by IAP, which refuses the app's bearer) sends no sandbox call at all.
- * `AuthService` is the floor under every surface: each of the six sandbox
+ * `AuthService` is the floor under every surface: each of the eight sandbox
  * methods answers `{ kind: "unavailable" }` BEFORE it reads a bearer, and the
  * runner host's method is never reached.
  */
@@ -51,6 +51,12 @@ function sandboxSpies() {
     runSandboxVerb: vi.fn<IRunnerHost["runSandboxVerb"]>(() =>
       Promise.resolve({ kind: "network-error" as const, detail: "unscripted" }),
     ),
+    getSandboxAutomation: vi.fn<IRunnerHost["getSandboxAutomation"]>(() =>
+      Promise.resolve({ kind: "network-error" as const, detail: "unscripted" }),
+    ),
+    openSandboxAutomation: vi.fn<IRunnerHost["openSandboxAutomation"]>(() =>
+      Promise.resolve({ kind: "network-error" as const, detail: "unscripted" }),
+    ),
   };
 }
 
@@ -83,7 +89,7 @@ describe("AuthService sandbox control on a build that cannot reach it", () => {
     ).toBeNull();
   });
 
-  it("answers every one of the six calls with the unavailable failure and never reaches the runner host", async () => {
+  it("answers every one of the eight calls with the unavailable failure and never reaches the runner host", async () => {
     const { service, spies } = makeService(REASON);
     const unavailable = { kind: "unavailable", reason: REASON };
 
@@ -95,6 +101,8 @@ describe("AuthService sandbox control on a build that cannot reach it", () => {
     expect(
       await service.runSandboxVerb("sbx_1", "resume", VERB_TIMEOUT_MS),
     ).toEqual(unavailable);
+    expect(await service.getSandboxAutomation()).toEqual(unavailable);
+    expect(await service.openSandboxAutomation()).toEqual(unavailable);
 
     expect(spies.listSandboxes).not.toHaveBeenCalled();
     expect(spies.getSandboxCosts).not.toHaveBeenCalled();
@@ -102,6 +110,8 @@ describe("AuthService sandbox control on a build that cannot reach it", () => {
     expect(spies.createSandbox).not.toHaveBeenCalled();
     expect(spies.destroySandbox).not.toHaveBeenCalled();
     expect(spies.runSandboxVerb).not.toHaveBeenCalled();
+    expect(spies.getSandboxAutomation).not.toHaveBeenCalled();
+    expect(spies.openSandboxAutomation).not.toHaveBeenCalled();
   });
 
   it("refuses before it reads a bearer: a signed-out build is told it is unavailable, not unauthorized, and the writes do not throw", async () => {
@@ -140,7 +150,15 @@ describe("AuthService sandbox control on a build that cannot reach it", () => {
     await expect(service.destroySandbox("sbx_1")).rejects.toThrow(
       "Sign in to destroy this sandbox.",
     );
+    expect(await service.getSandboxAutomation()).toEqual({
+      kind: "unauthorized",
+    });
+    await expect(service.openSandboxAutomation()).rejects.toThrow(
+      "Sign in to start Automations.",
+    );
     // Signed out, the bearer read stops them before the runner host too.
     expect(spies.listSandboxes).not.toHaveBeenCalled();
+    expect(spies.getSandboxAutomation).not.toHaveBeenCalled();
+    expect(spies.openSandboxAutomation).not.toHaveBeenCalled();
   });
 });

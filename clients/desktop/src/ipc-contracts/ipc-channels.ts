@@ -74,6 +74,8 @@ export const RunnerHostInvoke = {
   createSandbox: "runnerHost:sandboxes:create",
   destroySandbox: "runnerHost:sandboxes:destroy",
   runSandboxVerb: "runnerHost:sandboxes:verb",
+  getSandboxAutomation: "runnerHost:sandboxes:automation:get",
+  openSandboxAutomation: "runnerHost:sandboxes:automation:open",
   // The secrets broker (authn), from Electron main for the same reason.
   getSandboxGrants: "runnerHost:sandboxSecrets:grants",
   decideSecretRequest: "runnerHost:sandboxSecrets:decide",

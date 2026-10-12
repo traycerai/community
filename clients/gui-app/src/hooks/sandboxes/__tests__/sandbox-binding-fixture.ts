@@ -1,5 +1,7 @@
 import { vi, type Mock } from "vitest";
 import type {
+  SandboxAutomationFetchResult,
+  SandboxAutomationOpenFetchResult,
   SandboxControlFailure,
   SandboxCreateFetchResult,
   SandboxListFetchResult,
@@ -19,6 +21,8 @@ type RunSandboxVerb = (
   verb: SandboxLifecycleVerb,
   timeoutMs: number,
 ) => Promise<SandboxVerbFetchResult>;
+type GetSandboxAutomation = () => Promise<SandboxAutomationFetchResult>;
+type OpenSandboxAutomation = () => Promise<SandboxAutomationOpenFetchResult>;
 type DestroySandbox = (sandboxId: string) => Promise<SandboxVerbFetchResult>;
 
 /** The AuthService methods the sandbox mutations and the tab-open wake call. */
@@ -29,6 +33,8 @@ export interface FakeSandboxAuth {
   readonly createSandbox: Mock<CreateSandbox>;
   readonly runSandboxVerb: Mock<RunSandboxVerb>;
   readonly destroySandbox: Mock<DestroySandbox>;
+  readonly getSandboxAutomation: Mock<GetSandboxAutomation>;
+  readonly openSandboxAutomation: Mock<OpenSandboxAutomation>;
 }
 
 export interface FakeSandboxBinding {
@@ -54,6 +60,18 @@ export function createFakeSandboxBinding(): FakeSandboxBinding {
       ),
       destroySandbox: vi.fn<DestroySandbox>(() =>
         Promise.resolve({ kind: "ok", settled: true }),
+      ),
+      getSandboxAutomation: vi.fn<GetSandboxAutomation>(() =>
+        Promise.resolve({
+          kind: "ok",
+          automation: { available: false, sandbox: null },
+        }),
+      ),
+      openSandboxAutomation: vi.fn<OpenSandboxAutomation>(() =>
+        Promise.resolve({
+          kind: "network-error",
+          detail: "openSandboxAutomation was not scripted",
+        }),
       ),
     },
     directory: { refresh: vi.fn<() => void>() },

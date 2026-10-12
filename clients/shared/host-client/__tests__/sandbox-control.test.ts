@@ -19,9 +19,11 @@ import {
   ensureSandboxAwake,
   fetchSandboxCatalogueViaHttp,
   fetchSandboxCostsViaHttp,
+  getSandboxAutomationViaHttp,
   isSandboxAsleep,
   isSandboxFrozenInEffect,
   listSandboxesViaHttp,
+  openSandboxAutomationViaHttp,
   runSandboxVerbViaHttp,
   SANDBOX_VERB_FETCH_TIMEOUT_MS,
   type EnsureSandboxAwakeDeps,
@@ -579,14 +581,107 @@ describe("the other sandbox routes parse or fail the same way", () => {
   });
 });
 
+describe("getSandboxAutomationViaHttp", () => {
+  it("GETs the automation route with the user bearer and parses the body", async () => {
+    const automationRow = { ...SUMMARY, kind: "automation" };
+    const fetchMock = stubFetch(async () =>
+      jsonResponse(200, { available: true, sandbox: automationRow }),
+    );
+    const result = await getSandboxAutomationViaHttp(BASE, BEARER);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe(`${BASE}/api/sandboxes/automation`);
+    expect(init?.method).toBe("GET");
+    expect(init?.headers).toMatchObject({ Authorization: `Bearer ${BEARER}` });
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") {
+      expect(result.automation.available).toBe(true);
+      expect(result.automation.sandbox?.kind).toBe("automation");
+    }
+  });
+
+  it("reads available with no row", async () => {
+    stubFetch(async () =>
+      jsonResponse(200, { available: true, sandbox: null }),
+    );
+    expect(await getSandboxAutomationViaHttp(BASE, BEARER)).toEqual({
+      kind: "ok",
+      automation: { available: true, sandbox: null },
+    });
+  });
+
+  it("reads a typed sandbox_not_found 404 as not available, never a failure", async () => {
+    stubFetch(async () => jsonResponse(404, { code: "sandbox_not_found" }));
+    expect(await getSandboxAutomationViaHttp(BASE, BEARER)).toEqual({
+      kind: "ok",
+      automation: { available: false, sandbox: null },
+    });
+  });
+
+  it("reads a bare 404 as not available", async () => {
+    stubFetch(async () => new Response("Not Found", { status: 404 }));
+    expect(await getSandboxAutomationViaHttp(BASE, BEARER)).toEqual({
+      kind: "ok",
+      automation: { available: false, sandbox: null },
+    });
+  });
+
+  it("maps 401 and 403 to unauthorized", async () => {
+    for (const status of [401, 403]) {
+      stubFetch(async () => jsonResponse(status, {}));
+      expect(await getSandboxAutomationViaHttp(BASE, BEARER)).toEqual({
+        kind: "unauthorized",
+      });
+    }
+  });
+
+  it("reads a malformed body as a network error", async () => {
+    stubFetch(async () => jsonResponse(200, { available: "yes" }));
+    expect(await getSandboxAutomationViaHttp(BASE, BEARER)).toEqual({
+      kind: "network-error",
+      detail: "the Automations read did not match the contract",
+    });
+  });
+});
+
+describe("openSandboxAutomationViaHttp", () => {
+  const row = { ...SUMMARY, kind: "automation" };
+
+  it("POSTs with no body; 200 is settled", async () => {
+    const fetchMock = stubFetch(async () =>
+      jsonResponse(200, { sandbox: row }),
+    );
+    const result = await openSandboxAutomationViaHttp(BASE, BEARER);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe(`${BASE}/api/sandboxes/automation`);
+    expect(init?.method).toBe("POST");
+    expect(init?.body ?? null).toBeNull();
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") expect(result.settled).toBe(true);
+  });
+
+  it("reads 202 as not yet settled", async () => {
+    stubFetch(async () => jsonResponse(202, { sandbox: row }));
+    const result = await openSandboxAutomationViaHttp(BASE, BEARER);
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") expect(result.settled).toBe(false);
+  });
+
+  it("reads 409, 502 and 503 typed bodies as refused", async () => {
+    for (const status of [409, 502, 503]) {
+      stubFetch(async () =>
+        jsonResponse(status, { code: "verb_not_available" }),
+      );
+      expect(await openSandboxAutomationViaHttp(BASE, BEARER)).toMatchObject({
+        kind: "refused",
+        status,
+      });
+    }
+  });
+});
+
 describe("isSandboxFrozenInEffect", () => {
   it("lets a terminal state win over the stored frozen flag", () => {
-    for (const state of [
-      "destroying",
-      "destroyed",
-      "failed",
-      "released",
-    ] as const) {
+    for (const state of ["destroying", "destroyed", "failed"] as const) {
       expect(isSandboxFrozenInEffect(state, true)).toBe(false);
     }
   });
@@ -601,6 +696,7 @@ describe("isSandboxFrozenInEffect", () => {
       "stopping",
       "stopped",
       "starting",
+      "released",
       null,
     ] as const) {
       expect(isSandboxFrozenInEffect(state, true)).toBe(true);
@@ -621,12 +717,13 @@ describe("isSandboxFrozenInEffect", () => {
 });
 
 describe("isSandboxAsleep", () => {
-  it("is true for a sandbox suspended or stopped, or on its way there", () => {
+  it("is true for a sandbox suspended, stopped or released, or on its way there", () => {
     for (const state of [
       "suspending",
       "suspended",
       "stopping",
       "stopped",
+      "released",
     ] as const) {
       expect(isSandboxAsleep(state)).toBe(true);
     }
@@ -641,7 +738,6 @@ describe("isSandboxAsleep", () => {
       "destroying",
       "destroyed",
       "failed",
-      "released",
       null,
     ] as const) {
       expect(isSandboxAsleep(state)).toBe(false);
@@ -781,6 +877,20 @@ describe("ensureSandboxAwake", () => {
     expect(wake).toHaveBeenLastCalledWith("sbx_1", "start", 5_000);
   });
 
+  it("starts a released row (the Automations pod) and polls until awake", async () => {
+    const wake = vi.fn(async () => ok);
+    const outcome = await ensureSandboxAwake(
+      deps({
+        initial: { ...suspended, state: "released" },
+        wake,
+        reads: [{ ...suspended, state: "starting" }, awake],
+      }),
+    );
+    expect(outcome).toEqual({ kind: "awake" });
+    expect(wake).toHaveBeenCalledTimes(1);
+    expect(wake).toHaveBeenLastCalledWith("sbx_1", "start", 5_000);
+  });
+
   it("passes the wake what is left of its budget: the timeout minus the time already spent", async () => {
     const wake = vi.fn(async () => ok);
     const base = deps({ initial: suspended, wake, reads: [awake] });
@@ -894,13 +1004,8 @@ describe("ensureSandboxAwake", () => {
     });
   });
 
-  it("answers not-wakeable for a destroyed, failed or released row and for a vanished one", async () => {
-    for (const state of [
-      "destroying",
-      "destroyed",
-      "failed",
-      "released",
-    ] as const) {
+  it("answers not-wakeable for a destroyed or failed row and for a vanished one", async () => {
+    for (const state of ["destroying", "destroyed", "failed"] as const) {
       expect(
         await ensureSandboxAwake(
           deps({

@@ -95,6 +95,8 @@ export type {
 } from "@traycer-clients/shared/host-client/host-version-policy-fetcher";
 export type { DeregisterHostFetchResult } from "@traycer-clients/shared/host-client/host-deregister-fetcher";
 export type {
+  SandboxAutomationFetchResult,
+  SandboxAutomationOpenFetchResult,
   SandboxCatalogueFetchResult,
   SandboxCreateFetchResult,
   SandboxListFetchResult,

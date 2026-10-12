@@ -148,10 +148,11 @@ afterEach(() => {
 });
 
 describe("wakeSandboxOnPick", () => {
-  it("reads the list, then resumes a suspended sandbox and starts a stopped one", async () => {
+  it("reads the list, then resumes a suspended sandbox and starts a stopped or released one", async () => {
     for (const [state, verb] of [
       ["suspended", "resume"],
       ["stopped", "start"],
+      ["released", "start"],
     ] as const) {
       const binding = createFakeSandboxBinding();
       mocks.binding = binding;

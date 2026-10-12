@@ -87,6 +87,11 @@ vi.mock("@/hooks/host/use-fleet-update-views", async () => {
 vi.mock("@/components/hosts/sandbox-balance-banner", () => ({
   SandboxBalanceBanner: () => null,
 }));
+// Same reasoning: the Automations entry reads its own `useQuery`; its own
+// suite covers what it renders, this one covers when the sidebar mounts it.
+vi.mock("@/components/hosts/automations-host-entry", () => ({
+  AutomationsHostEntry: () => <div data-testid="automations-entry-probe" />,
+}));
 
 // What `IRunnerHost.sandboxControlUnavailableReason` reads as; a build that
 // reaches the control plane (every test here but one) answers `null`.
@@ -600,6 +605,30 @@ describe("<SettingsSidebar /> new sandbox entry", () => {
     // The rest of the rail rendered, so the entry's absence is the assertion.
     expect(await screen.findByRole("link", { name: "General" })).toBeDefined();
     expect(screen.queryByTestId("settings-new-sandbox")).toBeNull();
+  });
+
+  it("mounts the Automations entry for a signed-in user on a build that reaches the control plane", async () => {
+    useAuthStore.setState({ status: "signed-in" });
+    renderSidebar();
+
+    expect(await screen.findByTestId("automations-entry-probe")).toBeDefined();
+  });
+
+  it("mounts no Automations entry on a build that cannot reach the control plane, or signed out", async () => {
+    sandboxControl.reason = "Sandboxes aren't available in staging builds.";
+    useAuthStore.setState({ status: "signed-in" });
+    renderSidebar();
+    expect(
+      await screen.findByTestId("settings-sandboxes-unavailable"),
+    ).toBeDefined();
+    expect(screen.queryByTestId("automations-entry-probe")).toBeNull();
+    cleanup();
+
+    sandboxControl.reason = null;
+    useAuthStore.setState({ status: "signed-out" });
+    renderSidebar();
+    expect(await screen.findByRole("link", { name: "General" })).toBeDefined();
+    expect(screen.queryByTestId("automations-entry-probe")).toBeNull();
   });
 
   it("offers Secrets and GitHub to a signed-in user and opens the account's Secrets page", async () => {

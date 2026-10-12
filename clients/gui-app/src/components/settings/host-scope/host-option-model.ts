@@ -114,8 +114,8 @@ export function isHostOptionSelectable(
 }
 
 /**
- * A sandbox that is asleep (suspended or stopped, or on its way there) and
- * not frozen. Picking it in a `pin` or `bind` picker is the user's next
+ * A sandbox that is asleep (suspended, stopped or released, or on its way
+ * there) and not frozen. Picking it in a `pin` or `bind` picker is the user's next
  * action, which wakes it (`wakeSandboxOnPick`), so the row is offered
  * whatever its route says: a sleeping sandbox reads `offline`, and past the
  * relay fuse's grace it has no route at all. The pin or preference is stored
@@ -440,8 +440,11 @@ export function sandboxStateWord(sandbox: HostScopeSandbox): string | null {
  * - `hidden`: left out of this list.
  *
  * The Automations pod (`kind: "automation"`) is a slim host for scheduled
- * runs: the host list shows it with the user's sandboxes, and no picker offers
- * it as a target for full-host work.
+ * runs (correction 5): the host list shows it with the user's sandboxes, and
+ * of the pickers only a surface that `offersAutomations` does: the new
+ * terminal picker, whose verbs the slim host serves (the slim host plan's
+ * V5). Every other picker targets full-host work (an agent, a worktree, an
+ * epic) and hides it.
  *
  * `listsAgentSandboxes` is the host list (Settings), every other surface is a
  * picker. A picker fails CLOSED on a sandbox whose control-plane row has not
@@ -457,26 +460,29 @@ export type HostPickerGroup =
 export function hostOptionPickerGroup(
   host: HostScopeOption,
   listsAgentSandboxes: boolean,
+  offersAutomations: boolean,
 ): HostPickerGroup {
   if (host.sandbox === null) return "personal";
   const summary = host.sandbox.summary;
   if (summary === null) return listsAgentSandboxes ? "sandbox" : "hidden";
   if (summary.kind === "automation") {
-    return listsAgentSandboxes ? "sandbox" : "hidden";
+    return listsAgentSandboxes || offersAutomations ? "sandbox" : "hidden";
   }
   if (summary.burst) return listsAgentSandboxes ? "agent-sandbox" : "hidden";
   return "sandbox";
 }
 
 /**
- * Whether Activate may be offered for this row: exactly the rows a picker
- * offers. The host list keeps the Automations pod, burst sandboxes and an
- * unconfirmed sandbox (`summary === null`) visible for management. Activating
- * one would route the window's new work to a scheduled-run pod or a
- * task-owned sandbox, which every picker hides for that reason.
+ * Whether Activate may be offered for this row: exactly the rows a full-host
+ * picker offers. The host list keeps the Automations pod, burst sandboxes and
+ * an unconfirmed sandbox (`summary === null`) visible for management.
+ * Activating one would route the window's new work to a scheduled-run pod or
+ * a task-owned sandbox, which every full-host picker hides for that reason;
+ * the terminal picker offering the Automations pod does not make it a
+ * default host.
  */
 export function hostOptionCanActivate(host: HostScopeOption): boolean {
-  return hostOptionPickerGroup(host, false) !== "hidden";
+  return hostOptionPickerGroup(host, false, false) !== "hidden";
 }
 
 export interface HostPickerGroups {
@@ -494,13 +500,18 @@ export interface HostPickerGroups {
 export function groupHostOptions(
   hosts: readonly HostScopeOption[],
   listsAgentSandboxes: boolean,
+  offersAutomations: boolean,
   keepHostId: string | null,
 ): HostPickerGroups {
   const personal: HostScopeOption[] = [];
   const sandboxes: HostScopeOption[] = [];
   const agentSandboxes: HostScopeOption[] = [];
   for (const host of hosts) {
-    const group = hostOptionPickerGroup(host, listsAgentSandboxes);
+    const group = hostOptionPickerGroup(
+      host,
+      listsAgentSandboxes,
+      offersAutomations,
+    );
     if (group === "personal") personal.push(host);
     else if (group === "sandbox") sandboxes.push(host);
     else if (group === "agent-sandbox") agentSandboxes.push(host);
@@ -558,6 +569,6 @@ export function pickableHostOptions(
   hosts: readonly HostScopeOption[],
   keepHostId: string | null,
 ): readonly HostScopeOption[] {
-  const groups = groupHostOptions(hosts, false, keepHostId);
+  const groups = groupHostOptions(hosts, false, false, keepHostId);
   return [...groups.personal, ...groups.sandboxes];
 }

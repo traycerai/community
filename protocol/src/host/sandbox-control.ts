@@ -251,6 +251,39 @@ export const sandboxListResponseSchema: z.ZodType<SandboxListResponse> =
   );
 
 /**
+ * `GET /api/sandboxes/automation`: the user's Automations host. `available`
+ * is false on a deployment with no Automations cluster; `sandbox` is `null`
+ * until the row first exists (the first open creates it).
+ */
+export interface SandboxAutomationResponse {
+  readonly available: boolean;
+  readonly sandbox: SandboxSummary | null;
+}
+
+export const sandboxAutomationResponseSchema: z.ZodType<SandboxAutomationResponse> =
+  lazySchema(() =>
+    z.object({
+      available: z.boolean(),
+      sandbox: sandboxSummarySchema.nullable(),
+    }),
+  );
+
+/**
+ * `POST /api/sandboxes/automation` (`200` awake, `202` still creating or
+ * starting): the row as the open left it.
+ */
+export interface SandboxAutomationOpenResponse {
+  readonly sandbox: SandboxSummary;
+}
+
+export const sandboxAutomationOpenResponseSchema: z.ZodType<SandboxAutomationOpenResponse> =
+  lazySchema(() =>
+    z.object({
+      sandbox: sandboxSummarySchema,
+    }),
+  );
+
+/**
  * Free-form shape bounds of one provider. The server rounds a request UP to
  * `cpuStep` / `memoryStepMb` from the minimums, then checks the memory per
  * vCPU of the ROUNDED shape against the ratio range.

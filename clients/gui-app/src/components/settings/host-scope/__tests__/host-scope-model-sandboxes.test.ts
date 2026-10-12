@@ -16,6 +16,7 @@ import {
   hostOptionKindLabel,
   hostOptionPickerGroup,
   isHostOptionSelectable,
+  isSleepingSandboxPick,
   pickableHostOptions,
   SANDBOX_CREDENTIALS_REFUSED,
   hostTakesCredentials,
@@ -181,12 +182,12 @@ describe("sandbox grouping predicates", () => {
   });
 
   it("puts each row in the group the host list and the pickers agree on", () => {
-    expect(hostOptionPickerGroup(personal, false)).toBe("personal");
-    expect(hostOptionPickerGroup(normal, false)).toBe("sandbox");
-    expect(hostOptionPickerGroup(burst, true)).toBe("agent-sandbox");
-    expect(hostOptionPickerGroup(burst, false)).toBe("hidden");
-    expect(hostOptionPickerGroup(unanswered, false)).toBe("hidden");
-    expect(hostOptionPickerGroup(unanswered, true)).toBe("sandbox");
+    expect(hostOptionPickerGroup(personal, false, false)).toBe("personal");
+    expect(hostOptionPickerGroup(normal, false, false)).toBe("sandbox");
+    expect(hostOptionPickerGroup(burst, true, false)).toBe("agent-sandbox");
+    expect(hostOptionPickerGroup(burst, false, false)).toBe("hidden");
+    expect(hostOptionPickerGroup(unanswered, false, false)).toBe("hidden");
+    expect(hostOptionPickerGroup(unanswered, true, false)).toBe("sandbox");
   });
 
   it("offers Activate for exactly the rows a picker offers", () => {
@@ -209,6 +210,7 @@ describe("sandbox grouping predicates", () => {
   it("keeps the list's own order inside each group and never drops the row a surface points at", () => {
     const groups = groupHostOptions(
       [normal, burst, personal, unanswered],
+      false,
       false,
       "b",
     );
@@ -293,9 +295,70 @@ describe("sleeping sandbox picks", () => {
       connectable: true,
       kind: "automation",
     });
-    expect(hostOptionPickerGroup(pod, false)).toBe("hidden");
-    expect(hostOptionPickerGroup(pod, true)).toBe("sandbox");
+    expect(hostOptionPickerGroup(pod, false, false)).toBe("hidden");
+    expect(hostOptionPickerGroup(pod, true, false)).toBe("sandbox");
     expect(pickableHostOptions([pod], null)).toEqual([]);
+  });
+
+  it("offers the Automations pod to a picker that offersAutomations, hides it from the rest, and never activates it", () => {
+    for (const state of ["awake", "released"] as const) {
+      const pod = sandboxOption({
+        state,
+        frozen: false,
+        connectable: state === "awake",
+        kind: "automation",
+      });
+      expect(hostOptionPickerGroup(pod, false, true)).toBe("sandbox");
+      expect(hostOptionPickerGroup(pod, true, true)).toBe("sandbox");
+      expect(hostOptionPickerGroup(pod, false, false)).toBe("hidden");
+      expect(hostOptionCanActivate(pod)).toBe(false);
+      expect(
+        groupHostOptions([pod], false, true, null).sandboxes.map(
+          (h) => h.hostId,
+        ),
+      ).toEqual(["s"]);
+      expect(groupHostOptions([pod], false, false, null).sandboxes).toEqual([]);
+    }
+  });
+
+  it("does not let offersAutomations unhide a burst sandbox or an unanswered one", () => {
+    const burstRow = hostScopeOptionFixture({
+      hostId: "b",
+      kind: "sandbox",
+      sandbox: {
+        state: "awake",
+        frozen: false,
+        summary: sandboxSummaryFixture({ hostId: "b", burst: true }),
+      },
+    });
+    const unansweredRow = hostScopeOptionFixture({
+      hostId: "u",
+      kind: "sandbox",
+      sandbox: { state: "awake", frozen: false, summary: null },
+    });
+    expect(hostOptionPickerGroup(burstRow, false, true)).toBe("hidden");
+    expect(hostOptionPickerGroup(unansweredRow, false, true)).toBe("hidden");
+  });
+
+  it("treats a released, not frozen pod as a sleeping pick and a frozen one as not", () => {
+    const released = sandboxOption({
+      state: "released",
+      frozen: false,
+      connectable: false,
+      kind: "automation",
+    });
+    expect(isSleepingSandboxPick(released)).toBe(true);
+    expect(isHostOptionSelectable(released, "pin", available)).toBe(true);
+    expect(
+      isSleepingSandboxPick(
+        sandboxOption({
+          state: "released",
+          frozen: true,
+          connectable: false,
+          kind: "automation",
+        }),
+      ),
+    ).toBe(false);
   });
 });
 

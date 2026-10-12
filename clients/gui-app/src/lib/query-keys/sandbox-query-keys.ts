@@ -30,6 +30,25 @@ export const sandboxQueryKeys = {
     authService,
     userId,
   ],
+  // Under `registeredHostsAll` like the list: the Automations row is a host
+  // list row once it exists, so the same tick and the same invalidation
+  // refresh it.
+  automation: (
+    authService: object,
+    userId: string | null,
+  ): readonly unknown[] => [
+    "auth",
+    "registered-hosts",
+    "sandbox-automation",
+    authService,
+    userId,
+  ],
+  automationMissing: (): readonly unknown[] => [
+    "auth",
+    "registered-hosts",
+    "sandbox-automation",
+    "missing",
+  ],
   costsAll: (): readonly unknown[] => ["auth", "sandbox-costs"],
   costsMissing: (): readonly unknown[] => ["auth", "sandbox-costs", "missing"],
   catalogue: (
@@ -75,6 +94,10 @@ export const sandboxMutationKeys = {
   verb: (sandboxId: string) => ["auth", "sandbox", "verb", sandboxId] as const,
   // Per HOST: the tab open that wakes it knows the host, not the sandbox id.
   wake: (hostId: string) => ["auth", "sandbox", "wake", hostId] as const,
+  // Per account, like create: the first open creates the row and can take
+  // minutes.
+  automationOpen: (userId: string | null) =>
+    ["auth", "sandbox", "automation-open", userId] as const,
   // Per request, so two approval cards never share a pending state.
   decideSecretRequest: (requestId: string) =>
     ["auth", "sandbox", "secret-request", "decide", requestId] as const,

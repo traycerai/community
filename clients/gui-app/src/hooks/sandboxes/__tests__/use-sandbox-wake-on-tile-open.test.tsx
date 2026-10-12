@@ -162,6 +162,26 @@ describe("useSandboxWakeForOpenedTile", () => {
     );
   });
 
+  it("starts a released Automations sandbox, not a resume", async () => {
+    mocks.entry = entryFor("sandbox", "released", false);
+    const auth = mocks.binding?.auth;
+    auth?.listSandboxes
+      .mockImplementationOnce(listOf({ state: "released" }))
+      .mockImplementation(listOf({ state: "awake" }));
+
+    renderHook(() => useSandboxWakeForOpenedTile(HOST_ID), {
+      wrapper: wrapper(),
+    });
+    await settleWake();
+
+    expect(auth?.runSandboxVerb).toHaveBeenCalledTimes(1);
+    expect(auth?.runSandboxVerb).toHaveBeenCalledWith(
+      "sbx_1",
+      "start",
+      expect.any(Number),
+    );
+  });
+
   it("refuses a frozen sandbox at once with the frozen toast and sends no verb, awake or asleep", async () => {
     // A frozen row is asleep by design; a frozen-but-awake one is a freeze
     // whose suspend keeps failing at the provider, and is refused as well.

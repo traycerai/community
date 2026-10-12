@@ -106,6 +106,14 @@ export function createFakeRunnerHost(
       Promise.resolve({ kind: "network-error" as const, detail: "fake" }),
     runSandboxVerb: () =>
       Promise.resolve({ kind: "network-error" as const, detail: "fake" }),
+    // As a server without the route answers: no Automations entry anywhere.
+    getSandboxAutomation: () =>
+      Promise.resolve({
+        kind: "ok" as const,
+        automation: { available: false, sandbox: null },
+      }),
+    openSandboxAutomation: () =>
+      Promise.resolve({ kind: "network-error" as const, detail: "fake" }),
     getSandboxGrants: () =>
       Promise.resolve({ kind: "network-error" as const, detail: "fake" }),
     decideSecretRequest: () =>

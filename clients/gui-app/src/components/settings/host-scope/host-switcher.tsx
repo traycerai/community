@@ -279,6 +279,12 @@ export function HostSwitcher(props: {
    * does not silently connect to other hosts to improve their badges" rule.
    */
   readonly updateViewForHost: ((hostId: string) => FleetUpdateView) | null;
+  /**
+   * Whether this picker offers the Automations host (correction 5): only a
+   * surface every verb of which the slim host serves (the new terminal
+   * picker). See `hostOptionPickerGroup`.
+   */
+  readonly offersAutomations: boolean;
 }): ReactNode {
   const [open, setOpenState] = useState(false);
   const [search, setSearch] = useState("");
@@ -413,6 +419,7 @@ export function HostSwitcher(props: {
             <HostSwitcherGroups
               hosts={hosts}
               action={props.action}
+              offersAutomations={props.offersAutomations}
               searching={search.length > 0}
               renderRow={(host) => (
                 <HostSwitcherRow
@@ -516,6 +523,7 @@ export function HostSwitcher(props: {
 function HostSwitcherGroups(props: {
   readonly hosts: readonly HostScopeOption[];
   readonly action: HostSwitcherAction | null;
+  readonly offersAutomations: boolean;
   readonly searching: boolean;
   readonly selected: HostScopeOption | null;
   readonly renderRow: (host: HostScopeOption) => ReactNode;
@@ -527,6 +535,7 @@ function HostSwitcherGroups(props: {
     // own collapsed group. Every other surface is a picker and offers no burst
     // sandbox.
     props.action?.kind === "add-host",
+    props.offersAutomations,
     props.selected?.hostId ?? null,
   );
   return (

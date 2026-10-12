@@ -150,6 +150,14 @@ function buildFakeBridge(
       kind: "network-error" as const,
       detail: "test",
     }),
+    getSandboxAutomation: async () => ({
+      kind: "network-error" as const,
+      detail: "test",
+    }),
+    openSandboxAutomation: async () => ({
+      kind: "network-error" as const,
+      detail: "test",
+    }),
     getSandboxGrants: async () => ({
       kind: "network-error" as const,
       detail: "test",
@@ -890,6 +898,41 @@ describe("DesktopRunnerHost.runSandboxVerb", () => {
       "start",
       87_000,
     );
+  });
+});
+
+describe("DesktopRunnerHost Automations calls", () => {
+  it("hands the preload bridge the bearer for the read and for the open, and returns each answer", async () => {
+    const getSandboxAutomation = vi.fn<
+      DesktopPreloadBridge["getSandboxAutomation"]
+    >(async () => ({
+      kind: "ok",
+      automation: { available: true, sandbox: null },
+    }));
+    const openSandboxAutomation = vi.fn<
+      DesktopPreloadBridge["openSandboxAutomation"]
+    >(async () => ({ kind: "unauthorized" }));
+    const host = new DesktopRunnerHost({
+      bridge: {
+        ...buildFakeBridge(null).bridge,
+        getSandboxAutomation,
+        openSandboxAutomation,
+      },
+      signInUrl: "https://auth.example.invalid/sign-in",
+    });
+
+    await expect(host.getSandboxAutomation("bearer-1")).resolves.toEqual({
+      kind: "ok",
+      automation: { available: true, sandbox: null },
+    });
+    await expect(host.openSandboxAutomation("bearer-2")).resolves.toEqual({
+      kind: "unauthorized",
+    });
+
+    expect(getSandboxAutomation).toHaveBeenCalledWith("bearer-1");
+    expect(openSandboxAutomation).toHaveBeenCalledWith("bearer-2");
+    expect(getSandboxAutomation).toHaveBeenCalledTimes(1);
+    expect(openSandboxAutomation).toHaveBeenCalledTimes(1);
   });
 });
 

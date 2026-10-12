@@ -31,6 +31,7 @@ vi.mock("@/providers/use-runner-host", () => ({
   }),
 }));
 
+import { useSandboxAutomation } from "@/hooks/sandboxes/use-sandbox-automation-query";
 import { useSandboxCatalogue } from "@/hooks/sandboxes/use-sandbox-catalogue-query";
 import { useSandboxCosts } from "@/hooks/sandboxes/use-sandbox-costs-query";
 import { useSandboxList } from "@/hooks/sandboxes/use-sandbox-list-query";
@@ -100,5 +101,43 @@ describe("the sandbox queries on a build that cannot reach the control plane", (
       expect(result.current.data?.sandboxes).toHaveLength(1);
     });
     expect(mocks.binding?.auth.listSandboxes).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fetch the Automations read while the reason is set", async () => {
+    mocks.unavailableReason = "Sandboxes aren't available in staging builds.";
+    const { result } = renderHook(() => useSandboxAutomation(), {
+      wrapper: wrapper(),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(mocks.binding?.auth.getSandboxAutomation).not.toHaveBeenCalled();
+    expect(result.current.fetchStatus).toBe("idle");
+    expect(result.current.isError).toBe(false);
+  });
+
+  it("does not fetch the Automations read while signed out", async () => {
+    useAuthStore.setState({ status: "signed-out" });
+    const { result } = renderHook(() => useSandboxAutomation(), {
+      wrapper: wrapper(),
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(mocks.binding?.auth.getSandboxAutomation).not.toHaveBeenCalled();
+    expect(result.current.fetchStatus).toBe("idle");
+  });
+
+  it("control: signed in with no reason, the Automations read is made and returned", async () => {
+    mocks.binding?.auth.getSandboxAutomation.mockResolvedValue({
+      kind: "ok",
+      automation: { available: true, sandbox: null },
+    });
+    const { result } = renderHook(() => useSandboxAutomation(), {
+      wrapper: wrapper(),
+    });
+
+    await waitFor(() => {
+      expect(result.current.data).toEqual({ available: true, sandbox: null });
+    });
+    expect(mocks.binding?.auth.getSandboxAutomation).toHaveBeenCalledTimes(1);
   });
 });
