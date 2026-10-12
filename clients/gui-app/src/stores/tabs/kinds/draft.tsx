@@ -1,5 +1,7 @@
-import { lazy } from "react";
+import { createElement } from "react";
 import { LayersPlus } from "lucide-react";
+import { PreloadedTabSurface } from "@/components/layout/preloaded-tab-surface";
+import { draftSurfaceModule } from "@/stores/tabs/kinds/surface-modules";
 import { useLandingDraftStore } from "@/stores/home/landing-draft-store";
 import type { LandingDraftTab } from "@/stores/home/landing-draft-store";
 import { landingDraftDisplayTitle } from "@/lib/composer/landing-draft-title";
@@ -7,18 +9,6 @@ import { draftRoute, draftPathname } from "@/lib/routes";
 import { draftTabIntent } from "@/lib/tab-navigation/intents";
 import type { TabKindModule } from "@/stores/tabs/types";
 import { TAB_KIND_SPLIT_ELIGIBILITY } from "@/stores/tabs/tab-kind-policy";
-
-const landingDraftSurface = lazy(() =>
-  import("@/components/home/landing-draft-surface").then((module) => ({
-    default: module.LandingDraftSurface,
-  })),
-);
-
-const draftSurfaceProvider = lazy(() =>
-  import("@/providers/draft-surface-provider").then((module) => ({
-    default: module.DraftSurfaceProvider,
-  })),
-);
 
 /**
  * Module for `kind: "draft"` tabs. Each draft has its own
@@ -71,11 +61,15 @@ export const draftTabModule: TabKindModule<"draft", LandingDraftTab> = {
 };
 
 function renderDraftSurface(draftId: string) {
-  const DraftSurfaceProvider = draftSurfaceProvider;
-  const LandingDraftSurface = landingDraftSurface;
   return (
-    <DraftSurfaceProvider draftId={draftId}>
-      <LandingDraftSurface />
-    </DraftSurfaceProvider>
+    <PreloadedTabSurface
+      module={draftSurfaceModule}
+      render={(draft) =>
+        createElement(draft.DraftSurfaceProvider, {
+          draftId,
+          children: createElement(draft.LandingDraftSurface),
+        })
+      }
+    />
   );
 }

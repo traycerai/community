@@ -18,6 +18,24 @@ const DESKTOP_MODULES = [
   "@/components/sample-workspace/sample-workspace-surface",
 ];
 
+// The surface modules read ONE named export from each of these, and a stub
+// that exports nothing would leave the loaded value `undefined`, not a
+// component. These names are what `stores/tabs/kinds/surface-modules.ts` reads.
+const SURFACE_EXPORTS: Readonly<Partial<Record<string, string>>> = {
+  "@/components/epic-tabs/epic-surface": "EpicSurface",
+  "@/components/home-focus/home-focus-view": "HomeFocusView",
+  "@/providers/draft-surface-provider": "DraftSurfaceProvider",
+  "@/components/home/landing-draft-surface": "LandingDraftSurface",
+  "@/components/epics/history-surface": "HistorySurface",
+  "@/components/settings/settings-surface": "SettingsSurface",
+  "@/components/sample-workspace/sample-workspace-surface":
+    "SampleWorkspaceSurface",
+};
+
+function StubSurface(): null {
+  return null;
+}
+
 // Every warmed module is replaced by a stub that records its own evaluation,
 // so the assertions see what `warmRouteChunks` actually imported rather than
 // what a list claims it would.
@@ -32,7 +50,8 @@ async function loadWarmer(mobileApp: boolean) {
   for (const specifier of DESKTOP_MODULES) {
     vi.doMock(specifier, () => {
       imported.add(specifier);
-      return {};
+      const exportName = SURFACE_EXPORTS[specifier];
+      return exportName === undefined ? {} : { [exportName]: StubSurface };
     });
   }
   const mobile = await import("@/lib/mobile-app");
@@ -72,8 +91,34 @@ describe("warmRouteChunks", () => {
     expect([...imported].toSorted()).toEqual([...DESKTOP_MODULES].toSorted());
   });
 
+  it("has every surface module loaded after the desktop idle warm, so a tab kind opened later is drawn at once", async () => {
+    const { warmRouteChunks } = await loadWarmer(false);
+    // The SAME fresh module graph `loadWarmer` built.
+    const surfaces = await import("@/stores/tabs/kinds/surface-modules");
+    expect(surfaces.epicSurfaceModule.read()).toBeNull();
+
+    warmRouteChunks();
+    await vi.runAllTimersAsync();
+    await settleImports();
+
+    for (const module of [
+      surfaces.epicSurfaceModule,
+      surfaces.homeSurfaceModule,
+      surfaces.historySurfaceModule,
+      surfaces.settingsSurfaceModule,
+      surfaces.sampleWorkspaceSurfaceModule,
+    ]) {
+      expect(module.read()).toBeTypeOf("function");
+    }
+    expect(surfaces.draftSurfaceModule.read()).toEqual({
+      DraftSurfaceProvider: StubSurface,
+      LandingDraftSurface: StubSurface,
+    });
+  });
+
   it("warms only the epic surface at idle on the phone, before the first render", async () => {
     const { warmRouteChunks } = await loadWarmer(true);
+    const surfaces = await import("@/stores/tabs/kinds/surface-modules");
 
     warmRouteChunks();
     await settleImports();
@@ -89,6 +134,13 @@ describe("warmRouteChunks", () => {
     expect([...imported].toSorted()).toEqual([...EPIC_MODULES].toSorted());
     expect(imported).not.toContain("@/components/settings/settings-surface");
     expect(imported).not.toContain("@/components/epics/history-surface");
+    // On the phone only the task surface's module is loaded.
+    expect(surfaces.epicSurfaceModule.read()).toBeTypeOf("function");
+    expect(surfaces.homeSurfaceModule.read()).toBeNull();
+    expect(surfaces.draftSurfaceModule.read()).toBeNull();
+    expect(surfaces.historySurfaceModule.read()).toBeNull();
+    expect(surfaces.settingsSurfaceModule.read()).toBeNull();
+    expect(surfaces.sampleWorkspaceSurfaceModule.read()).toBeNull();
   });
 
   it("warms only the epic list on the phone when a router was warmed before setMobileApp", async () => {

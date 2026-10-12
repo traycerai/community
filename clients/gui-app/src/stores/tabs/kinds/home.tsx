@@ -1,5 +1,7 @@
-import { createElement, lazy } from "react";
+import { createElement } from "react";
 import { House } from "lucide-react";
+import { PreloadedTabSurface } from "@/components/layout/preloaded-tab-surface";
+import { homeSurfaceModule } from "@/stores/tabs/kinds/surface-modules";
 import { useLandingDraftStore } from "@/stores/home/landing-draft-store";
 import { homeTabIntent } from "@/lib/tab-navigation/intents";
 import type { HeaderTab, TabKindModule, TabRef } from "@/stores/tabs/types";
@@ -19,12 +21,6 @@ const HOME_ROUTE = "/home";
  * a second item competing with the strip.
  */
 export const HOME_TAB_REF: TabRef = { kind: "home", id: "home" };
-
-const homeSurface = lazy(() =>
-  import("@/components/home-focus/home-focus-view").then((module) => ({
-    default: module.HomeFocusView,
-  })),
-);
 
 /**
  * One record for the whole app rather than one per `build()` call: Home has no
@@ -52,7 +48,12 @@ export const homeTabModule: TabKindModule<"home", null> = {
   descriptor: {
     kind: "home",
     surface: {
-      render: () => createElement(homeSurface),
+      render: () => (
+        <PreloadedTabSurface
+          module={homeSurfaceModule}
+          render={(surface) => createElement(surface)}
+        />
+      ),
       canonicalRoute: (tab) => tab.route,
       splitEligibility: TAB_KIND_SPLIT_ELIGIBILITY.home,
       duplication: "forbidden",

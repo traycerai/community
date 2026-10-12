@@ -14,15 +14,25 @@
  * actions hooks faked - a call to `useFocusModel` IS the cost being measured,
  * so counting the calls is the honest test.
  */
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { NavigateOptions } from "@tanstack/react-router";
 import { TopLevelTabHost } from "@/components/layout/top-level-tab-host";
-// The Home tab loads this view as a lazy chunk on its first visit. Imported
-// here so it is loaded before any test runs: the lookups below then wait for
-// the view to render, not for its module to load.
+// The Home tab draws this view from an on-demand module
+// (`homeSurfaceModule`). Imported here so the module graph is transformed at
+// collection time, and loaded through its own loader in `beforeAll`: the
+// lookups below then wait for the view to render, not for its module to load.
 import "@/components/home-focus/home-focus-view";
+import { homeSurfaceModule } from "@/stores/tabs/kinds/surface-modules";
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
 import { useLandingDraftStore } from "@/stores/home/landing-draft-store";
 import {
@@ -113,6 +123,10 @@ function renderHost() {
 }
 
 describe("the Home surface's mount", () => {
+  beforeAll(async () => {
+    await homeSurfaceModule.load();
+  });
+
   beforeEach(async () => {
     resetStores();
     __resetTabSyncCoordinatorForTesting();
@@ -131,8 +145,9 @@ describe("the Home surface's mount", () => {
     selectItem("tab:epic:working");
     renderHost();
 
-    // The surface's chunk resolves in a microtask, so flushing one is what
-    // makes this a real absence rather than a race with the lazy import.
+    // The surface's module is already loaded (see `beforeAll`), so a tab that
+    // drew it would do so in the first commit; flushing one microtask is what
+    // makes this a real absence rather than a race with a late module load.
     await act(async () => {
       await Promise.resolve();
     });
@@ -146,8 +161,9 @@ describe("the Home surface's mount", () => {
     renderHost();
 
     selectItem(null);
-    // The surface itself is behind a `lazy()`, so the model starts running a
-    // chunk load after the mount appears, not with it.
+    // `findBy` is kept on purpose: the mount appears in the commit the tab is
+    // selected in, and the model starts running as that tree renders, so the
+    // lookup must not depend on a render having already happened.
     expect(await screen.findByTestId("home-focus-view")).toBeDefined();
     expect(focusModel.calls).toBeGreaterThan(0);
     const home = screen.getByTestId(HOME_SURFACE);
