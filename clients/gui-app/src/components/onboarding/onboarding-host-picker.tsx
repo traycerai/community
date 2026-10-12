@@ -100,6 +100,7 @@ export function OnboardingHostPickerBar(props: {
             listsFailed={scope.listsFailed}
             onRetryLists={scope.retryLists}
             updateViewForHost={null}
+            offersAutomations={false}
           />
         </div>
       )}

@@ -1,5 +1,6 @@
 import type { HostSandboxState } from "@traycer/protocol/host/host-status";
 import type {
+  SandboxKind,
   SandboxLifecycleVerb,
   SandboxSummary,
 } from "@traycer/protocol/host/sandbox-control";
@@ -46,16 +47,35 @@ const ACTIONS_BY_STATE: Record<HostSandboxState, readonly SandboxCardAction[]> =
     destroying: NO_ACTIONS,
     destroyed: NO_ACTIONS,
     failed: ["destroy"],
-    // The Automations row at rest; the server destroys it like any row.
+    // Only the Automations row rests here; see its own table below.
     released: ["destroy"],
   };
+
+/**
+ * The Automations row's verbs (`kind: "automation"`): it is `released` or
+ * `awake`, never suspended. `stop` releases it (scaled to zero, disk kept),
+ * `start` opens it, and a suspend would answer `409`, so it is never offered.
+ * The server destroys it like any row.
+ */
+const AUTOMATION_ACTIONS_BY_STATE: Record<
+  HostSandboxState,
+  readonly SandboxCardAction[]
+> = {
+  ...ACTIONS_BY_STATE,
+  awake: ["stop", "destroy"],
+  released: ["start", "destroy"],
+};
 
 export function sandboxCardActions(
   state: HostSandboxState | null,
   frozen: boolean,
+  kind: SandboxKind,
 ): readonly SandboxCardAction[] {
   if (state === null) return NO_ACTIONS;
-  const actions = ACTIONS_BY_STATE[state];
+  const actions =
+    kind === "automation"
+      ? AUTOMATION_ACTIONS_BY_STATE[state]
+      : ACTIONS_BY_STATE[state];
   if (frozen) {
     return actions.includes("destroy") ? FROZEN_ACTIONS : NO_ACTIONS;
   }
@@ -121,6 +141,10 @@ export function sandboxStateLine(
   if (state === "failed" && summary !== null && summary.failureCode !== null) {
     return `Failed to start (${summary.failureCode}). Nothing is billed for a sandbox that never woke.`;
   }
+  // The Automations row is never metered.
+  if (state === "awake" && summary?.kind === "automation") {
+    return "Running. Automations aren't billed.";
+  }
   return STATE_LINE[state];
 }
 
@@ -135,9 +159,13 @@ function formatMinutes(minutes: number): string {
 
 /**
  * The idle rule as the card states it. A burst sandbox is destroyed, not
- * suspended, once idle for its period (core flows, flow 2).
+ * suspended, once idle for its period (core flows, flow 2); the Automations
+ * row is released.
  */
 export function sandboxIdleLine(summary: SandboxSummary): string {
+  // The control plane's release job, not the row's idle period: a day with no
+  // shell on it (`AUTOMATION_RELEASE_AFTER_MS`).
+  if (summary.kind === "automation") return "Released after a day with no shell";
   const minutes = summary.idleMinutes ?? SANDBOX_DEFAULT_IDLE_MINUTES;
   return summary.burst
     ? `Destroyed after ${formatMinutes(minutes)} idle`
@@ -216,18 +244,25 @@ export function sandboxTileOverlay(
         verb: "start",
         label: "Start",
       };
+    // The Automations row at rest: `start` opens it.
+    case "released":
+      return {
+        kind: "asleep",
+        message: "Released",
+        verb: "start",
+        label: "Start",
+      };
     case "resuming":
       return { kind: "moving", message: "Resuming" };
     case "starting":
       return { kind: "moving", message: "Starting" };
-    // Awake renders normally; creating, failed, destroyed and released are
-    // the tile's own connection states, which it already shows.
+    // Awake renders normally; creating, failed and destroyed are the tile's
+    // own connection states, which it already shows.
     case "creating":
     case "awake":
     case "destroying":
     case "destroyed":
     case "failed":
-    case "released":
     case null:
       return null;
   }

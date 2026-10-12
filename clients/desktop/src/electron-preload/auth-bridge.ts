@@ -14,6 +14,8 @@ import type {
   RevokeAllSessionsFetchResult,
   RevokeUserSessionFetchResult,
   StepUpChallengeFetchResult,
+  SandboxAutomationFetchResult,
+  SandboxAutomationOpenFetchResult,
   SandboxCatalogueFetchResult,
   SandboxCostsFetchResult,
   SandboxCreateFetchResult,
@@ -131,6 +133,12 @@ export interface AuthBridgeSurface {
     verb: SandboxLifecycleVerb,
     timeoutMs: number,
   ): Promise<SandboxVerbFetchResult>;
+  getSandboxAutomation(
+    bearerToken: string,
+  ): Promise<SandboxAutomationFetchResult>;
+  openSandboxAutomation(
+    bearerToken: string,
+  ): Promise<SandboxAutomationOpenFetchResult>;
   beginAuthAttempt(): void;
   onAuthCallback(handler: Listener<void>): Disposable;
 }
@@ -244,6 +252,18 @@ export function buildAuthBridge(): AuthBridgeSurface {
         verb,
         timeoutMs,
       ) as Promise<SandboxVerbFetchResult>,
+
+    getSandboxAutomation: (bearerToken) =>
+      ipcRenderer.invoke(
+        RunnerHostInvoke.getSandboxAutomation,
+        bearerToken,
+      ) as Promise<SandboxAutomationFetchResult>,
+
+    openSandboxAutomation: (bearerToken) =>
+      ipcRenderer.invoke(
+        RunnerHostInvoke.openSandboxAutomation,
+        bearerToken,
+      ) as Promise<SandboxAutomationOpenFetchResult>,
 
     // Desktop does not dedupe browser-return signals on URL identity, so the
     // attempt-boundary hook is a renderer-local no-op. It still exists to

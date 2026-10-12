@@ -132,6 +132,7 @@ function renderSwitcher(input: {
       listsFailed={false}
       onRetryLists={() => undefined}
       updateViewForHost={null}
+      offersAutomations={false}
     />,
   );
   fireEvent.click(screen.getByTestId("settings-host-switcher"));

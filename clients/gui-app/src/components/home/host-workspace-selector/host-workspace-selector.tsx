@@ -595,6 +595,7 @@ export function ActiveHostWorkspaceControls(
           isLoading={hostOptions.isLoading}
           listsFailed={hostOptions.listsFailed}
           onRetryLists={hostOptions.retryLists}
+          offersAutomations={false}
           // `pin`, not `bind`: since P1.2 a pick here writes this composer's
           // surface pin and never rebinds the window. (The two intents gate
           // rows identically; only `view` differs.)
@@ -638,6 +639,7 @@ export function ActiveHostWorkspaceControls(
       isLoading={hostOptions.isLoading}
       listsFailed={hostOptions.listsFailed}
       onRetryLists={hostOptions.retryLists}
+      offersAutomations={false}
       surface="inline"
     />
   );
@@ -3234,6 +3236,7 @@ function InEpicSurface(props: InEpicSurfaceProps) {
       isLoading={hostOptions.isLoading}
       listsFailed={hostOptions.listsFailed}
       onRetryLists={hostOptions.retryLists}
+      offersAutomations={false}
       surface="inline"
       keepFocusableWhenDisabled={surface.kind === "terminal-agent"}
     />

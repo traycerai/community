@@ -20,7 +20,9 @@ import {
   destroySandboxViaHttp,
   fetchSandboxCatalogueViaHttp,
   fetchSandboxCostsViaHttp,
+  getSandboxAutomationViaHttp,
   listSandboxesViaHttp,
+  openSandboxAutomationViaHttp,
   runSandboxVerbViaHttp,
 } from "@traycer-clients/shared/host-client/sandbox-control";
 import { config } from "../../config";
@@ -285,6 +287,22 @@ export function registerAuthIpc(bridge: RunnerIpcBridge): void {
         parseSandboxLifecycleVerb(verb),
         timeoutMs,
       );
+    },
+  );
+
+  bridge.handleInvoke(
+    RunnerHostInvoke.getSandboxAutomation,
+    async (_event, bearerToken: unknown) => {
+      assertString(bearerToken, "getSandboxAutomation.bearerToken");
+      return getSandboxAutomationViaHttp(config.serverBaseUrl, bearerToken);
+    },
+  );
+
+  bridge.handleInvoke(
+    RunnerHostInvoke.openSandboxAutomation,
+    async (_event, bearerToken: unknown) => {
+      assertString(bearerToken, "openSandboxAutomation.bearerToken");
+      return openSandboxAutomationViaHttp(config.serverBaseUrl, bearerToken);
     },
   );
 

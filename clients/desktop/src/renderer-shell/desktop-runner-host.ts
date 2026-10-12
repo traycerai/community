@@ -139,6 +139,8 @@ import type {
 import type { DeregisterHostFetchResult } from "@traycer-clients/shared/host-client/host-deregister-fetcher";
 import {
   SANDBOXES_UNAVAILABLE_IN_STAGING,
+  type SandboxAutomationFetchResult,
+  type SandboxAutomationOpenFetchResult,
   type SandboxCatalogueFetchResult,
   type SandboxCreateFetchResult,
   type SandboxListFetchResult,
@@ -231,6 +233,12 @@ export interface DesktopPreloadBridge {
     verb: SandboxLifecycleVerb,
     timeoutMs: number,
   ): Promise<SandboxVerbFetchResult>;
+  getSandboxAutomation(
+    bearerToken: string,
+  ): Promise<SandboxAutomationFetchResult>;
+  openSandboxAutomation(
+    bearerToken: string,
+  ): Promise<SandboxAutomationOpenFetchResult>;
   // Credentials-file token store (tech plan §3): an IPC client of the main
   // `FileTokenStore`. Replaces the renderer-local encrypt-storage token slots.
   tokenStore: ITokenStore;
@@ -1159,6 +1167,18 @@ export class DesktopRunnerHost implements IRunnerHost {
     timeoutMs: number,
   ): Promise<SandboxVerbFetchResult> {
     return this.bridge.runSandboxVerb(bearerToken, sandboxId, verb, timeoutMs);
+  }
+
+  getSandboxAutomation(
+    bearerToken: string,
+  ): Promise<SandboxAutomationFetchResult> {
+    return this.bridge.getSandboxAutomation(bearerToken);
+  }
+
+  openSandboxAutomation(
+    bearerToken: string,
+  ): Promise<SandboxAutomationOpenFetchResult> {
+    return this.bridge.openSandboxAutomation(bearerToken);
   }
 
   beginAuthAttempt(): void {

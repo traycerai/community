@@ -3,16 +3,20 @@ import {
   SANDBOX_REFUSAL_CODE_FROZEN,
   SANDBOX_REFUSAL_CODE_INSUFFICIENT_CREDIT,
   SANDBOX_REFUSAL_CODE_VERB_NOT_AVAILABLE,
+  sandboxAutomationOpenResponseSchema,
+  sandboxAutomationResponseSchema,
   sandboxCatalogueSchema,
   sandboxCreateAcceptedSchema,
   sandboxListResponseSchema,
   sandboxRefusalBodySchema,
   userSandboxCostSchema,
+  type SandboxAutomationResponse,
   type SandboxCatalogue,
   type SandboxCreateAccepted,
   type SandboxCreateRequest,
   type SandboxLifecycleVerb,
   type SandboxListResponse,
+  type SandboxSummary,
   type UserSandboxCost,
 } from "@traycer/protocol/host/sandbox-control";
 import { composeRequestAbort } from "../auth/request-abort";
@@ -99,6 +103,22 @@ export type SandboxCostsFetchResult =
 
 export type SandboxCreateFetchResult =
   | { readonly kind: "ok"; readonly accepted: SandboxCreateAccepted }
+  | SandboxControlFailure;
+
+export type SandboxAutomationFetchResult =
+  | { readonly kind: "ok"; readonly automation: SandboxAutomationResponse }
+  | SandboxControlFailure;
+
+/**
+ * The open's answer: the row, and `settled` as {@link SandboxVerbFetchResult}
+ * carries it (`true` for `200` awake, `false` for `202` still moving).
+ */
+export type SandboxAutomationOpenFetchResult =
+  | {
+      readonly kind: "ok";
+      readonly sandbox: SandboxSummary;
+      readonly settled: boolean;
+    }
   | SandboxControlFailure;
 
 /**
@@ -307,6 +327,76 @@ export async function fetchSandboxCostsViaHttp(
   return { kind: "ok", costs: parsed.data };
 }
 
+/** An Automations read from a server that serves no Automations route. */
+const AUTOMATION_NOT_SERVED: SandboxAutomationResponse = {
+  available: false,
+  sandbox: null,
+};
+
+/**
+ * `GET /api/sandboxes/automation`: the user's Automations host. Any `404` is
+ * "not offered here", never a failure: a server from before the route
+ * answers one (its `GET /:id` reads `automation` as a sandbox id and answers
+ * `sandbox_not_found`, or no route matches at all).
+ */
+export async function getSandboxAutomationViaHttp(
+  serverBaseUrl: string,
+  bearerToken: string,
+): Promise<SandboxAutomationFetchResult> {
+  const raw = await call(
+    sandboxesUrl(serverBaseUrl, "/automation"),
+    { method: "GET", body: null, timeoutMs: SANDBOX_CONTROL_FETCH_TIMEOUT_MS },
+    bearerToken,
+  );
+  if (raw.kind === "network-error") return raw;
+  if (raw.status === 404) {
+    return { kind: "ok", automation: AUTOMATION_NOT_SERVED };
+  }
+  if (!isSuccess(raw.status)) return failureOf(raw.status, raw.body);
+  const parsed = sandboxAutomationResponseSchema.safeParse(raw.body);
+  if (!parsed.success) {
+    return {
+      kind: "network-error",
+      detail: "the Automations read did not match the contract",
+    };
+  }
+  return { kind: "ok", automation: parsed.data };
+}
+
+/**
+ * `POST /api/sandboxes/automation`: creates the row on first use, wakes a
+ * released one. Runs on the server's 360 s `transfer` tier, so it waits as
+ * long as a create.
+ */
+export async function openSandboxAutomationViaHttp(
+  serverBaseUrl: string,
+  bearerToken: string,
+): Promise<SandboxAutomationOpenFetchResult> {
+  const raw = await call(
+    sandboxesUrl(serverBaseUrl, "/automation"),
+    {
+      method: "POST",
+      body: null,
+      timeoutMs: SANDBOX_CREATE_FETCH_TIMEOUT_MS,
+    },
+    bearerToken,
+  );
+  if (raw.kind === "network-error") return raw;
+  if (!isSuccess(raw.status)) return failureOf(raw.status, raw.body);
+  const parsed = sandboxAutomationOpenResponseSchema.safeParse(raw.body);
+  if (!parsed.success) {
+    return {
+      kind: "network-error",
+      detail: "the Automations open answer did not match the contract",
+    };
+  }
+  return {
+    kind: "ok",
+    sandbox: parsed.data.sandbox,
+    settled: raw.status !== 202,
+  };
+}
+
 /** `POST /api/sandboxes`: `202` with the sandbox and host ids. */
 export async function createSandboxViaHttp(
   serverBaseUrl: string,
@@ -399,12 +489,15 @@ export async function runSandboxVerbViaHttp(
 // Wake before dial
 // -----------------------------------------------------------------------------
 
-/** States a sandbox does not come back from: its disk is gone or going. */
+/**
+ * States a sandbox does not come back from: its disk is gone or going.
+ * `released` is not one: the Automations row's idle state keeps its disk, and
+ * a `start` brings it back.
+ */
 const SANDBOX_TERMINAL_STATES: ReadonlySet<HostSandboxState> = new Set([
   "destroying",
   "destroyed",
   "failed",
-  "released",
 ]);
 
 /**
@@ -438,7 +531,7 @@ export interface SandboxDialFacts {
  *  - `credit-gate`        — the wake gate refused for lack of credits.
  *  - `wake-not-available` — this control plane does not serve the lifecycle
  *                           verbs yet (`501 verb_not_available`).
- *  - `not-wakeable`       — the sandbox is destroyed, failed or released.
+ *  - `not-wakeable`       — the sandbox is destroyed or failed.
  *  - `failed`             — anything else, with a stable `detail`.
  */
 export type SandboxWakeOutcome =
@@ -529,8 +622,9 @@ export const SANDBOX_FROZEN_MESSAGE =
 
 /**
  * Wakes a sandbox before a tab dials it: resume a suspended (or suspending)
- * one, start a stopped (or stopping) one, then wait until the host list says
- * `awake`. Called at tab open only, never from a session's reconnect loop -
+ * one, start a stopped (or stopping) or released one, then wait until the
+ * host list says `awake`. Called at tab open only, never from a session's
+ * reconnect loop -
  * a reconnect that woke sandboxes would keep a forgotten tab's metered
  * machine awake for as long as the tab exists.
  */
@@ -587,8 +681,8 @@ function settledOutcome(facts: SandboxDialFacts): SandboxWakeOutcome | null {
     case "destroying":
     case "destroyed":
     case "failed":
-    case "released":
       return { kind: "not-wakeable", state: facts.state };
+    case "released":
     case "creating":
     case "suspending":
     case "suspended":
@@ -602,8 +696,9 @@ function settledOutcome(facts: SandboxDialFacts): SandboxWakeOutcome | null {
 }
 
 /**
- * Whether a sandbox in this state is asleep: suspended or stopped, or on its
- * way there. A wake (a tab open, a pick in a host picker) brings it back.
+ * Whether a sandbox in this state is asleep: suspended, stopped or released,
+ * or on its way there. A wake (a tab open, a pick in a host picker) brings it
+ * back.
  */
 export function isSandboxAsleep(state: HostSandboxState | null): boolean {
   return wakeVerbFor(state) !== null;
@@ -621,6 +716,9 @@ function wakeVerbFor(state: HostSandboxState | null): SandboxWakeVerb | null {
       return "resume";
     case "stopping":
     case "stopped":
+    // The Automations row: its `start` is the open (scale to one, wait for
+    // the pod to enrol).
+    case "released":
       return "start";
     case "creating":
     case "resuming":
@@ -629,7 +727,6 @@ function wakeVerbFor(state: HostSandboxState | null): SandboxWakeVerb | null {
     case "destroying":
     case "destroyed":
     case "failed":
-    case "released":
     case null:
       return null;
   }

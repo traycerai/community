@@ -72,7 +72,8 @@ export function SandboxCard(props: {
   // fallback here would let a stale summary's `frozen` undo a resolved thaw.
   const { summary, state, frozen } = props.sandbox;
   const word = sandboxStateWord(props.sandbox);
-  const actions = summary === null ? [] : sandboxCardActions(state, frozen);
+  const actions =
+    summary === null ? [] : sandboxCardActions(state, frozen, summary.kind);
   return (
     <Card
       size="sm"
@@ -214,7 +215,9 @@ function SandboxFacts(props: { readonly summary: SandboxSummary }): ReactNode {
       <dd data-testid="sandbox-card-region">{summary.region}</dd>
       <dt className="text-muted-foreground">Rate</dt>
       <dd data-testid="sandbox-card-rate">
-        {formatRate(summary.priceMcPerHour)}
+        {summary.kind === "automation"
+          ? "Free"
+          : formatRate(summary.priceMcPerHour)}
       </dd>
       <dt className="text-muted-foreground">Idle</dt>
       <dd data-testid="sandbox-card-idle">{sandboxIdleLine(summary)}</dd>

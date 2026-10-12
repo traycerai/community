@@ -66,7 +66,7 @@ const THAWED_ACTIONS: Record<HostSandboxState, readonly SandboxCardAction[]> = {
 describe("sandboxCardActions", () => {
   it("offers each state exactly the verbs the control plane accepts from it", () => {
     for (const state of HOST_SANDBOX_STATES) {
-      expect(sandboxCardActions(state, false)).toEqual(THAWED_ACTIONS[state]);
+      expect(sandboxCardActions(state, false, "agent")).toEqual(THAWED_ACTIONS[state]);
     }
   });
 
@@ -78,7 +78,7 @@ describe("sandboxCardActions", () => {
       "failed",
       "released",
     ] as const) {
-      expect(sandboxCardActions(state, true)).toEqual(["destroy"]);
+      expect(sandboxCardActions(state, true, "agent")).toEqual(["destroy"]);
     }
   });
 
@@ -92,21 +92,21 @@ describe("sandboxCardActions", () => {
       "destroying",
       "destroyed",
     ] as const) {
-      expect(sandboxCardActions(state, true)).toEqual([]);
+      expect(sandboxCardActions(state, true, "agent")).toEqual([]);
     }
   });
 
   it("never offers a wake verb to a frozen row, which would only answer sandbox_frozen", () => {
     for (const state of HOST_SANDBOX_STATES) {
-      const actions = sandboxCardActions(state, true);
+      const actions = sandboxCardActions(state, true, "agent");
       expect(actions).not.toContain("resume");
       expect(actions).not.toContain("start");
     }
   });
 
   it("offers an unknown state nothing, frozen or not", () => {
-    expect(sandboxCardActions(null, false)).toEqual([]);
-    expect(sandboxCardActions(null, true)).toEqual([]);
+    expect(sandboxCardActions(null, false, "agent")).toEqual([]);
+    expect(sandboxCardActions(null, true, "agent")).toEqual([]);
   });
 });
 

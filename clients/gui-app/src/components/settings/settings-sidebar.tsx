@@ -31,6 +31,7 @@ import { useAddHostDialogStore } from "@/stores/settings/add-host-dialog-store";
 import { AddHostDialog } from "@/components/settings/host-scope/add-host-dialog";
 import { SandboxCreateDialog } from "@/components/hosts/sandbox-create-dialog";
 import { SandboxBalanceBanner } from "@/components/hosts/sandbox-balance-banner";
+import { AutomationsHostEntry } from "@/components/hosts/automations-host-entry";
 import { useSandboxCreateDialogStore } from "@/stores/settings/sandbox-create-dialog-store";
 import { useAuthStore } from "@/stores/auth/auth-store";
 import { Button } from "@/components/ui/button";
@@ -210,6 +211,7 @@ function SettingsSidebarHostPicker(props: {
         listsFailed={scope.listsFailed}
         onRetryLists={scope.retryLists}
         updateViewForHost={updateViewForHost}
+        offersAutomations={false}
       />
       {/* A sandbox is an account's machine: nothing to create signed out,
           and nothing at all from a build that cannot reach the control
@@ -234,6 +236,11 @@ function SettingsSidebarHostPicker(props: {
           <Plus className="size-3.5 shrink-0" aria-hidden />
           New sandbox…
         </Button>
+      ) : null}
+      {/* The Automations host before its row exists; the real row joins the
+          list above once it does. */}
+      {signedIn && sandboxesUnavailable === null ? (
+        <AutomationsHostEntry />
       ) : null}
       {/* The host list's balance banner: the two-hour and thirty-minute
           warnings for the account's awake sandboxes. Nothing for a user with

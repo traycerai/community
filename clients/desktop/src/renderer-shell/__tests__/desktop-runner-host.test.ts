@@ -150,6 +150,14 @@ function buildFakeBridge(
       kind: "network-error" as const,
       detail: "test",
     }),
+    getSandboxAutomation: async () => ({
+      kind: "network-error" as const,
+      detail: "test",
+    }),
+    openSandboxAutomation: async () => ({
+      kind: "network-error" as const,
+      detail: "test",
+    }),
     tokenStore: ((): ITokenStore => {
       let stored: StoredCredentials | null = null;
       return {

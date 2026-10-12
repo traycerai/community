@@ -74,6 +74,8 @@ export const RunnerHostInvoke = {
   createSandbox: "runnerHost:sandboxes:create",
   destroySandbox: "runnerHost:sandboxes:destroy",
   runSandboxVerb: "runnerHost:sandboxes:verb",
+  getSandboxAutomation: "runnerHost:sandboxes:automation:get",
+  openSandboxAutomation: "runnerHost:sandboxes:automation:open",
   openExternalLink: "runnerHost:openExternalLink",
   getRegisteredUrlSchemes: "runnerHost:getRegisteredUrlSchemes",
   requestMicrophoneAccess: "runnerHost:requestMicrophoneAccess",

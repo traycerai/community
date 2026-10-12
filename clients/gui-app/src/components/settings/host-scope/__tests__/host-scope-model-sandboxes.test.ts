@@ -181,12 +181,12 @@ describe("sandbox grouping predicates", () => {
   });
 
   it("puts each row in the group the host list and the pickers agree on", () => {
-    expect(hostOptionPickerGroup(personal, false)).toBe("personal");
-    expect(hostOptionPickerGroup(normal, false)).toBe("sandbox");
-    expect(hostOptionPickerGroup(burst, true)).toBe("agent-sandbox");
-    expect(hostOptionPickerGroup(burst, false)).toBe("hidden");
-    expect(hostOptionPickerGroup(unanswered, false)).toBe("hidden");
-    expect(hostOptionPickerGroup(unanswered, true)).toBe("sandbox");
+    expect(hostOptionPickerGroup(personal, false, false)).toBe("personal");
+    expect(hostOptionPickerGroup(normal, false, false)).toBe("sandbox");
+    expect(hostOptionPickerGroup(burst, true, false)).toBe("agent-sandbox");
+    expect(hostOptionPickerGroup(burst, false, false)).toBe("hidden");
+    expect(hostOptionPickerGroup(unanswered, false, false)).toBe("hidden");
+    expect(hostOptionPickerGroup(unanswered, true, false)).toBe("sandbox");
   });
 
   it("offers Activate for exactly the rows a picker offers", () => {
@@ -209,6 +209,7 @@ describe("sandbox grouping predicates", () => {
   it("keeps the list's own order inside each group and never drops the row a surface points at", () => {
     const groups = groupHostOptions(
       [normal, burst, personal, unanswered],
+      false,
       false,
       "b",
     );
@@ -293,8 +294,8 @@ describe("sleeping sandbox picks", () => {
       connectable: true,
       kind: "automation",
     });
-    expect(hostOptionPickerGroup(pod, false)).toBe("hidden");
-    expect(hostOptionPickerGroup(pod, true)).toBe("sandbox");
+    expect(hostOptionPickerGroup(pod, false, false)).toBe("hidden");
+    expect(hostOptionPickerGroup(pod, true, false)).toBe("sandbox");
     expect(pickableHostOptions([pod], null)).toEqual([]);
   });
 });
