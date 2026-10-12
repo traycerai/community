@@ -63,11 +63,13 @@ class BridgeViewController: CAPBridgeViewController {
     }
 
     /// Capacitor already notices every status-bar tap but tells only native
-    /// code. Forwarded as the `statusTap` window event (the name
-    /// `@capacitor/status-bar` would use), which `src/status-bar-tap.ts` hands
-    /// to the GUI as its scroll-to-top gesture. It reaches the app's own
-    /// document only: evaluating script on the web view runs in the main
-    /// frame, never in a sandboxed page.
+    /// code: its `UIStatusBarManager+CAPHandleTapAction.m` swizzles
+    /// `handleTapAction:` and posts `.capacitorStatusBarTapped`, so nothing in
+    /// this app has to detect the tap. Forwarded as the `statusTap` window
+    /// event (the name `@capacitor/status-bar` would use), which
+    /// `src/status-bar-tap.ts` hands to the GUI as its scroll-to-top gesture.
+    /// It reaches the app's own document only: evaluating script on the web
+    /// view runs in the main frame, never in a sandboxed page.
     private func forwardStatusBarTaps() {
         statusBarTapObserver = NotificationCenter.default.addObserver(
             forName: .capacitorStatusBarTapped,

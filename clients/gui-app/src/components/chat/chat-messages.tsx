@@ -3776,6 +3776,12 @@ function ChatMessagesInner(props: ChatMessagesInnerProps) {
         return;
       }
       event.preventDefault();
+      // A cross-tile jump still waiting for its row would land after this
+      // and pull the transcript back down; the tap is the newer intent.
+      const pendingLanding = pendingScrollRequestLandingRef.current;
+      if (pendingLanding !== null) {
+        settleScrollRequest(pendingLanding.requestId, "cancelled");
+      }
       releaseForExplicitNavigation();
       issueFreeTimelineNavigation(
         {
@@ -3793,7 +3799,11 @@ function ChatMessagesInner(props: ChatMessagesInnerProps) {
         answerScrollToTop,
       );
     };
-  }, [issueFreeTimelineNavigation, releaseForExplicitNavigation]);
+  }, [
+    issueFreeTimelineNavigation,
+    releaseForExplicitNavigation,
+    settleScrollRequest,
+  ]);
 
   // Ticket 15 review (live pass S5, confirmed defect): `restoredTabState`/
   // `initialScrollIndexAnchor` are computed ONCE at mount against whatever
