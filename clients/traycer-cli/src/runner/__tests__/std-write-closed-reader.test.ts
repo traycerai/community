@@ -46,8 +46,12 @@ interface WorkerOptions {
   /** Close the parent's read end of `stream` once the first line arrives. */
   readonly closeReader: boolean;
   readonly injectErrorCode: string | null;
-  /** The worker installs its own `error` listener before its first write. */
-  readonly ownErrorListener: boolean;
+  /**
+   * `"after-guard"`: the worker installs its own `error` listener after the
+   * guards, before its first write. `"once-before-guard"`: a `once("error")`
+   * listener registered BEFORE the guards. `null`: none.
+   */
+  readonly ownErrorListener: "after-guard" | "once-before-guard" | null;
 }
 
 let bundleDir = "";
@@ -94,7 +98,7 @@ function runWorker(options: WorkerOptions): Promise<WorkerRun> {
         ...process.env,
         WORKER_STREAM: options.stream,
         WORKER_INJECT_ERROR_CODE: options.injectErrorCode ?? "",
-        WORKER_OWN_ERROR_LISTENER: options.ownErrorListener ? "1" : "",
+        WORKER_OWN_ERROR_LISTENER: options.ownErrorListener ?? "",
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -128,7 +132,7 @@ describe("std-write survives a reader that closed the pipe", () => {
         stream,
         closeReader: true,
         injectErrorCode: null,
-        ownErrorListener: false,
+        ownErrorListener: null,
       });
 
       // A stderr reader that is gone cannot show us the crash text, so the
@@ -149,7 +153,7 @@ describe("std-write survives a reader that closed the pipe", () => {
         stream: "stdout",
         closeReader: false,
         injectErrorCode: "EIO",
-        ownErrorListener: false,
+        ownErrorListener: null,
       });
 
       // Swallowing EIO (or any other code) would hide a genuinely broken
@@ -173,12 +177,33 @@ describe("std-write survives a reader that closed the pipe", () => {
         stream: "stdout",
         closeReader: false,
         injectErrorCode: "EIO",
-        ownErrorListener: true,
+        ownErrorListener: "after-guard",
       });
 
       expect(run.signal).toBeNull();
       expect(run.code).toBe(0);
       expect(run.stderr).not.toContain("injected stream error");
+    },
+    SPAWN_TIMEOUT_MS,
+  );
+
+  it(
+    "does not rethrow an error a once-listener registered before the guard has handled",
+    async () => {
+      // Node removes a `once` listener BEFORE calling it, so by the time the
+      // guard runs the listener count has already dropped to 1. The guard
+      // must run first (prependListener) and count that listener.
+      const run = await runWorker({
+        stream: "stdout",
+        closeReader: false,
+        injectErrorCode: "EIO",
+        ownErrorListener: "once-before-guard",
+      });
+
+      expect(run.stderr).toContain("once-handler saw EIO");
+      expect(run.stderr).not.toContain("injected stream error");
+      expect(run.signal).toBeNull();
+      expect(run.code).toBe(0);
     },
     SPAWN_TIMEOUT_MS,
   );

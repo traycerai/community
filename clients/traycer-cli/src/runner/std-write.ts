@@ -145,11 +145,15 @@ function noteWriteError(
  * command installs its own `error` handler on these streams to outlive the
  * closed PTY (`acknowledgeRelocationEntry`), and EventEmitter calls every
  * listener, so this one only rethrows when it is the sole listener left.
+ * The guard is PREPENDED so it runs first: Node removes a `once` listener
+ * before invoking it, so a guard that ran after one would see the count
+ * already dropped and rethrow an error that was handled. Running first, every
+ * other listener, `once` included, is still counted.
  */
 function ignoreClosedReader(stream: NodeJS.WriteStream): void {
   if (guardedStreams.has(stream)) return;
   guardedStreams.add(stream);
-  stream.on("error", (error: NodeJS.ErrnoException) => {
+  stream.prependListener("error", (error: NodeJS.ErrnoException) => {
     if (error.code === "EPIPE") {
       noteWriteError(stream, error);
       return;
