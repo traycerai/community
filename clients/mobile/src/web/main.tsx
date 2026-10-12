@@ -37,6 +37,7 @@ import { MobileDeviceDescriber } from "../device-describer";
 import { MobileFileSave, supportsDirectDownload } from "../file-save";
 import { MobileLinkCodeScanner } from "../link-code-scanner";
 import { MobileLinkLoginDeepLinks } from "../link-login-deep-links";
+import { MobileStatusBarTap } from "../status-bar-tap";
 import { MobileSystemBack } from "../system-back";
 import {
   MobilePushRegistration,
@@ -369,6 +370,10 @@ async function mount(input: {
     // that recognizer; the dev web entry has the browser's own back.
     systemBack:
       Capacitor.getPlatform() === "android" ? new MobileSystemBack(App) : null,
+    // iOS's half of the same rule: tapping the status bar is that platform's
+    // "scroll to top", and no other shell has a status bar to tap.
+    statusBarTap:
+      Capacitor.getPlatform() === "ios" ? new MobileStatusBarTap(window) : null,
   });
   // After the host exists: registration follows the token store (sign-in,
   // app start while signed in, sign-out) and the host's resume edge (a

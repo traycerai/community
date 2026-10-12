@@ -38,6 +38,7 @@ import {
   type TileFindContextValue,
 } from "@/components/epic-canvas/tile-find/tile-find-adapter-context";
 import { CHAT_TIMELINE_NAVIGATION_VIEW_OFFSET_PX } from "@/components/chat/chat-messages-scroll-helpers";
+import { ScrollToTopRequestEvent } from "@/lib/dom/scroll-to-top-request";
 import { captureChatFreeScrollingOffset } from "@/components/chat/chat-scroll-restoration";
 import {
   evictChatTabState,
@@ -5185,6 +5186,60 @@ describe("ChatMessages scroll policy", () => {
       expect(
         callsOnScrollNode.every((call) => call.behavior === "smooth"),
       ).toBe(true);
+    });
+  });
+
+  // The iOS status-bar tap asks the scroll node it found for its top. A bare
+  // scroll would be pulled back to the newest reply by the follow latch, so
+  // the transcript answers the request itself with an owned navigation.
+  describe("scroll-to-top request (iOS status-bar tap)", () => {
+    it("answers a request at the list's scroll node with an owned navigation to the top row", async () => {
+      renderChatMessages({
+        messages: makeTranscript(24),
+        scrollStateKey: `scroll-to-top-request-${Math.random().toString(36).slice(2)}`,
+      });
+      await settleLegendList();
+      await enterFreeScrollingAwayFromEnd();
+      const list = legendListRefHolder.current;
+      if (list === null) throw new Error("LegendList ref is not mounted");
+      const scrollToIndex = vi
+        .spyOn(list, "scrollToIndex")
+        .mockResolvedValue(undefined);
+      const request = new ScrollToTopRequestEvent(true);
+
+      act(() => {
+        getScrollNode().dispatchEvent(request);
+      });
+
+      expect(request.defaultPrevented).toBe(true);
+      expect(scrollToIndex).toHaveBeenCalledExactlyOnceWith({
+        index: 0,
+        animated: true,
+        viewPosition: 0,
+        viewOffset: LEGEND_LIST_HEADER_PX,
+      });
+    });
+
+    it("leaves a request aimed at anything else inside the transcript to the default", async () => {
+      renderChatMessages({
+        messages: makeTranscript(24),
+        scrollStateKey: `scroll-to-top-request-other-${Math.random().toString(36).slice(2)}`,
+      });
+      await settleLegendList();
+      const list = legendListRefHolder.current;
+      if (list === null) throw new Error("LegendList ref is not mounted");
+      const scrollToIndex = vi
+        .spyOn(list, "scrollToIndex")
+        .mockResolvedValue(undefined);
+      const [row] = screen.getAllByTestId(/^mock-message-/);
+      const request = new ScrollToTopRequestEvent(true);
+
+      act(() => {
+        row.dispatchEvent(request);
+      });
+
+      expect(request.defaultPrevented).toBe(false);
+      expect(scrollToIndex).not.toHaveBeenCalled();
     });
   });
 
