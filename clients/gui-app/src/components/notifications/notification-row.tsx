@@ -22,6 +22,7 @@ import {
   TERMINAL_FAILURE_TONE,
 } from "@/components/notifications/notification-indicator-tones";
 import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
+import { SecretExportNoticeLine } from "@/components/notifications/secret-export-notice-line";
 import type { HostDirectoryEntry } from "@traycer-clients/shared/host-client/host-directory";
 import {
   hostUnavailability,
@@ -279,16 +280,18 @@ export function NotificationRow(props: NotificationRowProps): ReactNode {
       >
         <Icon className={cn("size-4", glyph.colorClassName)} />
       </span>
-      <NotificationRowMain
-        row={row}
-        displayBody={packPresentation.displayBody}
-        isRead={isRead}
-        isNavigable={packPresentation.isNavigable}
-        originUnavailability={originUnavailability}
-        packRemote={packPresentation.packRemote}
-        remoteHostLabel={packPresentation.remoteHostLabel}
-        onActivate={props.onActivate}
-      />
+      <NotificationRowWithSecrets row={row}>
+        <NotificationRowMain
+          row={row}
+          displayBody={packPresentation.displayBody}
+          isRead={isRead}
+          isNavigable={packPresentation.isNavigable}
+          originUnavailability={originUnavailability}
+          packRemote={packPresentation.packRemote}
+          remoteHostLabel={packPresentation.remoteHostLabel}
+          onActivate={props.onActivate}
+        />
+      </NotificationRowWithSecrets>
       <div className="flex shrink-0 flex-col items-end gap-1 pt-0.5">
         <NotificationTimestamp createdAt={row.createdAt} />
         <NotificationRowTrailingControl
@@ -299,6 +302,29 @@ export function NotificationRow(props: NotificationRowProps): ReactNode {
         />
       </div>
     </m.li>
+  );
+}
+
+/**
+ * An export row carries more than a title and a body: what was minted and
+ * until when it works. The line sits UNDER the row's main area and never
+ * inside it, because that area is one button when the row is navigable.
+ *
+ * Every other row gets its main area back untouched, with no wrapper.
+ */
+function NotificationRowWithSecrets(props: {
+  readonly row: MergedNotificationRow;
+  readonly children: ReactNode;
+}): ReactNode {
+  const secrets = props.row.secrets ?? null;
+  if (secrets === null || secrets.kind !== "export-minted") {
+    return props.children;
+  }
+  return (
+    <div className="flex min-w-0 flex-1 flex-col gap-1.5">
+      {props.children}
+      <SecretExportNoticeLine detail={secrets} />
+    </div>
   );
 }
 

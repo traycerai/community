@@ -109,6 +109,10 @@ import {
   type ProviderPackViewingLocalityContext,
 } from "@/lib/notifications/provider-pack-notification-attribution";
 import { useReactiveLocalHostEntry } from "@/hooks/host/use-reactive-local-host-entry";
+import {
+  secretsNotificationDetail,
+  type SecretsNotificationDetail,
+} from "@/lib/notifications/secrets-notification-detail";
 import { useRunnerHostOrNull } from "@/providers/use-runner-host";
 
 export type MergedNotificationSource =
@@ -130,6 +134,10 @@ export interface MergedNotificationRow {
    * the normalized navigation payload, where GUI chats and TUI agents both
    * intentionally route through a chat-shaped target. */
   readonly agentSurface?: "gui" | "tui" | null;
+  /** A secrets row's own facts (the grant request to decide, the export's
+   * expiry), read from its typed payload. Absent or `null` on every other
+   * row, and on a secrets row whose payload this build cannot read. */
+  readonly secrets?: SecretsNotificationDetail | null;
   readonly hostKind: HostNotificationFeedEntry["kind"] | null;
   readonly appLocalKind: AppLocalNotificationEntry["kind"] | null;
   readonly globalEntry: NotificationEntry | null;
@@ -1731,6 +1739,7 @@ function rowFromHostEntryForOrigin(
     body: presentation.body,
     payload: payloadFromHostEntry(entry),
     agentSurface: agentSurfaceFromHostEntry(entry),
+    secrets: secretsNotificationDetail(entry.kind, entry.payload),
     hostKind: entry.kind,
     appLocalKind: null,
     globalEntry: null,
@@ -1816,6 +1825,7 @@ export function rowFromCloudFeedRow(
     body: fallback.body,
     payload: payloadFromHostEntry(row.entry),
     agentSurface: agentSurfaceFromHostEntry(row.entry),
+    secrets: secretsNotificationDetail(row.entry.kind, row.entry.payload),
     hostKind: row.entry.kind,
     appLocalKind: null,
     globalEntry: null,
