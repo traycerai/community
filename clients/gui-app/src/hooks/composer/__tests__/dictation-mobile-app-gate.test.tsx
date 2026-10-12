@@ -20,6 +20,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { setMobileApp } from "@/lib/mobile-app";
 import { useComposerDictation } from "@/hooks/composer/use-composer-dictation";
+import { resetDictationWarmScheduleForTests } from "@/hooks/composer/use-dictation-availability";
 import { useSettingsStore } from "@/stores/settings/settings-store";
 import type { ComposerPromptEditorHandle } from "@/components/chat/composer/composer-prompt-editor";
 
@@ -113,6 +114,10 @@ function pressDictationChord(): void {
 }
 
 beforeEach(() => {
+  resetDictationWarmScheduleForTests();
+  // jsdom's document never has focus; the warm gate reads it once at mount
+  // and follows the window's focus / blur events from then on.
+  vi.spyOn(document, "hasFocus").mockReturnValue(true);
   host.statusQueryEnabled.length = 0;
   host.status = {
     engineAvailable: true,
@@ -226,21 +231,56 @@ describe("keeping the host's recogniser warm while a composer is focused", () =>
     expect(host.ensureModel).toHaveBeenCalledTimes(1);
   });
 
-  it("does not re-send for a focus that comes back inside the throttle window", () => {
+  it("does not re-send for a focus that comes back while the last warm is recent, and keeps the next warm due one interval after the last", () => {
     vi.useFakeTimers();
     const { rerender } = renderComposerDictationFocused(true);
     expect(host.ensureModel).toHaveBeenCalledTimes(1);
 
-    // Focus bounces between composers: the worker is still warm from the first.
+    // Focus leaves and comes back two minutes later: the worker is still
+    // warm from the first send, so nothing is sent...
     rerender({ isActive: false });
-    advance(30_000);
+    advance(2 * 60_000);
     rerender({ isActive: true });
     expect(host.ensureModel).toHaveBeenCalledTimes(1);
 
-    // Once the window has passed, a returning focus warms again.
+    // ...and the next warm is still due four minutes after the FIRST one,
+    // not four minutes after the return - a re-based interval would leave a
+    // six-minute gap, longer than the host's five-minute idle.
+    advance(2 * 60_000 - 1);
+    expect(host.ensureModel).toHaveBeenCalledTimes(1);
+    advance(1);
+    expect(host.ensureModel).toHaveBeenCalledTimes(2);
+
+    // A focus that returns after a whole interval away warms at once.
     rerender({ isActive: false });
     advance(WARM_INTERVAL_MS);
     rerender({ isActive: true });
+    expect(host.ensureModel).toHaveBeenCalledTimes(3);
+  });
+
+  it("shares the warm across composers: a second composer focused right after the first sends nothing", () => {
+    vi.useFakeTimers();
+    renderComposerDictationFocused(true);
+    expect(host.ensureModel).toHaveBeenCalledTimes(1);
+
+    renderComposerDictationFocused(true);
+    expect(host.ensureModel).toHaveBeenCalledTimes(1);
+  });
+
+  it("stops while the window is in the background and warms again when it returns", () => {
+    vi.useFakeTimers();
+    renderComposerDictationFocused(true);
+    expect(host.ensureModel).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      window.dispatchEvent(new Event("blur"));
+    });
+    advance(WARM_INTERVAL_MS * 3);
+    expect(host.ensureModel).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
     expect(host.ensureModel).toHaveBeenCalledTimes(2);
   });
 

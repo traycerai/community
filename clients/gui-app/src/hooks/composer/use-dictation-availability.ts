@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useHostQuery, useHostMutation } from "@/hooks/host/use-host-query";
 import { useHostClient, type HostRpcRegistry } from "@/lib/host";
@@ -12,14 +12,48 @@ const SPEECH_MODEL_PARAMS = { modelId: null };
 const MAX_ENSURE_ATTEMPTS = 3;
 // How often a focused composer re-sends `speech.ensureModel` to keep the
 // host's STT worker warm. The host frees the worker five minutes after the
-// last session, so a warm every four keeps the models loaded for as long as
-// a composer is in front of the person, and a composer that loses focus
-// stops sending and lets the host free it.
+// last warm or session, so a warm every four keeps the models loaded for as
+// long as a composer is in front of the person, and a composer that loses
+// focus - or a window that goes to the background - stops sending and lets
+// the host free it.
 const WARM_INTERVAL_MS = 4 * 60_000;
-// A focus change or a host switch inside this window re-sends nothing: the
-// worker is still warm from the last ensure. Half the interval, so a timer
-// tick that lands a few milliseconds early is never swallowed.
-const WARM_THROTTLE_MS = WARM_INTERVAL_MS / 2;
+// When each host was last warmed, shared by every composer in this window:
+// a focus moving between composers, or coming back to one, sends nothing
+// while the last warm is recent, and the next warm is always due exactly one
+// interval after the last - never re-based by a focus edge, which would let
+// the host's five-minute idle expire between two warms.
+const lastWarmAtByHost = new Map<string, number>();
+
+/** Forgets every host's last warm, so a test starts from a cold host. */
+export function resetDictationWarmScheduleForTests(): void {
+  lastWarmAtByHost.clear();
+}
+
+/**
+ * Whether this window is the one in front of the person (`document.hasFocus`,
+ * kept current by the window's own `focus` / `blur` events). Not
+ * `visibilitychange`: the desktop shell never fires it (every window runs
+ * with `backgroundThrottling: false`), and no browser fires it when focus
+ * moves between two visible windows.
+ */
+function useWindowFocused(): boolean {
+  const [focused, setFocused] = useState(() => document.hasFocus());
+  useEffect(() => {
+    const onFocus = (): void => {
+      setFocused(true);
+    };
+    const onBlur = (): void => {
+      setFocused(false);
+    };
+    window.addEventListener("focus", onFocus);
+    window.addEventListener("blur", onBlur);
+    return () => {
+      window.removeEventListener("focus", onFocus);
+      window.removeEventListener("blur", onBlur);
+    };
+  }, []);
+  return focused;
+}
 
 interface EnsureModelMutationContext {
   readonly hostId: string | null;
@@ -163,34 +197,32 @@ export function useDictationAvailability(
   ]);
 
   // Keep the host's STT worker warm while this composer has the person's
-  // attention. One ensure at focus, then one per interval; focus moving to
-  // another composer restarts the cadence there. Per host, like the budget
+  // attention and the window is in front of them. A warm is sent when one
+  // is due - at once if this host was never warmed or its last warm is older
+  // than the interval, otherwise when the interval since that warm elapses -
+  // and then every interval. The worker is ~2 GB resident, so a window in
+  // the background sends nothing and the host frees it; the next return
+  // warms it again before the mic is pressed. Per host, like the budget
   // above: a warm on host A says nothing about host B's worker.
   const ready = available && engineAvailable && downloadState === "ready";
-  const lastWarmRef = useRef<{ hostId: string | null; at: number } | null>(
-    null,
-  );
+  const windowFocused = useWindowFocused();
   useEffect(() => {
-    if (!focused || !ready) return;
-    const warm = () => {
-      const last = lastWarmRef.current;
-      const now = Date.now();
-      if (
-        last !== null &&
-        last.hostId === activeHostId &&
-        now - last.at < WARM_THROTTLE_MS
-      ) {
-        return;
-      }
-      lastWarmRef.current = { hostId: activeHostId, at: now };
+    if (!focused || !windowFocused || !ready || activeHostId === null) return;
+    const hostId = activeHostId;
+    let timer: number | null = null;
+    const warm = (): void => {
+      lastWarmAtByHost.set(hostId, Date.now());
       ensure(SPEECH_MODEL_PARAMS);
+      timer = window.setTimeout(warm, WARM_INTERVAL_MS);
     };
-    warm();
-    const timer = window.setInterval(warm, WARM_INTERVAL_MS);
+    const last = lastWarmAtByHost.get(hostId);
+    const dueIn = last === undefined ? 0 : last + WARM_INTERVAL_MS - Date.now();
+    if (dueIn <= 0) warm();
+    else timer = window.setTimeout(warm, dueIn);
     return () => {
-      window.clearInterval(timer);
+      if (timer !== null) window.clearTimeout(timer);
     };
-  }, [focused, ready, ensure, activeHostId]);
+  }, [focused, windowFocused, ready, ensure, activeHostId]);
 
   if (!available || !engineAvailable) return { ready: false, preparing: null };
   if (downloadState === "ready") return { ready: true, preparing: null };
