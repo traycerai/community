@@ -974,6 +974,21 @@ describe("useVoiceDictation late final transcript", () => {
     expect(result.current.state).toBe("idle");
   });
 
+  it("reports had_text false for a whitespace-only final, which the editor would not insert", async () => {
+    const track = vi.spyOn(Analytics.getInstance(), "track");
+    const { result } = renderWithText();
+    const client = await recordThenStop(result);
+    act(() => {
+      client.callbacks.onTranscript({ text: "   ", isFinal: true });
+      client.callbacks.onFlushed();
+    });
+    const succeeded = track.mock.calls.filter(
+      ([event]) => event === AnalyticsEvent.VoiceTranscriptionSucceeded,
+    );
+    expect(succeeded).toHaveLength(1);
+    expect(succeeded[0][1]).toMatchObject({ had_text: false });
+  });
+
   it("classifies a start with no host stream client after a completed dictation as a capture failure", async () => {
     const { result, rerender } = renderWithText();
     const client = await recordThenStop(result);

@@ -332,6 +332,33 @@ describe("keeping the host's recogniser warm while a composer is focused", () =>
     rerender({ isActive: true });
   });
 
+  it("re-arms the composer that now has focus when another composer's warm fails", () => {
+    vi.useFakeTimers();
+    const first = renderComposerDictationFocused(true);
+    expect(host.ensureModel).toHaveBeenCalledTimes(1);
+    const options = host.lastMutationOptions;
+    if (options === undefined) throw new Error("mutation options not seen");
+
+    // Focus moves to a second composer, then the first one's RPC fails.
+    first.rerender({ isActive: false });
+    renderComposerDictationFocused(true);
+    expect(host.ensureModel).toHaveBeenCalledTimes(1);
+    act(() => {
+      options.onError(
+        new Error("host unreachable"),
+        { modelId: null },
+        { hostId: "host-1" },
+      );
+    });
+
+    // The focused composer retries in thirty seconds, not at its original
+    // four-minute tick.
+    advance(30_000 - 1);
+    expect(host.ensureModel).toHaveBeenCalledTimes(1);
+    advance(1);
+    expect(host.ensureModel).toHaveBeenCalledTimes(2);
+  });
+
   it("stops while the window is in the background and warms again when it returns", () => {
     vi.useFakeTimers();
     renderComposerDictationFocused(true);

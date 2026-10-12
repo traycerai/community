@@ -671,7 +671,9 @@ export function useVoiceDictation(
             // `flushed`, which still records the outcome (the text WAS
             // produced) and closes it; `start`, the cap or the host closing
             // the stream do otherwise.
-            if (frame.text.length > 0) receivedTextRef.current = true;
+            // The same criterion the editor inserts by: a whitespace-only
+            // final inserts nothing and is "no text" for the funnel.
+            if (frame.text.trim().length > 0) receivedTextRef.current = true;
             const draftAtStop = draftAtStopRef.current;
             if (
               draftAtStop !== null &&

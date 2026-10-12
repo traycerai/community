@@ -28,6 +28,14 @@ const WARM_RETRY_DELAY_MS = 30_000;
 // interval after the last - never re-based by a focus edge, which would let
 // the host's five-minute idle expire between two warms.
 const lastWarmAtByHost = new Map<string, number>();
+// Every mounted hook, told when the schedule above changed under it (a warm
+// failed) so the FOCUSED composer re-arms its timer - the composer whose RPC
+// failed may have lost focus since it sent.
+const warmScheduleListeners = new Set<() => void>();
+
+function notifyWarmScheduleChanged(): void {
+  for (const listener of warmScheduleListeners) listener();
+}
 
 /** Forgets every host's last warm, so a test starts from a cold host. */
 export function resetDictationWarmScheduleForTests(): void {
@@ -135,8 +143,18 @@ export function useDictationAvailability(
     },
   });
 
-  // Bumped by a failed warm so the warm effect re-arms its timer.
-  const [failedWarms, setFailedWarms] = useState(0);
+  // Bumped when the shared schedule changed (a warm failed, in this composer
+  // or another) so the warm effect re-arms its timer.
+  const [scheduleVersion, setScheduleVersion] = useState(0);
+  useEffect(() => {
+    const listener = (): void => {
+      setScheduleVersion((version) => version + 1);
+    };
+    warmScheduleListeners.add(listener);
+    return () => {
+      warmScheduleListeners.delete(listener);
+    };
+  }, []);
   const ensureMutation = useHostMutation<
     HostRpcRegistry,
     "speech.ensureModel",
@@ -158,7 +176,7 @@ export function useDictationAvailability(
             context.hostId,
             Date.now() - WARM_INTERVAL_MS + WARM_RETRY_DELAY_MS,
           );
-          setFailedWarms((count) => count + 1);
+          notifyWarmScheduleChanged();
         }
       },
       onSuccess: (_result, _variables, context) => {
@@ -247,7 +265,7 @@ export function useDictationAvailability(
     return () => {
       if (timer !== null) window.clearTimeout(timer);
     };
-  }, [focused, windowFocused, ready, ensure, activeHostId, failedWarms]);
+  }, [focused, windowFocused, ready, ensure, activeHostId, scheduleVersion]);
 
   if (!available || !engineAvailable) return { ready: false, preparing: null };
   if (downloadState === "ready") return { ready: true, preparing: null };
