@@ -31,8 +31,19 @@ const recorder = vi.hoisted(() => ({
   cancel: vi.fn(),
 }));
 
+interface RecordedEnsureModelOptions {
+  readonly onError: (
+    error: Error,
+    variables: { readonly modelId: string | null },
+    context: { readonly hostId: string | null } | undefined,
+  ) => void;
+}
+
 const host = vi.hoisted(() => ({
   ensureModel: vi.fn(),
+  // The options the last `speech.ensureModel` mutation was built with, so a
+  // test can drive its `onError` the way a failed RPC would.
+  lastMutationOptions: undefined as RecordedEnsureModelOptions | undefined,
   // Every observed `enabled` the status query was asked for, so a test can
   // assert the speech RPC is never even armed on mobile.
   statusQueryEnabled: [] as boolean[],
@@ -75,7 +86,15 @@ vi.mock("@/hooks/host/use-host-query", () => ({
     // still shows would be a real leak, not an artifact of an idle host.
     return args.options.enabled ? { data: host.status } : { data: undefined };
   },
-  useHostMutation: () => ({ mutate: host.ensureModel, isPending: false }),
+  useHostMutation: (args: {
+    readonly options: RecordedEnsureModelOptions;
+  }): {
+    readonly mutate: typeof host.ensureModel;
+    readonly isPending: false;
+  } => {
+    host.lastMutationOptions = args.options;
+    return { mutate: host.ensureModel, isPending: false };
+  },
 }));
 
 function renderComposerDictationFocused(isActive: boolean) {
@@ -119,6 +138,7 @@ beforeEach(() => {
   // and follows the window's focus / blur events from then on.
   vi.spyOn(document, "hasFocus").mockReturnValue(true);
   host.statusQueryEnabled.length = 0;
+  host.lastMutationOptions = undefined;
   host.status = {
     engineAvailable: true,
     downloadState: "ready",
@@ -265,6 +285,43 @@ describe("keeping the host's recogniser warm while a composer is focused", () =>
 
     renderComposerDictationFocused(true);
     expect(host.ensureModel).toHaveBeenCalledTimes(1);
+  });
+
+  it("two focused composers send one warm per interval, not one each", () => {
+    vi.useFakeTimers();
+    renderComposerDictationFocused(true);
+    renderComposerDictationFocused(true);
+    expect(host.ensureModel).toHaveBeenCalledTimes(1);
+
+    // Both timers fire at the same instant: the first sends, the second
+    // re-reads the shared timestamp and waits for the next interval.
+    advance(WARM_INTERVAL_MS);
+    expect(host.ensureModel).toHaveBeenCalledTimes(2);
+    advance(WARM_INTERVAL_MS);
+    expect(host.ensureModel).toHaveBeenCalledTimes(3);
+  });
+
+  it("forgets a warm whose ensure failed, so the next focus sends again", () => {
+    vi.useFakeTimers();
+    const { rerender } = renderComposerDictationFocused(true);
+    expect(host.ensureModel).toHaveBeenCalledTimes(1);
+    const options = host.lastMutationOptions;
+    if (options === undefined) throw new Error("mutation options not seen");
+
+    act(() => {
+      options.onError(
+        new Error("host unreachable"),
+        { modelId: null },
+        { hostId: "host-1" },
+      );
+    });
+    // The control for this bounce is "does not re-send for a focus that
+    // comes back while the last warm is recent" above: without the failure
+    // it sends nothing.
+    rerender({ isActive: false });
+    advance(60_000);
+    rerender({ isActive: true });
+    expect(host.ensureModel).toHaveBeenCalledTimes(2);
   });
 
   it("stops while the window is in the background and warms again when it returns", () => {

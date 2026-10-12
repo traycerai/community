@@ -141,6 +141,14 @@ export function useDictationAvailability(
     options: {
       mutationKey: speechMutationKeys.ensureModel(),
       onMutate: () => ({ hostId: client.getActiveHostId() }),
+      onError: (_error, _variables, context) => {
+        // A warm that did not reach the host (restarting, disconnected) is
+        // no warm: forget it so the next focus or tick sends again instead
+        // of waiting out an interval the worker's idle may expire inside.
+        if (context !== undefined && context.hostId !== null) {
+          lastWarmAtByHost.delete(context.hostId);
+        }
+      },
       onSuccess: (_result, _variables, context) => {
         if (context.hostId !== null) {
           void queryClient.invalidateQueries({
@@ -210,15 +218,20 @@ export function useDictationAvailability(
     if (!focused || !windowFocused || !ready || activeHostId === null) return;
     const hostId = activeHostId;
     let timer: number | null = null;
+    // Sends when a warm is due, otherwise waits for it: re-read at every
+    // tick, since another composer's timer may have sent in the meantime.
     const warm = (): void => {
-      lastWarmAtByHost.set(hostId, Date.now());
+      const now = Date.now();
+      const last = lastWarmAtByHost.get(hostId);
+      if (last !== undefined && last + WARM_INTERVAL_MS > now) {
+        timer = window.setTimeout(warm, last + WARM_INTERVAL_MS - now);
+        return;
+      }
+      lastWarmAtByHost.set(hostId, now);
       ensure(SPEECH_MODEL_PARAMS);
       timer = window.setTimeout(warm, WARM_INTERVAL_MS);
     };
-    const last = lastWarmAtByHost.get(hostId);
-    const dueIn = last === undefined ? 0 : last + WARM_INTERVAL_MS - Date.now();
-    if (dueIn <= 0) warm();
-    else timer = window.setTimeout(warm, dueIn);
+    warm();
     return () => {
       if (timer !== null) window.clearTimeout(timer);
     };
