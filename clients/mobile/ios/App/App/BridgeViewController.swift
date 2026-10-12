@@ -12,10 +12,18 @@ import WebKit
 class BridgeViewController: CAPBridgeViewController {
     private var sandboxBridgeGuard: SandboxBridgeGuard?
     private var sandboxNavigationGuard: SandboxNavigationGuard?
+    private var statusBarTapObserver: NSObjectProtocol?
 
     override func capacitorDidLoad() {
         bridge?.registerPluginInstance(AuthSessionPlugin())
         installSandboxGuards()
+        forwardStatusBarTaps()
+    }
+
+    deinit {
+        if let statusBarTapObserver {
+            NotificationCenter.default.removeObserver(statusBarTapObserver)
+        }
     }
 
     private func installSandboxGuards() {
@@ -51,6 +59,22 @@ class BridgeViewController: CAPBridgeViewController {
         if !installed {
             CAPLog.print("⚡️  Native route token guard could not be installed")
             assertionFailure("Native route token guard could not be installed")
+        }
+    }
+
+    /// Capacitor already notices every status-bar tap but tells only native
+    /// code. Forwarded as the `statusTap` window event (the name
+    /// `@capacitor/status-bar` would use), which `src/status-bar-tap.ts` hands
+    /// to the GUI as its scroll-to-top gesture. It reaches the app's own
+    /// document only: evaluating script on the web view runs in the main
+    /// frame, never in a sandboxed page.
+    private func forwardStatusBarTaps() {
+        statusBarTapObserver = NotificationCenter.default.addObserver(
+            forName: .capacitorStatusBarTapped,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.bridge?.triggerWindowJSEvent(eventName: "statusTap")
         }
     }
 }
