@@ -1,6 +1,7 @@
 import { useId, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 import type { HostSandboxState } from "@traycer/protocol/host/host-status";
+import type { SandboxGrantsSummary } from "@traycer/protocol/host/sandbox-secrets";
 import type {
   SandboxCost,
   SandboxHourlyPrice,
@@ -55,6 +56,13 @@ import { formatCredits, formatMemory } from "@/lib/sandboxes/sandbox-pricing";
 import { useSandboxControlUnavailableReason } from "@/hooks/sandboxes/use-sandbox-control-unavailable-reason";
 import { useHostSupportsMethod } from "@/hooks/host/use-host-supports-method";
 import { useSandboxEgressEvents } from "@/hooks/sandboxes/use-sandbox-egress-events";
+import { useSandboxGrants } from "@/hooks/sandboxes/use-sandbox-grants-query";
+import {
+  sandboxGitHubLine,
+  sandboxGrantViews,
+  sandboxRouteAddresses,
+  type SandboxGrantView,
+} from "@/lib/sandboxes/sandbox-grants-view";
 import { useSandboxRepairGuestConfiguration } from "@/hooks/sandboxes/use-sandbox-repair-guest-configuration-mutation";
 import {
   sandboxCardEgressEventLines,
@@ -377,42 +385,28 @@ function SandboxCostFacts(props: {
 }
 
 /**
- * The sandbox's brokered secrets, the one place on the card that speaks of
- * them: whether they work right now, what the forwarder and the gateway last
+ * The sandbox's secrets, the one place on the card that speaks of them:
+ * whether brokered traffic flows right now, the secrets it may use with each
+ * destination's own readiness, what the forwarder and the gateway last
  * refused or closed, the repair action for its setup, and how a container
  * reaches a brokered destination.
  *
- * Shown only for a sandbox whose row reports a phase - a server from before
- * the secrets broker, or a sandbox that has none, gets nothing here - and its
- * live parts only while the sandbox is awake, since a card on screen is never
- * a reason to hold a connection to a sleeping one.
+ * The grants are the broker's answer and show for a sleeping sandbox too;
+ * everything that talks to the sandbox itself waits until it reports a phase.
  */
 function SandboxSecretsSection(props: {
   readonly summary: SandboxSummary;
   readonly state: HostSandboxState | null;
   readonly frozen: boolean;
 }): ReactNode {
-  // Decided before anything subscribes: a sandbox with no phase mounts none
-  // of the section's hooks.
-  if (props.summary.phase === null) return null;
-  return (
-    <SandboxSecretsSectionBody
-      summary={props.summary}
-      state={props.state}
-      frozen={props.frozen}
-    />
-  );
-}
-
-function SandboxSecretsSectionBody(props: {
-  readonly summary: SandboxSummary;
-  readonly state: HostSandboxState | null;
-  readonly frozen: boolean;
-}): ReactNode {
   const { summary } = props;
+  const grants = useSandboxGrants(summary.hostId);
+  const grantsSummary = grants.data ?? null;
+  // A sandbox with no phase and no grant set has no secrets to speak of (a
+  // server or broker from before them): the section, and every live hook
+  // below it, stays unmounted.
+  if (summary.phase === null && grantsSummary === null) return null;
   const awake = props.state === "awake" && !props.frozen;
-  const events = useSandboxEgressEvents(awake ? summary.hostId : null);
-  const lines = sandboxCardEgressEventLines(events);
   return (
     <section
       className="flex flex-col gap-1.5"
@@ -424,54 +418,237 @@ function SandboxSecretsSectionBody(props: {
         state={props.state}
         frozen={props.frozen}
       />
+      <SandboxGrantsList
+        summary={grantsSummary}
+        routes={summary.routes}
+        failed={grants.isError}
+        refetching={grants.isFetching}
+        onRetry={() => void grants.refetch()}
+      />
+      {summary.phase === null ? null : (
+        <SandboxSecretsLive
+          // Events are one host's: a card re-pointed at another sandbox must
+          // not show the last one's.
+          key={summary.hostId}
+          hostId={summary.hostId}
+          awake={awake}
+          routeAddresses={sandboxRouteAddresses(grantsSummary)}
+        />
+      )}
+    </section>
+  );
+}
+
+/**
+ * What this sandbox may use: each secret, how it holds it, and for a brokered
+ * one each destination with its own first-use readiness. The broker's answer,
+ * joined with what the sandbox last reported per route.
+ */
+function SandboxGrantsList(props: {
+  readonly summary: SandboxGrantsSummary | null;
+  readonly routes: SandboxSummary["routes"];
+  readonly failed: boolean;
+  readonly refetching: boolean;
+  readonly onRetry: () => void;
+}): ReactNode {
+  const { summary } = props;
+  if (summary === null) {
+    if (!props.failed) return null;
+    return (
+      <div
+        className="flex flex-wrap items-center gap-2"
+        data-testid="sandbox-card-grants-failed"
+      >
+        <p className="text-ui-xs text-muted-foreground">
+          Couldn&apos;t load this sandbox&apos;s secrets.
+        </p>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          disabled={props.refetching}
+          data-testid="sandbox-card-grants-retry"
+          onClick={props.onRetry}
+        >
+          {props.refetching ? (
+            <AgentSpinningDots
+              className={undefined}
+              testId={undefined}
+              variant={undefined}
+            />
+          ) : null}
+          Retry
+        </Button>
+      </div>
+    );
+  }
+  const views = sandboxGrantViews(summary, props.routes);
+  return (
+    <div className="flex flex-col gap-1" data-testid="sandbox-card-grants">
+      {views.length === 0 ? (
+        <p className="text-ui-xs text-muted-foreground">
+          No secrets are granted to this sandbox.
+        </p>
+      ) : (
+        <ul className="flex flex-col gap-1">
+          {views.map((view) => (
+            <SandboxGrantRow key={view.secretName} view={view} />
+          ))}
+        </ul>
+      )}
+      {summary.github === null ? null : (
+        <p
+          className="text-ui-xs break-words text-muted-foreground"
+          data-testid="sandbox-card-github"
+        >
+          {sandboxGitHubLine(summary.github)}
+        </p>
+      )}
+    </div>
+  );
+}
+
+function SandboxGrantRow(props: {
+  readonly view: SandboxGrantView;
+}): ReactNode {
+  const { view } = props;
+  return (
+    <li
+      className="text-ui-xs leading-snug break-words"
+      data-testid="sandbox-card-grant"
+    >
+      <p>
+        <span className="font-medium">{view.secretName}</span>
+        <span
+          className={cn(
+            view.exposed ? "text-warning-foreground" : "text-muted-foreground",
+          )}
+        >
+          {" · "}
+          {view.modeLine}
+        </span>
+        {view.via === null ? null : (
+          <span className="text-muted-foreground">
+            {" · "}
+            {view.via}
+          </span>
+        )}
+        {view.source === null ? null : (
+          <span className="text-muted-foreground">
+            {" · "}
+            {view.source}
+          </span>
+        )}
+      </p>
+      {view.routes.length === 0 ? null : (
+        <ul className="flex flex-col pl-3">
+          {view.routes.map((route) => (
+            <li
+              key={route.route}
+              data-testid="sandbox-card-grant-route"
+              data-readiness={route.readiness ?? "unknown"}
+            >
+              <span>{route.address}</span>
+              {route.readinessText === null ? null : (
+                <span
+                  className={cn(
+                    route.readiness === "ready" && "text-success-foreground",
+                    route.readiness === "pending" && "text-muted-foreground",
+                    route.readiness === "unavailable" &&
+                      "text-warning-foreground",
+                  )}
+                >
+                  {" · "}
+                  {route.readinessText}
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </li>
+  );
+}
+
+/**
+ * The parts that talk to the sandbox host itself or only make sense once it
+ * brokers: its last typed egress events, the repair action, and the Docker
+ * note. The events stream opens only while the sandbox is awake, since a card
+ * on screen is never a reason to hold a connection to a sleeping one.
+ */
+function SandboxSecretsLive(props: {
+  readonly hostId: string;
+  readonly awake: boolean;
+  readonly routeAddresses: ReadonlyMap<string, string>;
+}): ReactNode {
+  const events = useSandboxEgressEvents(props.awake ? props.hostId : null);
+  const lines = sandboxCardEgressEventLines(events);
+  return (
+    <>
       {lines.length === 0 ? null : (
         <ul
           className="flex flex-col gap-1.5"
           data-testid="sandbox-card-egress-events"
         >
           {lines.map((line) => (
-            <SandboxEgressEventRow key={line.id} line={line} />
+            <SandboxEgressEventRow
+              key={line.id}
+              line={line}
+              address={
+                line.route === null
+                  ? null
+                  : (props.routeAddresses.get(line.route) ?? null)
+              }
+            />
           ))}
         </ul>
       )}
-      {awake ? <SandboxRepairAction hostId={summary.hostId} /> : null}
-      <details
-        className="text-ui-xs leading-snug text-muted-foreground"
-        data-testid="sandbox-card-docker-note"
-      >
-        <summary className="cursor-pointer">
-          Using secrets from a Docker container
-        </summary>
-        <ul className="mt-1 flex list-disc flex-col gap-1 pl-4">
-          <li>
-            curl and other proxy-aware clients: pass the proxy line,{" "}
-            <code>-e HTTPS_PROXY=http://&lt;bridge address&gt;:3128</code>.
-          </li>
-          <li>
-            Node 24 and later: the proxy line plus{" "}
-            <code>-e NODE_USE_ENV_PROXY=1</code>. Older Node ignores the proxy
-            line and is covered only by{" "}
-            <code>--add-host &lt;alias&gt;:&lt;bridge address&gt;</code> with{" "}
-            <code>NODE_EXTRA_CA_CERTS</code>.
-          </li>
-          <li>
-            A database, broker or other native destination:{" "}
-            <code>--add-host &lt;alias&gt;:&lt;bridge address&gt;</code> and
-            that destination&apos;s container port. The sandbox&apos;s egress
-            file prints the exact form for each one.
-          </li>
-          <li>
-            SSH: mount the sandbox&apos;s agent socket (
-            <code>$SSH_AUTH_SOCK</code>) into the container.
-          </li>
-        </ul>
-      </details>
-    </section>
+      {props.awake ? <SandboxRepairAction hostId={props.hostId} /> : null}
+      <SandboxDockerNote />
+    </>
+  );
+}
+
+function SandboxDockerNote(): ReactNode {
+  return (
+    <details
+      className="text-ui-xs leading-snug text-muted-foreground"
+      data-testid="sandbox-card-docker-note"
+    >
+      <summary className="cursor-pointer">
+        Using secrets from a Docker container
+      </summary>
+      <ul className="mt-1 flex list-disc flex-col gap-1 pl-4">
+        <li>
+          curl and other proxy-aware clients: pass the proxy line,{" "}
+          <code>-e HTTPS_PROXY=http://&lt;bridge address&gt;:3128</code>.
+        </li>
+        <li>
+          Node 24 and later: the proxy line plus{" "}
+          <code>-e NODE_USE_ENV_PROXY=1</code>. Older Node ignores the proxy
+          line and is covered only by{" "}
+          <code>--add-host &lt;alias&gt;:&lt;bridge address&gt;</code> with{" "}
+          <code>NODE_EXTRA_CA_CERTS</code>.
+        </li>
+        <li>
+          A database, broker or other native destination:{" "}
+          <code>--add-host &lt;alias&gt;:&lt;bridge address&gt;</code> and that
+          destination&apos;s container port. The sandbox&apos;s egress file
+          prints the exact form for each one.
+        </li>
+        <li>
+          SSH: mount the sandbox&apos;s agent socket (
+          <code>$SSH_AUTH_SOCK</code>) into the container.
+        </li>
+      </ul>
+    </details>
   );
 }
 
 function SandboxEgressEventRow(props: {
   readonly line: SandboxEgressEventLine;
+  /** Where the event's route leads, when the grants summary names it. */
+  readonly address: string | null;
 }): ReactNode {
   const { line } = props;
   const now = useSampledNow();
@@ -489,6 +666,7 @@ function SandboxEgressEventRow(props: {
       <p className="font-medium">{line.headline}</p>
       <p>{line.description}</p>
       <p className="text-muted-foreground">
+        {props.address === null ? null : `${props.address} · `}
         {formatRelativeTimestamp(line.at, now)}
         {line.reportedBySandbox ? " · reported by the sandbox" : null}
       </p>

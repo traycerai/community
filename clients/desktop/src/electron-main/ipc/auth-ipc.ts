@@ -23,6 +23,10 @@ import {
   listSandboxesViaHttp,
   runSandboxVerbViaHttp,
 } from "@traycer-clients/shared/host-client/sandbox-control";
+import {
+  decideSecretRequestViaHttp,
+  fetchSandboxGrantsViaHttp,
+} from "@traycer-clients/shared/host-client/sandbox-secrets";
 import { config } from "../../config";
 import type {
   DesktopAuthSessionSetResult,
@@ -37,6 +41,7 @@ import {
   parseMintHostCredentialRequest,
   parseSandboxCreateRequest,
   parseSandboxLifecycleVerb,
+  parseSecretRequestDecision,
   parseStoredAuthTokens,
   parseStoredCredentialsIdentity,
   parseTokenRotateExpected,
@@ -284,6 +289,38 @@ export function registerAuthIpc(bridge: RunnerIpcBridge): void {
         sandboxId,
         parseSandboxLifecycleVerb(verb),
         timeoutMs,
+      );
+    },
+  );
+
+  bridge.handleInvoke(
+    RunnerHostInvoke.getSandboxGrants,
+    async (_event, bearerToken: unknown, hostId: unknown) => {
+      assertString(bearerToken, "getSandboxGrants.bearerToken");
+      assertString(hostId, "getSandboxGrants.hostId");
+      return fetchSandboxGrantsViaHttp(
+        bridge.options.authnBaseUrl,
+        bearerToken,
+        hostId,
+      );
+    },
+  );
+
+  bridge.handleInvoke(
+    RunnerHostInvoke.decideSecretRequest,
+    async (
+      _event,
+      bearerToken: unknown,
+      requestId: unknown,
+      decision: unknown,
+    ) => {
+      assertString(bearerToken, "decideSecretRequest.bearerToken");
+      assertString(requestId, "decideSecretRequest.requestId");
+      return decideSecretRequestViaHttp(
+        bridge.options.authnBaseUrl,
+        bearerToken,
+        requestId,
+        parseSecretRequestDecision(decision),
       );
     },
   );

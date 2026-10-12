@@ -102,6 +102,11 @@ export type {
   SandboxVerbFetchResult,
 } from "@traycer-clients/shared/host-client/sandbox-control";
 export type {
+  SandboxGrantsFetchResult,
+  SecretRequestDecideFetchResult,
+} from "@traycer-clients/shared/host-client/sandbox-secrets";
+export type { SecretRequestDecision } from "@traycer/protocol/host/sandbox-secrets";
+export type {
   SandboxCreateRequest,
   SandboxLifecycleVerb,
 } from "@traycer/protocol/host/sandbox-control";

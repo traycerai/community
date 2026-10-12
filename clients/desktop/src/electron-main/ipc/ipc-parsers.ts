@@ -39,6 +39,10 @@ import type {
   SandboxCreateRequest,
   SandboxLifecycleVerb,
 } from "@traycer/protocol/host/sandbox-control";
+import {
+  SECRET_REQUEST_DECISIONS,
+  type SecretRequestDecision,
+} from "@traycer/protocol/host/sandbox-secrets";
 
 export function assertString(
   value: unknown,
@@ -572,6 +576,18 @@ function requirePositiveInteger(value: unknown, name: string): number {
     throw new Error(`${name} must be a positive integer`);
   }
   return value;
+}
+
+export function parseSecretRequestDecision(
+  value: unknown,
+): SecretRequestDecision {
+  const decision = SECRET_REQUEST_DECISIONS.find((known) => known === value);
+  if (decision === undefined) {
+    throw new Error(
+      'decideSecretRequest.decision must be "approve", "approve_default" or "decline"',
+    );
+  }
+  return decision;
 }
 
 export function parseSandboxLifecycleVerb(

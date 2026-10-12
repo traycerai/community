@@ -11,6 +11,13 @@ import {
   type SandboxListFetchResult,
   type SandboxVerbFetchResult,
 } from "../sandbox-control";
+import {
+  decideSecretRequestViaHttp,
+  fetchSandboxGrantsViaHttp,
+  type SandboxGrantsFetchResult,
+  type SecretRequestDecideFetchResult,
+} from "../sandbox-secrets";
+import type { SecretRequestDecision } from "@traycer/protocol/host/sandbox-secrets";
 import type {
   SandboxCreateRequest,
   SandboxLifecycleVerb,
@@ -646,6 +653,26 @@ export class MockRunnerHost implements IRunnerHost {
       sandboxId,
       verb,
       timeoutMs,
+    );
+  }
+
+  getSandboxGrants(
+    bearerToken: string,
+    hostId: string,
+  ): Promise<SandboxGrantsFetchResult> {
+    return fetchSandboxGrantsViaHttp(this.authnBaseUrl, bearerToken, hostId);
+  }
+
+  decideSecretRequest(
+    bearerToken: string,
+    requestId: string,
+    decision: SecretRequestDecision,
+  ): Promise<SecretRequestDecideFetchResult> {
+    return decideSecretRequestViaHttp(
+      this.authnBaseUrl,
+      bearerToken,
+      requestId,
+      decision,
     );
   }
 

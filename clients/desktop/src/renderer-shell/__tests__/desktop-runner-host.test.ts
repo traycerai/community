@@ -150,6 +150,14 @@ function buildFakeBridge(
       kind: "network-error" as const,
       detail: "test",
     }),
+    getSandboxGrants: async () => ({
+      kind: "network-error" as const,
+      detail: "test",
+    }),
+    decideSecretRequest: async () => ({
+      kind: "network-error" as const,
+      detail: "test",
+    }),
     tokenStore: ((): ITokenStore => {
       let stored: StoredCredentials | null = null;
       return {
@@ -882,6 +890,86 @@ describe("DesktopRunnerHost.runSandboxVerb", () => {
       "start",
       87_000,
     );
+  });
+});
+
+describe("DesktopRunnerHost.getSandboxGrants", () => {
+  it("hands the preload bridge the bearer and the host, and returns its answer", async () => {
+    const summary = { version: 2, grants: [], github: null };
+    const getSandboxGrants = vi.fn<DesktopPreloadBridge["getSandboxGrants"]>(
+      async () => ({ kind: "ok", summary }),
+    );
+    const host = new DesktopRunnerHost({
+      bridge: { ...buildFakeBridge(null).bridge, getSandboxGrants },
+      signInUrl: "https://auth.example.invalid/sign-in",
+    });
+
+    await expect(host.getSandboxGrants("bearer-1", "host-1")).resolves.toEqual({
+      kind: "ok",
+      summary,
+    });
+
+    expect(getSandboxGrants).toHaveBeenCalledTimes(1);
+    expect(getSandboxGrants).toHaveBeenCalledWith("bearer-1", "host-1");
+  });
+
+  it("returns a failure the bridge reports unchanged", async () => {
+    const getSandboxGrants = vi.fn<DesktopPreloadBridge["getSandboxGrants"]>(
+      async () => ({ kind: "not-found" }),
+    );
+    const host = new DesktopRunnerHost({
+      bridge: { ...buildFakeBridge(null).bridge, getSandboxGrants },
+      signInUrl: "https://auth.example.invalid/sign-in",
+    });
+
+    await expect(host.getSandboxGrants("bearer-1", "host-1")).resolves.toEqual({
+      kind: "not-found",
+    });
+  });
+});
+
+describe("DesktopRunnerHost.decideSecretRequest", () => {
+  it("hands the preload bridge the bearer, the request and the decision, and returns its answer", async () => {
+    const decideSecretRequest = vi.fn<
+      DesktopPreloadBridge["decideSecretRequest"]
+    >(async () => ({ kind: "ok", status: "approved_default" }));
+    const host = new DesktopRunnerHost({
+      bridge: { ...buildFakeBridge(null).bridge, decideSecretRequest },
+      signInUrl: "https://auth.example.invalid/sign-in",
+    });
+
+    await expect(
+      host.decideSecretRequest("bearer-1", "req-1", "approve_default"),
+    ).resolves.toEqual({ kind: "ok", status: "approved_default" });
+
+    expect(decideSecretRequest).toHaveBeenCalledTimes(1);
+    expect(decideSecretRequest).toHaveBeenCalledWith(
+      "bearer-1",
+      "req-1",
+      "approve_default",
+    );
+  });
+
+  it("returns a conflict the bridge reports unchanged", async () => {
+    const decideSecretRequest = vi.fn<
+      DesktopPreloadBridge["decideSecretRequest"]
+    >(async () => ({
+      kind: "conflict",
+      status: "pending",
+      code: "secret_required",
+    }));
+    const host = new DesktopRunnerHost({
+      bridge: { ...buildFakeBridge(null).bridge, decideSecretRequest },
+      signInUrl: "https://auth.example.invalid/sign-in",
+    });
+
+    await expect(
+      host.decideSecretRequest("bearer-1", "req-1", "approve"),
+    ).resolves.toEqual({
+      kind: "conflict",
+      status: "pending",
+      code: "secret_required",
+    });
   });
 });
 

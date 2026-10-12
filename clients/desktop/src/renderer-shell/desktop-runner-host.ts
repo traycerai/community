@@ -146,6 +146,11 @@ import {
   type SandboxVerbFetchResult,
 } from "@traycer-clients/shared/host-client/sandbox-control";
 import type {
+  SandboxGrantsFetchResult,
+  SecretRequestDecideFetchResult,
+} from "@traycer-clients/shared/host-client/sandbox-secrets";
+import type { SecretRequestDecision } from "@traycer/protocol/host/sandbox-secrets";
+import type {
   SandboxCreateRequest,
   SandboxLifecycleVerb,
 } from "@traycer/protocol/host/sandbox-control";
@@ -231,6 +236,15 @@ export interface DesktopPreloadBridge {
     verb: SandboxLifecycleVerb,
     timeoutMs: number,
   ): Promise<SandboxVerbFetchResult>;
+  getSandboxGrants(
+    bearerToken: string,
+    hostId: string,
+  ): Promise<SandboxGrantsFetchResult>;
+  decideSecretRequest(
+    bearerToken: string,
+    requestId: string,
+    decision: SecretRequestDecision,
+  ): Promise<SecretRequestDecideFetchResult>;
   // Credentials-file token store (tech plan §3): an IPC client of the main
   // `FileTokenStore`. Replaces the renderer-local encrypt-storage token slots.
   tokenStore: ITokenStore;
@@ -1159,6 +1173,21 @@ export class DesktopRunnerHost implements IRunnerHost {
     timeoutMs: number,
   ): Promise<SandboxVerbFetchResult> {
     return this.bridge.runSandboxVerb(bearerToken, sandboxId, verb, timeoutMs);
+  }
+
+  getSandboxGrants(
+    bearerToken: string,
+    hostId: string,
+  ): Promise<SandboxGrantsFetchResult> {
+    return this.bridge.getSandboxGrants(bearerToken, hostId);
+  }
+
+  decideSecretRequest(
+    bearerToken: string,
+    requestId: string,
+    decision: SecretRequestDecision,
+  ): Promise<SecretRequestDecideFetchResult> {
+    return this.bridge.decideSecretRequest(bearerToken, requestId, decision);
   }
 
   beginAuthAttempt(): void {

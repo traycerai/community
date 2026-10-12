@@ -41,6 +41,26 @@ export const sandboxQueryKeys = {
     "sandbox-catalogue",
     "missing",
   ],
+  // The broker's grants summary for one sandbox host. Not under
+  // `registeredHostsAll`: it is a read of authn's grant set, refreshed on
+  // focus and after a grant decision, never on the directory's liveness tick.
+  grants: (
+    authService: object,
+    userId: string | null,
+    hostId: string,
+  ): readonly unknown[] => [
+    "auth",
+    "sandbox-grants",
+    authService,
+    userId,
+    hostId,
+  ],
+  grantsAll: (): readonly unknown[] => ["auth", "sandbox-grants"],
+  grantsMissing: (): readonly unknown[] => [
+    "auth",
+    "sandbox-grants",
+    "missing",
+  ],
 };
 
 export const sandboxMutationKeys = {
@@ -55,6 +75,9 @@ export const sandboxMutationKeys = {
   verb: (sandboxId: string) => ["auth", "sandbox", "verb", sandboxId] as const,
   // Per HOST: the tab open that wakes it knows the host, not the sandbox id.
   wake: (hostId: string) => ["auth", "sandbox", "wake", hostId] as const,
+  // Per request, so two approval cards never share a pending state.
+  decideSecretRequest: (requestId: string) =>
+    ["auth", "sandbox", "secret-request", "decide", requestId] as const,
   // A host RPC, not a control-plane call: the sandbox host repairs itself.
   repairGuestConfiguration: () =>
     ["host.sandbox.repairGuestConfiguration"] as const,

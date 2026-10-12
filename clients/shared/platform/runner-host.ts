@@ -34,6 +34,11 @@ import type {
   SandboxVerbFetchResult,
 } from "../host-client/sandbox-control";
 import type {
+  SandboxGrantsFetchResult,
+  SecretRequestDecideFetchResult,
+} from "../host-client/sandbox-secrets";
+import type { SecretRequestDecision } from "@traycer/protocol/host/sandbox-secrets";
+import type {
   SandboxCreateRequest,
   SandboxLifecycleVerb,
 } from "@traycer/protocol/host/sandbox-control";
@@ -385,6 +390,20 @@ export interface IRunnerHost {
     verb: SandboxLifecycleVerb,
     timeoutMs: number,
   ): Promise<SandboxVerbFetchResult>;
+  /**
+   * The secrets broker (authn), with the user's bearer: the grants one
+   * sandbox host holds, and the answer to an agent's grant request. See
+   * `host-client/sandbox-secrets.ts`.
+   */
+  getSandboxGrants(
+    bearerToken: string,
+    hostId: string,
+  ): Promise<SandboxGrantsFetchResult>;
+  decideSecretRequest(
+    bearerToken: string,
+    requestId: string,
+    decision: SecretRequestDecision,
+  ): Promise<SecretRequestDecideFetchResult>;
 
   openExternalLink(url: string): Promise<void>;
 

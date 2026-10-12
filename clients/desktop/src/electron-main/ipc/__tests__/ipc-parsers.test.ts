@@ -3,6 +3,7 @@ import {
   parseQuitDecision,
   parseSandboxCreateRequest,
   parseSandboxLifecycleVerb,
+  parseSecretRequestDecision,
 } from "../ipc-parsers";
 
 vi.mock("../../app/logger", () => ({
@@ -63,6 +64,39 @@ describe("parseSandboxLifecycleVerb", () => {
     ]) {
       expect(() => parseSandboxLifecycleVerb(bad)).toThrow(
         'runSandboxVerb.verb must be "suspend", "resume", "stop" or "start"',
+      );
+    }
+  });
+});
+
+// The renderer's `decideSecretRequest` crosses IPC as `unknown`, and the
+// decision goes into the body of a write the broker acts on: the parser is the
+// whole guard between a renderer value and that body.
+describe("parseSecretRequestDecision", () => {
+  it("accepts exactly the three decisions", () => {
+    for (const decision of ["approve", "approve_default", "decline"] as const) {
+      expect(parseSecretRequestDecision(decision)).toBe(decision);
+    }
+  });
+
+  it("throws on anything else, naming the field", () => {
+    for (const bad of [
+      "approved",
+      "Approve",
+      " approve",
+      "approve ",
+      "approve-default",
+      "deny",
+      "",
+      undefined,
+      null,
+      42,
+      true,
+      ["approve"],
+      { decision: "approve" },
+    ]) {
+      expect(() => parseSecretRequestDecision(bad)).toThrow(
+        'decideSecretRequest.decision must be "approve", "approve_default" or "decline"',
       );
     }
   });

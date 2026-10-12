@@ -11,6 +11,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { HOST_SANDBOX_STATES } from "@traycer/protocol/host/host-status";
 import type { HostListItem } from "@traycer/protocol/host/host-status";
 import type { SandboxEgressEvent } from "@traycer/protocol/host/sandbox-egress";
+import type {
+  SandboxGrant,
+  SandboxGrantsSummary,
+} from "@traycer/protocol/host/sandbox-secrets";
 import { hostListItemToDirectoryEntry } from "@traycer-clients/shared/host-client/remote-fetcher";
 import type {
   SandboxCatalogue,
@@ -45,6 +49,12 @@ const mocks = vi.hoisted(() => ({
   useSupportsMethod: vi.fn<(hostId: string | null, method: string) => void>(),
   repairPending: false,
   repairMutate: vi.fn<(variables: object, options: object) => void>(),
+  /** What `useSandboxGrants` returns; the hook spy records its argument. */
+  grantsData: undefined as SandboxGrantsSummary | null | undefined,
+  grantsError: false,
+  grantsFetching: false,
+  grantsRefetch: vi.fn<() => void>(),
+  useGrants: vi.fn<(hostId: string | null) => void>(),
 }));
 
 vi.mock("sonner", () => ({
@@ -70,6 +80,17 @@ vi.mock("@/hooks/sandboxes/use-sandbox-egress-events", () => ({
   useSandboxEgressEvents: (hostId: string | null) => {
     mocks.useEgressEvents(hostId);
     return mocks.egressEvents;
+  },
+}));
+vi.mock("@/hooks/sandboxes/use-sandbox-grants-query", () => ({
+  useSandboxGrants: (hostId: string | null) => {
+    mocks.useGrants(hostId);
+    return {
+      data: mocks.grantsData,
+      isError: mocks.grantsError,
+      isFetching: mocks.grantsFetching,
+      refetch: mocks.grantsRefetch,
+    };
   },
 }));
 vi.mock("@/hooks/host/use-host-supports-method", () => ({
@@ -168,6 +189,11 @@ beforeEach(() => {
   mocks.egressEvents = [];
   mocks.supportsMethod = false;
   mocks.repairPending = false;
+  mocks.grantsData = undefined;
+  mocks.grantsError = false;
+  mocks.grantsFetching = false;
+  mocks.grantsRefetch.mockClear();
+  mocks.useGrants.mockClear();
   mocks.useEgressEvents.mockClear();
   mocks.useSupportsMethod.mockClear();
   mocks.repairMutate.mockClear();
@@ -985,5 +1011,277 @@ describe("<SandboxCard /> secrets section", () => {
       ).toBe(true);
       expect(screen.getByTestId("sandbox-card-repair-spinner")).toBeTruthy();
     });
+  });
+});
+
+describe("<SandboxCard /> grants list", () => {
+  function grantOf(overrides: Partial<SandboxGrant>): SandboxGrant {
+    return {
+      secretName: "PROD_DB",
+      kind: "password",
+      protocol: "postgres",
+      mode: "brokered",
+      source: "approved",
+      connectorName: null,
+      routes: [{ route: "route-1", destination: "db.internal", port: 5432 }],
+      ...overrides,
+    };
+  }
+
+  function grantsOf(
+    grants: readonly SandboxGrant[],
+    github: SandboxGrantsSummary["github"],
+  ): SandboxGrantsSummary {
+    return { version: 3, grants, github };
+  }
+
+  it("asks the broker about the summary's host", () => {
+    mocks.grantsData = grantsOf([], null);
+
+    renderCard(sandboxOf("awake", false, { phase: "ready" }));
+
+    expect(mocks.useGrants).toHaveBeenLastCalledWith("host-sbx-1");
+  });
+
+  it("lists each grant with its routes and their readiness", () => {
+    mocks.grantsData = grantsOf(
+      [
+        grantOf({}),
+        grantOf({
+          secretName: "CACHE_KEY",
+          protocol: "redis",
+          routes: [
+            { route: "route-2", destination: "cache.internal", port: 6379 },
+            { route: "route-3", destination: "cache-2.internal", port: null },
+          ],
+        }),
+      ],
+      null,
+    );
+
+    renderCard(
+      sandboxOf("awake", false, {
+        phase: "ready",
+        routes: [
+          { route: "route-1", state: "ready", code: null },
+          { route: "route-2", state: "pending", code: null },
+          { route: "route-3", state: "unavailable", code: "connector_offline" },
+        ],
+      }),
+    );
+
+    const list = screen.getByTestId("sandbox-card-grants");
+    const grants = within(list).getAllByTestId("sandbox-card-grant");
+    expect(grants).toHaveLength(2);
+    expect(grants[0].textContent).toContain("PROD_DB");
+    expect(grants[0].textContent).toContain("postgres · brokered");
+    expect(grants[0].textContent).toContain("approved for this sandbox");
+    const routes = within(list).getAllByTestId("sandbox-card-grant-route");
+    expect(routes.map((route) => route.getAttribute("data-readiness"))).toEqual(
+      ["ready", "pending", "unavailable"],
+    );
+    expect(routes[0].textContent).toContain("db.internal:5432");
+    expect(routes[0].textContent).toContain("ready");
+    expect(routes[1].textContent).toContain("not used yet");
+    expect(routes[2].textContent).toContain("cache-2.internal");
+    expect(routes[2].textContent).toContain("Connector is offline");
+  });
+
+  it("marks a route the sandbox has not reported as unknown", () => {
+    mocks.grantsData = grantsOf([grantOf({})], null);
+
+    renderCard(sandboxOf("awake", false, { phase: "ready", routes: null }));
+
+    const route = screen.getByTestId("sandbox-card-grant-route");
+    expect(route.getAttribute("data-readiness")).toBe("unknown");
+    expect(route.textContent).toBe("db.internal:5432");
+  });
+
+  it("shows an exposed grant without routes", () => {
+    mocks.grantsData = grantsOf(
+      [
+        grantOf({
+          secretName: "API_TOKEN",
+          mode: "exposed",
+          protocol: "https",
+          routes: [],
+        }),
+      ],
+      null,
+    );
+
+    renderCard(sandboxOf("awake", false, { phase: "ready" }));
+
+    const grant = screen.getByTestId("sandbox-card-grant");
+    expect(grant.textContent).toContain("API_TOKEN");
+    expect(grant.textContent).toContain(
+      "https · exposed, readable on the sandbox",
+    );
+    expect(within(grant).queryByTestId("sandbox-card-grant-route")).toBeNull();
+  });
+
+  it("names the connector a grant goes through", () => {
+    mocks.grantsData = grantsOf(
+      [grantOf({ connectorName: "office-vpc" })],
+      null,
+    );
+
+    renderCard(sandboxOf("awake", false, { phase: "ready" }));
+
+    expect(screen.getByTestId("sandbox-card-grant").textContent).toContain(
+      "through connector office-vpc",
+    );
+  });
+
+  it("says no secrets are granted for an empty grant set", () => {
+    mocks.grantsData = grantsOf([], null);
+
+    renderCard(sandboxOf("awake", false, { phase: "ready" }));
+
+    expect(screen.getByTestId("sandbox-card-grants").textContent).toContain(
+      "No secrets are granted to this sandbox.",
+    );
+    expect(screen.queryByTestId("sandbox-card-grant")).toBeNull();
+  });
+
+  it("shows the GitHub line when the broker reports GitHub access", () => {
+    mocks.grantsData = grantsOf([], {
+      linked: true,
+      installations: [
+        { account: "traycerai", repositorySelection: "selected" },
+      ],
+    });
+
+    renderCard(sandboxOf("awake", false, { phase: "ready" }));
+
+    expect(screen.getByTestId("sandbox-card-github").textContent).toBe(
+      "GitHub: traycerai (selected repositories)",
+    );
+  });
+
+  it("shows no GitHub line when the broker does not report it", () => {
+    mocks.grantsData = grantsOf([grantOf({})], null);
+
+    renderCard(sandboxOf("awake", false, { phase: "ready" }));
+
+    expect(screen.queryByTestId("sandbox-card-github")).toBeNull();
+  });
+
+  it("shows the grants for a suspended sandbox too", () => {
+    mocks.grantsData = grantsOf([grantOf({})], null);
+
+    renderCard(sandboxOf("suspended", false, { phase: "ready" }));
+
+    expect(screen.getByTestId("sandbox-card-grant")).toBeTruthy();
+  });
+
+  it("shows the list and no live parts when the sandbox reports no phase", () => {
+    mocks.supportsMethod = true;
+    mocks.grantsData = grantsOf([grantOf({})], null);
+
+    renderCard(sandboxOf("awake", false, { phase: null }));
+
+    expect(screen.getByTestId("sandbox-card-secrets")).toBeTruthy();
+    expect(screen.getByTestId("sandbox-card-grant")).toBeTruthy();
+    expect(mocks.useEgressEvents).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("sandbox-card-repair")).toBeNull();
+    expect(screen.queryByTestId("sandbox-card-docker-note")).toBeNull();
+  });
+
+  it("shows no secrets section with no phase and no grants answer", () => {
+    mocks.grantsData = undefined;
+    renderCard(sandboxOf("awake", false, { phase: null }));
+    expect(screen.queryByTestId("sandbox-card-secrets")).toBeNull();
+    cleanup();
+
+    mocks.grantsData = null;
+    renderCard(sandboxOf("awake", false, { phase: null }));
+    expect(screen.queryByTestId("sandbox-card-secrets")).toBeNull();
+  });
+
+  it("shows nothing for the grants while the first answer is pending", () => {
+    mocks.grantsData = undefined;
+
+    renderCard(sandboxOf("awake", false, { phase: "ready" }));
+
+    expect(screen.getByTestId("sandbox-card-secrets")).toBeTruthy();
+    expect(screen.queryByTestId("sandbox-card-grants")).toBeNull();
+    expect(screen.queryByTestId("sandbox-card-grants-failed")).toBeNull();
+  });
+
+  it("says the grants could not be loaded and retries through refetch", () => {
+    mocks.grantsError = true;
+
+    renderCard(sandboxOf("awake", false, { phase: "ready" }));
+
+    expect(screen.queryByTestId("sandbox-card-grants")).toBeNull();
+    expect(
+      screen.getByTestId("sandbox-card-grants-failed").textContent,
+    ).toContain("Couldn't load this sandbox's secrets.");
+    fireEvent.click(screen.getByTestId("sandbox-card-grants-retry"));
+    expect(mocks.grantsRefetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("disables the retry while a refetch is in flight", () => {
+    mocks.grantsError = true;
+    mocks.grantsFetching = true;
+
+    renderCard(sandboxOf("awake", false, { phase: "ready" }));
+
+    expect(
+      screen.getByTestId("sandbox-card-grants-retry").hasAttribute("disabled"),
+    ).toBe(true);
+  });
+
+  it("keeps the last good list through a failed refetch", () => {
+    mocks.grantsData = grantsOf([grantOf({})], null);
+    mocks.grantsError = true;
+
+    renderCard(sandboxOf("awake", false, { phase: "ready" }));
+
+    expect(screen.getByTestId("sandbox-card-grant")).toBeTruthy();
+    expect(screen.queryByTestId("sandbox-card-grants-failed")).toBeNull();
+  });
+
+  it("shows an egress event's route address when the grants summary names the route", () => {
+    mocks.grantsData = grantsOf([grantOf({})], null);
+    mocks.egressEvents = [
+      {
+        kind: "egress.teardown",
+        id: "ev-teardown",
+        at: new Date(2026, 9, 1, 12).getTime(),
+        emitter: "gateway",
+        untrusted: false,
+        route: "route-1",
+        reason: "revoke",
+      },
+    ];
+
+    renderCard(sandboxOf("awake", false, { phase: "ready" }));
+
+    expect(
+      screen.getByTestId("sandbox-card-egress-event").textContent,
+    ).toContain("db.internal:5432 · ");
+  });
+
+  it("shows no address for an event whose route the summary does not name", () => {
+    mocks.grantsData = grantsOf([grantOf({ routes: [] })], null);
+    mocks.egressEvents = [
+      {
+        kind: "egress.teardown",
+        id: "ev-teardown",
+        at: new Date(2026, 9, 1, 12).getTime(),
+        emitter: "gateway",
+        untrusted: false,
+        route: "route-1",
+        reason: "revoke",
+      },
+    ];
+
+    renderCard(sandboxOf("awake", false, { phase: "ready" }));
+
+    expect(
+      screen.getByTestId("sandbox-card-egress-event").textContent,
+    ).not.toContain("db.internal");
   });
 });

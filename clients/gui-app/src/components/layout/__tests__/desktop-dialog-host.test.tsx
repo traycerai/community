@@ -345,6 +345,9 @@ function createBaseRunnerHost(): IRunnerHost {
     createSandbox: () => Promise.resolve({ kind: "unauthorized" as const }),
     destroySandbox: () => Promise.resolve({ kind: "unauthorized" as const }),
     runSandboxVerb: () => Promise.resolve({ kind: "unauthorized" as const }),
+    getSandboxGrants: () => Promise.resolve({ kind: "unauthorized" as const }),
+    decideSecretRequest: () =>
+      Promise.resolve({ kind: "unauthorized" as const }),
     openExternalLink: () => Promise.resolve(),
     getRegisteredUrlSchemes: () => Promise.resolve([]),
     requestMicrophoneAccess: () => Promise.resolve("granted" as const),

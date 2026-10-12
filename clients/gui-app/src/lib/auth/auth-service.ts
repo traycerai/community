@@ -46,6 +46,11 @@ import type {
   SandboxVerbFetchResult,
 } from "@traycer-clients/shared/host-client/sandbox-control";
 import type {
+  SandboxGrantsFetchResult,
+  SecretRequestDecideFetchResult,
+} from "@traycer-clients/shared/host-client/sandbox-secrets";
+import type { SecretRequestDecision } from "@traycer/protocol/host/sandbox-secrets";
+import type {
   SandboxCreateRequest,
   SandboxLifecycleVerb,
 } from "@traycer/protocol/host/sandbox-control";
@@ -3006,6 +3011,31 @@ export class AuthService {
       return { kind: "unauthorized" };
     }
     return this.runnerHost.runSandboxVerb(bearer, sandboxId, verb, timeoutMs);
+  }
+
+  /**
+   * The secrets one sandbox host may use, from the broker (authn). No
+   * `sandboxControlRefusal` here: the broker is authn, which every build
+   * reaches, and a build with no sandboxes simply never asks.
+   */
+  async getSandboxGrants(hostId: string): Promise<SandboxGrantsFetchResult> {
+    const bearer = this.cloudBearer();
+    if (bearer === null) {
+      return { kind: "unauthorized" };
+    }
+    return this.runnerHost.getSandboxGrants(bearer, hostId);
+  }
+
+  /** The user's answer to an agent's grant request. */
+  async decideSecretRequest(
+    requestId: string,
+    decision: SecretRequestDecision,
+  ): Promise<SecretRequestDecideFetchResult> {
+    const bearer = this.cloudBearer();
+    if (bearer === null) {
+      return { kind: "unauthorized" };
+    }
+    return this.runnerHost.decideSecretRequest(bearer, requestId, decision);
   }
 
   private async revalidateCurrentContextOnce(

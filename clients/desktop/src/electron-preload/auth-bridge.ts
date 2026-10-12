@@ -18,9 +18,12 @@ import type {
   SandboxCostsFetchResult,
   SandboxCreateFetchResult,
   SandboxCreateRequest,
+  SandboxGrantsFetchResult,
   SandboxLifecycleVerb,
   SandboxListFetchResult,
   SandboxVerbFetchResult,
+  SecretRequestDecideFetchResult,
+  SecretRequestDecision,
   UpdateHostVersionPolicyFetchResult,
   UpdateHostVersionPolicyInput,
 } from "../ipc-contracts/host-types";
@@ -131,6 +134,15 @@ export interface AuthBridgeSurface {
     verb: SandboxLifecycleVerb,
     timeoutMs: number,
   ): Promise<SandboxVerbFetchResult>;
+  getSandboxGrants(
+    bearerToken: string,
+    hostId: string,
+  ): Promise<SandboxGrantsFetchResult>;
+  decideSecretRequest(
+    bearerToken: string,
+    requestId: string,
+    decision: SecretRequestDecision,
+  ): Promise<SecretRequestDecideFetchResult>;
   beginAuthAttempt(): void;
   onAuthCallback(handler: Listener<void>): Disposable;
 }
@@ -244,6 +256,21 @@ export function buildAuthBridge(): AuthBridgeSurface {
         verb,
         timeoutMs,
       ) as Promise<SandboxVerbFetchResult>,
+
+    getSandboxGrants: (bearerToken, hostId) =>
+      ipcRenderer.invoke(
+        RunnerHostInvoke.getSandboxGrants,
+        bearerToken,
+        hostId,
+      ) as Promise<SandboxGrantsFetchResult>,
+
+    decideSecretRequest: (bearerToken, requestId, decision) =>
+      ipcRenderer.invoke(
+        RunnerHostInvoke.decideSecretRequest,
+        bearerToken,
+        requestId,
+        decision,
+      ) as Promise<SecretRequestDecideFetchResult>,
 
     // Desktop does not dedupe browser-return signals on URL identity, so the
     // attempt-boundary hook is a renderer-local no-op. It still exists to

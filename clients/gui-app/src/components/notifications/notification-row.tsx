@@ -23,6 +23,7 @@ import {
 } from "@/components/notifications/notification-indicator-tones";
 import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
 import { SecretExportNoticeLine } from "@/components/notifications/secret-export-notice-line";
+import { SecretGrantRequestCard } from "@/components/notifications/secret-grant-request-card";
 import type { HostDirectoryEntry } from "@traycer-clients/shared/host-client/host-directory";
 import {
   hostUnavailability,
@@ -306,9 +307,10 @@ export function NotificationRow(props: NotificationRowProps): ReactNode {
 }
 
 /**
- * An export row carries more than a title and a body: what was minted and
- * until when it works. The line sits UNDER the row's main area and never
- * inside it, because that area is one button when the row is navigable.
+ * A secrets row carries more than a title and a body: a grant request's
+ * details and its three answers, or an export's expiry. They sit UNDER the
+ * row's main area and never inside it, because that area is one button when
+ * the row is navigable and the answers are buttons of their own.
  *
  * Every other row gets its main area back untouched, with no wrapper.
  */
@@ -317,13 +319,18 @@ function NotificationRowWithSecrets(props: {
   readonly children: ReactNode;
 }): ReactNode {
   const secrets = props.row.secrets ?? null;
-  if (secrets === null || secrets.kind !== "export-minted") {
-    return props.children;
-  }
+  if (secrets === null) return props.children;
   return (
     <div className="flex min-w-0 flex-1 flex-col gap-1.5">
       {props.children}
-      <SecretExportNoticeLine detail={secrets} />
+      {secrets.kind === "grant-request" ? (
+        <SecretGrantRequestCard
+          detail={secrets}
+          resolved={props.row.resolvedAt !== null}
+        />
+      ) : (
+        <SecretExportNoticeLine detail={secrets} />
+      )}
     </div>
   );
 }
