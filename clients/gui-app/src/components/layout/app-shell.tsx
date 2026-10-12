@@ -24,7 +24,6 @@ import { useHostSessionConnectivity } from "@/lib/host/session-connectivity";
 import { StatusBarKeybindingBridge } from "@/components/layout/status-bar/status-bar-keybinding-bridge";
 import { ClockSkewBanner } from "@/components/layout/clock-skew-banner";
 import { useMobileHistorySwipes } from "@/components/layout/shell/use-mobile-history-swipes";
-import { useStatusBarTapScrollToTop } from "@/components/layout/shell/use-status-bar-tap-scroll-to-top";
 import { useSystemBack } from "@/components/layout/shell/use-system-back";
 import { AppStatusBar } from "@/components/layout/status-bar/app-status-bar";
 import { MobileAppStatusBar } from "@/components/layout/status-bar/mobile-app-status-bar";
@@ -96,9 +95,6 @@ function AppShellBody(props: AppShellProps) {
   // history through the same `goBack`. Self-gated on the shell capability, so
   // every other shell attaches nothing.
   useSystemBack();
-  // The iOS status-bar tap scrolls whatever is in front back to its top.
-  // Self-gated on the shell capability, like the back request above.
-  useStatusBarTapScrollToTop();
   // Read ONCE, here, and handed both to the strip that renders it and to the
   // surfaces that defer to it. `useHostSessionConnectivity` builds a store per
   // call - its own poll timer and its own latched episode - so a second reader
