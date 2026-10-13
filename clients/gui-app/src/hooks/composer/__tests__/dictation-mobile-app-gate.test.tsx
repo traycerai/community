@@ -14,7 +14,7 @@
  * host stream) and the host RPC transport are faked.
  */
 import type { RefObject } from "react";
-import { cleanup, renderHook } from "@testing-library/react";
+import { act, cleanup, renderHook } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -109,6 +109,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.useRealTimers();
   cleanup();
   vi.clearAllMocks();
   setMobileApp(false);
@@ -162,6 +163,21 @@ describe("dictation on other builds", () => {
     // A ready model is never re-ensured: ensure is the download. #2471 made
     // a focused composer re-send it every four minutes to keep the host's
     // 1.2 GB recogniser loaded, and that is what this guards against.
+    expect(host.ensureModel).not.toHaveBeenCalled();
+  });
+
+  it("never re-ensures a ready model while the composer and the window are focused", () => {
+    setMobileApp(false);
+    vi.useFakeTimers();
+    renderComposerDictation();
+    // #2471 warmed on a window focus and then every four minutes; neither
+    // may send anything now.
+    act(() => {
+      window.dispatchEvent(new Event("focus"));
+    });
+    act(() => {
+      vi.advanceTimersByTime(3 * 4 * 60_000);
+    });
     expect(host.ensureModel).not.toHaveBeenCalled();
   });
 });
