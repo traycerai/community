@@ -2371,9 +2371,9 @@ describe("epic sidebar selection mode", () => {
     fireEvent.click(dropdownItem("delete-spec-root"));
     const dialog = await screen.findByTestId("confirm-destructive-dialog");
 
-    expect(
-      within(dialog).getByTestId("confirm-cascade-meta").textContent,
-    ).toBe("This will also delete 1 ticket nested under it.");
+    expect(within(dialog).getByTestId("confirm-cascade-meta").textContent).toBe(
+      "This will also delete 1 ticket nested under it.",
+    );
   });
 
   it("keeps artifact add inline and exposes ellipsis actions on right-click", async () => {
