@@ -51,17 +51,26 @@ vi.mock("../../../host/pid-metadata", () => ({
 
 const runCommandMock = vi.hoisted(() => ({
   impl: null as
-    ((command: string, args: readonly string[]) => Promise<unknown>) | null,
+    | ((
+        command: string,
+        args: readonly string[],
+        options: RunOptions,
+      ) => Promise<unknown>)
+    | null,
 }));
 vi.mock("../../process-runner", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../process-runner")>();
   return {
     ...actual,
-    runCommand: async (command: string, args: readonly string[]) => {
+    runCommand: async (
+      command: string,
+      args: readonly string[],
+      options: RunOptions,
+    ) => {
       if (runCommandMock.impl === null) {
         throw new Error("runCommand called without a configured mock impl");
       }
-      return runCommandMock.impl(command, args);
+      return runCommandMock.impl(command, args, options);
     },
   };
 });
@@ -73,8 +82,12 @@ afterAll(async () => {
 });
 
 import { createWindowsController } from "../windows";
-import { ProcessRunError, ProcessTimeoutError } from "../../process-runner";
-import { serviceLabelFor } from "../../label";
+import {
+  ProcessRunError,
+  ProcessTimeoutError,
+  type RunOptions,
+} from "../../process-runner";
+import { serviceLabelFor, windowsTaskName } from "../../label";
 
 const label = serviceLabelFor("production");
 
@@ -179,24 +192,37 @@ describe("statusService disambiguates schtasks /Query failures", () => {
       }
     });
 
-    function schtasksFailsInSpanish(probeExitCode: number): void {
-      runCommandMock.impl = async (command) => {
+    function localizedQueryError(stderr: string): ProcessRunError {
+      return new ProcessRunError(
+        `schtasks /Query /TN ai.traycer.host exited with code 1: ${stderr.trim()}`,
+        "schtasks",
+        ["/Query", "/TN", "ai.traycer.host"],
+        1,
+        "",
+        stderr,
+      );
+    }
+
+    // Answers the schtasks query with `stderr` and the PowerShell absence probe
+    // with `probe`; records every PowerShell spawn.
+    function answer(
+      stderr: string,
+      probe: { exitCode: number } | { throws: Error },
+    ): { readonly probeEnvs: NodeJS.ProcessEnv[] } {
+      const probeEnvs: NodeJS.ProcessEnv[] = [];
+      runCommandMock.impl = async (command, _args, options) => {
         if (command === "powershell") {
-          return { exitCode: probeExitCode, stdout: "", stderr: "" };
+          probeEnvs.push({ ...options.env });
+          if ("throws" in probe) throw probe.throws;
+          return { exitCode: probe.exitCode, stdout: "", stderr: "" };
         }
-        throw new ProcessRunError(
-          `schtasks /Query /TN ai.traycer.host exited with code 1: ${SPANISH_STDERR.trim()}`,
-          "schtasks",
-          ["/Query", "/TN", "ai.traycer.host"],
-          1,
-          "",
-          SPANISH_STDERR,
-        );
+        throw localizedQueryError(stderr);
       };
+      return { probeEnvs };
     }
 
     it("(v) Task Scheduler proving the task absent resolves 'not-installed' instead of throwing", async () => {
-      schtasksFailsInSpanish(2);
+      const { probeEnvs } = answer(SPANISH_STDERR, { exitCode: 2 });
       const controller = createWindowsController(null, { now: () => 0 });
 
       await expect(controller.status(label)).resolves.toEqual({
@@ -205,13 +231,49 @@ describe("statusService disambiguates schtasks /Query failures", () => {
         listenUrl: null,
         pid: null,
       });
+      // The probe is told which task to look for, by the same name the query
+      // used.
+      expect(probeEnvs).toHaveLength(1);
+      expect(probeEnvs[0]?.TRAYCER_TASK_NAME).toBe(windowsTaskName(label));
     });
 
     it("(vi) a probe that cannot prove absence still rejects, so a failed query is never read as not-installed", async () => {
-      schtasksFailsInSpanish(4);
+      answer(SPANISH_STDERR, { exitCode: 4 });
       const controller = createWindowsController(null, { now: () => 0 });
 
       await expect(controller.status(label)).rejects.toThrow();
+    });
+
+    it("(vii) a probe that finds the task (exit 0) rejects: the query failed for another reason", async () => {
+      answer(SPANISH_STDERR, { exitCode: 0 });
+      const controller = createWindowsController(null, { now: () => 0 });
+
+      await expect(controller.status(label)).rejects.toThrow();
+    });
+
+    it("(viii) a probe that cannot be spawned rejects with the query's own failure", async () => {
+      answer(SPANISH_STDERR, { throws: new Error("spawn powershell ENOENT") });
+      const controller = createWindowsController(null, { now: () => 0 });
+
+      await expect(controller.status(label)).rejects.toBeInstanceOf(
+        ProcessRunError,
+      );
+    });
+
+    it("(ix) English text naming the missing task is answered without spawning the probe", async () => {
+      const { probeEnvs } = answer(
+        "ERROR: The system cannot find the file specified.\r\n",
+        { exitCode: 4 },
+      );
+      const controller = createWindowsController(null, { now: () => 0 });
+
+      await expect(controller.status(label)).resolves.toEqual({
+        state: "not-installed",
+        version: null,
+        listenUrl: null,
+        pid: null,
+      });
+      expect(probeEnvs).toHaveLength(0);
     });
   });
 });
