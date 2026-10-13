@@ -2,6 +2,7 @@ import type { SandboxRouteReadiness } from "@traycer/protocol/host/sandbox-contr
 import {
   SANDBOX_GRANT_MODE_BROKERED,
   SANDBOX_GRANT_MODE_EXPOSED,
+  SANDBOX_ROUTE_UNREADY_CONNECTOR_OFFLINE,
   type SandboxGitHubAccess,
   type SandboxGrant,
   type SandboxGrantsSummary,
@@ -58,13 +59,30 @@ function addressOf(destination: string, port: number | null): string {
   return port === null ? destination : `${destination}:${port}`;
 }
 
+function unreadyText(grant: SandboxGrant, unready: string): string {
+  if (unready !== SANDBOX_ROUTE_UNREADY_CONNECTOR_OFFLINE) return "unavailable";
+  return grant.connectorName === null
+    ? "connector offline"
+    : `connector ${grant.connectorName} offline`;
+}
+
 function routeView(
   grant: SandboxGrant,
   route: SandboxGrant["routes"][number],
   readinessByRoute: ReadonlyMap<string, SandboxRouteReadiness>,
 ): SandboxGrantRouteView {
-  const reported = readinessByRoute.get(route.route) ?? null;
   const address = addressOf(route.destination, route.port);
+  // What the broker knows comes first: a route it says cannot be used is not
+  // ready, whatever the sandbox last reported for it.
+  if (route.unready !== null) {
+    return {
+      route: route.route,
+      address,
+      readiness: "unavailable",
+      readinessText: unreadyText(grant, route.unready),
+    };
+  }
+  const reported = readinessByRoute.get(route.route) ?? null;
   if (reported === null) {
     return {
       route: route.route,

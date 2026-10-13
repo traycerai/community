@@ -51,7 +51,14 @@ const SUMMARY: SandboxGrantsSummary = {
       mode: "brokered",
       source: "approved",
       connectorName: null,
-      routes: [{ route: "route-1", destination: "db.example.com", port: 3306 }],
+      routes: [
+        {
+          route: "route-1",
+          destination: "db.example.com",
+          port: 3306,
+          unready: null,
+        },
+      ],
     },
   ],
   github: { linked: true, installations: [] },

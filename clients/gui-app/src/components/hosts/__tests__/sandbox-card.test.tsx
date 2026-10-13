@@ -1057,7 +1057,14 @@ describe("<SandboxCard /> grants list", () => {
       mode: "brokered",
       source: "approved",
       connectorName: null,
-      routes: [{ route: "route-1", destination: "db.internal", port: 5432 }],
+      routes: [
+        {
+          route: "route-1",
+          destination: "db.internal",
+          port: 5432,
+          unready: null,
+        },
+      ],
       ...overrides,
     };
   }
@@ -1085,8 +1092,18 @@ describe("<SandboxCard /> grants list", () => {
           secretName: "CACHE_KEY",
           protocol: "redis",
           routes: [
-            { route: "route-2", destination: "cache.internal", port: 6379 },
-            { route: "route-3", destination: "cache-2.internal", port: null },
+            {
+              route: "route-2",
+              destination: "cache.internal",
+              port: 6379,
+              unready: null,
+            },
+            {
+              route: "route-3",
+              destination: "cache-2.internal",
+              port: null,
+              unready: null,
+            },
           ],
         }),
       ],
@@ -1119,6 +1136,56 @@ describe("<SandboxCard /> grants list", () => {
     expect(routes[1].textContent).toContain("not used yet");
     expect(routes[2].textContent).toContain("cache-2.internal");
     expect(routes[2].textContent).toContain("Connector is offline");
+  });
+
+  it("shows a route whose connector the broker reports offline, by the connector's name", () => {
+    mocks.grantsData = grantsOf(
+      [
+        grantOf({
+          connectorName: "office-vpc",
+          routes: [
+            {
+              route: "route-1",
+              destination: "db.internal",
+              port: 5432,
+              unready: "connector_offline",
+            },
+          ],
+        }),
+      ],
+      null,
+    );
+
+    // The sandbox's own last report says ready; the broker's word wins.
+    renderCard(
+      sandboxOf("awake", false, {
+        phase: "ready",
+        routes: [{ route: "route-1", state: "ready", code: null }],
+      }),
+    );
+
+    const route = screen.getByTestId("sandbox-card-grant-route");
+    expect(route.getAttribute("data-readiness")).toBe("unavailable");
+    expect(route.textContent).toContain("db.internal:5432");
+    expect(route.textContent).toContain("connector office-vpc offline");
+  });
+
+  it("shows no offline state once the broker reports the route usable again", () => {
+    mocks.grantsData = grantsOf(
+      [grantOf({ connectorName: "office-vpc" })],
+      null,
+    );
+
+    renderCard(
+      sandboxOf("awake", false, {
+        phase: "ready",
+        routes: [{ route: "route-1", state: "ready", code: null }],
+      }),
+    );
+
+    const route = screen.getByTestId("sandbox-card-grant-route");
+    expect(route.getAttribute("data-readiness")).toBe("ready");
+    expect(route.textContent).not.toContain("offline");
   });
 
   it("marks a route the sandbox has not reported as unknown", () => {

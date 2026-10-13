@@ -31,7 +31,17 @@ export interface SandboxGrantRoute {
   readonly route: string;
   readonly destination: string;
   readonly port: number | null;
+  /**
+   * Why the broker knows this route cannot be used right now, or `null` when
+   * it knows of nothing: {@link SANDBOX_ROUTE_UNREADY_CONNECTOR_OFFLINE} while
+   * the route's private connector is not answering. Any other word is a
+   * reason a newer broker names; the route is still one that cannot be used.
+   */
+  readonly unready: string | null;
 }
+
+/** The route's private connector is offline. */
+export const SANDBOX_ROUTE_UNREADY_CONNECTOR_OFFLINE = "connector_offline";
 
 export const sandboxGrantRouteSchema: z.ZodType<SandboxGrantRoute> = lazySchema(
   () =>
@@ -39,6 +49,7 @@ export const sandboxGrantRouteSchema: z.ZodType<SandboxGrantRoute> = lazySchema(
       route: z.string().min(1),
       destination: z.string().min(1),
       port: z.number().int().positive().nullable().default(null),
+      unready: z.string().min(1).nullable().default(null),
     }),
 );
 

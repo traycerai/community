@@ -30,7 +30,12 @@ const SUMMARY_RESULT: SandboxGrantsFetchResult = {
         source: "approved",
         connectorName: null,
         routes: [
-          { route: "route-1", destination: "db.example.com", port: 3306 },
+          {
+            route: "route-1",
+            destination: "db.example.com",
+            port: 3306,
+            unready: null,
+          },
         ],
       },
     ],

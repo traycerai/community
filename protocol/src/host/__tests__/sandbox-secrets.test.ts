@@ -7,6 +7,7 @@ import {
   SECRET_REQUEST_STATUSES,
   SECRET_REQUEST_STATUS_OF_DECISION,
   sandboxGrantRouteSchema,
+  SANDBOX_ROUTE_UNREADY_CONNECTOR_OFFLINE,
   sandboxGrantSchema,
   sandboxGrantsSummarySchema,
   secretRequestDecideBodySchema,
@@ -16,6 +17,7 @@ const ROUTE = {
   route: "route-1",
   destination: "db.example.com",
   port: 3306,
+  unready: null,
 };
 
 const BROKERED_GRANT = {
@@ -249,6 +251,27 @@ describe("sandboxGrantRouteSchema", () => {
         port: null,
       }).port,
     ).toBeNull();
+  });
+
+  it("defaults a missing unready to null, and keeps the broker's word when it sends one", () => {
+    expect(
+      sandboxGrantRouteSchema.parse({ route: "r", destination: "d" }).unready,
+    ).toBeNull();
+    expect(
+      sandboxGrantRouteSchema.parse({
+        ...ROUTE,
+        unready: SANDBOX_ROUTE_UNREADY_CONNECTOR_OFFLINE,
+      }).unready,
+    ).toBe("connector_offline");
+    // A reason a newer broker names still parses: the route is shown as one
+    // that cannot be used, not dropped with the whole summary.
+    expect(
+      sandboxGrantRouteSchema.parse({ ...ROUTE, unready: "future_reason" })
+        .unready,
+    ).toBe("future_reason");
+    expect(
+      sandboxGrantRouteSchema.safeParse({ ...ROUTE, unready: "" }).success,
+    ).toBe(false);
   });
 
   it("rejects an empty route or destination", () => {

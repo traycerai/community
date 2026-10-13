@@ -19,7 +19,14 @@ function grant(overrides: Partial<SandboxGrant>): SandboxGrant {
     mode: "brokered",
     source: "approved",
     connectorName: null,
-    routes: [{ route: "route-1", destination: "db.internal", port: 5432 }],
+    routes: [
+      {
+        route: "route-1",
+        destination: "db.internal",
+        port: 5432,
+        unready: null,
+      },
+    ],
     ...overrides,
   };
 }
@@ -99,6 +106,117 @@ describe("sandboxGrantViews", () => {
     });
   });
 
+  it("says a route's connector is offline, by name, when the broker says so", () => {
+    const [view] = sandboxGrantViews(
+      summary([
+        grant({
+          connectorName: "office-vpc",
+          routes: [
+            {
+              route: "route-1",
+              destination: "db.internal",
+              port: 5432,
+              unready: "connector_offline",
+            },
+          ],
+        }),
+      ]),
+      [],
+    );
+    expect(view.routes[0]).toEqual({
+      route: "route-1",
+      address: "db.internal:5432",
+      readiness: "unavailable",
+      readinessText: "connector office-vpc offline",
+    });
+  });
+
+  it("puts the broker's word ahead of what the sandbox last reported", () => {
+    const offline = grant({
+      connectorName: "office-vpc",
+      routes: [
+        {
+          route: "route-1",
+          destination: "db.internal",
+          port: 5432,
+          unready: "connector_offline",
+        },
+      ],
+    });
+    const [stale] = sandboxGrantViews(summary([offline]), [
+      readiness("route-1", "ready", null),
+    ]);
+    expect(stale.routes[0]).toMatchObject({
+      readiness: "unavailable",
+      readinessText: "connector office-vpc offline",
+    });
+
+    // Cleared at the broker: the same route reads the sandbox's report again.
+    const [cleared] = sandboxGrantViews(
+      summary([
+        grant({
+          connectorName: "office-vpc",
+          routes: [
+            {
+              route: "route-1",
+              destination: "db.internal",
+              port: 5432,
+              unready: null,
+            },
+          ],
+        }),
+      ]),
+      [readiness("route-1", "ready", null)],
+    );
+    expect(cleared.routes[0]).toMatchObject({
+      readiness: "ready",
+      readinessText: "ready",
+    });
+  });
+
+  it("shows an unready route without a connector name, or with a reason it does not know, as unusable", () => {
+    const [unnamed] = sandboxGrantViews(
+      summary([
+        grant({
+          routes: [
+            {
+              route: "route-1",
+              destination: "db.internal",
+              port: 5432,
+              unready: "connector_offline",
+            },
+          ],
+        }),
+      ]),
+      [],
+    );
+    expect(unnamed.routes[0]).toMatchObject({
+      readiness: "unavailable",
+      readinessText: "connector offline",
+    });
+
+    const [unknown] = sandboxGrantViews(
+      summary([
+        grant({
+          connectorName: "office-vpc",
+          routes: [
+            {
+              route: "route-1",
+              destination: "db.internal",
+              port: 5432,
+              unready: "future_reason",
+            },
+          ],
+        }),
+      ]),
+      [readiness("route-1", "ready", null)],
+    );
+    expect(unknown.routes[0]).toMatchObject({
+      readiness: "unavailable",
+      readinessText: "unavailable",
+    });
+  });
+
   it("shows no state for a route the sandbox has not reported", () => {
     const [view] = sandboxGrantViews(summary([grant({})]), [
       readiness("another-route", "ready", null),
@@ -116,8 +234,18 @@ describe("sandboxGrantViews", () => {
       summary([
         grant({
           routes: [
-            { route: "route-1", destination: "db.internal", port: 5432 },
-            { route: "route-2", destination: "cache.internal", port: null },
+            {
+              route: "route-1",
+              destination: "db.internal",
+              port: 5432,
+              unready: null,
+            },
+            {
+              route: "route-2",
+              destination: "cache.internal",
+              port: null,
+              unready: null,
+            },
           ],
         }),
       ]),
@@ -135,7 +263,12 @@ describe("sandboxGrantViews", () => {
       summary([
         grant({
           routes: [
-            { route: "route-2", destination: "api.example.com", port: null },
+            {
+              route: "route-2",
+              destination: "api.example.com",
+              port: null,
+              unready: null,
+            },
           ],
         }),
       ]),
@@ -207,7 +340,12 @@ describe("sandboxGrantViews", () => {
         grant({
           secretName: "B",
           routes: [
-            { route: "route-2", destination: "cache.internal", port: 6379 },
+            {
+              route: "route-2",
+              destination: "cache.internal",
+              port: 6379,
+              unready: null,
+            },
           ],
         }),
       ]),
@@ -233,8 +371,18 @@ describe("sandboxRouteAddresses", () => {
         grant({}),
         grant({
           routes: [
-            { route: "route-2", destination: "api.example.com", port: null },
-            { route: "route-3", destination: "cache.internal", port: 6379 },
+            {
+              route: "route-2",
+              destination: "api.example.com",
+              port: null,
+              unready: null,
+            },
+            {
+              route: "route-3",
+              destination: "cache.internal",
+              port: 6379,
+              unready: null,
+            },
           ],
         }),
         grant({ mode: "exposed", routes: [] }),
