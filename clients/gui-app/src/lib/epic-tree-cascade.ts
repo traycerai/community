@@ -147,7 +147,9 @@ export function countDirectAgentChildren(
  * instead of the cascade sentence an artifact row gets from
  * `formatCascadeSummary`.
  */
-export function formatAgentDeleteNesting(nestedAgentCount: number): string | null {
+export function formatAgentDeleteNesting(
+  nestedAgentCount: number,
+): string | null {
   if (nestedAgentCount <= 0) return null;
   return `${nestedAgentCount} ${nestedAgentCount === 1 ? "agent" : "agents"} nested under it will be kept and moved to the top level.`;
 }
