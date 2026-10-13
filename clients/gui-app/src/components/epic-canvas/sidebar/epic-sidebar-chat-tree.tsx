@@ -52,7 +52,7 @@ import {
 } from "@/lib/artifacts/node-display";
 import {
   computeDescendantCountsFromTree,
-  formatCascadeSummary,
+  formatAgentDeleteNesting,
 } from "@/lib/epic-tree-cascade";
 import { useOpenEpicHandle } from "@/providers/use-open-epic-handle";
 import { cn } from "@/lib/utils";
@@ -1987,7 +1987,7 @@ const ChatNode = memo(function ChatNode(props: ChatNodeProps) {
   if (node === null) return null;
   if (!treeFilter(node.type)) return null;
 
-  const cascadeSummary = formatCascadeSummary(cascadeCounts);
+  const nestingNote = formatAgentDeleteNesting(cascadeCounts);
   const rowClick = (event: React.MouseEvent<HTMLButtonElement>) => {
     if (selectionMode || event.ctrlKey || event.metaKey) {
       event.preventDefault();
@@ -2043,7 +2043,7 @@ const ChatNode = memo(function ChatNode(props: ChatNodeProps) {
       onPerformDelete={performDelete}
       confirmDeleteOpen={confirmDeleteOpen}
       onConfirmDeleteOpenChange={setConfirmDeleteOpen}
-      cascadeSummary={cascadeSummary}
+      nestingNote={nestingNote}
       deletePending={deletePending}
       onConfirmDelete={confirmDelete}
       archive={archiveRow}
@@ -2093,7 +2093,7 @@ interface ChatNodeShellProps {
   readonly onPerformDelete: () => void;
   readonly confirmDeleteOpen: boolean;
   readonly onConfirmDeleteOpenChange: (open: boolean) => void;
-  readonly cascadeSummary: string | null;
+  readonly nestingNote: string | null;
   readonly deletePending: boolean;
   readonly onConfirmDelete: () => void;
   readonly archive: ChatRowArchiveInputs;
@@ -2194,7 +2194,7 @@ function ChatNodeShellBody(
     onPerformDelete,
     confirmDeleteOpen,
     onConfirmDeleteOpenChange,
-    cascadeSummary,
+    nestingNote,
     deletePending,
     onConfirmDelete,
     archive: archiveRow,
@@ -2368,8 +2368,12 @@ function ChatNodeShellBody(
         open={confirmDeleteOpen}
         onOpenChange={onConfirmDeleteOpenChange}
         title={`Delete ${EPIC_NODE_SENTENCE_NOUNS[artifactType]} "${nodeName}"?`}
-        description="This action cannot be undone."
-        cascadeSummary={cascadeSummary}
+        description={
+          nestingNote === null
+            ? "This action cannot be undone."
+            : `This action cannot be undone. ${nestingNote}`
+        }
+        cascadeSummary={null}
         actionLabel="Delete"
         isPending={deletePending}
         onConfirm={onConfirmDelete}

@@ -119,3 +119,19 @@ export function formatCascadeSummary(counts: DescendantCounts): string | null {
   if (parts.length === 2) return `${parts[0]} and ${parts[1]}`;
   return `${parts.slice(0, -1).join(", ")}, and ${parts[parts.length - 1]}`;
 }
+
+/**
+ * Sentence for an AGENT row's delete dialog, or null when it has no nested
+ * agents. Deleting an agent removes that one record only: its nested agents
+ * are kept and the tree draws them at the top level, so the dialog says that
+ * instead of the cascade sentence an artifact row gets from
+ * `formatCascadeSummary`. Artifacts never nest under agents, so only the two
+ * agent kinds are counted.
+ */
+export function formatAgentDeleteNesting(
+  counts: DescendantCounts,
+): string | null {
+  const n = counts.chat + counts["terminal-agent"];
+  if (n <= 0) return null;
+  return `${n} ${n === 1 ? "agent" : "agents"} nested under it will be kept and moved to the top level.`;
+}

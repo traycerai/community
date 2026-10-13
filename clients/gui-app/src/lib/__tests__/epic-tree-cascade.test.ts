@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   computeDescendantCounts,
   computeDescendantCountsFromTree,
+  formatAgentDeleteNesting,
   formatCascadeSummary,
   type DescendantCounts,
 } from "@/lib/epic-tree-cascade";
@@ -294,5 +295,29 @@ describe("formatCascadeSummary", () => {
       "terminal-agent": 0,
     };
     expect(formatCascadeSummary(counts)).toBe("2 stories");
+  });
+});
+
+describe("formatAgentDeleteNesting", () => {
+  const none: DescendantCounts = {
+    spec: 0,
+    ticket: 0,
+    story: 0,
+    review: 0,
+    chat: 0,
+    "terminal-agent": 0,
+  };
+
+  it("returns null when the agent has no nested agents", () => {
+    expect(formatAgentDeleteNesting(none)).toBeNull();
+  });
+
+  it("says nested agents are kept and moved to the top level", () => {
+    expect(formatAgentDeleteNesting({ ...none, chat: 1 })).toBe(
+      "1 agent nested under it will be kept and moved to the top level.",
+    );
+    expect(
+      formatAgentDeleteNesting({ ...none, chat: 2, "terminal-agent": 1 }),
+    ).toBe("3 agents nested under it will be kept and moved to the top level.");
   });
 });

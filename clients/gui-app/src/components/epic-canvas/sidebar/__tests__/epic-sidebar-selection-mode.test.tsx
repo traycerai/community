@@ -2241,6 +2241,50 @@ describe("epic sidebar selection mode", () => {
     });
   });
 
+  it("does not say deleting an agent deletes the agents nested under it", async () => {
+    // Deleting an agent removes that one record; its nested agents are kept
+    // and drawn at the top level (orphan promotion in `projectTreeSlice`), so
+    // the confirm dialog must not claim otherwise.
+    seedChatTree();
+
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
+
+    fireEvent.click(dropdownItem("delete-chat-root"));
+    const dialog = await screen.findByTestId("confirm-destructive-dialog");
+
+    expect(within(dialog).queryByTestId("confirm-cascade-meta")).toBeNull();
+    expect(dialog.textContent).not.toContain("also delete");
+    expect(dialog.textContent).toContain(
+      "1 agent nested under it will be kept and moved to the top level.",
+    );
+  });
+
+  it("says nothing about nested agents when a deleted agent has none", async () => {
+    seedChatTree();
+
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
+
+    fireEvent.click(dropdownItem("delete-agent-root"));
+    const dialog = await screen.findByTestId("confirm-destructive-dialog");
+
+    expect(within(dialog).queryByTestId("confirm-cascade-meta")).toBeNull();
+    expect(dialog.textContent).not.toContain("nested under it");
+  });
+
+  it("still says deleting an artifact deletes the artifacts nested under it", async () => {
+    seedArtifactTree();
+    testState.activePanelId = "artifacts";
+
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
+
+    fireEvent.click(dropdownItem("delete-spec-root"));
+    const dialog = await screen.findByTestId("confirm-destructive-dialog");
+
+    expect(
+      within(dialog).getByTestId("confirm-cascade-meta").textContent,
+    ).toBe("This will also delete 1 ticket nested under it.");
+  });
+
   it("keeps artifact add inline and exposes ellipsis actions on right-click", async () => {
     seedArtifactTree();
     testState.activePanelId = "artifacts";
