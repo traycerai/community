@@ -1710,7 +1710,10 @@ function SidebarBulkDeleteController(props: {
         pendingDeleteIds,
         recordById,
       )}
-      description={describeSidebarBulkDeleteDescription(pendingDeleteIds)}
+      description={describeSidebarBulkDeleteDescription(
+        panelId,
+        pendingDeleteIds,
+      )}
       cascadeSummary={null}
       actionLabel="Delete"
       isPending={deletePending}
@@ -1879,9 +1882,13 @@ function panelRowNoun(panelId: LeftPanelId, count: number): string {
 }
 
 function describeSidebarBulkDeleteDescription(
+  panelId: LeftPanelId,
   ids: readonly string[] | null,
 ): string {
   if (ids === null || ids.length < 2) return "This action cannot be undone.";
+  // Deleting an agent keeps the agents nested under it, so only artifacts
+  // carry the warning.
+  if (panelId === "chats") return "This action cannot be undone.";
   return "This action cannot be undone. Nested items under selected rows may also be deleted.";
 }
 

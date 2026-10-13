@@ -121,17 +121,33 @@ export function formatCascadeSummary(counts: DescendantCounts): string | null {
 }
 
 /**
+ * How many agents are DIRECT children of `nodeId`: the ones that move to the
+ * top level when it is deleted. Grandchildren are not counted - they stay under
+ * their own, kept, parent. Artifacts never nest under agents, so only the two
+ * agent kinds count.
+ */
+export function countDirectAgentChildren(
+  tree: TreeSlice,
+  nodeId: string,
+): number {
+  if (!Object.hasOwn(tree.childrenByParent, nodeId)) return 0;
+  let count = 0;
+  for (const childId of tree.childrenByParent[nodeId]) {
+    if (!Object.hasOwn(tree.nodeById, childId)) continue;
+    const { type } = tree.nodeById[childId];
+    if (type === "chat" || type === "terminal-agent") count += 1;
+  }
+  return count;
+}
+
+/**
  * Sentence for an AGENT row's delete dialog, or null when it has no nested
- * agents. Deleting an agent removes that one record only: its nested agents
+ * agents. Deleting an agent removes that one record only: its direct children
  * are kept and the tree draws them at the top level, so the dialog says that
  * instead of the cascade sentence an artifact row gets from
- * `formatCascadeSummary`. Artifacts never nest under agents, so only the two
- * agent kinds are counted.
+ * `formatCascadeSummary`.
  */
-export function formatAgentDeleteNesting(
-  counts: DescendantCounts,
-): string | null {
-  const n = counts.chat + counts["terminal-agent"];
-  if (n <= 0) return null;
-  return `${n} ${n === 1 ? "agent" : "agents"} nested under it will be kept and moved to the top level.`;
+export function formatAgentDeleteNesting(nestedAgentCount: number): string | null {
+  if (nestedAgentCount <= 0) return null;
+  return `${nestedAgentCount} ${nestedAgentCount === 1 ? "agent" : "agents"} nested under it will be kept and moved to the top level.`;
 }

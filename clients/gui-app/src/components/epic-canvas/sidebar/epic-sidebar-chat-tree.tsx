@@ -51,7 +51,7 @@ import {
   type EpicNodeKind,
 } from "@/lib/artifacts/node-display";
 import {
-  computeDescendantCountsFromTree,
+  countDirectAgentChildren,
   formatAgentDeleteNesting,
 } from "@/lib/epic-tree-cascade";
 import { useOpenEpicHandle } from "@/providers/use-open-epic-handle";
@@ -1615,8 +1615,9 @@ const ChatNode = memo(function ChatNode(props: ChatNodeProps) {
   const renameTerminalAgent = useEpicRenameTuiAgent();
   const renameArtifactInTab = useEpicCanvasStore((s) => s.renameArtifactInTab);
 
-  // The cascade-delete summary, subscribed to its ANSWER rather than to the
-  // record list it is computed from.
+  // How many agents sit directly under this row (they move to the top level
+  // when it is deleted), subscribed to its ANSWER rather than to the record
+  // list it is computed from.
   //
   // `useEpicArtifactRecords()` hands back an array whose identity moves whenever
   // ANY record in the epic changes - a body write, a chat token, a timestamp
@@ -1625,18 +1626,11 @@ const ChatNode = memo(function ChatNode(props: ChatNodeProps) {
   // bursted): 40 of 40 re-rendered per burst, bystanders included. `memo` is no
   // defence, because this is the row's OWN subscription rather than a prop.
   //
-  // The tree walk is the same counts by a different route: `childrenByParent`
-  // and `nodeById` are the normalised structure this sidebar already renders, so
-  // it agrees with what the user sees. `useShallow` is required rather than
-  // decorative - the selector returns a fresh object per call, and without it
-  // `useSyncExternalStore` sees a change on every notification and loops.
-  //
-  // The artifact row was moved to exactly this in `d1cb1b3a`; this row is the
-  // same defect in the second copy of it.
-  const cascadeCounts = useEpicStore(
-    useShallow((state: OpenEpicState) =>
-      computeDescendantCountsFromTree(state.tree, nodeId),
-    ),
+  // `childrenByParent` and `nodeById` are the normalised structure this sidebar
+  // already renders, so the count agrees with what the user sees. The selector
+  // returns a number, so it needs no `useShallow`.
+  const nestedAgentCount = useEpicStore((state: OpenEpicState) =>
+    countDirectAgentChildren(state.tree, nodeId),
   );
 
   const expanded = expandedIds.has(nodeId);
@@ -1987,7 +1981,7 @@ const ChatNode = memo(function ChatNode(props: ChatNodeProps) {
   if (node === null) return null;
   if (!treeFilter(node.type)) return null;
 
-  const nestingNote = formatAgentDeleteNesting(cascadeCounts);
+  const nestingNote = formatAgentDeleteNesting(nestedAgentCount);
   const rowClick = (event: React.MouseEvent<HTMLButtonElement>) => {
     if (selectionMode || event.ctrlKey || event.metaKey) {
       event.preventDefault();
