@@ -2,7 +2,15 @@ import { mkdtempSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, describe, expect, it, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 
 // `statusService` (`windows.ts:~520-535`) runs
 // `runCommand("schtasks", ["/Query","/TN",task], {tolerateNonZeroExit: false})`
@@ -43,8 +51,7 @@ vi.mock("../../../host/pid-metadata", () => ({
 
 const runCommandMock = vi.hoisted(() => ({
   impl: null as
-    | ((command: string, args: readonly string[]) => Promise<unknown>)
-    | null,
+    ((command: string, args: readonly string[]) => Promise<unknown>) | null,
 }));
 vi.mock("../../process-runner", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../../process-runner")>();
@@ -150,6 +157,61 @@ describe("statusService disambiguates schtasks /Query failures", () => {
       version: null,
       listenUrl: null,
       pid: null,
+    });
+  });
+
+  describe("on a non-English Windows, where schtasks words a missing task in the system's language", () => {
+    const originalPlatform = Object.getOwnPropertyDescriptor(
+      process,
+      "platform",
+    );
+    const SPANISH_STDERR =
+      "ERROR: El sistema no puede encontrar el archivo especificado.\r\n";
+
+    beforeEach(() => {
+      // The task-scheduler probe is Windows-only.
+      Object.defineProperty(process, "platform", { value: "win32" });
+    });
+
+    afterEach(() => {
+      if (originalPlatform !== undefined) {
+        Object.defineProperty(process, "platform", originalPlatform);
+      }
+    });
+
+    function schtasksFailsInSpanish(probeExitCode: number): void {
+      runCommandMock.impl = async (command) => {
+        if (command === "powershell") {
+          return { exitCode: probeExitCode, stdout: "", stderr: "" };
+        }
+        throw new ProcessRunError(
+          `schtasks /Query /TN ai.traycer.host exited with code 1: ${SPANISH_STDERR.trim()}`,
+          "schtasks",
+          ["/Query", "/TN", "ai.traycer.host"],
+          1,
+          "",
+          SPANISH_STDERR,
+        );
+      };
+    }
+
+    it("(v) Task Scheduler proving the task absent resolves 'not-installed' instead of throwing", async () => {
+      schtasksFailsInSpanish(2);
+      const controller = createWindowsController(null, { now: () => 0 });
+
+      await expect(controller.status(label)).resolves.toEqual({
+        state: "not-installed",
+        version: null,
+        listenUrl: null,
+        pid: null,
+      });
+    });
+
+    it("(vi) a probe that cannot prove absence still rejects, so a failed query is never read as not-installed", async () => {
+      schtasksFailsInSpanish(4);
+      const controller = createWindowsController(null, { now: () => 0 });
+
+      await expect(controller.status(label)).rejects.toThrow();
     });
   });
 });
