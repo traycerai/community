@@ -153,11 +153,15 @@ describe("dictation on other builds", () => {
     expect(host.ensureModel).not.toHaveBeenCalled();
   });
 
-  it("still offers the mic and the hotkey", () => {
+  it("still offers the mic and the hotkey, and sends no ensure for a model that is ready", () => {
     setMobileApp(false);
     const { result } = renderComposerDictation();
     expect(result.current.dictationControl).not.toBeNull();
     pressDictationChord();
     expect(recorder.start).toHaveBeenCalledTimes(1);
+    // A ready model is never re-ensured: ensure is the download. #2471 made
+    // a focused composer re-send it every four minutes to keep the host's
+    // 1.2 GB recogniser loaded, and that is what this guards against.
+    expect(host.ensureModel).not.toHaveBeenCalled();
   });
 });
