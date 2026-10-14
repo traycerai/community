@@ -199,6 +199,38 @@ describe("chat-tab-persistence-key", () => {
 });
 
 describe("ticket 15 dual-key scroll cache", () => {
+  it.each([null, 2])(
+    "follows latest when a saved free scroll has no anchor (index %s)",
+    (anchorIndex) => {
+      const id = chatIdIdentity("missing-anchor");
+      const messages = makeMessages(3);
+      saveChatTabState({
+        identity: id,
+        mode: "free-scrolling",
+        anchorMessageId: null,
+        anchorIndex,
+        offset: 48,
+      });
+
+      // A saved free scroll without an anchor names no row to restore to, and
+      // the list would mount at scroll 0 (the top). Following the latest is the
+      // only fallback that leaves the reader at the conversation they left.
+      const followingLatest = {
+        mode: "following-end",
+        anchorMessageId: null,
+        anchorIndex: null,
+        offset: 0,
+      };
+      expect(
+        restoreChatTabState(
+          id,
+          messages.map((message) => message.id),
+        ),
+      ).toEqual(followingLatest);
+      expect(restoreChatTabState(id, [])).toEqual(followingLatest);
+    },
+  );
+
   it("RESTORE-FIRST: saved following-end and free-scrolling both round-trip (tab-key)", () => {
     const messages = makeMessages(6);
     const id = chatIdIdentity("pane-a");

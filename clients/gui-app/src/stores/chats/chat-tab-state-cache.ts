@@ -68,6 +68,12 @@ export function restoreChatTabState(
 ): SavedChatTabScrollState {
   const saved = peekSavedChatTabState(identity);
   if (saved === null) return DEFAULT_CHAT_TAB_SCROLL_STATE;
+  // A free scroll saved without an anchor names no row to restore to, and the
+  // list would mount at scroll 0, the top of the transcript, with no follow
+  // permission to correct it. Following the latest is the fallback.
+  if (saved.mode === "free-scrolling" && saved.anchorMessageId === null) {
+    return DEFAULT_CHAT_TAB_SCROLL_STATE;
+  }
   if (saved.anchorMessageId === null) return saved;
   if (rowKeys.includes(saved.anchorMessageId)) {
     return saved;
