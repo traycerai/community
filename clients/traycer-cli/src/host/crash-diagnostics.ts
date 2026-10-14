@@ -120,9 +120,42 @@ const WINDOWS_EXIT_MEANINGS: ReadonlyMap<number, string> = new Map([
   ],
   [0xc0000005, "STATUS_ACCESS_VIOLATION (native crash)"],
   [0xc0000142, "STATUS_DLL_INIT_FAILED (spawn during session shutdown)"],
-  [0x40010004, "DBG_TERMINATE_PROCESS (session teardown kill)"],
+  [
+    0x40010004,
+    "DBG_TERMINATE_PROCESS (terminated from outside, most often the session ending)",
+  ],
+  [
+    0xc000026b,
+    "STATUS_DLL_INIT_FAILED_LOGOFF (spawn during logoff or shutdown)",
+  ],
   [0xc00000fd, "STATUS_STACK_OVERFLOW"],
 ]);
+
+/**
+ * The Windows exit status that is a session ending by its own name: a relaunch
+ * attempted while the window station is closing
+ * (`STATUS_DLL_INIT_FAILED_LOGOFF`). Not a defect of the host, and not
+ * reported as a crash.
+ */
+const WINDOWS_SESSION_END_EXIT_CODES: ReadonlySet<number> = new Set([
+  0xc000026b,
+]);
+
+/** Whether a Windows exit status is the session ending rather than a crash. */
+export function isWindowsSessionEndExit(code: number): boolean {
+  return WINDOWS_SESSION_END_EXIT_CODES.has(code >>> 0);
+}
+
+/**
+ * `DBG_TERMINATE_PROCESS`: the child was ended from outside. Most often the
+ * user's session ending, but any caller of `TerminateProcess` (a security
+ * product, a debugger, another tool) leaves it, so it is not a crash and not
+ * proven to be a session end either: it is reported at a lower severity under
+ * its own fingerprint (see `buildHostCrashEvent`).
+ */
+export function isWindowsExternalTerminationExit(code: number): boolean {
+  return code >>> 0 === 0x40010004;
+}
 
 /**
  * POSIX signals that mean the host CRASHED rather than being shut down. A

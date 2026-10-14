@@ -43,6 +43,7 @@ import {
   describeExitCode,
   describeFatalSignal,
   findCrashReportSince,
+  isWindowsSessionEndExit,
   prepareCrashReportsDir,
 } from "../host/crash-diagnostics";
 import {
@@ -3756,7 +3757,12 @@ async function persistChildExit(input: {
   // a telemetry stall must not delay it. Not awaited either: the relaunch
   // decision and its backoff start now, and a stalled reporter is bounded
   // and discarded on its own. Every nonzero exit is reported, not only the
-  // decodable ones - an undecoded code is still a crash to count.
+  // decodable ones - an undecoded code is still a crash to count. The one
+  // exception is the Windows session ending: the marker and the diagnostics
+  // line above stay, but the fleet crash count does not carry a logoff.
+  if (input.platform === "win32" && isWindowsSessionEndExit(code)) {
+    return outcome;
+  }
   void boundedCrashTelemetry(input, {
     environment,
     attemptId,
