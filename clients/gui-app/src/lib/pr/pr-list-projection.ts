@@ -215,7 +215,14 @@ function buildRepoBlocks(
       (left, right) => nativePosition(left) - nativePosition(right),
     );
     const first = layers[0].stack ?? null;
-    const size = Math.max(first === null ? 0 : first.size, layers.length);
+    // Rows of one stack were fetched at different times, so a stack that
+    // grew can report two sizes, and a stale size can sit below a carried
+    // position. The block spans every size and position it was given.
+    const size = Math.max(
+      layers.length,
+      ...layers.map((item) => item.stack?.size ?? 0),
+      ...layers.map((item) => nativeStackPosition(item) ?? 0),
+    );
     const present = new Set(layers.map((item) => nativeStackPosition(item)));
     const absentPositions: number[] = [];
     for (let position = 1; position <= size; position += 1) {

@@ -592,6 +592,25 @@ describe("groupPrItemsByRepo stack blocks", () => {
       ).toEqual(["absent:2", 4, 3, "absent:1", 1]);
     });
 
+    it("spans the highest size and position its rows report", () => {
+      // A stack that grew after one row's fact was fetched: the stale row
+      // says size 2, the newer one sits at position 3 of 3.
+      const stack = asStack(
+        onlyBlocks([
+          pr(1, { stack: nativeStack(1, 2) }),
+          pr(3, { stack: nativeStack(3, 3) }),
+        ]).at(0),
+      );
+
+      expect(stack.size).toBe(3);
+      expect(stack.absentPositions).toEqual([2]);
+      expect(
+        prStackRailEntries(stack).map((entry) =>
+          entry.kind === "layer" ? entry.item.base?.prNumber : "absent",
+        ),
+      ).toEqual([3, "absent", 1]);
+    });
+
     it("keeps a layer hidden by a filter off the rail without calling it absent", () => {
       // Hiding position 2 of a complete two-layer stack leaves one layer,
       // not a layer plus a "not in this task" run above it.
