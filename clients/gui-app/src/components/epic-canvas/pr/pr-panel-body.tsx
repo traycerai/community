@@ -47,6 +47,7 @@ import {
   formatPrRowTitle,
   formatPrStackCount,
   formatRepoGroupLabel,
+  prStackLayerLabel,
   fullyIdentifiedPrBase,
   groupPrItemsByRepo,
   prListRowKey,
@@ -429,6 +430,7 @@ function PrRepoGroupSection(props: {
                   hostId={props.hostId}
                   epicId={props.epicId}
                   tabId={props.tabId}
+                  layerLabel={null}
                 />
               );
             }
@@ -444,6 +446,7 @@ function PrRepoGroupSection(props: {
                       hostId={props.hostId}
                       epicId={props.epicId}
                       tabId={props.tabId}
+                      layerLabel={prStackLayerLabel(item, block)}
                     />
                   );
                 })}

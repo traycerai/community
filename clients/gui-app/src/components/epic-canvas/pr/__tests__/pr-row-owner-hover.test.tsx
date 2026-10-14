@@ -168,6 +168,7 @@ function renderRow(
           entry={entry}
           epicId="epic-1"
           tabId={TAB_ID}
+          layerLabel={null}
         />
       </TooltipProvider>
     </QueryClientProvider>,
