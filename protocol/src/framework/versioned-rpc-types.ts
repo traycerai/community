@@ -195,6 +195,33 @@ export const RPC_ERROR_CODES = [
   // degrade story as E_INVALID_ARGUMENT: a client that does not know this code
   // shows its generic failure, exactly as it did before the code existed.
   "E_HOST_STORAGE_FULL",
+  // ─── Sandbox host refusals (on-demand sandboxes) ────────────────────────
+  //
+  // Domain codes live here, as the share-refusal taxonomy's do: the code is
+  // the only typed channel on the error envelope, and each of these needs its
+  // own copy and its own next step. Same additive degrade story as
+  // E_INVALID_ARGUMENT - a client that predates them narrows each to
+  // RPC_ERROR while keeping the status and the message.
+  //
+  // The target sandbox is frozen for lack of credits. Not retryable until the
+  // balance is topped up; a dial path answers this instead of waiting out a
+  // HOST_UNREACHABLE timeout against a host that is deliberately down.
+  "SANDBOX_FROZEN",
+  // A sandbox host refuses to receive or store a user credential (profile
+  // sync, settings API keys, provider login, browser sign-ins): nothing
+  // secret lives on a sandbox outside the secrets track's broker.
+  "SANDBOX_HOST_REFUSES_CREDENTIALS",
+  // The sandbox host's guest configuration (`configureGuest`) has not
+  // completed: a harness spawn waited its 30 seconds for it and refused, with
+  // the attempt's last status in the message, rather than hang through a
+  // broker outage.
+  "SANDBOX_GUEST_NOT_CONFIGURED",
+  // The host runs a profile that carries no agents (the Automations pod's
+  // `automation` profile: shells, terminals and file copies only), so the two
+  // agent-creation verbs answer this instead of creating one. Not retryable
+  // on that host; the agent belongs on one of the user's own hosts or a
+  // sandbox.
+  "PROFILE_REFUSES_AGENTS",
 ] as const;
 
 export type RpcErrorCode = (typeof RPC_ERROR_CODES)[number];

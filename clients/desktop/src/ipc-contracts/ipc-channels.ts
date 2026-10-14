@@ -65,6 +65,17 @@ export const RunnerHostInvoke = {
   // no route to the machine, which is why it does not live on the host-
   // management bridge next to the OS-service verbs it must not be confused with.
   deregisterHostFromAccount: "runnerHost:hosts:deregisterFromAccount",
+  // The sandbox control plane (traycer-server `/api/sandboxes`). Same CORS
+  // reason as the registry calls above: traycer-server's allow-list is the web
+  // dashboard origin, so the renderer cannot reach it directly.
+  listSandboxes: "runnerHost:sandboxes:list",
+  getSandboxCosts: "runnerHost:sandboxes:costs",
+  getSandboxCatalogue: "runnerHost:sandboxes:catalogue",
+  createSandbox: "runnerHost:sandboxes:create",
+  destroySandbox: "runnerHost:sandboxes:destroy",
+  runSandboxVerb: "runnerHost:sandboxes:verb",
+  getSandboxAutomation: "runnerHost:sandboxes:automation:get",
+  openSandboxAutomation: "runnerHost:sandboxes:automation:open",
   openExternalLink: "runnerHost:openExternalLink",
   getRegisteredUrlSchemes: "runnerHost:getRegisteredUrlSchemes",
   requestMicrophoneAccess: "runnerHost:requestMicrophoneAccess",

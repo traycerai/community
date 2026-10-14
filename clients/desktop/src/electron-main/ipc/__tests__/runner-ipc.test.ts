@@ -34,6 +34,12 @@ import type {
   WindowSummary,
 } from "../../../ipc-contracts/window-types";
 import { createAuthenticatedUserFixture } from "@traycer-clients/shared/test-fixtures/authenticated-user";
+import type {
+  getSandboxAutomationViaHttp,
+  openSandboxAutomationViaHttp,
+  runSandboxVerbViaHttp,
+} from "@traycer-clients/shared/host-client/sandbox-control";
+import { config } from "../../../config";
 import { FakeHostController } from "./fake-host-controller";
 import { setAppliedLocalHostCapability } from "../../host/local-host-capability";
 import {
@@ -43,6 +49,37 @@ import {
 } from "../../auth/__tests__/jws-fixture";
 
 const featureSettings = vi.hoisted(() => ({ agentRoles: false }));
+/** The control-plane call the `runSandboxVerb` handler makes, observed. */
+const runSandboxVerbViaHttpMock = vi.hoisted(() =>
+  vi.fn<typeof runSandboxVerbViaHttp>(async () => ({
+    kind: "ok",
+    settled: true,
+  })),
+);
+/** The Automations read and open the two new handlers make, observed. */
+const getSandboxAutomationViaHttpMock = vi.hoisted(() =>
+  vi.fn<typeof getSandboxAutomationViaHttp>(async () => ({
+    kind: "ok",
+    automation: { available: true, sandbox: null },
+  })),
+);
+const openSandboxAutomationViaHttpMock = vi.hoisted(() =>
+  vi.fn<typeof openSandboxAutomationViaHttp>(async () => ({
+    kind: "network-error",
+    detail: "unscripted",
+  })),
+);
+vi.mock(
+  "@traycer-clients/shared/host-client/sandbox-control",
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import("@traycer-clients/shared/host-client/sandbox-control")
+    >()),
+    runSandboxVerbViaHttp: runSandboxVerbViaHttpMock,
+    getSandboxAutomationViaHttp: getSandboxAutomationViaHttpMock,
+    openSandboxAutomationViaHttp: openSandboxAutomationViaHttpMock,
+  }),
+);
 /**
  * `app`-level event listeners, recorded rather than discarded so a test can
  * drive them. `epic-visibility-ipc.ts` registers a `render-process-gone`
@@ -598,6 +635,15 @@ describe("RunnerIpcBridge", () => {
           RunnerHostInvoke.deregisterHostFromAccount,
           RunnerHostInvoke.listRegisteredHosts,
           RunnerHostInvoke.updateHostVersionPolicy,
+          // The sandbox control plane, for traycer-server's CORS reason.
+          RunnerHostInvoke.listSandboxes,
+          RunnerHostInvoke.getSandboxCosts,
+          RunnerHostInvoke.getSandboxCatalogue,
+          RunnerHostInvoke.createSandbox,
+          RunnerHostInvoke.destroySandbox,
+          RunnerHostInvoke.runSandboxVerb,
+          RunnerHostInvoke.getSandboxAutomation,
+          RunnerHostInvoke.openSandboxAutomation,
           RunnerHostInvoke.listUserSessions,
           RunnerHostInvoke.revokeUserSession,
           RunnerHostInvoke.revokeAllSessions,
@@ -884,6 +930,104 @@ describe("RunnerIpcBridge", () => {
       "featureSettings:agentRoles:set requires a boolean",
     );
     expect(setAgentRolesEnabledMock).toHaveBeenCalledTimes(1);
+    bridge.dispose();
+  });
+
+  it("forwards the runSandboxVerb timeout to the control-plane call, and rejects a timeout that is not a number before any request", async () => {
+    const mod = await import("../register-runner-ipc");
+    const bridge = new mod.RunnerIpcBridge({
+      host: new FakeHost(),
+      hostController: new FakeHostController(),
+      authnBaseUrl: "http://localhost:5005",
+      authRedirectUri: null,
+      tray: null,
+      zoomController: undefined,
+      authTokenStore: undefined,
+      window: buildWindow(),
+    });
+    bridge.install();
+    const handler = ipcMainState.handlers.get(RunnerHostInvoke.runSandboxVerb);
+    if (handler === undefined) {
+      throw new Error("runSandboxVerb handler missing");
+    }
+
+    await expect(
+      handler(bareEvent(), "bearer-1", "sbx_1", "resume", 119_000),
+    ).resolves.toEqual({ kind: "ok", settled: true });
+    expect(runSandboxVerbViaHttpMock).toHaveBeenCalledTimes(1);
+    expect(runSandboxVerbViaHttpMock).toHaveBeenCalledWith(
+      config.serverBaseUrl,
+      "bearer-1",
+      "sbx_1",
+      "resume",
+      119_000,
+    );
+
+    for (const bad of ["119000", null, undefined, {}]) {
+      await expect(
+        handler(bareEvent(), "bearer-1", "sbx_1", "resume", bad),
+      ).rejects.toThrow("runSandboxVerb.timeoutMs");
+    }
+    // The old four-argument call, from a renderer that predates the field.
+    await expect(
+      handler(bareEvent(), "bearer-1", "sbx_1", "resume"),
+    ).rejects.toThrow("runSandboxVerb.timeoutMs");
+    expect(runSandboxVerbViaHttpMock).toHaveBeenCalledTimes(1);
+    bridge.dispose();
+  });
+
+  it("routes the Automations read and open to the control plane with the bearer, and rejects a bearer that is not a string before any request", async () => {
+    const mod = await import("../register-runner-ipc");
+    const bridge = new mod.RunnerIpcBridge({
+      host: new FakeHost(),
+      hostController: new FakeHostController(),
+      authnBaseUrl: "http://localhost:5005",
+      authRedirectUri: null,
+      tray: null,
+      zoomController: undefined,
+      authTokenStore: undefined,
+      window: buildWindow(),
+    });
+    bridge.install();
+    const read = ipcMainState.handlers.get(
+      RunnerHostInvoke.getSandboxAutomation,
+    );
+    const open = ipcMainState.handlers.get(
+      RunnerHostInvoke.openSandboxAutomation,
+    );
+    if (read === undefined || open === undefined) {
+      throw new Error("an Automations handler is missing");
+    }
+
+    await expect(read(bareEvent(), "bearer-1")).resolves.toEqual({
+      kind: "ok",
+      automation: { available: true, sandbox: null },
+    });
+    expect(getSandboxAutomationViaHttpMock).toHaveBeenCalledWith(
+      config.serverBaseUrl,
+      "bearer-1",
+    );
+    expect(openSandboxAutomationViaHttpMock).not.toHaveBeenCalled();
+
+    await expect(open(bareEvent(), "bearer-2")).resolves.toEqual({
+      kind: "network-error",
+      detail: "unscripted",
+    });
+    expect(openSandboxAutomationViaHttpMock).toHaveBeenCalledWith(
+      config.serverBaseUrl,
+      "bearer-2",
+    );
+
+    for (const bad of [null, undefined, 7, {}]) {
+      await expect(read(bareEvent(), bad)).rejects.toThrow(
+        "getSandboxAutomation.bearerToken",
+      );
+      await expect(open(bareEvent(), bad)).rejects.toThrow(
+        "openSandboxAutomation.bearerToken",
+      );
+    }
+    expect(getSandboxAutomationViaHttpMock).toHaveBeenCalledTimes(1);
+    expect(openSandboxAutomationViaHttpMock).toHaveBeenCalledTimes(1);
     bridge.dispose();
   });
 

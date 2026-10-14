@@ -58,6 +58,7 @@ export function createFakeRunnerHost(
     authnBaseUrl: "https://auth.example.invalid",
     relayBaseUrl: "wss://relay.example.invalid/attach",
     hasLocalHost: true,
+    sandboxControlUnavailableReason: null,
     canCopyImages: true,
     validateAuthTokenIdentity: () =>
       Promise.resolve({ kind: "rejected" as const }),
@@ -93,6 +94,26 @@ export function createFakeRunnerHost(
       Promise.resolve({ kind: "network-error" as const }),
     deregisterHostFromAccount: () =>
       Promise.resolve({ kind: "network-error" as const }),
+    listSandboxes: () =>
+      Promise.resolve({ kind: "network-error" as const, detail: "fake" }),
+    getSandboxCosts: () =>
+      Promise.resolve({ kind: "network-error" as const, detail: "fake" }),
+    getSandboxCatalogue: () =>
+      Promise.resolve({ kind: "network-error" as const, detail: "fake" }),
+    createSandbox: () =>
+      Promise.resolve({ kind: "network-error" as const, detail: "fake" }),
+    destroySandbox: () =>
+      Promise.resolve({ kind: "network-error" as const, detail: "fake" }),
+    runSandboxVerb: () =>
+      Promise.resolve({ kind: "network-error" as const, detail: "fake" }),
+    // As a server without the route answers: no Automations entry anywhere.
+    getSandboxAutomation: () =>
+      Promise.resolve({
+        kind: "ok" as const,
+        automation: { available: false, sandbox: null },
+      }),
+    openSandboxAutomation: () =>
+      Promise.resolve({ kind: "network-error" as const, detail: "fake" }),
     openExternalLink: () => Promise.resolve(),
     getRegisteredUrlSchemes: () => Promise.resolve([]),
     requestMicrophoneAccess: () => Promise.resolve("granted" as const),

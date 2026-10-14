@@ -26,6 +26,19 @@ import type {
   UpdateHostVersionPolicyInput,
 } from "../host-client/host-version-policy-fetcher";
 import type { DeregisterHostFetchResult } from "../host-client/host-deregister-fetcher";
+import type {
+  SandboxAutomationFetchResult,
+  SandboxAutomationOpenFetchResult,
+  SandboxCatalogueFetchResult,
+  SandboxCostsFetchResult,
+  SandboxCreateFetchResult,
+  SandboxListFetchResult,
+  SandboxVerbFetchResult,
+} from "../host-client/sandbox-control";
+import type {
+  SandboxCreateRequest,
+  SandboxLifecycleVerb,
+} from "@traycer/protocol/host/sandbox-control";
 import type { SelectionAuthorityClient } from "../host-selection/selection-authority-contract";
 import type { StoredCredentials } from "@traycer/protocol/config/credentials";
 import type {
@@ -343,6 +356,45 @@ export interface IRunnerHost {
     hostId: string,
   ): Promise<DeregisterHostFetchResult>;
 
+  /**
+   * The sandbox control plane (traycer-server `/api/sandboxes`) with the user
+   * bearer: the user's sandboxes, their cost and the user's awake burn, the
+   * catalogue the create form prices from, create, destroy, the lifecycle
+   * verbs (the card's suspend / resume / stop / start, and the wake a tab open
+   * calls before dialing a suspended or stopped sandbox), and the user's
+   * Automations host (its read, and the open that creates or wakes it). Each shell owns its traycer-server base URL
+   * the way it owns `authnBaseUrl`. Desktop runs these in Electron main
+   * (traycer-server's CORS allow-list is the web dashboard origin); mobile
+   * goes through the native HTTP layer; browser/dev shells call the shared
+   * helpers in `host-client/sandbox-control.ts` directly. Never throw:
+   * failures collapse into the discriminated results.
+   */
+  listSandboxes(bearerToken: string): Promise<SandboxListFetchResult>;
+  getSandboxCosts(bearerToken: string): Promise<SandboxCostsFetchResult>;
+  getSandboxCatalogue(
+    bearerToken: string,
+  ): Promise<SandboxCatalogueFetchResult>;
+  createSandbox(
+    bearerToken: string,
+    request: SandboxCreateRequest,
+  ): Promise<SandboxCreateFetchResult>;
+  destroySandbox(
+    bearerToken: string,
+    sandboxId: string,
+  ): Promise<SandboxVerbFetchResult>;
+  runSandboxVerb(
+    bearerToken: string,
+    sandboxId: string,
+    verb: SandboxLifecycleVerb,
+    timeoutMs: number,
+  ): Promise<SandboxVerbFetchResult>;
+  getSandboxAutomation(
+    bearerToken: string,
+  ): Promise<SandboxAutomationFetchResult>;
+  openSandboxAutomation(
+    bearerToken: string,
+  ): Promise<SandboxAutomationOpenFetchResult>;
+
   openExternalLink(url: string): Promise<void>;
 
   /**
@@ -466,6 +518,14 @@ export interface IRunnerHost {
    * stream are not exposed to a branch on capability.
    */
   readonly hasLocalHost: boolean;
+
+  /**
+   * Why this build cannot reach the sandbox control plane at all, or `null`
+   * when it can. Set on a staging build (`SANDBOXES_UNAVAILABLE_IN_STAGING`):
+   * every sandbox call is refused there before it is sent, and the sandbox
+   * surfaces show this line instead of failing one request at a time.
+   */
+  readonly sandboxControlUnavailableReason: string | null;
 
   /**
    * Whether an image written through the web clipboard API on this shell
