@@ -9,6 +9,7 @@ import {
   prRowTitleText,
   prStackLayerLabel,
   prStackLayerLabelsByItem,
+  prStackRailEntries,
   type PrRepoBlock,
 } from "@/lib/pr/pr-list-projection";
 
@@ -622,6 +623,48 @@ describe("groupPrItemsByRepo stack blocks", () => {
       expect(labels.get(rows[0])).toBe("layer 1 of 2");
       expect(labels.get(rows[1])).toBe("layer 2 of 2");
       expect(labels.has(rows[2])).toBe(false);
+    });
+  });
+
+  describe("prStackRailEntries", () => {
+    it("lists a native stack top first with absent runs where they sit", () => {
+      const stack = asStack(
+        onlyBlocks([
+          pr(1, { stack: nativeStack(1, 6) }),
+          pr(3, { stack: nativeStack(3, 6) }),
+          pr(4, { stack: nativeStack(4, 6) }),
+        ]).at(0),
+      );
+
+      expect(
+        prStackRailEntries(stack).map((entry) =>
+          entry.kind === "layer"
+            ? entry.item.base?.prNumber
+            : `absent:${entry.count}`,
+        ),
+      ).toEqual(["absent:2", 4, 3, "absent:1", 1]);
+    });
+
+    it("lists an inferred stack top first with no absent runs", () => {
+      const stack = asStack(
+        onlyBlocks([
+          pr(1, { headRefName: "a", baseRefName: "main" }),
+          pr(2, { headRefName: "b", baseRefName: "a" }),
+        ]).at(0),
+      );
+
+      expect(stack.number).toBeNull();
+      expect(prStackRailEntries(stack).map((entry) => entry.kind)).toEqual([
+        "layer",
+        "layer",
+      ]);
+      expect(
+        numbers(
+          prStackRailEntries(stack).flatMap((entry) =>
+            entry.kind === "layer" ? [entry.item] : [],
+          ),
+        ),
+      ).toEqual([2, 1]);
     });
   });
 

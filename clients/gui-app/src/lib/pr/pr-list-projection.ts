@@ -29,6 +29,8 @@ export type PrRepoBlock =
   | {
       readonly kind: "stack";
       readonly key: string;
+      /** GitHub's stack number; `null` for an inferred stack. */
+      readonly number: number | null;
       readonly baseRefName: string | null;
       readonly size: number;
       readonly layers: readonly PrLightItem[];
@@ -209,6 +211,7 @@ function buildRepoBlocks(
     blocks.push({
       kind: "stack",
       key: `native:${number}`,
+      number,
       baseRefName: first === null ? null : first.baseRefName,
       size: Math.max(first === null ? 0 : first.size, layers.length),
       layers,
@@ -323,6 +326,7 @@ function inferStackBlocks(
     blocks.push({
       kind: "stack",
       key: `inferred:${prListRowKey(bottom, "")}`,
+      number: null,
       baseRefName: bottom.baseRefName,
       size: layers.length,
       layers,
@@ -429,6 +433,53 @@ export function prStackLayerLabel(
     return `layer ${stack.position} of ${stack.size}`;
   }
   return `layer ${index + 1} of ${block.layers.length}`;
+}
+
+/**
+ * A stack drawn top layer first, the way GitHub lists one, with the layers
+ * this epic's list does not carry marked where they sit. Each entry is a
+ * carried row, or a run of absent positions (a native stack with layers
+ * opened from elsewhere); an inferred stack is never short of layers.
+ * The stack's base sits below the last entry.
+ */
+export type PrStackRailEntry =
+  | { readonly kind: "layer"; readonly item: PrLightItem }
+  | {
+      readonly kind: "absent";
+      readonly count: number;
+      /** The highest absent position in the run; unique within a stack. */
+      readonly topPosition: number;
+    };
+
+export function prStackRailEntries(
+  block: PrStackBlock,
+): readonly PrStackRailEntry[] {
+  const positioned = block.layers.map((item, index) => ({
+    item,
+    position: nativeStackPosition(item) ?? index + 1,
+  }));
+  const entries: PrStackRailEntry[] = [];
+  let expected = block.size;
+  for (const { item, position } of [...positioned].reverse()) {
+    if (position < expected) {
+      entries.push({
+        kind: "absent",
+        count: expected - position,
+        topPosition: expected,
+      });
+    }
+    entries.push({ kind: "layer", item });
+    expected = position - 1;
+  }
+  if (expected >= 1) {
+    entries.push({ kind: "absent", count: expected, topPosition: expected });
+  }
+  return entries;
+}
+
+function nativeStackPosition(item: PrLightItem): number | null {
+  const stack = item.stack ?? null;
+  return stack !== null && stack.size > 1 ? stack.position : null;
 }
 
 /**

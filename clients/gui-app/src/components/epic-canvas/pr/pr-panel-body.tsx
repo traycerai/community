@@ -1,5 +1,4 @@
 import {
-  Fragment,
   useCallback,
   useLayoutEffect,
   useMemo,
@@ -49,6 +48,7 @@ import {
   formatPrStackCount,
   formatRepoGroupLabel,
   prStackLayerLabelsByItem,
+  prStackRailEntries,
   fullyIdentifiedPrBase,
   groupPrItemsByRepo,
   prListRowKey,
@@ -446,22 +446,15 @@ function PrRepoGroupSection(props: {
               );
             }
             return (
-              <Fragment key={block.key}>
-                <PrStackHeader block={block} />
-                {block.layers.map((item) => {
-                  const entry = props.buildEntry(item);
-                  return (
-                    <PrRow
-                      key={entry.key}
-                      entry={entry}
-                      hostId={props.hostId}
-                      epicId={props.epicId}
-                      tabId={props.tabId}
-                      layerLabel={props.layerLabels.get(item) ?? null}
-                    />
-                  );
-                })}
-              </Fragment>
+              <PrStackBlockView
+                key={block.key}
+                block={block}
+                hostId={props.hostId}
+                epicId={props.epicId}
+                tabId={props.tabId}
+                buildEntry={props.buildEntry}
+                layerLabels={props.layerLabels}
+              />
             );
           })}
         </div>
@@ -470,15 +463,121 @@ function PrRepoGroupSection(props: {
   );
 }
 
+type PrStackBlock = Extract<PrRepoBlock, { readonly kind: "stack" }>;
+
 /**
- * The line above a stack's layers: the branch the whole stack lands on and
- * how many layers it has. It sits in the group's ruled list as a row of its
- * own, but in the label register (small, muted) so it reads as a heading
- * for the rows below rather than as one of them.
+ * A stack drawn the way GitHub draws one: a header naming the stack, then
+ * its layers top first down a vertical rail, and the base branch as the
+ * rail's end. Every row sits on the rail with a node, so the eye reads
+ * "these land on each other" without a label; a layer this epic did not
+ * open is a dashed stretch of rail with a count, where it belongs in the
+ * order, and the base is a hollow node, since it is a branch and not a PR.
  */
-function PrStackHeader(props: {
-  readonly block: Extract<PrRepoBlock, { readonly kind: "stack" }>;
+function PrStackBlockView(props: {
+  readonly block: PrStackBlock;
+  readonly hostId: string | null;
+  readonly epicId: string;
+  readonly tabId: string;
+  readonly buildEntry: (item: PrLightItem) => PrRowEntry;
+  readonly layerLabels: ReadonlyMap<PrLightItem, string>;
 }): ReactNode {
+  const entries = prStackRailEntries(props.block);
+  return (
+    <div className="flex min-w-0 flex-col" data-testid="pr-stack">
+      <PrStackHeader block={props.block} />
+      {entries.map((entry, index) =>
+        entry.kind === "layer" ? (
+          <PrStackRailRow
+            key={props.buildEntry(entry.item).key}
+            first={index === 0}
+            node="solid"
+          >
+            <PrRow
+              entry={props.buildEntry(entry.item)}
+              hostId={props.hostId}
+              epicId={props.epicId}
+              tabId={props.tabId}
+              layerLabel={props.layerLabels.get(entry.item) ?? null}
+            />
+          </PrStackRailRow>
+        ) : (
+          <PrStackRailRow
+            key={`absent:${entry.topPosition}`}
+            first={index === 0}
+            node="dashed"
+          >
+            <p
+              className="px-3 py-1.5 text-ui-xs text-muted-foreground"
+              data-testid="pr-stack-absent"
+            >
+              {formatAbsentLayers(entry.count)}
+            </p>
+          </PrStackRailRow>
+        ),
+      )}
+      <PrStackRailRow first={entries.length === 0} node="base">
+        <p
+          className="flex min-w-0 items-center gap-1.5 px-3 py-1.5 text-ui-xs text-muted-foreground"
+          data-testid="pr-stack-base"
+        >
+          <span className="truncate font-mono">
+            {props.block.baseRefName ?? "unknown base"}
+          </span>
+        </p>
+      </PrStackRailRow>
+    </div>
+  );
+}
+
+/**
+ * One slot on the stack rail: a gutter carrying the rail and this entry's
+ * node, and the entry beside it. The rail runs from the first entry's node
+ * down through the base node, so the top entry has no rail above it and the
+ * base none below. A dashed node and rail mark layers that are not here.
+ */
+function PrStackRailRow(props: {
+  readonly first: boolean;
+  readonly node: "solid" | "dashed" | "base";
+  readonly children: ReactNode;
+}): ReactNode {
+  const dashed = props.node === "dashed";
+  return (
+    <div className="flex min-w-0" data-testid="pr-stack-rail-row">
+      <div className="flex w-6 shrink-0 flex-col items-center pl-3" aria-hidden>
+        <span
+          className={cn(
+            "w-0 flex-1 border-l-2",
+            props.first ? "border-transparent" : "border-primary/50",
+            dashed && "border-dashed",
+          )}
+        />
+        <span
+          className={cn(
+            "size-2.5 shrink-0 rounded-full border-2",
+            props.node === "solid" && "border-primary bg-primary",
+            dashed && "border-dashed border-primary/50 bg-background",
+            props.node === "base" && "border-primary/60 bg-background",
+          )}
+        />
+        <span
+          className={cn(
+            "w-0 flex-1 border-l-2",
+            props.node === "base" ? "border-transparent" : "border-primary/50",
+            dashed && "border-dashed",
+          )}
+        />
+      </div>
+      <div className="min-w-0 flex-1">{props.children}</div>
+    </div>
+  );
+}
+
+/**
+ * The line above a stack's layers: which stack it is, the branch it lands
+ * on, and how many of its layers this epic carries. Label register (small,
+ * muted) so it reads as a heading for the rail below.
+ */
+function PrStackHeader(props: { readonly block: PrStackBlock }): ReactNode {
   return (
     <div
       className="flex min-w-0 items-center gap-1.5 px-3 py-1 text-ui-xs text-muted-foreground"
@@ -486,13 +585,21 @@ function PrStackHeader(props: {
     >
       <Layers className="size-3.5 shrink-0" aria-hidden />
       <span className="min-w-0 flex-1 truncate">
-        Stack → {props.block.baseRefName ?? "unknown"}
+        {props.block.number === null ? "Stack" : `Stack #${props.block.number}`}
+        {" → "}
+        {props.block.baseRefName ?? "unknown"}
       </span>
       <span className="shrink-0 tabular-nums">
         {formatPrStackCount(props.block)}
       </span>
     </div>
   );
+}
+
+function formatAbsentLayers(count: number): string {
+  return count === 1
+    ? "1 layer not in this task"
+    : `${count} layers not in this task`;
 }
 
 function isOpenPrItem(item: PrLightItem): boolean {

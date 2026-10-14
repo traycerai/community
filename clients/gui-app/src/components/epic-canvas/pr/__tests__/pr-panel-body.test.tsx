@@ -192,6 +192,15 @@ const MockWsStreamClient =
 /** Minimal, fully-populated `PrLightItem` fixture builder - every required
  * field gets a realistic default; callers override only what the case cares
  * about. */
+function railRowKind(row: HTMLElement): string {
+  if (row.querySelector("[data-testid=pr-stack-absent]") !== null) {
+    return "absent";
+  }
+  if (row.querySelector("[data-testid=pr-stack-base]") !== null) return "base";
+  const card = row.querySelector("[data-testid^=mock-pr-card-]");
+  return card?.getAttribute("data-testid")?.replace("mock-pr-card-", "") ?? "?";
+}
+
 function layerLabelOf(head: string): string | null | undefined {
   return screen
     .getByTestId(`mock-pr-card-${head}`)
@@ -772,15 +781,16 @@ describe("PrPanelBody card list", () => {
       expect(header.textContent).toContain("Stack → main");
       expect(header.textContent).toContain("2");
       expect(screen.getAllByTestId("pr-stack-header")).toHaveLength(1);
-      // Bottom layer first, directly beneath the header.
+      // Top layer first beneath the header, the base branch at the foot.
       const bottom = screen.getByTestId("mock-pr-card-stack-bottom");
       const top = screen.getByTestId("mock-pr-card-stack-top");
       expect(
-        header.compareDocumentPosition(bottom) &
-          Node.DOCUMENT_POSITION_FOLLOWING,
+        header.compareDocumentPosition(top) & Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBeTruthy();
+      expect(screen.getByTestId("pr-stack-base").textContent).toBe("main");
+      expect(screen.queryByTestId("pr-stack-absent")).toBeNull();
       expect(
-        bottom.compareDocumentPosition(top) & Node.DOCUMENT_POSITION_FOLLOWING,
+        top.compareDocumentPosition(bottom) & Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBeTruthy();
     });
 
@@ -809,10 +819,25 @@ describe("PrPanelBody card list", () => {
       ]);
 
       const header = await screen.findByTestId("pr-stack-header");
-      expect(header.textContent).toContain("Stack → development");
+      expect(header.textContent).toContain("Stack #7 → development");
       expect(header.textContent).toContain("2 of 5");
       expect(layerLabelOf("native-1")).toBe("layer 1 of 5");
       expect(layerLabelOf("native-2")).toBe("layer 2 of 5");
+      // Drawn top first down the rail: the three absent upper layers, then
+      // layer 2, layer 1, and the base at the foot.
+      const rail = screen.getAllByTestId("pr-stack-rail-row");
+      expect(rail.map((row) => railRowKind(row))).toEqual([
+        "absent",
+        "native-2",
+        "native-1",
+        "base",
+      ]);
+      expect(screen.getByTestId("pr-stack-absent").textContent).toBe(
+        "3 layers not in this task",
+      );
+      expect(screen.getByTestId("pr-stack-base").textContent).toBe(
+        "development",
+      );
     });
 
     it("does not invent a stack when Open only hides a fan-in row", async () => {
