@@ -75,15 +75,31 @@ export interface HostBusyForceDeferDialogProps {
  * "activate"` outcome (post-commit, packaged macOS) submits
  * `activateInstalled{force}` instead, never re-running the already-consumed
  * apply/pin.
+ *
+ * Dismissable while `isForcing`. Only Force and the idle action go inert
+ * then: a second force must not stack on the first, but closing abandons
+ * nothing - the respawn is already queued in the desktop's mutation lane and
+ * runs to completion whether or not this dialog is watching it. The
+ * in-flight flag every caller passes is cache-wide (a menu or tray respawn
+ * counts too) and settles only when the relaunched host reports ready, which
+ * a wedged relaunch can stretch to the CLI stream's ten-minute idle timeout.
+ * Locking Defer, Escape and the overlay for that window held a modal over
+ * the whole app with no way out. Defer is relabelled "Close" for it, since
+ * there is nothing left to defer.
+ *
+ * The idle action's own pending state still locks the dialog: that request
+ * only SCHEDULES the restart and is brief, and its verdict decides what the
+ * dialog does next (a failure leaves it open with the action available).
  */
 export function HostBusyForceDeferDialog(props: HostBusyForceDeferDialogProps) {
   const idleAction = props.idleAction;
   const acting = props.isForcing || idleAction?.isPending === true;
+  const closeLocked = idleAction?.isPending === true;
   return (
     <Dialog
       open={props.open}
       onOpenChange={
-        acting
+        closeLocked
           ? undefined
           : (open) => {
               if (!open) props.onDefer();
@@ -115,11 +131,11 @@ export function HostBusyForceDeferDialog(props: HostBusyForceDeferDialogProps) {
             type="button"
             variant="ghost"
             size="sm"
-            disabled={acting}
+            disabled={closeLocked}
             onClick={props.onDefer}
             data-testid="host-busy-defer"
           >
-            Defer
+            {props.isForcing ? "Close" : "Defer"}
           </Button>
           {idleAction === null ? null : (
             <Button
