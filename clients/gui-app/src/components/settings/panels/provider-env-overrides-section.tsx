@@ -43,7 +43,7 @@ export function ProviderEnvOverridesSection({
   ): void => {
     if (credentialRefusal !== null) return;
     setOverride.mutate(
-      { providerId, key: newKey, value },
+      { providerId, key: newKey, value, executableWriteGrant: null },
       {
         onSuccess: () => {
           if (oldKey.length > 0 && oldKey !== newKey) {

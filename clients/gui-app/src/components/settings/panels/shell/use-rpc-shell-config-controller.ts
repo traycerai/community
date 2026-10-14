@@ -156,6 +156,7 @@ export function useRpcShellConfigController(props: {
       await client.request("config.env.set", {
         key: rename.newKey,
         value: rename.value,
+        executableWriteGrant: null,
       });
       if (rename.oldKey.length === 0) return;
       await client.request("config.env.delete", { key: rename.oldKey });
@@ -218,14 +219,24 @@ export function useRpcShellConfigController(props: {
       envDeleteMutation.isPending ||
       envRenameMutation.isPending,
     probeSource,
-    setShell: (request, callbacks) => setMutation.mutate(request, callbacks),
-    resetShell: (callbacks) => resetMutation.mutate({}, callbacks),
-    addShell: (path, callbacks) => addMutation.mutate({ path }, callbacks),
+    setShell: (request, callbacks) =>
+      setMutation.mutate(
+        { ...request, executableWriteGrant: null },
+        callbacks,
+      ),
+    resetShell: (callbacks) =>
+      resetMutation.mutate({ executableWriteGrant: null }, callbacks),
+    addShell: (path, callbacks) =>
+      addMutation.mutate({ path, executableWriteGrant: null }, callbacks),
     removeShell: (path, callbacks) =>
-      removeMutation.mutate({ path }, callbacks),
+      removeMutation.mutate({ path, executableWriteGrant: null }, callbacks),
     revertShellArgs: (path, callbacks) =>
-      revertMutation.mutate({ path }, callbacks),
-    setEnv: (entry, callbacks) => envSetMutation.mutate(entry, callbacks),
+      revertMutation.mutate({ path, executableWriteGrant: null }, callbacks),
+    setEnv: (entry, callbacks) =>
+      envSetMutation.mutate(
+        { ...entry, executableWriteGrant: null },
+        callbacks,
+      ),
     deleteEnv: (key, callbacks) => envDeleteMutation.mutate({ key }, callbacks),
     renameEnv: (rename, callbacks) =>
       envRenameMutation.mutate(rename, callbacks),

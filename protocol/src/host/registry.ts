@@ -1,4 +1,6 @@
+import type { RequiredHostMethodVersion } from "../host-transport/remote/rpc-types";
 import { PROFILE_SYNC_LINK_RPC_METHODS } from "./profile-sync-link-contracts";
+import { ENVIRONMENT_RPC_METHODS } from "./environment-contracts";
 import {
   organizationReadV10,
   organizationReadV11,
@@ -478,18 +480,30 @@ import {
   configEnvDeleteV10,
   configEnvListV10,
   configEnvSetV10,
+  configEnvSetV11,
+  configEnvSetUpgradeV10ToV11,
   configLogLevelsGetV10,
   configLogLevelsSetV10,
   configShellAddV10,
+  configShellAddV11,
+  configShellAddUpgradeV10ToV11,
   configShellGetV10,
   configShellListDetectedUpgradeV10ToV11,
   configShellListDetectedV10,
   configShellListDetectedV11,
   configShellProbeV10,
   configShellRemoveV10,
+  configShellRemoveV11,
+  configShellRemoveUpgradeV10ToV11,
   configShellResetV10,
+  configShellResetV11,
+  configShellResetUpgradeV10ToV11,
   configShellRevertArgsV10,
+  configShellRevertArgsV11,
+  configShellRevertArgsUpgradeV10ToV11,
   configShellSetV10,
+  configShellSetV11,
+  configShellSetUpgradeV10ToV11,
   configWorktreesGetV10,
   configWorktreesSetV10,
   configCatalogGetV10,
@@ -892,6 +906,9 @@ import {
 } from "@traycer/protocol/host/terminal/plain-subscribe-list";
 import {
   hostNotificationHooksSave,
+  hostNotificationHooksSaveV20,
+  hostNotificationHooksSaveUpgradeV1ToV2,
+  hostNotificationHooksSaveDowngradeV20ToV10,
   hostNotificationHooksStatus,
   hostNotificationHooksTest,
   hostNotificationsClearAll,
@@ -1170,6 +1187,7 @@ import {
   providersMcpAuthRequestSchema,
   providersMcpAuthResponseSchema,
   providersNativeMutateRequestSchema,
+  providersNativeMutateRequestSchemaV10,
   providersNativeMutateResponseSchema,
   providersCancelLoginResponseSchemaV10,
   providersClearApiKeyRequestSchema,
@@ -1274,6 +1292,7 @@ import {
   providersSetProfileEnabledResponseSchema,
   providersSetEnvOverrideRequestSchema,
   providersSetEnvOverrideRequestSchemaV10,
+  providersSetEnvOverrideRequestSchemaV21,
   providersSetEnvOverrideResponseSchema,
   providersSetEnvOverrideResponseSchemaV10,
   providersSetEnvOverrideResponseSchemaV20,
@@ -4350,9 +4369,47 @@ export const providersCancelMcpAuthV10 = defineRpcContract({
 export const providersNativeMutateV10 = defineRpcContract({
   method: "providers.nativeMutate",
   schemaVersion: { major: 1, minor: 0 } as const,
+  requestSchema: providersNativeMutateRequestSchemaV10,
+  responseSchema: providersNativeMutateResponseSchema,
+});
+
+/**
+ * `providers.nativeMutate@1.1` (ticket E7): `promoteToPersonal` and the
+ * executable-write grant. 1.0 is released, so both open a minor. A 1.1
+ * request to a 1.0 host is re-parsed onto 1.0: the grant key is stripped,
+ * and a `promoteToPersonal` mutation fails the parse (`DOWNGRADE_UNSUPPORTED`)
+ * rather than being dropped. The response is unchanged: a promotion answers
+ * the resulting `mcp` or `skills` collection.
+ */
+export const providersNativeMutateV11 = defineRpcContract({
+  method: "providers.nativeMutate",
+  schemaVersion: { major: 1, minor: 1 } as const,
   requestSchema: providersNativeMutateRequestSchema,
   responseSchema: providersNativeMutateResponseSchema,
 });
+
+export const providersNativeMutateUpgradeV10ToV11 = defineUpgradePath<
+  typeof providersNativeMutateV10,
+  typeof providersNativeMutateV11
+>({
+  from: { major: 1, minor: 0 },
+  to: { major: 1, minor: 1 },
+  upgradeRequest: (request) => ({ ...request, executableWriteGrant: null }),
+  upgradeResponse: (response) => response,
+});
+
+/**
+ * The floor a `promoteToPersonal` call attaches as its
+ * `requiredHostMethodVersion`: a host below it refuses the call pre-send
+ * with `HostMethodVersionUnsatisfiedError`, whose `requirement` is this
+ * constant, so the GUI names the refusal ("update this host to add it to
+ * Personal") rather than showing a generic unsupported.
+ */
+export const PROMOTE_TO_PERSONAL_REQUIRED_HOST_VERSION: RequiredHostMethodVersion =
+  {
+    method: "providers.nativeMutate",
+    version: { major: 1, minor: 1 },
+  };
 
 // ── Per-pack version-manager methods + the on-demand discovery refresh ─────
 //
@@ -5073,7 +5130,7 @@ export const providersSetEnvOverrideV10 = defineRpcContract({
 export const providersSetEnvOverrideV20 = defineRpcContract({
   method: "providers.setEnvOverride",
   schemaVersion: { major: 2, minor: 0 } as const,
-  requestSchema: providersSetEnvOverrideRequestSchema,
+  requestSchema: providersSetEnvOverrideRequestSchemaV21,
   responseSchema: providersSetEnvOverrideResponseSchemaV20,
 });
 
@@ -5092,7 +5149,7 @@ export const providersSetEnvOverrideUpgradeV1ToV2 = defineUpgradePath<
 export const providersSetEnvOverrideV21 = defineRpcContract({
   method: "providers.setEnvOverride",
   schemaVersion: { major: 2, minor: 1 } as const,
-  requestSchema: providersSetEnvOverrideRequestSchema,
+  requestSchema: providersSetEnvOverrideRequestSchemaV21,
   responseSchema: providersSetEnvOverrideResponseSchema,
 });
 
@@ -5130,13 +5187,40 @@ export const providersSetEnvOverrideDowngradeV21ToV20 = defineDowngradePath<
   },
 });
 
-export const providersSetEnvOverrideDowngradeV21ToV10 = defineDowngradePath<
+/**
+ * `providers.setEnvOverride@2.2` (ticket E7): the executable-write grant. 2.1
+ * is released, so the field opens a minor; a 2.2 request to a 2.x host below
+ * it is re-parsed onto that line's non-strict request, which strips the key.
+ */
+export const providersSetEnvOverrideV22 = defineRpcContract({
+  method: "providers.setEnvOverride",
+  schemaVersion: { major: 2, minor: 2 } as const,
+  requestSchema: providersSetEnvOverrideRequestSchema,
+  responseSchema: providersSetEnvOverrideResponseSchema,
+});
+
+export const providersSetEnvOverrideUpgradeV21ToV22 = defineUpgradePath<
   typeof providersSetEnvOverrideV21,
-  typeof providersSetEnvOverrideV10
+  typeof providersSetEnvOverrideV22
 >({
   from: { major: 2, minor: 1 },
+  to: { major: 2, minor: 2 },
+  upgradeRequest: (request) => ({ ...request, executableWriteGrant: null }),
+  upgradeResponse: (response) => response,
+});
+
+/**
+ * The cross-major downgrade from the head to the strict 1.0 line. The grant
+ * is dropped before the parse: a 1.0 host checks none, and its
+ * `z.strictObject` request would otherwise refuse the key.
+ */
+export const providersSetEnvOverrideDowngradeV22ToV10 = defineDowngradePath<
+  typeof providersSetEnvOverrideV22,
+  typeof providersSetEnvOverrideV10
+>({
+  from: { major: 2, minor: 2 },
   to: { major: 1, minor: 0 },
-  downgradeRequest: (request) =>
+  downgradeRequest: ({ executableWriteGrant: _grant, ...request }) =>
     downgradeProviderRequestForV10(
       providersSetEnvOverrideRequestSchemaV10,
       request,
@@ -5696,11 +5780,15 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   "config.shell.set": {
     degrade: { kind: "unsupported" },
     1: {
-      latestMinor: 0,
+      latestMinor: 1,
       versions: {
         0: {
           contract: configShellSetV10,
           upgradeFromPreviousVersion: null,
+        },
+        1: {
+          contract: configShellSetV11,
+          upgradeFromPreviousVersion: configShellSetUpgradeV10ToV11,
         },
       },
       downgradePathsFromLatest: {},
@@ -5709,11 +5797,15 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   "config.shell.reset": {
     degrade: { kind: "unsupported" },
     1: {
-      latestMinor: 0,
+      latestMinor: 1,
       versions: {
         0: {
           contract: configShellResetV10,
           upgradeFromPreviousVersion: null,
+        },
+        1: {
+          contract: configShellResetV11,
+          upgradeFromPreviousVersion: configShellResetUpgradeV10ToV11,
         },
       },
       downgradePathsFromLatest: {},
@@ -5722,11 +5814,15 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   "config.shell.add": {
     degrade: { kind: "unsupported" },
     1: {
-      latestMinor: 0,
+      latestMinor: 1,
       versions: {
         0: {
           contract: configShellAddV10,
           upgradeFromPreviousVersion: null,
+        },
+        1: {
+          contract: configShellAddV11,
+          upgradeFromPreviousVersion: configShellAddUpgradeV10ToV11,
         },
       },
       downgradePathsFromLatest: {},
@@ -5735,11 +5831,15 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   "config.shell.remove": {
     degrade: { kind: "unsupported" },
     1: {
-      latestMinor: 0,
+      latestMinor: 1,
       versions: {
         0: {
           contract: configShellRemoveV10,
           upgradeFromPreviousVersion: null,
+        },
+        1: {
+          contract: configShellRemoveV11,
+          upgradeFromPreviousVersion: configShellRemoveUpgradeV10ToV11,
         },
       },
       downgradePathsFromLatest: {},
@@ -5748,11 +5848,15 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   "config.shell.revertArgs": {
     degrade: { kind: "unsupported" },
     1: {
-      latestMinor: 0,
+      latestMinor: 1,
       versions: {
         0: {
           contract: configShellRevertArgsV10,
           upgradeFromPreviousVersion: null,
+        },
+        1: {
+          contract: configShellRevertArgsV11,
+          upgradeFromPreviousVersion: configShellRevertArgsUpgradeV10ToV11,
         },
       },
       downgradePathsFromLatest: {},
@@ -5804,11 +5908,15 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   "config.env.set": {
     degrade: { kind: "unsupported" },
     1: {
-      latestMinor: 0,
+      latestMinor: 1,
       versions: {
         0: {
           contract: configEnvSetV10,
           upgradeFromPreviousVersion: null,
+        },
+        1: {
+          contract: configEnvSetV11,
+          upgradeFromPreviousVersion: configEnvSetUpgradeV10ToV11,
         },
       },
       downgradePathsFromLatest: {},
@@ -6560,6 +6668,18 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
         },
       },
       downgradePathsFromLatest: {},
+    },
+    2: {
+      latestMinor: 0,
+      versions: {
+        0: {
+          contract: hostNotificationHooksSaveV20,
+          upgradeFromPreviousVersion: hostNotificationHooksSaveUpgradeV1ToV2,
+        },
+      },
+      downgradePathsFromLatest: {
+        1: hostNotificationHooksSaveDowngradeV20ToV10,
+      },
     },
   },
   "host.notifications.getConfig": {
@@ -10947,11 +11067,15 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
   "providers.nativeMutate": {
     degrade: { kind: "unsupported" },
     1: {
-      latestMinor: 0,
+      latestMinor: 1,
       versions: {
         0: {
           contract: providersNativeMutateV10,
           upgradeFromPreviousVersion: null,
+        },
+        1: {
+          contract: providersNativeMutateV11,
+          upgradeFromPreviousVersion: providersNativeMutateUpgradeV10ToV11,
         },
       },
       downgradePathsFromLatest: {},
@@ -11257,7 +11381,7 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
       downgradePathsFromLatest: {},
     },
     2: {
-      latestMinor: 1,
+      latestMinor: 2,
       versions: {
         0: {
           contract: providersSetEnvOverrideV20,
@@ -11267,9 +11391,13 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
           contract: providersSetEnvOverrideV21,
           upgradeFromPreviousVersion: providersSetEnvOverrideUpgradeV20ToV21,
         },
+        2: {
+          contract: providersSetEnvOverrideV22,
+          upgradeFromPreviousVersion: providersSetEnvOverrideUpgradeV21ToV22,
+        },
       },
       downgradePathsFromLatest: {
-        1: providersSetEnvOverrideDowngradeV21ToV10,
+        1: providersSetEnvOverrideDowngradeV22ToV10,
       },
     },
   },
@@ -12293,7 +12421,22 @@ type AssertNever<T extends never> = T;
 // its versioned schemas do not push its declaration emission over TS7056.
 type HostRpcProfileMethods = typeof PROFILE_SYNC_LINK_RPC_METHODS;
 
+// The environment family (ticket E7), its own slot for the same reason.
+type HostRpcEnvironmentMethods = typeof ENVIRONMENT_RPC_METHODS;
+
 type DuplicateHostRpcMethodNames =
+  | Extract<
+      keyof HostRpcEnvironmentMethods,
+      | keyof HostRpcProfileMethods
+      | keyof typeof HOST_RPC_REGISTRY_BASE_DEFINITION
+      | keyof typeof HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION
+      | keyof typeof HOST_RPC_PROVIDERS_REGISTRY_DEFINITION
+      | keyof typeof HOST_RPC_EDITING_REGISTRY_DEFINITION
+      | keyof typeof HOST_RPC_DRAFTS_REGISTRY_DEFINITION
+      | keyof typeof HOST_RPC_NOTIFICATION_METHODS
+      | keyof typeof HOST_RPC_ID_CARRYING_REGISTRY_DEFINITION
+      | keyof typeof HOST_RPC_PROVIDERS_LIST_REGISTRY_DEFINITION
+    >
   | Extract<
       keyof HostRpcProfileMethods,
       | keyof typeof HOST_RPC_REGISTRY_BASE_DEFINITION
@@ -12406,6 +12549,7 @@ type DuplicateHostRpcMethodNames =
 type HostRpcRegistryDefinition = typeof HOST_RPC_REGISTRY_BASE_DEFINITION &
   typeof HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION &
   HostRpcProfileMethods &
+  HostRpcEnvironmentMethods &
   typeof HOST_RPC_PROVIDERS_REGISTRY_DEFINITION &
   typeof HOST_RPC_EDITING_REGISTRY_DEFINITION &
   typeof HOST_RPC_DRAFTS_REGISTRY_DEFINITION &
@@ -12417,6 +12561,7 @@ type HostRpcRegistryDefinition = typeof HOST_RPC_REGISTRY_BASE_DEFINITION &
 const HOST_RPC_REGISTRY_DEFINITION: HostRpcRegistryDefinition = {
   ...HOST_RPC_REGISTRY_BASE_DEFINITION,
   ...PROFILE_SYNC_LINK_RPC_METHODS,
+  ...ENVIRONMENT_RPC_METHODS,
   ...HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION,
   ...HOST_RPC_PROVIDERS_REGISTRY_DEFINITION,
   ...HOST_RPC_EDITING_REGISTRY_DEFINITION,

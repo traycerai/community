@@ -111,6 +111,7 @@ export function useProvidersMcpMutate(): UseMutationResult<
       };
       const response = await client.request("providers.nativeMutate", {
         providerId: variables.providerId,
+        executableWriteGrant: null,
         mutation: {
           kind: "mcp",
           scope: variables.scope,

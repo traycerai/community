@@ -62,6 +62,7 @@ export function useProvidersSkillsMutate(): UseMutationResult<
     mutationFn: async (variables) => {
       const response = await client.request("providers.nativeMutate", {
         providerId: variables.providerId,
+        executableWriteGrant: null,
         mutation: {
           kind: "skills",
           scope: variables.scope,

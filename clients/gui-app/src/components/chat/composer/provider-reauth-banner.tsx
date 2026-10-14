@@ -1055,7 +1055,12 @@ function TokenReauthForm({
       );
     } else {
       setEnvOverride.mutate(
-        { providerId, key: activeVar, value: trimmed },
+        {
+          providerId,
+          key: activeVar,
+          value: trimmed,
+          executableWriteGrant: null,
+        },
         { onSuccess: afterWrite },
       );
     }

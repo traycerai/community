@@ -27314,6 +27314,38 @@ export const FROZEN_CATALOG_LINE_SNAPSHOTS = {
         },
         "credentialsManagedInAccount": {
           "type": "boolean"
+        },
+        "scope": {
+          "anyOf": [
+            {
+              "type": "string",
+              "const": "personal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "onHostOnly": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "providerId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "profileId": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "providerId",
+              "profileId"
+            ],
+            "additionalProperties": false
+          }
         }
       },
       "required": [

@@ -14,6 +14,7 @@ import {
 } from "@traycer/protocol/framework/index";
 import { defineStreamRpcContract } from "@traycer/protocol/framework/versioned-stream-rpc";
 import { lazySchema } from "@traycer/protocol/framework/lazy-schema";
+import { executableWriteGrantSchema } from "@traycer/protocol/host/executable-write-grant";
 
 const textFrameFields = {
   hasBinaryPayload: lazySchema(() => z.literal(false)),
@@ -2430,8 +2431,27 @@ export type NotificationHookStatusEntry = z.infer<
   typeof notificationHookStatusEntrySchema
 >;
 
-export const notificationHooksSaveRequestSchema = lazySchema(() =>
+/** The v1.0 request, FROZEN as released (`host-v1.5.1`). */
+export const notificationHooksSaveRequestSchemaV10 = lazySchema(() =>
   z.object({ hooks: z.array(notificationHookConfigSchema) }).strict(),
+);
+export type NotificationHooksSaveRequestV10 = z.infer<
+  typeof notificationHooksSaveRequestSchemaV10
+>;
+
+/**
+ * v2.0 (ticket E7): the saved list can hold a `command` action, which the
+ * host runs, so the save carries the executable-write grant. A whole-list
+ * save with no per-hook write, so the grant matters when the list holds a
+ * command; `null` otherwise.
+ */
+export const notificationHooksSaveRequestSchema = lazySchema(() =>
+  z
+    .object({
+      hooks: z.array(notificationHookConfigSchema),
+      executableWriteGrant: executableWriteGrantSchema,
+    })
+    .strict(),
 );
 export type NotificationHooksSaveRequest = z.infer<
   typeof notificationHooksSaveRequestSchema
@@ -2499,6 +2519,42 @@ export const hostNotificationHooksTest = defineRpcContract({
 export const hostNotificationHooksSave = defineRpcContract({
   method: "host.notificationHooks.save",
   schemaVersion: { major: 1, minor: 0 } as const,
+  requestSchema: notificationHooksSaveRequestSchemaV10,
+  responseSchema: notificationHooksStatusResponseSchema,
+});
+
+/**
+ * `host.notificationHooks.save@2.0` (ticket E7): the executable-write grant.
+ * A MAJOR, not a minor: within a major the client re-parses a newer request
+ * with the host's own minor schema, and v1.0's request is `.strict()`, so a
+ * v1.1 request carrying the grant would fail `DOWNGRADE_UNSUPPORTED` against
+ * every released host and no hook could be saved there. Across a major the
+ * downgrade below strips the grant (a v1.0 host checks none), and a v1.0
+ * caller's request is upgraded with `null`. The response is unchanged.
+ */
+export const hostNotificationHooksSaveV20 = defineRpcContract({
+  method: "host.notificationHooks.save",
+  schemaVersion: { major: 2, minor: 0 } as const,
   requestSchema: notificationHooksSaveRequestSchema,
   responseSchema: notificationHooksStatusResponseSchema,
+});
+
+export const hostNotificationHooksSaveUpgradeV1ToV2 = defineUpgradePath<
+  typeof hostNotificationHooksSave,
+  typeof hostNotificationHooksSaveV20
+>({
+  from: { major: 1, minor: 0 },
+  to: { major: 2, minor: 0 },
+  upgradeRequest: (request) => ({ ...request, executableWriteGrant: null }),
+  upgradeResponse: (response) => response,
+});
+
+export const hostNotificationHooksSaveDowngradeV20ToV10 = defineDowngradePath<
+  typeof hostNotificationHooksSaveV20,
+  typeof hostNotificationHooksSave
+>({
+  from: { major: 2, minor: 0 },
+  to: { major: 1, minor: 0 },
+  downgradeRequest: (request) => ({ ok: true, value: { hooks: request.hooks } }),
+  downgradeResponse: (response) => ({ ok: true, value: response }),
 });

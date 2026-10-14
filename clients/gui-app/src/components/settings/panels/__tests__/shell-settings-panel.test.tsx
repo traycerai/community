@@ -1244,7 +1244,11 @@ describe("<ShellSettingsPanel /> host environment on a host that takes no creden
     await addVariable("NODE_ENV", "NODE_ENV", "production");
 
     await waitFor(() => expect(set).toHaveBeenCalledTimes(1));
-    expect(set).toHaveBeenCalledWith({ key: "NODE_ENV", value: "production" });
+    expect(set).toHaveBeenCalledWith({
+      key: "NODE_ENV",
+      value: "production",
+      executableWriteGrant: null,
+    });
   });
 
   it("refuses a sign-in URL typed into an existing variable on blur, and sends nothing", async () => {
@@ -1303,7 +1307,11 @@ describe("<ShellSettingsPanel /> host environment on a host that takes no creden
     );
 
     await waitFor(() => expect(set).toHaveBeenCalledTimes(1));
-    expect(set).toHaveBeenCalledWith({ key: "REPO_URL", value: SIGN_IN_URL });
+    expect(set).toHaveBeenCalledWith({
+      key: "REPO_URL",
+      value: SIGN_IN_URL,
+      executableWriteGrant: null,
+    });
   });
 });
 
@@ -1399,7 +1407,11 @@ describe("<ShellSettingsPanel /> host environment names that look like credentia
     await addVariable("EDITOR", "vim");
 
     await waitFor(() => expect(set).toHaveBeenCalledTimes(1));
-    expect(set).toHaveBeenCalledWith({ key: "EDITOR", value: "vim" });
+    expect(set).toHaveBeenCalledWith({
+      key: "EDITOR",
+      value: "vim",
+      executableWriteGrant: null,
+    });
     expect(screen.queryByText(NAME_LINE)).toBeNull();
   });
 
@@ -1415,6 +1427,10 @@ describe("<ShellSettingsPanel /> host environment names that look like credentia
     await addVariable("OPENAI_API_KEY", "sk-x");
 
     await waitFor(() => expect(set).toHaveBeenCalledTimes(1));
-    expect(set).toHaveBeenCalledWith({ key: "OPENAI_API_KEY", value: "sk-x" });
+    expect(set).toHaveBeenCalledWith({
+      key: "OPENAI_API_KEY",
+      value: "sk-x",
+      executableWriteGrant: null,
+    });
   });
 });

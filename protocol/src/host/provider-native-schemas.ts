@@ -1266,6 +1266,44 @@ export const nativeMutationSchema = lazySchema(() =>
 );
 export type NativeMutation = z.infer<typeof nativeMutationSchema>;
 
+/**
+ * `providers.nativeMutate@1.1`'s `promoteToPersonal` (ticket E7): an MCP
+ * server or skill that a CLI or an agent added to this host's native config
+ * shows as local, and the person's "Add to Personal" uploads it to their
+ * Personal environment so every host gets it. Never uploaded without that
+ * click. Named by the native entry's name at its scope, as the remove action
+ * names it; the answer is the resulting collection of `entryKind`, the same
+ * `mcp` or `skills` success arm the other actions answer.
+ *
+ * Its own arm rather than an action inside the `mcp` and `skills` arms, so
+ * the released v1.0 request (`nativeMutationSchema`) is not widened: a v1.0
+ * host re-parses a v1.1 request onto v1.0 and this arm fails that parse
+ * rather than being dropped. A client names that refusal with the floor
+ * `PROMOTE_TO_PERSONAL_REQUIRED_HOST_VERSION`.
+ */
+export const nativePromoteToPersonalMutationSchema = lazySchema(() =>
+  z
+    .object({
+      kind: z.literal("promoteToPersonal"),
+      entryKind: z.enum(["mcp", "skills"]),
+      scope: providerNativeScopeSchema,
+      workspaceRoot: z.string().nullable(),
+      name: z.string().min(1),
+    })
+    .superRefine((value, ctx) => {
+      refineProviderNativeScope(value, ctx);
+    }),
+);
+export type NativePromoteToPersonalMutation = z.infer<
+  typeof nativePromoteToPersonalMutationSchema
+>;
+
+/** The v1.1 mutation: every v1.0 arm plus `promoteToPersonal`. */
+export const nativeMutationSchemaV11 = lazySchema(() =>
+  z.union([nativeMutationSchema, nativePromoteToPersonalMutationSchema]),
+);
+export type NativeMutationV11 = z.infer<typeof nativeMutationSchemaV11>;
+
 const nativeMutationSuccessResultSchema = lazySchema(() =>
   z.discriminatedUnion("kind", [
     z.object({

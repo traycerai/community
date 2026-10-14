@@ -59,6 +59,7 @@ export function useProvidersPluginsMutate(): UseMutationResult<
     mutationFn: async (variables) => {
       const response = await client.request("providers.nativeMutate", {
         providerId: variables.providerId,
+        executableWriteGrant: null,
         mutation: {
           kind: "plugins",
           scope: variables.scope,

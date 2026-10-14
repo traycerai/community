@@ -2195,6 +2195,98 @@ export const HOST_METHOD_POLL_TABLE = {
   },
   "config.shell.listDetected": { ...LATEST_SCHEDULING, poll: null },
   "config.shell.probe": { ...LATEST_SCHEDULING, poll: null },
+  // The environment methods (ticket E7): reads take the latest answer;
+  // writes, Verify and the link steps are ordered and never joined.
+  "environment.localOverrides": { ...LATEST_SCHEDULING, poll: null },
+  "environment.secrets.list": { ...LATEST_SCHEDULING, poll: null },
+  "environment.secrets.versions": { ...LATEST_SCHEDULING, poll: null },
+  "environment.secrets.rotation": { ...LATEST_SCHEDULING, poll: null },
+  "environment.agentDefinitions.list": { ...LATEST_SCHEDULING, poll: null },
+  "environment.setup.get": { ...LATEST_SCHEDULING, poll: null },
+  "environment.setup.attempts": { ...LATEST_SCHEDULING, poll: null },
+  "environment.status": { ...LATEST_SCHEDULING, poll: null },
+  "environment.notices": { ...LATEST_SCHEDULING, poll: null },
+  "environment.review": { ...LATEST_SCHEDULING, poll: null },
+  "providers.link": {
+    mode: "fifo",
+    joinResponseTimeoutMs: null,
+    poll: null,
+  },
+  "providers.linkComplete": {
+    mode: "fifo",
+    joinResponseTimeoutMs: null,
+    poll: null,
+  },
+  "config.env.localOverride.set": {
+    mode: "fifo",
+    joinResponseTimeoutMs: null,
+    poll: null,
+  },
+  "config.env.localOverride.clear": {
+    mode: "fifo",
+    joinResponseTimeoutMs: null,
+    poll: null,
+  },
+  "environment.secrets.create": {
+    mode: "fifo",
+    joinResponseTimeoutMs: null,
+    poll: null,
+  },
+  "environment.secrets.verify": {
+    mode: "fifo",
+    joinResponseTimeoutMs: null,
+    poll: null,
+  },
+  "environment.secrets.replaceValue": {
+    mode: "fifo",
+    joinResponseTimeoutMs: null,
+    poll: null,
+  },
+  "environment.secrets.undo": {
+    mode: "fifo",
+    joinResponseTimeoutMs: null,
+    poll: null,
+  },
+  "environment.secrets.destroy": {
+    mode: "fifo",
+    joinResponseTimeoutMs: null,
+    poll: null,
+  },
+  "environment.secrets.consent": {
+    mode: "fifo",
+    joinResponseTimeoutMs: null,
+    poll: null,
+  },
+  "environment.agentDefinitions.put": {
+    mode: "fifo",
+    joinResponseTimeoutMs: null,
+    poll: null,
+  },
+  "environment.agentDefinitions.delete": {
+    mode: "fifo",
+    joinResponseTimeoutMs: null,
+    poll: null,
+  },
+  "environment.setup.put": {
+    mode: "fifo",
+    joinResponseTimeoutMs: null,
+    poll: null,
+  },
+  "environment.setup.retry": {
+    mode: "fifo",
+    joinResponseTimeoutMs: null,
+    poll: null,
+  },
+  "environment.undo": {
+    mode: "fifo",
+    joinResponseTimeoutMs: null,
+    poll: null,
+  },
+  "host.remoteAccess.set": {
+    mode: "fifo",
+    joinResponseTimeoutMs: null,
+    poll: null,
+  },
   "config.env.list": { ...LATEST_SCHEDULING, poll: null },
   "config.env.set": { mode: "fifo", joinResponseTimeoutMs: null, poll: null },
   "config.env.delete": {
