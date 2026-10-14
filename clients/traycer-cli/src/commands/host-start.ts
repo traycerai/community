@@ -5,6 +5,7 @@ import {
 } from "node:child_process";
 import { constants as osConstants } from "node:os";
 import { randomUUID } from "node:crypto";
+import { performance } from "node:perf_hooks";
 import { access } from "node:fs/promises";
 import type { Readable } from "node:stream";
 import {
@@ -1987,6 +1988,10 @@ export async function runHostStart(
     // report before any post-spawn statement runs, and the report scan treats
     // this as its lower bound (with additional slack for mtime granularity).
     let childSpawnedAtMs = 0;
+    // The same instant on the monotonic clock: the crash telemetry's uptime
+    // is a duration, and a wall-clock step between spawn and exit must not
+    // turn a host that died at boot into a long run or a negative one.
+    let childSpawnedMonoMs = 0;
     let child: ChildProcess;
     const spawnedWhileAdmitting: { child: ChildProcess | null } = {
       child: null,
@@ -2085,6 +2090,7 @@ export async function runHostStart(
             throw new StopAnnouncedDuringAdmission(announcedDuringAdmission);
           }
           childSpawnedAtMs = Date.now();
+          childSpawnedMonoMs = performance.now();
           spawnedWhileAdmitting.child = deps.spawn(
             launch.command,
             launch.args,
@@ -2695,6 +2701,7 @@ export async function runHostStart(
     // `SUSTAINED_UPTIME_RESET_MS` over the line and reset the budget, which is
     // the governor's own re-arming bug in a narrower window.
     const childEndedAtMs = Date.now();
+    const childEndedMonoMs = performance.now();
     currentChild = null;
 
     if (ending.kind === "spawn-error") {
@@ -2860,6 +2867,8 @@ export async function runHostStart(
       probeObservation,
       childSpawnedAtMs,
       childEndedAtMs,
+      childSpawnedMonoMs,
+      childEndedMonoMs,
       stderrTee,
       stderrEnded,
       crashReportsDirPath,
@@ -3499,6 +3508,10 @@ async function persistChildExit(input: {
   // finalization, the stderr drain, the report scan) would otherwise be
   // counted as time the child ran.
   readonly childEndedAtMs: number;
+  // The same two instants on the monotonic clock; the telemetry's uptime is
+  // taken from these.
+  readonly childSpawnedMonoMs: number;
+  readonly childEndedMonoMs: number;
   readonly stderrTee: StderrTee;
   readonly stderrEnded: Promise<void>;
   readonly crashReportsDirPath: string;
@@ -3623,7 +3636,10 @@ async function persistChildExit(input: {
         signal,
         exitMeaning: fatalMeaning,
         hasDiagnosticReport: crashReport !== null,
-        uptimeMs: Math.max(0, input.childEndedAtMs - input.childSpawnedAtMs),
+        uptimeMs: Math.max(
+          0,
+          input.childEndedMonoMs - input.childSpawnedMonoMs,
+        ),
         stopRequested: input.stopRequested,
         stderrEmpty: input.stderrTee.capture.isEmpty(),
       });
@@ -3775,7 +3791,7 @@ async function persistChildExit(input: {
     signal: null,
     exitMeaning: exitMeaning ?? null,
     hasDiagnosticReport: crashReport !== null,
-    uptimeMs: Math.max(0, input.childEndedAtMs - input.childSpawnedAtMs),
+    uptimeMs: Math.max(0, input.childEndedMonoMs - input.childSpawnedMonoMs),
     stopRequested: input.stopRequested,
     stderrEmpty: input.stderrTee.capture.isEmpty(),
   });

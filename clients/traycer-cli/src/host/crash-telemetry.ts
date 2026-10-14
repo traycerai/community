@@ -98,18 +98,18 @@ export interface HostCrashEvent {
 export const HOST_CRASH_FINGERPRINT_ROOT = "host-crash";
 
 /**
- * How far the crashed child got, from the one thing the supervisor can read
- * after the fact: the pid.json the child itself publishes once it is serving.
- * `published` - the file is this child's; `before-publish` - a file exists but
- * is another process's, so this child died before it published; `unknown` -
- * no readable file, so nothing can be said.
+ * What the pid.json on disk says about the crashed child: `published` - the
+ * file's pid is the child's pid; `before-publish` - a file exists with another
+ * pid; `unknown` - no readable file, or the spawn yielded no pid to compare.
+ * It is evidence about publishing, not a verdict on how far startup got.
  */
 export type HostCrashPhase = "published" | "before-publish" | "unknown";
 
 export function hostCrashPhase(
   identity: HostCrashIdentity | null,
+  childPid: number | null,
 ): HostCrashPhase {
-  if (identity === null) return "unknown";
+  if (identity === null || childPid === null) return "unknown";
   return identity.runningVersion !== null ? "published" : "before-publish";
 }
 
@@ -117,7 +117,15 @@ export function hostCrashPhase(
  * A closed set of lifetimes, so "exits within seconds of spawn" and "ran for
  * a day" are separate groups in the issue's tag view instead of one number.
  */
-export function uptimeBucket(uptimeMs: number): string {
+export type UptimeBucket =
+  | "lt-10s"
+  | "lt-1m"
+  | "lt-10m"
+  | "lt-1h"
+  | "lt-24h"
+  | "gte-24h";
+
+export function uptimeBucket(uptimeMs: number): UptimeBucket {
   if (uptimeMs < 10_000) return "lt-10s";
   if (uptimeMs < 60_000) return "lt-1m";
   if (uptimeMs < 10 * 60_000) return "lt-10m";
@@ -211,7 +219,7 @@ export function buildHostCrashEvent(
       // none can carry a path, a message or an id.
       stop_requested: telemetry.stopRequested ? "yes" : "no",
       host_output: telemetry.stderrEmpty ? "silent" : "wrote",
-      host_phase: hostCrashPhase(identity),
+      host_phase: hostCrashPhase(identity, telemetry.childPid),
       uptime_bucket: uptimeBucket(telemetry.uptimeMs),
     },
     extra: {

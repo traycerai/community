@@ -221,6 +221,7 @@ describe("buildHostCrashEvent", () => {
       ...Object.keys(event.tags),
       ...Object.keys(event.extra),
     ]) {
+      expect(key.toLowerCase()).not.toContain("stderr");
       expect(key.toLowerCase()).not.toContain("bundle");
       expect(key.toLowerCase()).not.toContain("path");
     }
@@ -331,6 +332,12 @@ describe("buildHostCrashEvent", () => {
       expect(published.tags.host_phase).toBe("published");
       expect(beforePublish.tags.host_phase).toBe("before-publish");
       expect(unknown.tags.host_phase).toBe("unknown");
+      // A spawn that yielded no pid cannot be compared with the file's pid.
+      const noChildPid = buildHostCrashEvent(
+        sampleTelemetry({ childPid: null }),
+        { hostId: "host-a", runningVersion: null },
+      );
+      expect(noChildPid.tags.host_phase).toBe("unknown");
     });
 
     it.each([

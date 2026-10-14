@@ -1433,6 +1433,10 @@ describe("runHostStart - signal/exit propagation", () => {
       expect(abrtReport.signal).toBe("SIGABRT");
       expect(abrtReport.exitCode).toBeNull();
       expect(abrtReport.exitMeaning).toContain("SIGABRT");
+      // The signal path carries the same two verdicts as a nonzero exit: the
+      // child wrote to stderr, and no stop was asked for.
+      expect(abrtReport.stderrEmpty).toBe(false);
+      expect(abrtReport.stopRequested).toBe(false);
     }
 
     {
