@@ -348,6 +348,7 @@ import {
   chatSubscribeV121,
   chatSubscribeV122,
   chatSubscribeV123,
+  chatSubscribeV124,
 } from "@traycer/protocol/host/agent/gui/contracts";
 import {
   agentTuiGenerateTitleV10,
@@ -13407,7 +13408,7 @@ const HOST_STREAM_RPC_REGISTRY_DEFINITION = {
   ...HOST_STREAM_RPC_REGISTRY_OTHER_DEFINITION,
   "chat.subscribe": {
     1: {
-      latestMinor: 23,
+      latestMinor: 24,
       versions: {
         0: {
           contract: chatSubscribeV10,
@@ -13552,6 +13553,12 @@ const HOST_STREAM_RPC_REGISTRY_DEFINITION = {
         // @1.23 adds agent-page and MCP App stamps; older peers receive neither.
         23: {
           contract: chatSubscribeV123,
+        },
+        // @1.24 adds the optional CLI-reported next-run time to cron items.
+        // The host deletes the key for @1.20–1.23 and still omits cron below
+        // @1.20. Older frame shapes are frozen at those boundaries.
+        24: {
+          contract: chatSubscribeV124,
         },
       },
     },

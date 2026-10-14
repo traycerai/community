@@ -618,6 +618,7 @@ function BackgroundTreeRow(props: {
             <p className="mt-1 break-words text-ui-xs text-muted-foreground">
               Schedule · <code>{item.schedule}</code>
             </p>
+            <CronNextRun scheduledFor={item.scheduledFor} />
             <p className="mt-1 whitespace-pre-wrap break-words text-ui-xs text-foreground/85">
               {item.prompt}
             </p>
@@ -721,6 +722,18 @@ function BackgroundWaitTitle({
 }) {
   const now = useSampledNow();
   return <>{backgroundItemDisplayTitle(item, now)}</>;
+}
+
+// Keep the minute-clock subscription in this leaf so a tick does not repaint
+// the cron row's schedule, prompt or session-lifetime explanation.
+function CronNextRun({ scheduledFor }: { readonly scheduledFor: number | null }) {
+  const now = useSampledNow();
+  if (scheduledFor === null || scheduledFor <= now) return null;
+  return (
+    <p className="mt-1 text-ui-xs text-foreground/85">
+      Next run {formatWaitTime(scheduledFor, now)}
+    </p>
+  );
 }
 
 export function BackgroundItemsPanel(props: {

@@ -37,6 +37,7 @@ vi.mock("@/lib/links/open-link", () => ({
 }));
 
 import { BackgroundItemsPanel } from "@/components/chat/chat-background-items-panel";
+import { formatWaitTime } from "@/lib/relative-time";
 import { TabHostProvider } from "@/components/epic-canvas/tab-host-provider";
 
 const queryClient = new QueryClient({
@@ -53,7 +54,10 @@ const CRON_ITEM: BackgroundItem = {
   humanSchedule: "Every 5 minutes",
   prompt: "check the build and report failures",
   recurring: true,
+  scheduledFor: null,
 };
+
+const HOUR_MS = 60 * 60 * 1000;
 
 function renderCronPanel(
   items: ReadonlyArray<BackgroundItem>,
@@ -130,6 +134,47 @@ describe("<BackgroundItemsPanel /> cron rows (T15)", () => {
       "a job already running at that moment finishes first",
     );
     expect(text).not.toMatch(/Waiting until|in \d+ ?(m|min|s)\b/);
+  });
+
+  it("shows the CLI-reported next run under the schedule when it is in the future", () => {
+    const scheduledFor = Date.now() + 2 * HOUR_MS;
+    renderCronPanel([{ ...CRON_ITEM, scheduledFor }], {
+      onStopItem: () => null,
+      onStopAll: () => null,
+      onStopSession: () => null,
+    });
+    openPanel();
+    const line = screen.getByText(/^Next run /);
+    expect(line.textContent).toBe(
+      `Next run ${formatWaitTime(scheduledFor, Date.now())}`,
+    );
+    // Still a row with a schedule and the session-lifetime sentence, no countdown.
+    expect(document.body.textContent).toContain(
+      "scheduled jobs run while the session is otherwise alive",
+    );
+    expect(document.body.textContent).not.toMatch(/Waiting until/);
+  });
+
+  it("renders no next-run line for a null time", () => {
+    renderCronPanel([CRON_ITEM], {
+      onStopItem: () => null,
+      onStopAll: () => null,
+      onStopSession: () => null,
+    });
+    openPanel();
+    expect(screen.queryByText(/Next run/)).toBeNull();
+    expect(screen.getByText(/\*\/5 \* \* \* \*/)).toBeTruthy();
+  });
+
+  it("renders no next-run line for a time that has already passed", () => {
+    renderCronPanel([{ ...CRON_ITEM, scheduledFor: Date.now() - HOUR_MS }], {
+      onStopItem: () => null,
+      onStopAll: () => null,
+      onStopSession: () => null,
+    });
+    openPanel();
+    expect(screen.queryByText(/Next run/)).toBeNull();
+    expect(screen.getByText(/Every 5 minutes/)).toBeTruthy();
   });
 
   it("offers no per-row stop and no Stop all when only crons are listed", () => {
