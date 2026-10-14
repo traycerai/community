@@ -23,6 +23,20 @@ export interface ConfirmDestructiveDialogProps {
   actionLabel: string;
   isPending: boolean;
   /**
+   * Keep Cancel, Escape and the overlay live while `isPending`, with Cancel
+   * relabelled "Close". Only the confirm button stays inert.
+   *
+   * Opt-in, and off by default, because the lock is load-bearing for many
+   * callers: their `onOpenChange(false)` clears the target the running
+   * mutation was armed against, or resets a retry key, and some do not
+   * disable their opener while pending. Turn it on only for a caller whose
+   * action runs to completion on its own once dispatched, whose close handler
+   * clears nothing the mutation still needs, and whose opener is disabled
+   * while pending - typically a long-running host call that would otherwise
+   * hold a modal over the app until it settles.
+   */
+  dismissableWhilePending?: boolean;
+  /**
    * Why this action cannot be performed at all, or `null` when it can.
    *
    * Disables confirm and renders the reason. Deliberately not optional: a
@@ -50,6 +64,7 @@ export function ConfirmDestructiveDialog(props: ConfirmDestructiveDialogProps) {
     blockedReason,
     onConfirm,
   } = props;
+  const closeLocked = isPending && props.dismissableWhilePending !== true;
 
   /**
    * The control the dialog was opened FROM, so Escape and Cancel have somewhere
@@ -74,7 +89,7 @@ export function ConfirmDestructiveDialog(props: ConfirmDestructiveDialogProps) {
   const openerRef = useRef<HTMLElement | null>(null);
 
   return (
-    <Dialog open={open} onOpenChange={isPending ? undefined : onOpenChange}>
+    <Dialog open={open} onOpenChange={closeLocked ? undefined : onOpenChange}>
       <DialogContent
         layout="banded"
         showCloseButton={false}
@@ -159,13 +174,15 @@ export function ConfirmDestructiveDialog(props: ConfirmDestructiveDialogProps) {
             type="button"
             variant="ghost"
             size="sm"
-            disabled={isPending}
+            disabled={closeLocked}
             onClick={() => {
               onOpenChange(false);
             }}
             data-testid="confirm-cancel"
           >
-            Cancel
+            {/* Once dispatched there is nothing left to cancel: the action
+                runs regardless and this button only closes the dialog. */}
+            {isPending && !closeLocked ? "Close" : "Cancel"}
           </Button>
           <Button
             type="button"

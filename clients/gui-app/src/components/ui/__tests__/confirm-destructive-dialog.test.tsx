@@ -186,3 +186,81 @@ describe("ConfirmDestructiveDialog - confirm gating", () => {
     expect(onConfirm).not.toHaveBeenCalled();
   });
 });
+
+describe("ConfirmDestructiveDialog - dismissable while pending", () => {
+  function renderPending(
+    isPending: boolean,
+    dismissableWhilePending: boolean | undefined,
+  ) {
+    const onOpenChange = vi.fn();
+    const onConfirm = vi.fn();
+    render(
+      <ConfirmDestructiveDialog
+        open
+        onOpenChange={onOpenChange}
+        title="Delete this?"
+        description="This cannot be undone."
+        cascadeSummary={null}
+        actionLabel="Delete"
+        isPending={isPending}
+        dismissableWhilePending={dismissableWhilePending}
+        blockedReason={null}
+        onConfirm={onConfirm}
+      />,
+    );
+    return { onOpenChange, onConfirm };
+  }
+
+  it("locks Cancel and Escape while pending by default", () => {
+    const { onOpenChange } = renderPending(true, undefined);
+    const cancel = screen.getByTestId<HTMLButtonElement>("confirm-cancel");
+    expect(cancel.disabled).toBe(true);
+    expect(cancel.textContent).toBe("Cancel");
+    expect(
+      screen.getByTestId<HTMLButtonElement>("confirm-action").disabled,
+    ).toBe(true);
+    fireEvent.keyDown(screen.getByTestId("confirm-destructive-dialog"), {
+      key: "Escape",
+    });
+    expect(onOpenChange).not.toHaveBeenCalled();
+  });
+
+  it("stays locked while pending when dismissableWhilePending is false", () => {
+    const { onOpenChange } = renderPending(true, false);
+    const cancel = screen.getByTestId<HTMLButtonElement>("confirm-cancel");
+    expect(cancel.disabled).toBe(true);
+    expect(cancel.textContent).toBe("Cancel");
+    fireEvent.keyDown(screen.getByTestId("confirm-destructive-dialog"), {
+      key: "Escape",
+    });
+    expect(onOpenChange).not.toHaveBeenCalled();
+  });
+
+  it("lets the user close while pending when dismissableWhilePending is set", () => {
+    const { onOpenChange, onConfirm } = renderPending(true, true);
+    const cancel = screen.getByTestId<HTMLButtonElement>("confirm-cancel");
+    expect(cancel.disabled).toBe(false);
+    expect(cancel.textContent).toBe("Close");
+    fireEvent.click(cancel);
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+
+    onOpenChange.mockClear();
+    fireEvent.keyDown(screen.getByTestId("confirm-destructive-dialog"), {
+      key: "Escape",
+    });
+    expect(onOpenChange).toHaveBeenCalledWith(false);
+
+    expect(
+      screen.getByTestId<HTMLButtonElement>("confirm-action").disabled,
+    ).toBe(true);
+    fireEvent.click(screen.getByTestId("confirm-action"));
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  it("keeps the Cancel label when not pending, even if dismissableWhilePending is set", () => {
+    renderPending(false, true);
+    const cancel = screen.getByTestId<HTMLButtonElement>("confirm-cancel");
+    expect(cancel.disabled).toBe(false);
+    expect(cancel.textContent).toBe("Cancel");
+  });
+});
