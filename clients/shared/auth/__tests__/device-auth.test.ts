@@ -471,9 +471,7 @@ describe("cancellation and timeout", () => {
   });
 
   it("describeDeviceAuthorizeFailure renders fixed words and the status number only", () => {
-    expect(describeDeviceAuthorizeFailure({ kind: "timeout" })).toBe(
-      "timeout",
-    );
+    expect(describeDeviceAuthorizeFailure({ kind: "timeout" })).toBe("timeout");
     expect(
       describeDeviceAuthorizeFailure({ kind: "transport", code: "ENOTFOUND" }),
     ).toBe("transport code=ENOTFOUND");
