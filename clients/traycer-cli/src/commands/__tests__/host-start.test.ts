@@ -1354,6 +1354,10 @@ describe("runHostStart - signal/exit propagation", () => {
     expect(report.attemptId).toBe(crashed?.fields.attemptId);
     expect(report.uptimeMs).toBeGreaterThanOrEqual(0);
     expect(report.environment).toBe("production");
+    // The two verdicts the event splits an exit status on: this child wrote
+    // a fatal block to stderr and nobody asked for a stop.
+    expect(report.stderrEmpty).toBe(false);
+    expect(report.stopRequested).toBe(false);
     // The crashed child's pid, as spawned by the stub - the crash telemetry
     // uses it to decide whether the pid.json on disk was written by THIS
     // child before attributing its published version to the crash.
@@ -1429,6 +1433,10 @@ describe("runHostStart - signal/exit propagation", () => {
       expect(abrtReport.signal).toBe("SIGABRT");
       expect(abrtReport.exitCode).toBeNull();
       expect(abrtReport.exitMeaning).toContain("SIGABRT");
+      // The signal path carries the same two verdicts as a nonzero exit: the
+      // child wrote to stderr, and no stop was asked for.
+      expect(abrtReport.stderrEmpty).toBe(false);
+      expect(abrtReport.stopRequested).toBe(false);
     }
 
     {
@@ -1875,6 +1883,10 @@ describe("runHostStart - Windows requested-kill arm", () => {
     expect(recorded.markers.some((m) => m.phase === "killed")).toBe(false);
     expect(recorded.crashReports).toHaveLength(1);
     expect(recorded.crashReports[0]?.exitCode).toBe(accessViolation);
+    // Reported as a crash AND carrying that a stop was asked for and that the
+    // child said nothing: the two facts that tell this from an unprompted one.
+    expect(recorded.crashReports[0]?.stopRequested).toBe(true);
+    expect(recorded.crashReports[0]?.stderrEmpty).toBe(true);
     expect(
       recorded.loggerErrors.some(
         (e) => e.message === "Host child exited with non-zero status",
