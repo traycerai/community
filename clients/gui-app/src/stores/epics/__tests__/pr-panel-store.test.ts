@@ -22,7 +22,8 @@ describe("pr-panel-store", () => {
   });
 
   it("starts with every pull request shown", () => {
-    expect(usePrPanelStore.getState().openOnly).toBe(false);
+    // The initial state, not the `beforeEach` reset.
+    expect(usePrPanelStore.getInitialState().openOnly).toBe(false);
   });
 
   it("sets and toggles the open-only filter", () => {

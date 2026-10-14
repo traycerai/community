@@ -1,12 +1,14 @@
 import { describe, it, expect } from "vitest";
 import type { PrLightItem } from "@traycer/protocol/host/pr-schemas";
 import {
+  filterPrRepoGroups,
   formatPrRowTitle,
   formatPrStackCount,
   groupPrItemsByRepo,
   prChecksSummary,
   prRowTitleText,
   prStackLayerLabel,
+  prStackLayerLabelsByItem,
   type PrRepoBlock,
 } from "@/lib/pr/pr-list-projection";
 
@@ -547,6 +549,79 @@ describe("groupPrItemsByRepo stack blocks", () => {
       );
 
       expect(prStackLayerLabel(pr(99, {}), stack)).toBeNull();
+    });
+  });
+
+  describe("filterPrRepoGroups", () => {
+    const isOpen = (row: PrLightItem): boolean => row.state === "open";
+
+    it("keeps a fan-in as singles when the filter hides one of its rows", () => {
+      // Filtering the list first would leave development with one
+      // dependent, which inference reads as a chain. Grouping first does not.
+      const groups = groupPrItemsByRepo([
+        pr(1, { headRefName: "development", baseRefName: "main" }),
+        pr(2, { headRefName: "feat-open", baseRefName: "development" }),
+        pr(3, {
+          headRefName: "feat-merged",
+          baseRefName: "development",
+          state: "merged",
+        }),
+      ]);
+
+      const visible = filterPrRepoGroups(groups, isOpen);
+      expect(numbers(visible[0].items)).toEqual([1, 2]);
+      expect(visible[0].blocks.map((block) => block.kind)).toEqual([
+        "single",
+        "single",
+      ]);
+    });
+
+    it("trims a stack's hidden layers and keeps its size", () => {
+      const groups = groupPrItemsByRepo([
+        pr(1, { headRefName: "a", baseRefName: "main", state: "merged" }),
+        pr(2, { headRefName: "b", baseRefName: "a" }),
+        pr(3, { headRefName: "c", baseRefName: "b" }),
+      ]);
+
+      const stack = asStack(filterPrRepoGroups(groups, isOpen)[0].blocks[0]);
+      expect(numbers(stack.layers)).toEqual([2, 3]);
+      expect(stack.size).toBe(3);
+      expect(formatPrStackCount(stack)).toBe("2 of 3");
+    });
+
+    it("drops a stack and a repo group with nothing left to show", () => {
+      const groups = groupPrItemsByRepo([
+        pr(1, { headRefName: "a", baseRefName: "main", state: "merged" }),
+        pr(2, { headRefName: "b", baseRefName: "a", state: "closed" }),
+        item({
+          base: { owner: "acme", repo: "widget", prNumber: 9 },
+          repoIdentifier: { owner: "acme", repo: "widget" },
+          headRefName: "solo",
+        }),
+      ]);
+
+      const visible = filterPrRepoGroups(groups, isOpen);
+      expect(visible).toHaveLength(1);
+      expect(visible[0].repoIdentifier).toEqual({
+        owner: "acme",
+        repo: "widget",
+      });
+      expect(visible[0].blocks.map((block) => block.kind)).toEqual(["single"]);
+    });
+  });
+
+  describe("prStackLayerLabelsByItem", () => {
+    it("labels every stack layer from the complete groups and no single", () => {
+      const rows = [
+        pr(1, { headRefName: "a", baseRefName: "main", state: "merged" }),
+        pr(2, { headRefName: "b", baseRefName: "a" }),
+        pr(3, { headRefName: "solo", baseRefName: "main" }),
+      ];
+      const labels = prStackLayerLabelsByItem(groupPrItemsByRepo(rows));
+
+      expect(labels.get(rows[0])).toBe("layer 1 of 2");
+      expect(labels.get(rows[1])).toBe("layer 2 of 2");
+      expect(labels.has(rows[2])).toBe(false);
     });
   });
 

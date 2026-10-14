@@ -45,9 +45,10 @@ import {
 import { makePrDetailTile, prDetailTileId } from "@/lib/pr/pr-detail-tile";
 import {
   formatPrRowTitle,
+  filterPrRepoGroups,
   formatPrStackCount,
   formatRepoGroupLabel,
-  prStackLayerLabel,
+  prStackLayerLabelsByItem,
   fullyIdentifiedPrBase,
   groupPrItemsByRepo,
   prListRowKey,
@@ -184,16 +185,24 @@ export function PrPanelBodyContent(props: {
 }): ReactNode {
   const { openTile } = useEpicTileNavigation();
   const openOnly = usePrPanelStore((state) => state.openOnly);
-  const visibleItems = useMemo(
-    () =>
-      openOnly
-        ? props.items.filter((item) => item.state === "open")
-        : props.items,
-    [openOnly, props.items],
+  // Grouped on the complete list, then filtered: stack membership is decided
+  // with every row present, so hiding a merged dependent cannot turn its
+  // siblings into a stack they are not in (see `filterPrRepoGroups`).
+  const allGroups = useMemo(
+    () => groupPrItemsByRepo(props.items),
+    [props.items],
+  );
+  const layerLabels = useMemo(
+    () => prStackLayerLabelsByItem(allGroups),
+    [allGroups],
   );
   const groups = useMemo(
-    () => groupPrItemsByRepo(visibleItems),
-    [visibleItems],
+    () => (openOnly ? filterPrRepoGroups(allGroups, isOpenPrItem) : allGroups),
+    [allGroups, openOnly],
+  );
+  const visibleCount = useMemo(
+    () => groups.reduce((count, group) => count + group.items.length, 0),
+    [groups],
   );
   const [collapsedRepos, setCollapsedRepos] = useState<ReadonlySet<string>>(
     new Set<string>(),
@@ -342,7 +351,7 @@ export function PrPanelBodyContent(props: {
           testId="pr-panel-error-notice"
         />
       ) : null}
-      {visibleItems.length === 0 && props.items.length > 0 ? (
+      {visibleCount === 0 && props.items.length > 0 ? (
         <p
           role="status"
           className="px-3 py-2 text-ui-xs text-muted-foreground"
@@ -366,6 +375,7 @@ export function PrPanelBodyContent(props: {
             }
             onToggle={toggleRepo}
             buildEntry={buildEntry}
+            layerLabels={layerLabels}
           />
         ))}
       </HoverCardGroup>
@@ -386,6 +396,7 @@ function PrRepoGroupSection(props: {
   readonly collapsed: boolean;
   readonly onToggle: (repoLabel: string) => void;
   readonly buildEntry: (item: PrLightItem) => PrRowEntry;
+  readonly layerLabels: ReadonlyMap<PrLightItem, string>;
 }): ReactNode {
   const label = formatRepoGroupLabel(props.group.repoIdentifier);
   const { onToggle } = props;
@@ -446,7 +457,7 @@ function PrRepoGroupSection(props: {
                       hostId={props.hostId}
                       epicId={props.epicId}
                       tabId={props.tabId}
-                      layerLabel={prStackLayerLabel(item, block)}
+                      layerLabel={props.layerLabels.get(item) ?? null}
                     />
                   );
                 })}
@@ -482,6 +493,10 @@ function PrStackHeader(props: {
       </span>
     </div>
   );
+}
+
+function isOpenPrItem(item: PrLightItem): boolean {
+  return item.state === "open";
 }
 
 function formatAllHiddenMessage(count: number): string {

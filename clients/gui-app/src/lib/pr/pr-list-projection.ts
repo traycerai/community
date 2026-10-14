@@ -362,6 +362,57 @@ function layerDepths(
 }
 
 /**
+ * The groups with only the rows `keep` admits, stacks and repo groups
+ * included. Membership is decided on the COMPLETE list first (by
+ * {@link groupPrItemsByRepo}) and hidden afterwards: filtering before
+ * grouping would let a hidden fan-in row disappear from the inference and
+ * turn a promotion PR plus one visible dependent into a stack that is not
+ * one. A stack whose every layer is hidden goes; one with some hidden keeps
+ * its place, and a group with nothing left to show goes with its header.
+ */
+export function filterPrRepoGroups(
+  groups: readonly PrRepoGroup[],
+  keep: (item: PrLightItem) => boolean,
+): readonly PrRepoGroup[] {
+  const filtered: PrRepoGroup[] = [];
+  for (const group of groups) {
+    const items = group.items.filter(keep);
+    if (items.length === 0) continue;
+    const blocks: PrRepoBlock[] = [];
+    for (const block of group.blocks) {
+      if (block.kind === "single") {
+        if (keep(block.item)) blocks.push(block);
+        continue;
+      }
+      const layers = block.layers.filter(keep);
+      if (layers.length > 0) blocks.push({ ...block, layers });
+    }
+    filtered.push({ repoIdentifier: group.repoIdentifier, items, blocks });
+  }
+  return filtered;
+}
+
+/**
+ * Every stack layer's label, keyed by row, read off the COMPLETE groups so a
+ * layer keeps its place when its neighbours are filtered out of view.
+ */
+export function prStackLayerLabelsByItem(
+  groups: readonly PrRepoGroup[],
+): ReadonlyMap<PrLightItem, string> {
+  const labels = new Map<PrLightItem, string>();
+  for (const group of groups) {
+    for (const block of group.blocks) {
+      if (block.kind !== "stack") continue;
+      for (const item of block.layers) {
+        const label = prStackLayerLabel(item, block);
+        if (label !== null) labels.set(item, label);
+      }
+    }
+  }
+  return labels;
+}
+
+/**
  * A stack member's place in its stack, e.g. `layer 3 of 12`. A native stack
  * counts against GitHub's own size; an inferred one against the rows it was
  * built from. `null` when `item` is not one of the block's layers.

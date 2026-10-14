@@ -169,7 +169,12 @@ vi.mock("@/components/epic-canvas/pr/pr-row", () => {
         readonly tileId: string | null;
         readonly onOpen: (() => void) | null;
       };
-    }) => <div>{mockEntry(props.entry, "mock-pr-card")}</div>,
+      readonly layerLabel: string | null;
+    }) => (
+      <div data-layer-label={props.layerLabel ?? ""}>
+        {mockEntry(props.entry, "mock-pr-card")}
+      </div>
+    ),
   };
 });
 
@@ -187,6 +192,13 @@ const MockWsStreamClient =
 /** Minimal, fully-populated `PrLightItem` fixture builder - every required
  * field gets a realistic default; callers override only what the case cares
  * about. */
+function layerLabelOf(head: string): string | null | undefined {
+  return screen
+    .getByTestId(`mock-pr-card-${head}`)
+    .closest("[data-layer-label]")
+    ?.getAttribute("data-layer-label");
+}
+
 function buildPrItem(overrides: Partial<PrLightItem>): PrLightItem {
   return {
     githubHost: null,
@@ -799,6 +811,75 @@ describe("PrPanelBody card list", () => {
       const header = await screen.findByTestId("pr-stack-header");
       expect(header.textContent).toContain("Stack → development");
       expect(header.textContent).toContain("2 of 5");
+      expect(layerLabelOf("native-1")).toBe("layer 1 of 5");
+      expect(layerLabelOf("native-2")).toBe("layer 2 of 5");
+    });
+
+    it("does not invent a stack when Open only hides a fan-in row", async () => {
+      const epicId = "epic-filter-fanin";
+      renderPanel({ epicId, tabId: "tab-filter-fanin" });
+      await emitSnapshot(epicId, [
+        buildPrItem({
+          headRefName: "development",
+          baseRefName: "main",
+          state: "open",
+        }),
+        buildPrItem({
+          headRefName: "feat-open",
+          baseRefName: "development",
+          state: "open",
+        }),
+        buildPrItem({
+          headRefName: "feat-merged",
+          baseRefName: "development",
+          state: "merged",
+        }),
+      ]);
+      await screen.findByTestId("mock-pr-card-feat-open");
+      expect(screen.queryByTestId("pr-stack-header")).toBeNull();
+
+      act(() => {
+        usePrPanelStore.getState().setOpenOnly(true);
+      });
+
+      expect(screen.queryByTestId("mock-pr-card-feat-merged")).toBeNull();
+      expect(screen.queryByTestId("pr-stack-header")).toBeNull();
+      expect(layerLabelOf("feat-open")).toBe("");
+    });
+
+    it("keeps a hidden layer's neighbours in their stack places", async () => {
+      const epicId = "epic-filter-stack";
+      renderPanel({ epicId, tabId: "tab-filter-stack" });
+      await emitSnapshot(epicId, [
+        buildPrItem({
+          headRefName: "layer-1",
+          baseRefName: "main",
+          state: "merged",
+        }),
+        buildPrItem({
+          headRefName: "layer-2",
+          baseRefName: "layer-1",
+          state: "open",
+        }),
+        buildPrItem({
+          headRefName: "layer-3",
+          baseRefName: "layer-2",
+          state: "open",
+        }),
+      ]);
+      await screen.findByTestId("pr-stack-header");
+      expect(layerLabelOf("layer-1")).toBe("layer 1 of 3");
+
+      act(() => {
+        usePrPanelStore.getState().setOpenOnly(true);
+      });
+
+      expect(screen.queryByTestId("mock-pr-card-layer-1")).toBeNull();
+      expect(screen.getByTestId("pr-stack-header").textContent).toContain(
+        "2 of 3",
+      );
+      expect(layerLabelOf("layer-2")).toBe("layer 2 of 3");
+      expect(layerLabelOf("layer-3")).toBe("layer 3 of 3");
     });
 
     it("draws no stack header for unrelated rows", async () => {
