@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { BrowserViewportGeometry } from "@traycer/protocol/host/browser/viewport";
 import type {
   BrowserViewElectronViewport,
@@ -139,11 +139,58 @@ function createAcknowledgingViewport(
       });
       return true;
     },
+    () => false,
   );
   return viewport;
 }
 
+const SCREEN_LOCKED_MESSAGE =
+  "The screen is locked, so the browser cannot show a new viewport until it is unlocked.";
+
+/** Sends presentations like the real window but never acknowledges one. */
+function createUnacknowledgedViewport(
+  readback: BrowserViewportGeometry,
+  isScreenLocked: () => boolean,
+): {
+  readonly entry: BrowserViewEntry;
+  readonly viewport: BrowserViewViewport;
+  readonly presentedIntents: unknown[];
+} {
+  const entries = new BrowserViewEntryRegistry<BrowserViewEntry>();
+  const annotations = new BrowserViewAnnotationHost({
+    entries,
+    debugSessions: new BrowserViewDebugSessions({
+      onDetached: () => undefined,
+      isOnScreen: () => false,
+    }),
+    send: () => false,
+  });
+  const presentedIntents: unknown[] = [];
+  const viewport = new BrowserViewViewport(
+    entries,
+    annotations,
+    (_windowId, channel, payload) => {
+      if (
+        channel === RunnerHostEvent.browserViewGuestViewportRequested &&
+        typeof payload === "object" &&
+        payload !== null &&
+        "intent" in payload
+      )
+        presentedIntents.push(payload.intent);
+      return true;
+    },
+    isScreenLocked,
+  );
+  const entry = createEntry(new ReadbackWebContents(readback));
+  entries.register(entry);
+  return { entry, viewport, presentedIntents };
+}
+
 describe("BrowserViewViewport", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("preserves the first geometry script error instead of masking it in rollback", async () => {
     const entries = new BrowserViewEntryRegistry<BrowserViewEntry>();
     const debugSessions = new BrowserViewDebugSessions({
@@ -155,7 +202,12 @@ describe("BrowserViewViewport", () => {
       debugSessions,
       send: () => false,
     });
-    const viewport = new BrowserViewViewport(entries, annotations, () => false);
+    const viewport = new BrowserViewViewport(
+      entries,
+      annotations,
+      () => false,
+      () => false,
+    );
     const entry = createEntry(new RejectingWebContents());
     entries.register(entry);
 
@@ -239,5 +291,79 @@ describe("BrowserViewViewport", () => {
     ).resolves.toEqual(readback);
     expect(webContents.debugger.attached).toBe(false);
     expect(webContents.debugger.commands).toEqual([]);
+  });
+
+  it("does not wait for a frame while the screen is locked", async () => {
+    vi.useFakeTimers();
+    const readback: BrowserViewportGeometry = {
+      width: 800,
+      height: 600,
+      dpr: 1,
+    };
+    const { entry, viewport, presentedIntents } = createUnacknowledgedViewport(
+      readback,
+      () => true,
+    );
+    let failure: unknown = null;
+    void viewport
+      .apply(entry, {
+        ...viewportInput(),
+        intent: { mode: "fit" },
+        geometry: readback,
+      })
+      .catch((error: unknown) => {
+        failure = error;
+      });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(failure).toHaveProperty("message", SCREEN_LOCKED_MESSAGE);
+    expect(presentedIntents).toEqual([{ mode: "fit" }]);
+  });
+
+  it("does not roll back a Fit the window never acknowledges", async () => {
+    vi.useFakeTimers();
+    const readback: BrowserViewportGeometry = {
+      width: 800,
+      height: 600,
+      dpr: 1,
+    };
+    const { entry, viewport, presentedIntents } = createUnacknowledgedViewport(
+      readback,
+      () => false,
+    );
+    const rejection = expect(
+      viewport.apply(entry, {
+        ...viewportInput(),
+        intent: { mode: "fit" },
+        geometry: readback,
+      }),
+    ).rejects.toThrow(/did not (apply|confirm) its viewport in time\./);
+
+    await vi.advanceTimersByTimeAsync(10_000);
+    await rejection;
+
+    expect(presentedIntents).toEqual([{ mode: "fit" }]);
+  });
+
+  it("reports why a fixed resize failed when its rollback cannot be drawn either", async () => {
+    const readback: BrowserViewportGeometry = {
+      width: 800,
+      height: 600,
+      dpr: 1,
+    };
+    const { entry, viewport, presentedIntents } = createUnacknowledgedViewport(
+      readback,
+      () => true,
+    );
+
+    await expect(viewport.apply(entry, viewportInput())).rejects.toThrow(
+      SCREEN_LOCKED_MESSAGE,
+    );
+
+    expect(presentedIntents).toEqual([
+      { mode: "fixed", width: 390, height: 844 },
+      { mode: "fit" },
+    ]);
   });
 });

@@ -23,6 +23,9 @@ interface ViewportEntry {
 
 class UnrepresentableViewportError extends Error {}
 
+/** The window drew no frame, so the guest has not laid out the new size. */
+class ViewportNotDrawnError extends Error {}
+
 interface PendingPresentation {
   readonly entry: BrowserViewEntry;
   readonly revision: number;
@@ -40,6 +43,7 @@ export class BrowserViewViewport {
     private readonly entries: BrowserViewEntryRegistry<BrowserViewEntry>,
     private readonly annotations: BrowserViewAnnotationHost,
     private readonly send: BrowserViewSend,
+    private readonly isScreenLocked: () => boolean,
   ) {}
 
   apply(
@@ -66,11 +70,18 @@ export class BrowserViewViewport {
       this.requireCurrent(entry, state, input);
       await this.annotations.preserveBeforeViewportChange(entry);
       this.requireCurrent(entry, state, input);
-      const before = state.confirmed ?? {
-        ...input,
-        intent: { mode: "fit" as const },
-        geometry: await this.readGeometry(entry),
-      };
+      // Fit is where a failed change falls back to, so a failed Fit is never
+      // rolled back: the guest keeps the Fit request and lays it out on its next
+      // frame, and the host keeps the Fit unconfirmed (an older host rolls the
+      // setting back itself).
+      const before =
+        input.intent.mode === "fit"
+          ? null
+          : (state.confirmed ?? {
+              ...input,
+              intent: { mode: "fit" as const },
+              geometry: await this.readGeometry(entry),
+            });
       try {
         const geometry = await this.land(entry, input);
         this.requireCurrent(entry, state, input);
@@ -78,11 +89,18 @@ export class BrowserViewViewport {
         state.confirmedZoom = entry.webContents.getZoomFactor();
         return geometry;
       } catch (error) {
+        if (before === null) {
+          state.confirmed = null;
+          throw error;
+        }
         if (this.entries.isCurrent(entry)) {
           try {
             await this.land(entry, { ...before, revision: input.revision });
-          } catch {
+          } catch (rollbackError) {
             state.confirmed = null;
+            // The guest holds the rollback request and lays it out once the
+            // window draws, so the reason worth reporting is the first one.
+            if (rollbackError instanceof ViewportNotDrawnError) throw error;
             throw new Error(
               "The previous viewport could not be restored. Reset to Fit to recover.",
             );
@@ -226,8 +244,12 @@ export class BrowserViewViewport {
     entry: BrowserViewEntry,
     input: BrowserViewElectronViewport,
   ): Promise<BrowserViewportGeometry> {
-    return withinViewportDeadline((signal) =>
-      this.applyNativeGeometry(entry, input, signal),
+    return withinViewportDeadline(
+      (signal) => this.applyNativeGeometry(entry, input, signal),
+      () =>
+        new ViewportNotDrawnError(
+          "The browser did not apply its viewport in time.",
+        ),
     );
   }
 
@@ -287,17 +309,20 @@ export class BrowserViewViewport {
   private readGeometry(
     entry: BrowserViewEntry,
   ): Promise<BrowserViewportGeometry> {
-    return withinViewportDeadline(async (signal) => {
-      const value = await entry.webContents.executeJavaScript(
-        "({width:innerWidth,height:innerHeight,dpr:Math.round(devicePixelRatio*1000000)/1000000})",
-        false,
-      );
-      signal.throwIfAborted();
-      const parsed = browserViewportGeometrySchema.safeParse(value);
-      if (!parsed.success)
-        throw new Error("The browser did not report a valid viewport.");
-      return parsed.data;
-    });
+    return withinViewportDeadline(
+      async (signal) => {
+        const value = await entry.webContents.executeJavaScript(
+          "({width:innerWidth,height:innerHeight,dpr:Math.round(devicePixelRatio*1000000)/1000000})",
+          false,
+        );
+        signal.throwIfAborted();
+        const parsed = browserViewportGeometrySchema.safeParse(value);
+        if (!parsed.success)
+          throw new Error("The browser did not report a valid viewport.");
+        return parsed.data;
+      },
+      () => new Error("The browser did not apply its viewport in time."),
+    );
   }
 
   private present(
@@ -310,26 +335,40 @@ export class BrowserViewViewport {
     const requestId = randomUUID();
     const { revision } = presentation;
     return new Promise((resolve, reject) => {
+      // The acknowledgment needs a drawn frame. A locked screen draws none, so
+      // the request is still sent (the guest lays it out once the screen is
+      // unlocked) but not waited for. A window can also stop drawing with no
+      // signal this process can read, such as a display asleep without a lock;
+      // this deadline ends that wait.
       const timer = setTimeout(() => {
         this.pending.delete(requestId);
-        reject(new Error("The browser did not confirm its viewport in time."));
+        reject(
+          new ViewportNotDrawnError(
+            "The browser did not confirm its viewport in time.",
+          ),
+        );
       }, 4_000);
       this.pending.set(requestId, { entry, revision, resolve, reject, timer });
-      if (
-        !this.send(
-          entry.identity.lifecycleWindowId,
-          RunnerHostEvent.browserViewGuestViewportRequested,
-          {
-            requestId,
-            registrationId: entry.identity.registrationId,
-            ...presentation,
-          },
-        )
-      ) {
+      const sent = this.send(
+        entry.identity.lifecycleWindowId,
+        RunnerHostEvent.browserViewGuestViewportRequested,
+        {
+          requestId,
+          registrationId: entry.identity.registrationId,
+          ...presentation,
+        },
+      );
+      if (!sent || this.isScreenLocked()) {
         this.pending.delete(requestId);
         clearTimeout(timer);
         reject(
-          new Error("The browser window is unavailable for viewport resize."),
+          sent
+            ? new ViewportNotDrawnError(
+                "The screen is locked, so the browser cannot show a new viewport until it is unlocked.",
+              )
+            : new Error(
+                "The browser window is unavailable for viewport resize.",
+              ),
         );
       }
     });
@@ -338,14 +377,13 @@ export class BrowserViewViewport {
 
 function withinViewportDeadline<T>(
   work: (signal: AbortSignal) => Promise<T>,
+  timedOut: () => Error,
 ): Promise<T> {
   const controller = new AbortController();
   let timer: NodeJS.Timeout | null = null;
   const timeout = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
-      const error = new Error(
-        "The browser did not apply its viewport in time.",
-      );
+      const error = timedOut();
       controller.abort(error);
       reject(error);
     }, 4_000);
