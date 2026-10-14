@@ -263,6 +263,42 @@ describe("buildHostCrashEvent", () => {
     expect(event.extra.hostIdKnown).toBe(true);
   });
 
+  describe("external termination", () => {
+    it("reports DBG_TERMINATE_PROCESS as a warning under its own fingerprint, tagged host_exit_kind", () => {
+      const event = buildHostCrashEvent(
+        sampleTelemetry({
+          exitCode: 0x40010004,
+          signal: null,
+          exitMeaning:
+            "0x40010004 DBG_TERMINATE_PROCESS (terminated from outside)",
+        }),
+        null,
+      );
+      expect(event.level).toBe("warning");
+      expect(event.fingerprint).toEqual([
+        HOST_CRASH_FINGERPRINT_ROOT,
+        platform(),
+        "external-termination",
+      ]);
+      expect(event.tags.host_exit_kind).toBe("external-termination");
+      expect(event.tags.crash_kind).toBe("0x40010004");
+    });
+
+    it("keeps every other exit status an error under the crash fingerprint with no host_exit_kind", () => {
+      const event = buildHostCrashEvent(
+        sampleTelemetry({ exitCode: 0xc0000005, exitMeaning: null }),
+        null,
+      );
+      expect(event.level).toBe("error");
+      expect(event.fingerprint).toEqual([
+        HOST_CRASH_FINGERPRINT_ROOT,
+        platform(),
+        "0xC0000005",
+      ]);
+      expect(event.tags).not.toHaveProperty("host_exit_kind");
+    });
+  });
+
   describe("cli_version tag", () => {
     afterEach(() => {
       vi.unstubAllEnvs();

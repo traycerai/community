@@ -7,6 +7,7 @@ import * as Sentry from "@sentry/node";
 import { resolveCliVersion } from "../cli-version";
 import type { Environment } from "../runner/environment";
 import { destroySentryTransportRequests } from "../sentry-transport";
+import { isWindowsExternalTerminationExit } from "./crash-diagnostics";
 import { readHostPidMetadata } from "./pid-metadata";
 
 // Fleet visibility for host crashes.
@@ -78,6 +79,8 @@ export interface HostCrashIdentity {
  */
 export interface HostCrashEvent {
   readonly message: string;
+  /** `error` for a crash; `warning` for an exit that is not one. */
+  readonly level: "error" | "warning";
   readonly fingerprint: readonly string[];
   readonly hostId: string | null;
   readonly tags: Readonly<Record<string, string>>;
@@ -132,9 +135,23 @@ export function buildHostCrashEvent(
   const platform = osPlatform();
   const kind = crashKindToken(telemetry.exitCode, telemetry.signal);
   const cause = telemetry.exitMeaning ?? kind;
+  // Ended from outside (not a crash, not proven to be a session end): kept
+  // queryable at a lower severity and under its own fingerprint, so a rise in
+  // mid-session kills is visible without being a crash issue.
+  // (A POSIX exit status never exceeds 255, so the code alone is Windows.)
+  const externallyTerminated =
+    telemetry.exitCode !== null &&
+    isWindowsExternalTerminationExit(telemetry.exitCode);
   return {
-    message: `Host crashed: ${cause}`,
-    fingerprint: [HOST_CRASH_FINGERPRINT_ROOT, platform, kind],
+    message: externallyTerminated
+      ? `Host terminated externally: ${cause}`
+      : `Host crashed: ${cause}`,
+    level: externallyTerminated ? "warning" : "error",
+    fingerprint: [
+      HOST_CRASH_FINGERPRINT_ROOT,
+      platform,
+      externallyTerminated ? "external-termination" : kind,
+    ],
     hostId: identity?.hostId ?? null,
     tags: {
       host_environment: telemetry.environment,
@@ -148,6 +165,9 @@ export function buildHostCrashEvent(
       arch: osArch(),
       os_release: osRelease(),
       crash_kind: kind,
+      ...(externallyTerminated
+        ? { host_exit_kind: "external-termination" }
+        : {}),
     },
     extra: {
       attemptId: telemetry.attemptId,
@@ -194,7 +214,7 @@ export async function readHostCrashIdentity(
  */
 export function captureHostCrashEvent(event: HostCrashEvent): void {
   Sentry.withScope((scope) => {
-    scope.setLevel("error");
+    scope.setLevel(event.level);
     scope.setFingerprint([...event.fingerprint]);
     scope.setTags(event.tags);
     scope.setExtras(event.extra);
@@ -203,7 +223,7 @@ export function captureHostCrashEvent(event: HostCrashEvent): void {
       // column count distinct hosts.
       scope.setUser({ id: event.hostId });
     }
-    Sentry.captureMessage(event.message, "error");
+    Sentry.captureMessage(event.message, event.level);
   });
 }
 

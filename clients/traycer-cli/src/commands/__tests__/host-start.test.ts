@@ -2009,48 +2009,59 @@ describe("runHostStart - Windows requested-kill arm", () => {
 
 // --------------------------------- Windows session-end exits
 //
-// A Windows logoff or shutdown ends the host child with DBG_TERMINATE_PROCESS
-// (0x40010004), and a relaunch attempted while the window station is already
-// closing fails at DLL initialisation with STATUS_DLL_INIT_FAILED_LOGOFF
-// (0xC000026B). Neither is a defect of the host: they are the session ending.
-// The crash marker and the diagnostics line stay (support still reads them),
-// but the fleet crash count must not carry them. Controls pin that every
-// other code, and the same code on another platform, is still reported.
+// A relaunch attempted while the window station is closing fails at DLL
+// initialisation with STATUS_DLL_INIT_FAILED_LOGOFF (0xC000026B), which is a
+// session ending by its own name. The crash marker and the diagnostics line
+// stay (support still reads them), but the fleet crash count must not carry
+// it. 0xC0000142 and DBG_TERMINATE_PROCESS (0x40010004) are NOT skipped: the
+// latter is most often the user's session ending but any caller of
+// TerminateProcess can produce it, so it is reported (as a warning, see
+// crash-telemetry) rather than dropped. Controls pin that every other code,
+// and the same code on another platform, is still reported.
 
 describe("runHostStart - Windows session-end exits", () => {
   const exec = "/opt/traycer/host/install/traycer-host";
   const DBG_TERMINATE_PROCESS = 0x40010004;
   const DLL_INIT_FAILED_LOGOFF = 0xc000026b;
 
-  it.each([
-    ["DBG_TERMINATE_PROCESS", DBG_TERMINATE_PROCESS],
-    ["STATUS_DLL_INIT_FAILED_LOGOFF", DLL_INIT_FAILED_LOGOFF],
-  ])(
-    "writes the crash marker but reports no crash telemetry for %s on win32",
-    async (_name, exitCode) => {
-      const { child, recorded, deps } = makeRunStubs(sampleRecord(exec), null);
-      const win32Deps = withLifecyclePlatform(deps, "win32");
+  it("writes the crash marker but reports no crash telemetry for STATUS_DLL_INIT_FAILED_LOGOFF on win32", async () => {
+    const { child, recorded, deps } = makeRunStubs(sampleRecord(exec), null);
+    const win32Deps = withLifecyclePlatform(deps, "win32");
 
-      await runUntilExit(
-        () =>
-          runHostStart(
-            { environment: "production", cwd: null },
-            withChildExit(win32Deps, child, exitCode, null),
-          ),
-        recorded,
-      );
-
-      const crashed = recorded.markers.find((m) => m.phase === "crashed");
-      expect(crashed).toBeDefined();
-      expect(crashed?.fields.exitCode).toBe(exitCode);
-      expect(
-        recorded.loggerErrors.some(
-          (e) => e.message === "Host crash diagnostics",
+    await runUntilExit(
+      () =>
+        runHostStart(
+          { environment: "production", cwd: null },
+          withChildExit(win32Deps, child, DLL_INIT_FAILED_LOGOFF, null),
         ),
-      ).toBe(true);
-      expect(recorded.crashReports).toHaveLength(0);
-    },
-  );
+      recorded,
+    );
+
+    const crashed = recorded.markers.find((m) => m.phase === "crashed");
+    expect(crashed).toBeDefined();
+    expect(crashed?.fields.exitCode).toBe(DLL_INIT_FAILED_LOGOFF);
+    expect(
+      recorded.loggerErrors.some((e) => e.message === "Host crash diagnostics"),
+    ).toBe(true);
+    expect(recorded.crashReports).toHaveLength(0);
+  });
+
+  it("control: DBG_TERMINATE_PROCESS on win32 is still reported, to be sent as a warning", async () => {
+    const { child, recorded, deps } = makeRunStubs(sampleRecord(exec), null);
+    const win32Deps = withLifecyclePlatform(deps, "win32");
+
+    await runUntilExit(
+      () =>
+        runHostStart(
+          { environment: "production", cwd: null },
+          withChildExit(win32Deps, child, DBG_TERMINATE_PROCESS, null),
+        ),
+      recorded,
+    );
+
+    expect(recorded.crashReports).toHaveLength(1);
+    expect(recorded.crashReports[0]?.exitCode).toBe(DBG_TERMINATE_PROCESS);
+  });
 
   it("control: the same code on a non-Windows platform is still reported", async () => {
     const { child, recorded, deps } = makeRunStubs(sampleRecord(exec), null);
