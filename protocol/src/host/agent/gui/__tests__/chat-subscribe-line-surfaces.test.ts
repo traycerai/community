@@ -84,9 +84,11 @@ const CLAUDE_PARITY_MINOR = 20;
 // `1.21` is the Command Code line: it adds no key, only which harnesses the
 // shapes may name. `1.22` is the open-harness-id line: it adds no key either,
 // only reopens the heard-from harness leaves to a string. `1.23` adds the
-// tool-call `page` / `mcpApp` stamps (pinned below); every threshold above
-// still reads `>=` against both.
-const LIVE_MINOR = 23;
+// tool-call `page` / `mcpApp` stamps (pinned below). `1.24` adds the cron
+// next-run time, whose `scheduledFor` key already exists on other item kinds;
+// `chat-subscribe-cron-next-run-v124.test.ts` pins that arm directly. Every
+// threshold above still reads `>=` against the live line.
+const LIVE_MINOR = 24;
 // Object keys carry their colon so a needle cannot hit an enum value or a
 // description that merely mentions the name; the two literals (`thinkingTokens`
 // frame kind, `cron` background kind) are matched with both quotes, which
@@ -230,13 +232,13 @@ function actionAckPropertyNames(serverFrameSchema: z.ZodType): string[] {
 }
 
 describe("chat.subscribe line surfaces", () => {
-  it("covers chat.subscribe@1.0 through @1.23 (a line added later cannot drop out)", () => {
+  it("covers chat.subscribe@1.0 through @1.24 (a line added later cannot drop out)", () => {
     // RESTATED on purpose: this is the change-detector for the line SET, so a
     // derived list would assert the registry against itself. When a new minor
     // lands, extending this by hand is the acknowledgement.
     expect(MINORS).toEqual([
       0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-      21, 22, 23,
+      21, 22, 23, 24,
     ]);
     expect(chatSubscribeLine.latestMinor).toBe(LIVE_MINOR);
   });
