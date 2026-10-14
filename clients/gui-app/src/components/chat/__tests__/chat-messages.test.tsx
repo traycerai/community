@@ -47,6 +47,7 @@ import {
   restoreChatTabState,
   saveChatTabState,
 } from "@/stores/chats/chat-tab-state-cache";
+import { pendingHydrationRestore } from "@/stores/chats/chat-tab-pending-hydration-restore";
 import type { ChatTabPersistenceIdentity } from "@/stores/chats/chat-tab-persistence-key";
 import { flushChatTabViewportHandoff } from "@/stores/chats/chat-tab-viewport-handoff";
 import type {
@@ -3955,6 +3956,11 @@ describe("ChatMessages scroll policy", () => {
       // of the transcript: it follows the latest instead.
       expect(getScrollNode().dataset.scrollMode).toBe("following-end");
       expect(isJumpPillVisible()).toBe(false);
+      // The anchor never arrives, so nothing may stay armed to replay it (it
+      // would hold follow correction suppressed behind a row that is gone).
+      expect(
+        pendingHydrationRestore(makeDefaultTestIdentity(scrollStateKey)),
+      ).toBeNull();
 
       // following-end + stale anchor: mode preserved, no crash.
       const followKey = `t5-stale-follow-${Math.random().toString(36).slice(2)}`;

@@ -2039,9 +2039,18 @@ function ChatMessagesInner(props: ChatMessagesInnerProps) {
   // Raw saved state, peeked WITHOUT `restoreChatTabState`'s messages-dependent
   // clamp. Hydration retry needs the original anchor id to replay a measured
   // location once the transcript has hydrated enough to contain it.
-  const [rawSavedTabState] = useState<SavedChatTabScrollState | null>(
-    () => pendingHydrationRestore(identity) ?? peekSavedChatTabState(identity),
-  );
+  const [rawSavedTabState] = useState<SavedChatTabScrollState | null>(() => {
+    const raw =
+      pendingHydrationRestore(identity) ?? peekSavedChatTabState(identity);
+    // The mount fell back to following the latest because the saved free
+    // scroll names no row that can ever be restored (`restoreChatTabStateForMount`).
+    // Carrying the stale anchor on would arm a hydration replay for a row that
+    // never arrives and hold follow correction suppressed behind it.
+    return restoredTabState.mode === "following-end" &&
+      raw?.mode === "free-scrolling"
+      ? restoredTabState
+      : raw;
+  });
   const pendingHydrationRestoreAnchorId =
     resolvePendingHydrationRestoreAnchorId(restoredTabState, rawSavedTabState);
   // Non-null only when the mount-time restore above had to clamp away from
