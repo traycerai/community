@@ -2555,6 +2555,9 @@ export const hostNotificationHooksSaveDowngradeV20ToV10 = defineDowngradePath<
 >({
   from: { major: 2, minor: 0 },
   to: { major: 1, minor: 0 },
-  downgradeRequest: (request) => ({ ok: true, value: { hooks: request.hooks } }),
+  downgradeRequest: (request) => ({
+    ok: true,
+    value: { hooks: request.hooks },
+  }),
   downgradeResponse: (response) => ({ ok: true, value: response }),
 });

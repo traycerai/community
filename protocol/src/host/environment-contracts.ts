@@ -172,7 +172,8 @@ export const ENVIRONMENT_RPC_METHODS = {
             method: "environment.secrets.replaceValue",
             schemaVersion: { major: 1, minor: 0 },
             requestSchema: schemas.environmentSecretsReplaceValueRequestSchema,
-            responseSchema: schemas.environmentSecretsReplaceValueResponseSchema,
+            responseSchema:
+              schemas.environmentSecretsReplaceValueResponseSchema,
           }),
           upgradeFromPreviousVersion: null,
         },
@@ -280,7 +281,8 @@ export const ENVIRONMENT_RPC_METHODS = {
             method: "environment.agentDefinitions.list",
             schemaVersion: { major: 1, minor: 0 },
             requestSchema: schemas.environmentAgentDefinitionsListRequestSchema,
-            responseSchema: schemas.environmentAgentDefinitionsListResponseSchema,
+            responseSchema:
+              schemas.environmentAgentDefinitionsListResponseSchema,
           }),
           upgradeFromPreviousVersion: null,
         },
@@ -315,7 +317,8 @@ export const ENVIRONMENT_RPC_METHODS = {
           contract: defineRpcContract({
             method: "environment.agentDefinitions.delete",
             schemaVersion: { major: 1, minor: 0 },
-            requestSchema: schemas.environmentAgentDefinitionsDeleteRequestSchema,
+            requestSchema:
+              schemas.environmentAgentDefinitionsDeleteRequestSchema,
             responseSchema: schemas.environmentWriteOutcomeSchema,
           }),
           upgradeFromPreviousVersion: null,

@@ -220,10 +220,7 @@ export function useRpcShellConfigController(props: {
       envRenameMutation.isPending,
     probeSource,
     setShell: (request, callbacks) =>
-      setMutation.mutate(
-        { ...request, executableWriteGrant: null },
-        callbacks,
-      ),
+      setMutation.mutate({ ...request, executableWriteGrant: null }, callbacks),
     resetShell: (callbacks) =>
       resetMutation.mutate({ executableWriteGrant: null }, callbacks),
     addShell: (path, callbacks) =>

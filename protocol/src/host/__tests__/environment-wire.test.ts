@@ -155,7 +155,8 @@ describe("new methods are off every released floor", () => {
     );
     expect(shapes).toEqual(
       ENVIRONMENT_METHOD_NAMES.map(
-        (name) => `${name}: degrade=unsupported majors=1 latestMinor=0 minors=0`,
+        (name) =>
+          `${name}: degrade=unsupported majors=1 latestMinor=0 minors=0`,
       ),
     );
     expect(hostRpcRegistry["environment.status"].degrade).toEqual({
@@ -278,8 +279,7 @@ const releasedSinkCases: readonly ReleasedSinkCase[] = [
     method: "config.shell.set",
     clientVersion: { major: 1, minor: 1 },
     latestRequestSchema:
-      hostRpcRegistry["config.shell.set"][1].versions[1].contract
-        .requestSchema,
+      hostRpcRegistry["config.shell.set"][1].versions[1].contract.requestSchema,
     legacyRequest: { path: "/bin/zsh", args: ["-l"] },
     hostLines: [
       {
@@ -302,8 +302,7 @@ const releasedSinkCases: readonly ReleasedSinkCase[] = [
     method: "config.shell.add",
     clientVersion: { major: 1, minor: 1 },
     latestRequestSchema:
-      hostRpcRegistry["config.shell.add"][1].versions[1].contract
-        .requestSchema,
+      hostRpcRegistry["config.shell.add"][1].versions[1].contract.requestSchema,
     legacyRequest: { path: "/usr/local/bin/fish" },
     hostLines: [
       {
@@ -423,7 +422,11 @@ const releasedSinkCases: readonly ReleasedSinkCase[] = [
     latestRequestSchema:
       hostRpcRegistry["providers.setEnvOverride"][2].versions[2].contract
         .requestSchema,
-    legacyRequest: { providerId: "claude-code", key: "CLAUDE_BIN", value: "/x" },
+    legacyRequest: {
+      providerId: "claude-code",
+      key: "CLAUDE_BIN",
+      value: "/x",
+    },
     hostLines: [
       {
         version: { major: 2, minor: 1 },
@@ -505,7 +508,11 @@ const newSinkCases: readonly NewSinkCase[] = [
     requestSchema:
       ENVIRONMENT_RPC_METHODS["environment.agentDefinitions.put"][1].versions[0]
         .contract.requestSchema,
-    request: { name: "reviewer.md", text: "# Reviewer", expectedRevision: null },
+    request: {
+      name: "reviewer.md",
+      text: "# Reviewer",
+      expectedRevision: null,
+    },
   },
   {
     label: "environment.setup.put@1.0",
@@ -585,68 +592,72 @@ describe("every sink-reaching method parses with and without executableWriteGran
     });
   });
 
-  describe.each(releasedSinkCases)("$label against the released line", (entry) => {
-    it("keeps the previous line's request schema parsing the old shape", () => {
-      for (const line of entry.hostLines) {
-        expect(
-          accepts(line.requestSchema, entry.legacyRequest),
-          `${String(line.version.major)}.${String(line.version.minor)}`,
-        ).toBe(true);
-      }
-    });
-
-    it("registers the upgrade path, which fills executableWriteGrant: null", () => {
-      expect(entry.registeredUpgrade).toBe(entry.upgradePath);
-      const upgraded = entry.upgrade(entry.legacyRequest);
-      expect(upgraded).toEqual({
-        ...entry.legacyRequest,
-        executableWriteGrant: null,
+  describe.each(releasedSinkCases)(
+    "$label against the released line",
+    (entry) => {
+      it("keeps the previous line's request schema parsing the old shape", () => {
+        for (const line of entry.hostLines) {
+          expect(
+            accepts(line.requestSchema, entry.legacyRequest),
+            `${String(line.version.major)}.${String(line.version.minor)}`,
+          ).toBe(true);
+        }
       });
-      expect(accepts(entry.latestRequestSchema, upgraded)).toBe(true);
-    });
 
-    it("sends a newer client's request to every older host line WITHOUT the grant, in a shape that line accepts", () => {
-      const params = {
-        ...entry.legacyRequest,
-        executableWriteGrant: JWT_SHAPED_GRANT,
-      };
-      for (const line of entry.hostLines) {
+      it("registers the upgrade path, which fills executableWriteGrant: null", () => {
+        expect(entry.registeredUpgrade).toBe(entry.upgradePath);
+        const upgraded = entry.upgrade(entry.legacyRequest);
+        expect(upgraded).toEqual({
+          ...entry.legacyRequest,
+          executableWriteGrant: null,
+        });
+        expect(accepts(entry.latestRequestSchema, upgraded)).toBe(true);
+      });
+
+      it("sends a newer client's request to every older host line WITHOUT the grant, in a shape that line accepts", () => {
+        const params = {
+          ...entry.legacyRequest,
+          executableWriteGrant: JWT_SHAPED_GRANT,
+        };
+        for (const line of entry.hostLines) {
+          const prepared = prepareRequestPayload(
+            entry.registry,
+            entry.clientVersion,
+            line.version,
+            params,
+            "r1",
+            entry.method,
+          );
+          const label = `${String(line.version.major)}.${String(line.version.minor)}`;
+          expect(prepared.onWireVersion, label).toEqual(line.version);
+          expect(prepared.onWirePayload, label).not.toHaveProperty(
+            "executableWriteGrant",
+          );
+          expect(prepared.onWirePayload, label).toEqual(entry.legacyRequest);
+          expect(
+            accepts(line.requestSchema, prepared.onWirePayload),
+            label,
+          ).toBe(true);
+        }
+      });
+
+      it("leaves the grant intact between peers on the same line", () => {
+        const params = {
+          ...entry.legacyRequest,
+          executableWriteGrant: JWT_SHAPED_GRANT,
+        };
         const prepared = prepareRequestPayload(
           entry.registry,
           entry.clientVersion,
-          line.version,
+          entry.clientVersion,
           params,
-          "r1",
+          "r2",
           entry.method,
         );
-        const label = `${String(line.version.major)}.${String(line.version.minor)}`;
-        expect(prepared.onWireVersion, label).toEqual(line.version);
-        expect(prepared.onWirePayload, label).not.toHaveProperty(
-          "executableWriteGrant",
-        );
-        expect(prepared.onWirePayload, label).toEqual(entry.legacyRequest);
-        expect(accepts(line.requestSchema, prepared.onWirePayload), label).toBe(
-          true,
-        );
-      }
-    });
-
-    it("leaves the grant intact between peers on the same line", () => {
-      const params = {
-        ...entry.legacyRequest,
-        executableWriteGrant: JWT_SHAPED_GRANT,
-      };
-      const prepared = prepareRequestPayload(
-        entry.registry,
-        entry.clientVersion,
-        entry.clientVersion,
-        params,
-        "r2",
-        entry.method,
-      );
-      expect(prepared.onWirePayload).toEqual(params);
-    });
-  });
+        expect(prepared.onWirePayload).toEqual(params);
+      });
+    },
+  );
 
   it("providers.setEnvOverride: the 1.0 line is strict, which is why the downgrade must strip the grant", () => {
     const strictRefusal = providersSetEnvOverrideV10.requestSchema.safeParse({
@@ -673,7 +684,8 @@ describe("every sink-reaching method parses with and without executableWriteGran
     // The 2.0 -> 1.0 downgrade (cross-major) is what lets a hook be saved on a
     // released host at all.
     expect(
-      hostRpcRegistry["host.notificationHooks.save"][2].downgradePathsFromLatest[1],
+      hostRpcRegistry["host.notificationHooks.save"][2]
+        .downgradePathsFromLatest[1],
     ).toBeDefined();
   });
 
@@ -874,7 +886,9 @@ describe("promoteToPersonal toward a 1.0 host is refused, never dropped", () => 
     });
     expect(error).toBeInstanceOf(HostMethodVersionUnsatisfiedError);
     expect(error).toBeInstanceOf(HostRpcError);
-    expect(error.requirement).toEqual(PROMOTE_TO_PERSONAL_REQUIRED_HOST_VERSION);
+    expect(error.requirement).toEqual(
+      PROMOTE_TO_PERSONAL_REQUIRED_HOST_VERSION,
+    );
     expect(error.negotiated).toEqual({ major: 1, minor: 0 });
     expect(error.code).toBe("DOWNGRADE_UNSUPPORTED");
   });
@@ -910,7 +924,9 @@ describe("secret versions, Undo, Destroy, rotation and consent are the plan's sh
       secretId: "s1",
     });
     expect(request).toEqual({ secretId: "s1" });
-    expect(accepts(env.environmentSecretsVersionsRequestSchema, {})).toBe(false);
+    expect(accepts(env.environmentSecretsVersionsRequestSchema, {})).toBe(
+      false,
+    );
 
     const row = {
       versionId: "v2",
@@ -1171,13 +1187,17 @@ describe("secret versions, Undo, Destroy, rotation and consent are the plan's sh
       expect(accepts(env.rotationEvidenceSchema, entry), entry.kind).toBe(true);
     }
     for (const kind of ["fenced", "fencedAt", "deadline"]) {
-      expect(accepts(env.rotationEvidenceSchema, { kind, count: 1 }), kind).toBe(
-        false,
-      );
+      expect(
+        accepts(env.rotationEvidenceSchema, { kind, count: 1 }),
+        kind,
+      ).toBe(false);
     }
     // Evidence count: null (no sessions, or one probe) and a truthful zero.
     expect(
-      accepts(env.rotationEvidenceSchema, { kind: "session_closed", count: null }),
+      accepts(env.rotationEvidenceSchema, {
+        kind: "session_closed",
+        count: null,
+      }),
     ).toBe(true);
     expect(
       accepts(env.rotationEvidenceSchema, { kind: "cache_cleared", count: 0 }),
@@ -1185,16 +1205,25 @@ describe("secret versions, Undo, Destroy, rotation and consent are the plan's sh
     // Per kind, as the Evidence row gives it: `cache_cleared` is "never
     // null"; `probe_refused` "is null, one probe being one".
     expect(
-      accepts(env.rotationEvidenceSchema, { kind: "cache_cleared", count: null }),
+      accepts(env.rotationEvidenceSchema, {
+        kind: "cache_cleared",
+        count: null,
+      }),
     ).toBe(false);
     expect(
       accepts(env.rotationEvidenceSchema, { kind: "probe_refused", count: 1 }),
     ).toBe(false);
     expect(
-      accepts(env.rotationEvidenceSchema, { kind: "session_closed", count: -1 }),
+      accepts(env.rotationEvidenceSchema, {
+        kind: "session_closed",
+        count: -1,
+      }),
     ).toBe(false);
     expect(
-      accepts(env.rotationEvidenceSchema, { kind: "session_closed", count: 1.5 }),
+      accepts(env.rotationEvidenceSchema, {
+        kind: "session_closed",
+        count: 1.5,
+      }),
     ).toBe(false);
 
     // A producer is a worker (contained by expiry) or a host (applies on
@@ -1238,7 +1267,12 @@ describe("secret versions, Undo, Destroy, rotation and consent are the plan's sh
     // `issuedAt` is null before the controller's first send.
     expect(
       accepts(env.environmentSecretsRotationResponseSchema, {
-        rotation: { ...rotation, state: "accepted", issuedAt: null, producers: [] },
+        rotation: {
+          ...rotation,
+          state: "accepted",
+          issuedAt: null,
+          producers: [],
+        },
         lastVerify: null,
       }),
     ).toBe(true);
