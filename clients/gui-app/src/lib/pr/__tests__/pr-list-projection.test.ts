@@ -7,8 +7,6 @@ import {
   groupPrItemsByRepo,
   prChecksSummary,
   prRowTitleText,
-  prStackLayerLabel,
-  prStackLayerLabelsByItem,
   prStackRailEntries,
   type PrRepoBlock,
 } from "@/lib/pr/pr-list-projection";
@@ -517,42 +515,6 @@ describe("groupPrItemsByRepo stack blocks", () => {
     expect(numbers(group?.items ?? [])).toEqual([2, 4, 1, 3]);
   });
 
-  describe("prStackLayerLabel", () => {
-    it("reads a native layer against GitHub's own position and size", () => {
-      const third = pr(3, { stack: nativeStack(3, 12) });
-      const stack = asStack(
-        onlyBlocks([third, pr(1, { stack: nativeStack(1, 12) })]).at(0),
-      );
-
-      expect(prStackLayerLabel(third, stack)).toBe("layer 3 of 12");
-    });
-
-    it("reads an inferred layer against the rows it was built from", () => {
-      const rows = [
-        pr(1, { headRefName: "a", baseRefName: "main" }),
-        pr(2, { headRefName: "b", baseRefName: "a" }),
-        pr(3, { headRefName: "c", baseRefName: "b" }),
-      ];
-      const stack = asStack(onlyBlocks(rows).at(0));
-      const second = stack.layers.at(1);
-
-      expect(second).toBeDefined();
-      if (second === undefined) return;
-      expect(prStackLayerLabel(second, stack)).toBe("layer 2 of 3");
-    });
-
-    it("is null for a row that is not one of the stack's layers", () => {
-      const stack = asStack(
-        onlyBlocks([
-          pr(1, { stack: nativeStack(1, 2) }),
-          pr(2, { stack: nativeStack(2, 2) }),
-        ]).at(0),
-      );
-
-      expect(prStackLayerLabel(pr(99, {}), stack)).toBeNull();
-    });
-  });
-
   describe("filterPrRepoGroups", () => {
     const isOpen = (row: PrLightItem): boolean => row.state === "open";
 
@@ -608,21 +570,6 @@ describe("groupPrItemsByRepo stack blocks", () => {
         repo: "widget",
       });
       expect(visible[0].blocks.map((block) => block.kind)).toEqual(["single"]);
-    });
-  });
-
-  describe("prStackLayerLabelsByItem", () => {
-    it("labels every stack layer from the complete groups and no single", () => {
-      const rows = [
-        pr(1, { headRefName: "a", baseRefName: "main", state: "merged" }),
-        pr(2, { headRefName: "b", baseRefName: "a" }),
-        pr(3, { headRefName: "solo", baseRefName: "main" }),
-      ];
-      const labels = prStackLayerLabelsByItem(groupPrItemsByRepo(rows));
-
-      expect(labels.get(rows[0])).toBe("layer 1 of 2");
-      expect(labels.get(rows[1])).toBe("layer 2 of 2");
-      expect(labels.has(rows[2])).toBe(false);
     });
   });
 

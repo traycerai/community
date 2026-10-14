@@ -47,7 +47,6 @@ import {
   filterPrRepoGroups,
   formatPrStackCount,
   formatRepoGroupLabel,
-  prStackLayerLabelsByItem,
   prStackRailEntries,
   fullyIdentifiedPrBase,
   groupPrItemsByRepo,
@@ -191,10 +190,6 @@ export function PrPanelBodyContent(props: {
   const allGroups = useMemo(
     () => groupPrItemsByRepo(props.items),
     [props.items],
-  );
-  const layerLabels = useMemo(
-    () => prStackLayerLabelsByItem(allGroups),
-    [allGroups],
   );
   const groups = useMemo(
     () => (openOnly ? filterPrRepoGroups(allGroups, isOpenPrItem) : allGroups),
@@ -375,7 +370,6 @@ export function PrPanelBodyContent(props: {
             }
             onToggle={toggleRepo}
             buildEntry={buildEntry}
-            layerLabels={layerLabels}
           />
         ))}
       </HoverCardGroup>
@@ -396,7 +390,6 @@ function PrRepoGroupSection(props: {
   readonly collapsed: boolean;
   readonly onToggle: (repoLabel: string) => void;
   readonly buildEntry: (item: PrLightItem) => PrRowEntry;
-  readonly layerLabels: ReadonlyMap<PrLightItem, string>;
 }): ReactNode {
   const label = formatRepoGroupLabel(props.group.repoIdentifier);
   const { onToggle } = props;
@@ -441,7 +434,6 @@ function PrRepoGroupSection(props: {
                   hostId={props.hostId}
                   epicId={props.epicId}
                   tabId={props.tabId}
-                  layerLabel={null}
                 />
               );
             }
@@ -453,7 +445,6 @@ function PrRepoGroupSection(props: {
                 epicId={props.epicId}
                 tabId={props.tabId}
                 buildEntry={props.buildEntry}
-                layerLabels={props.layerLabels}
               />
             );
           })}
@@ -479,7 +470,6 @@ function PrStackBlockView(props: {
   readonly epicId: string;
   readonly tabId: string;
   readonly buildEntry: (item: PrLightItem) => PrRowEntry;
-  readonly layerLabels: ReadonlyMap<PrLightItem, string>;
 }): ReactNode {
   const entries = prStackRailEntries(props.block);
   return (
@@ -497,7 +487,6 @@ function PrStackBlockView(props: {
               hostId={props.hostId}
               epicId={props.epicId}
               tabId={props.tabId}
-              layerLabel={props.layerLabels.get(entry.item) ?? null}
             />
           </PrStackRailRow>
         ) : (

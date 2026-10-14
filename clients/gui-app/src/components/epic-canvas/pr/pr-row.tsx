@@ -152,13 +152,6 @@ export function PrRow(props: {
   readonly entry: PrRowEntry;
   readonly epicId: string;
   readonly tabId: string;
-  /**
-   * The row's place in its stack (`layer 2 of 5`), shown after the branch
-   * line; `null` outside a stack. Carried per row because a partial native
-   * stack lists fewer rows than it has layers, so order alone cannot say
-   * which layer a row is.
-   */
-  readonly layerLabel: string | null;
 }): ReactNode {
   const item = props.entry.item;
   // A never-swept row has no title, and `prRowIdentity` already carries the
@@ -257,7 +250,6 @@ export function PrRow(props: {
             <span className="min-w-0 truncate">
               {formatPrBaseFromHead(item)}
             </span>
-            <PrRowLayerLabel label={props.layerLabel} />
           </p>
           <PrOwnerBadges
             owners={item.owners}
@@ -530,19 +522,6 @@ function PrRowUpdatedAt(props: { readonly updatedAt: number }): ReactNode {
   return (
     <span className="whitespace-nowrap" data-testid="pr-row-updated-at">
       {label}
-    </span>
-  );
-}
-
-/** `· layer 2 of 5` after the branch line; nothing outside a stack. */
-function PrRowLayerLabel(props: { readonly label: string | null }): ReactNode {
-  if (props.label === null) return null;
-  return (
-    <span
-      className="shrink-0 font-sans tabular-nums"
-      data-testid="pr-row-layer-label"
-    >
-      · {props.label}
     </span>
   );
 }

@@ -169,12 +169,7 @@ vi.mock("@/components/epic-canvas/pr/pr-row", () => {
         readonly tileId: string | null;
         readonly onOpen: (() => void) | null;
       };
-      readonly layerLabel: string | null;
-    }) => (
-      <div data-layer-label={props.layerLabel ?? ""}>
-        {mockEntry(props.entry, "mock-pr-card")}
-      </div>
-    ),
+    }) => <div>{mockEntry(props.entry, "mock-pr-card")}</div>,
   };
 });
 
@@ -199,13 +194,6 @@ function railRowKind(row: HTMLElement): string {
   if (row.querySelector("[data-testid=pr-stack-base]") !== null) return "base";
   const card = row.querySelector("[data-testid^=mock-pr-card-]");
   return card?.getAttribute("data-testid")?.replace("mock-pr-card-", "") ?? "?";
-}
-
-function layerLabelOf(head: string): string | null | undefined {
-  return screen
-    .getByTestId(`mock-pr-card-${head}`)
-    .closest("[data-layer-label]")
-    ?.getAttribute("data-layer-label");
 }
 
 function buildPrItem(overrides: Partial<PrLightItem>): PrLightItem {
@@ -821,8 +809,6 @@ describe("PrPanelBody card list", () => {
       const header = await screen.findByTestId("pr-stack-header");
       expect(header.textContent).toContain("Stack #7 → development");
       expect(header.textContent).toContain("2 of 5");
-      expect(layerLabelOf("native-1")).toBe("layer 1 of 5");
-      expect(layerLabelOf("native-2")).toBe("layer 2 of 5");
       // Drawn top first down the rail: the three absent upper layers, then
       // layer 2, layer 1, and the base at the foot.
       const rail = screen.getAllByTestId("pr-stack-rail-row");
@@ -869,7 +855,7 @@ describe("PrPanelBody card list", () => {
 
       expect(screen.queryByTestId("mock-pr-card-feat-merged")).toBeNull();
       expect(screen.queryByTestId("pr-stack-header")).toBeNull();
-      expect(layerLabelOf("feat-open")).toBe("");
+      expect(screen.queryByTestId("pr-stack-rail-row")).toBeNull();
     });
 
     it("keeps a hidden layer's neighbours in their stack places", async () => {
@@ -893,7 +879,11 @@ describe("PrPanelBody card list", () => {
         }),
       ]);
       await screen.findByTestId("pr-stack-header");
-      expect(layerLabelOf("layer-1")).toBe("layer 1 of 3");
+      const railKinds = () =>
+        screen
+          .getAllByTestId("pr-stack-rail-row")
+          .map((row) => railRowKind(row));
+      expect(railKinds()).toEqual(["layer-3", "layer-2", "layer-1", "base"]);
 
       act(() => {
         usePrPanelStore.getState().setOpenOnly(true);
@@ -903,8 +893,9 @@ describe("PrPanelBody card list", () => {
       expect(screen.getByTestId("pr-stack-header").textContent).toContain(
         "2 of 3",
       );
-      expect(layerLabelOf("layer-2")).toBe("layer 2 of 3");
-      expect(layerLabelOf("layer-3")).toBe("layer 3 of 3");
+      // The hidden bottom layer leaves the rail; the rest keep their order
+      // and the base stays at the foot.
+      expect(railKinds()).toEqual(["layer-3", "layer-2", "base"]);
     });
 
     it("draws no stack header for unrelated rows", async () => {

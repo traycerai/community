@@ -397,45 +397,6 @@ export function filterPrRepoGroups(
 }
 
 /**
- * Every stack layer's label, keyed by row, read off the COMPLETE groups so a
- * layer keeps its place when its neighbours are filtered out of view.
- */
-export function prStackLayerLabelsByItem(
-  groups: readonly PrRepoGroup[],
-): ReadonlyMap<PrLightItem, string> {
-  const labels = new Map<PrLightItem, string>();
-  for (const group of groups) {
-    for (const block of group.blocks) {
-      if (block.kind !== "stack") continue;
-      for (const item of block.layers) {
-        const label = prStackLayerLabel(item, block);
-        if (label !== null) labels.set(item, label);
-      }
-    }
-  }
-  return labels;
-}
-
-/**
- * A stack member's place in its stack, e.g. `layer 3 of 12`. A native stack
- * counts against GitHub's own size; an inferred one against the rows it was
- * built from. `null` when `item` is not one of the block's layers.
- */
-export function prStackLayerLabel(
-  item: PrLightItem,
-  block: PrStackBlock,
-): string | null {
-  const index = block.layers.indexOf(item);
-  if (index === -1) return null;
-  // Inferred stacks only ever hold rows with no native stack of 2+.
-  const stack = item.stack ?? null;
-  if (stack !== null && stack.size > 1) {
-    return `layer ${stack.position} of ${stack.size}`;
-  }
-  return `layer ${index + 1} of ${block.layers.length}`;
-}
-
-/**
  * A stack drawn top layer first, the way GitHub lists one, with the layers
  * this epic's list does not carry marked where they sit. Each entry is a
  * carried row, or a run of absent positions (a native stack with layers
@@ -459,7 +420,11 @@ export function prStackRailEntries(
     position: nativeStackPosition(item) ?? index + 1,
   }));
   const entries: PrStackRailEntry[] = [];
-  let expected = block.size;
+  // An inferred stack has no positions of its own: a layer the view has
+  // filtered out is simply gone from the rail, never an absent run (which
+  // would claim the layer was opened elsewhere). Only GitHub's size can say
+  // a layer is missing.
+  let expected = block.number === null ? block.layers.length : block.size;
   for (const { item, position } of [...positioned].reverse()) {
     if (position < expected) {
       entries.push({

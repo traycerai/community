@@ -119,7 +119,6 @@ function renderRow(overrides: Partial<PrLightItem>) {
           entry={entry(overrides, () => {})}
           epicId="epic-1"
           tabId={TAB_ID}
-          layerLabel={null}
         />
       </TooltipProvider>
     </QueryClientProvider>,
@@ -536,7 +535,6 @@ describe("PrRow active-tile highlight", () => {
             entry={{ key: "row", item: BASE_ITEM, tileId, onOpen: () => {} }}
             epicId="epic-1"
             tabId={tabId}
-            layerLabel={null}
           />
         </TooltipProvider>
       </QueryClientProvider>,
