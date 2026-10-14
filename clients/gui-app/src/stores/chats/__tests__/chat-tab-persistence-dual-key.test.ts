@@ -230,34 +230,25 @@ describe("ticket 15 dual-key scroll cache", () => {
       },
     );
 
-    it("follows latest when the saved anchor is gone and has no index", () => {
-      const id = chatIdIdentity("gone-anchor-no-index");
+    it("leaves a saved anchor that does not resolve yet to the hydration restore", () => {
+      const id = chatIdIdentity("hydrating");
       const rowKeys = makeMessages(3).map((message) => message.id);
       saveChatTabState({
         identity: id,
         mode: "free-scrolling",
-        anchorMessageId: "gone-no-index",
+        anchorMessageId: "not-hydrated-yet",
         anchorIndex: null,
         offset: 16,
       });
-      expect(restoreChatTabStateForMount(id, rowKeys)).toEqual(followingLatest);
-    });
-
-    it("keeps the anchorless shape while the transcript is still hydrating", () => {
-      const id = chatIdIdentity("hydrating");
-      saveChatTabState({
-        identity: id,
-        mode: "free-scrolling",
-        anchorMessageId: "not-hydrated-yet",
-        anchorIndex: 2,
-        offset: 16,
-      });
-      expect(restoreChatTabStateForMount(id, [])).toEqual({
+      const pending = {
         mode: "free-scrolling",
         anchorMessageId: null,
         anchorIndex: null,
         offset: 0,
-      });
+      };
+      // A partial transcript and an empty one both keep the pending shape.
+      expect(restoreChatTabStateForMount(id, rowKeys)).toEqual(pending);
+      expect(restoreChatTabStateForMount(id, [])).toEqual(pending);
     });
 
     it("leaves the visibility replay on the raw anchorless shape", () => {

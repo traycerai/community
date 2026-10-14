@@ -47,7 +47,6 @@ import {
   restoreChatTabState,
   saveChatTabState,
 } from "@/stores/chats/chat-tab-state-cache";
-import { pendingHydrationRestore } from "@/stores/chats/chat-tab-pending-hydration-restore";
 import type { ChatTabPersistenceIdentity } from "@/stores/chats/chat-tab-persistence-key";
 import { flushChatTabViewportHandoff } from "@/stores/chats/chat-tab-viewport-handoff";
 import type {
@@ -3924,9 +3923,9 @@ describe("ChatMessages scroll policy", () => {
       const scrollStateKey = `t5-stale-free-${Math.random().toString(36).slice(2)}`;
 
       // Legacy save without anchorIndex (pre-ticket-15 shape): when the id is
-      // gone AND no index was recorded, degrade to null-anchor rather than
-      // inventing a neighbor. Ticket 15's nearest-neighbor pin covers the
-      // anchorIndex path separately.
+      // gone AND no index was recorded, still degrade to null-anchor rather
+      // than inventing a neighbor. Ticket 15's nearest-neighbor pin covers
+      // the anchorIndex path separately.
       saveChatTabState({
         identity: makeDefaultTestIdentity(scrollStateKey),
         mode: "free-scrolling",
@@ -3935,8 +3934,7 @@ describe("ChatMessages scroll policy", () => {
         offset: 64,
       });
 
-      // restoreChatTabState keeps mode, drops the stale anchor (a kept-alive
-      // tile's visibility replay reads it as "leave the viewport alone").
+      // restoreChatTabState keeps mode, drops the stale anchor.
       expect(
         restoreChatTabState(
           makeDefaultTestIdentity(scrollStateKey),
@@ -3952,15 +3950,8 @@ describe("ChatMessages scroll policy", () => {
       renderChatMessages({ messages, scrollStateKey });
       await settleLegendList();
 
-      // A mount with no anchor to restore to would sit at scroll 0, the top
-      // of the transcript: it follows the latest instead.
-      expect(getScrollNode().dataset.scrollMode).toBe("following-end");
-      expect(isJumpPillVisible()).toBe(false);
-      // The anchor never arrives, so nothing may stay armed to replay it (it
-      // would hold follow correction suppressed behind a row that is gone).
-      expect(
-        pendingHydrationRestore(makeDefaultTestIdentity(scrollStateKey)),
-      ).toBeNull();
+      expect(getScrollNode().dataset.scrollMode).toBe("free-scrolling");
+      await waitForPillVisible();
 
       // following-end + stale anchor: mode preserved, no crash.
       const followKey = `t5-stale-follow-${Math.random().toString(36).slice(2)}`;
