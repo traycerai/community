@@ -20,6 +20,7 @@ import {
   evictChatTabStateForEpic,
   peekSavedChatTabState,
   restoreChatTabState,
+  restoreChatTabStateForMount,
   saveChatTabState,
 } from "@/stores/chats/chat-tab-state-cache";
 import {
@@ -199,37 +200,84 @@ describe("chat-tab-persistence-key", () => {
 });
 
 describe("ticket 15 dual-key scroll cache", () => {
-  it.each([null, 2])(
-    "follows latest when a saved free scroll has no anchor (index %s)",
-    (anchorIndex) => {
-      const id = chatIdIdentity("missing-anchor");
-      const messages = makeMessages(3);
+  describe("mounting a free scroll that resolves to no anchor", () => {
+    const followingLatest = {
+      mode: "following-end",
+      anchorMessageId: null,
+      anchorIndex: null,
+      offset: 0,
+    };
+
+    // The list would mount at scroll 0 with no follow permission, so a mount
+    // follows the latest instead.
+    it.each([null, 2])(
+      "follows latest when the saved anchor is null (index %s)",
+      (anchorIndex) => {
+        const id = chatIdIdentity("missing-anchor");
+        const messages = makeMessages(3);
+        const rowKeys = messages.map((message) => message.id);
+        saveChatTabState({
+          identity: id,
+          mode: "free-scrolling",
+          anchorMessageId: null,
+          anchorIndex,
+          offset: 48,
+        });
+        expect(restoreChatTabStateForMount(id, rowKeys)).toEqual(
+          followingLatest,
+        );
+        expect(restoreChatTabStateForMount(id, [])).toEqual(followingLatest);
+      },
+    );
+
+    it("follows latest when the saved anchor is gone and has no index", () => {
+      const id = chatIdIdentity("gone-anchor-no-index");
+      const rowKeys = makeMessages(3).map((message) => message.id);
+      saveChatTabState({
+        identity: id,
+        mode: "free-scrolling",
+        anchorMessageId: "gone-no-index",
+        anchorIndex: null,
+        offset: 16,
+      });
+      expect(restoreChatTabStateForMount(id, rowKeys)).toEqual(followingLatest);
+    });
+
+    it("keeps the anchorless shape while the transcript is still hydrating", () => {
+      const id = chatIdIdentity("hydrating");
+      saveChatTabState({
+        identity: id,
+        mode: "free-scrolling",
+        anchorMessageId: "not-hydrated-yet",
+        anchorIndex: 2,
+        offset: 16,
+      });
+      expect(restoreChatTabStateForMount(id, [])).toEqual({
+        mode: "free-scrolling",
+        anchorMessageId: null,
+        anchorIndex: null,
+        offset: 0,
+      });
+    });
+
+    it("leaves the visibility replay on the raw anchorless shape", () => {
+      const id = chatIdIdentity("replay-anchorless");
+      const rowKeys = makeMessages(3).map((message) => message.id);
       saveChatTabState({
         identity: id,
         mode: "free-scrolling",
         anchorMessageId: null,
-        anchorIndex,
-        offset: 48,
-      });
-
-      // A saved free scroll without an anchor names no row to restore to, and
-      // the list would mount at scroll 0 (the top). Following the latest is the
-      // only fallback that leaves the reader at the conversation they left.
-      const followingLatest = {
-        mode: "following-end",
-        anchorMessageId: null,
         anchorIndex: null,
         offset: 0,
-      };
-      expect(
-        restoreChatTabState(
-          id,
-          messages.map((message) => message.id),
-        ),
-      ).toEqual(followingLatest);
-      expect(restoreChatTabState(id, [])).toEqual(followingLatest);
-    },
-  );
+      });
+      // A kept-alive tile shown again must not jump a reader who was free
+      // scrolling over an unplaced row.
+      expect(restoreChatTabState(id, rowKeys)).toMatchObject({
+        mode: "free-scrolling",
+        anchorMessageId: null,
+      });
+    });
+  });
 
   it("RESTORE-FIRST: saved following-end and free-scrolling both round-trip (tab-key)", () => {
     const messages = makeMessages(6);

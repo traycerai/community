@@ -60,6 +60,7 @@ import {
   commitChatTabStateToDurable,
   peekSavedChatTabState,
   restoreChatTabState,
+  restoreChatTabStateForMount,
   saveChatTabState,
   type ChatTabScrollMode,
   type SavedChatTabScrollState,
@@ -2011,7 +2012,7 @@ function ChatMessagesInner(props: ChatMessagesInnerProps) {
   // render would only repeat an O(n) row scan whose result the
   // initializers below already captured.
   const [restoredTabState] = useState<SavedChatTabScrollState>(() =>
-    restoreChatTabState(
+    restoreChatTabStateForMount(
       identity,
       listRows.map((row) => row.key),
     ),

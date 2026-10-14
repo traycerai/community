@@ -68,12 +68,6 @@ export function restoreChatTabState(
 ): SavedChatTabScrollState {
   const saved = peekSavedChatTabState(identity);
   if (saved === null) return DEFAULT_CHAT_TAB_SCROLL_STATE;
-  // A free scroll saved without an anchor names no row to restore to, and the
-  // list would mount at scroll 0, the top of the transcript, with no follow
-  // permission to correct it. Following the latest is the fallback.
-  if (saved.mode === "free-scrolling" && saved.anchorMessageId === null) {
-    return DEFAULT_CHAT_TAB_SCROLL_STATE;
-  }
   if (saved.anchorMessageId === null) return saved;
   if (rowKeys.includes(saved.anchorMessageId)) {
     return saved;
@@ -96,6 +90,35 @@ export function restoreChatTabState(
     anchorIndex: clampedIndex,
     offset: 0,
   };
+}
+
+/**
+ * `restoreChatTabState` for a tile that is mounting, where the result seeds
+ * the list's `initialScrollAtEnd` / `initialScrollIndex`.
+ *
+ * A free scroll that resolves to no anchor names no row to restore to: the
+ * list would mount at scroll 0, the top of the transcript, with no follow
+ * permission to correct it. Following the latest is the fallback. The one
+ * exception is an empty transcript with a saved anchor, which is still
+ * hydrating: the pending-hydration restore replays that anchor once its rows
+ * arrive.
+ *
+ * Only mounting wants this. A kept-alive tile that is shown again replays
+ * through `restoreChatTabState` itself, where an anchorless free scroll means
+ * "leave the viewport where the reader put it", not "jump to the end".
+ */
+export function restoreChatTabStateForMount(
+  identity: ChatTabPersistenceIdentity,
+  rowKeys: ReadonlyArray<string>,
+): SavedChatTabScrollState {
+  const restored = restoreChatTabState(identity, rowKeys);
+  if (restored.mode !== "free-scrolling" || restored.anchorMessageId !== null) {
+    return restored;
+  }
+  const saved = peekSavedChatTabState(identity);
+  const hydrating =
+    rowKeys.length === 0 && saved !== null && saved.anchorMessageId !== null;
+  return hydrating ? restored : DEFAULT_CHAT_TAB_SCROLL_STATE;
 }
 
 export interface SaveChatTabStateInput extends SavedChatTabScrollState {
