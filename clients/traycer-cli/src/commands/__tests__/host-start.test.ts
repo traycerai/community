@@ -2046,7 +2046,7 @@ describe("runHostStart - Windows session-end exits", () => {
     expect(recorded.crashReports).toHaveLength(0);
   });
 
-  it("control: DBG_TERMINATE_PROCESS on win32 is still reported, to be sent as a warning", async () => {
+  it("control: DBG_TERMINATE_PROCESS on win32 still produces a crash report", async () => {
     const { child, recorded, deps } = makeRunStubs(sampleRecord(exec), null);
     const win32Deps = withLifecyclePlatform(deps, "win32");
 

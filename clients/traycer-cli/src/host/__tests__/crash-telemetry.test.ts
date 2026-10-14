@@ -429,6 +429,20 @@ describe("captureHostCrashEvent", () => {
     );
   });
 
+  it("sends an externally terminated host at warning level, not error", () => {
+    const event = buildHostCrashEvent(
+      sampleTelemetry({ exitCode: 0x40010004, signal: null }),
+      null,
+    );
+    captureHostCrashEvent(event);
+
+    expect(sentryMocks.setLevel).toHaveBeenCalledWith("warning");
+    expect(sentryMocks.captureMessage).toHaveBeenCalledWith(
+      event.message,
+      "warning",
+    );
+  });
+
   it("sets the Sentry user to the host id when hostId is known", () => {
     const identity: HostCrashIdentity = {
       hostId: "host-known",
