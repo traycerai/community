@@ -58,10 +58,14 @@ import { createAppQueryClient } from "@/lib/query-client";
 
 // ---- host boundary --------------------------------------------------------
 
-vi.mock("@/components/settings/host-scope/use-host-scope", () => ({
-  useHostScope: () =>
-    hostScopeFixture({ status: "following", hostId: "host-a" }),
-}));
+vi.mock("@/components/settings/host-scope/use-host-scope", () => {
+  const useHostScope = () =>
+    hostScopeFixture({ status: "following", hostId: "host-a" });
+  return {
+    useHostScope,
+    usePersonalHostScope: useHostScope,
+  };
+});
 vi.mock(
   "@/components/settings/host-scope/use-scoped-host-binding",
   async () => {

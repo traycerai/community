@@ -39,7 +39,7 @@ describe("<AccountManagedCredentialsLine />", () => {
 
     expect(mocks.openLink).toHaveBeenCalledTimes(1);
     expect(mocks.openLink).toHaveBeenCalledWith(
-      "https://platform.example.dev/secrets",
+      "https://platform.example.dev/environments/personal/secrets",
       "account",
       expect.anything(),
     );

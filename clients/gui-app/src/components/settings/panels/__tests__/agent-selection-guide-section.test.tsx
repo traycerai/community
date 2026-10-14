@@ -113,58 +113,60 @@ vi.mock("@/hooks/host/use-host-client-for", () => ({
 vi.mock("@/components/settings/host-scope/use-host-scope", async () => {
   const { hostScopeFixture, hostScopeOptionFixture } =
     await import("@/components/settings/host-scope/host-scope-fixture");
-  return {
-    useHostScope: () => {
-      const hosts = guideMocks.directoryEntries.map((entry) =>
-        hostScopeOptionFixture({
-          hostId: entry.hostId,
-          name: entry.label,
-          isLocalMachine: entry.hostId === "local",
-          isActive: entry.hostId === guideMocks.activeHostId,
-        }),
-      );
-      const activeHost =
-        hosts.find((host) => host.hostId === guideMocks.activeHostId) ?? null;
-      const picked = guideMocks.pickedHostId;
-      if (picked === null) {
-        return hostScopeFixture({
-          hosts,
-          host: activeHost,
-          hostId: activeHost?.hostId ?? null,
-          hostLabel: activeHost?.name ?? "No host",
-          activeHost,
-          isViewingActive: true,
-          status: "following",
-          client: null,
-        });
-      }
-      const host = hosts.find((entry) => entry.hostId === picked) ?? null;
-      if (host === null) {
-        return hostScopeFixture({
-          hosts,
-          host: null,
-          hostId: null,
-          hostLabel: picked,
-          vanishedHostId: picked,
-          activeHost,
-          isViewingActive: false,
-          status: "vanished",
-          client: null,
-        });
-      }
+  const useHostScope = () => {
+    const hosts = guideMocks.directoryEntries.map((entry) =>
+      hostScopeOptionFixture({
+        hostId: entry.hostId,
+        name: entry.label,
+        isLocalMachine: entry.hostId === "local",
+        isActive: entry.hostId === guideMocks.activeHostId,
+      }),
+    );
+    const activeHost =
+      hosts.find((host) => host.hostId === guideMocks.activeHostId) ?? null;
+    const picked = guideMocks.pickedHostId;
+    if (picked === null) {
       return hostScopeFixture({
         hosts,
-        host,
-        hostId: host.hostId,
-        hostLabel: host.name,
+        host: activeHost,
+        hostId: activeHost?.hostId ?? null,
+        hostLabel: activeHost?.name ?? "No host",
         activeHost,
-        isViewingActive: host.hostId === guideMocks.activeHostId,
-        status: "ready",
-        // Only a resolved scope hands back a client, and it is the PICKED
-        // host's - never the ambient one.
-        client: { getActiveHostId: () => host.hostId } as never,
+        isViewingActive: true,
+        status: "following",
+        client: null,
       });
-    },
+    }
+    const host = hosts.find((entry) => entry.hostId === picked) ?? null;
+    if (host === null) {
+      return hostScopeFixture({
+        hosts,
+        host: null,
+        hostId: null,
+        hostLabel: picked,
+        vanishedHostId: picked,
+        activeHost,
+        isViewingActive: false,
+        status: "vanished",
+        client: null,
+      });
+    }
+    return hostScopeFixture({
+      hosts,
+      host,
+      hostId: host.hostId,
+      hostLabel: host.name,
+      activeHost,
+      isViewingActive: host.hostId === guideMocks.activeHostId,
+      status: "ready",
+      // Only a resolved scope hands back a client, and it is the PICKED
+      // host's - never the ambient one.
+      client: { getActiveHostId: () => host.hostId } as never,
+    });
+  };
+  return {
+    useHostScope,
+    usePersonalHostScope: useHostScope,
   };
 });
 

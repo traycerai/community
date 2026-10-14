@@ -75,10 +75,14 @@ vi.mock("@/components/settings/panels/providers-settings-panel", () => ({
 
 // ---- host boundary, as in rules-tab-host-continuity -----------------------
 
-vi.mock("@/components/settings/host-scope/use-host-scope", () => ({
-  useHostScope: () =>
-    hostScopeFixture({ status: "following", hostId: "host-a" }),
-}));
+vi.mock("@/components/settings/host-scope/use-host-scope", () => {
+  const useHostScope = () =>
+    hostScopeFixture({ status: "following", hostId: "host-a" });
+  return {
+    useHostScope,
+    usePersonalHostScope: useHostScope,
+  };
+});
 vi.mock(
   "@/components/settings/host-scope/use-scoped-host-binding",
   async () => {

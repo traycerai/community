@@ -32,7 +32,7 @@ import {
 } from "@/components/settings/host-scope/host-scope-model";
 import { useScopedHostBinding } from "@/components/settings/host-scope/use-scoped-host-binding";
 import {
-  useHostScope,
+  usePersonalHostScope,
   type HostScope,
 } from "@/components/settings/host-scope/use-host-scope";
 import { EffectiveCommandPreview } from "@/components/settings/panels/shell/effective-command-preview";
@@ -62,7 +62,7 @@ import { useSettingsDensity } from "@/providers/settings-density-context";
 import { useRunnerHost } from "@/providers/use-runner-host";
 
 const PANEL_DESCRIPTION =
-  "How Traycer launches terminals, the host, and provider harnesses. New terminals pick up shell changes immediately; host env changes apply on restart.";
+  "How Traycer launches terminals, the host, and provider harnesses. New terminals pick up shell changes immediately; variable changes apply on restart.";
 const SAVED_FLASH_MS = 1600;
 type ShellSaveTarget = "program" | "flags";
 
@@ -146,7 +146,7 @@ const SHELL_CONFIG_GATE_METHOD = "config.shell.get";
  * local truth about it to fall back to.
  */
 export function ShellSettingsPanel() {
-  const scope = useHostScope();
+  const scope = usePersonalHostScope();
   // Hoisted above the branch, because the branch itself depends on it. The
   // nullable form is load-bearing: `false` is a host that HANDSHAKED without
   // the methods, while `null` is "no handshake yet" — and the panel's own first
@@ -185,7 +185,7 @@ export function ShellSettingsPanel() {
 
   const inner = (
     <SettingsPanelShell
-      title="Shell"
+      title={SHELL.page.label}
       description={PANEL_DESCRIPTION}
       bodyClassName="overflow-visible rounded-none border-none bg-transparent"
     >
@@ -256,14 +256,17 @@ function ShellSettingsPanelOverLocalStore(props: {
   const traycerCli = runnerHost.traycerCli;
   if (traycerCli === null) {
     return (
-      <SettingsPanelShell title="Shell" description={PANEL_DESCRIPTION}>
+      <SettingsPanelShell
+        title={SHELL.page.label}
+        description={PANEL_DESCRIPTION}
+      >
         <NoConfigSourceNotice hostName={props.hostName} />
       </SettingsPanelShell>
     );
   }
   return (
     <SettingsPanelShell
-      title="Shell"
+      title={SHELL.page.label}
       description={PANEL_DESCRIPTION}
       bodyClassName="overflow-visible rounded-none border-none bg-transparent"
     >
@@ -904,7 +907,7 @@ function HostEnvironmentGroup(props: {
         <TransientSaveLiveStatus
           pending={props.pending ? props.saveActive : false}
           saved={props.justSaved}
-          label="Host environment"
+          label="Variables"
         />
         <div
           className={cn(

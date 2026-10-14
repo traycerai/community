@@ -107,14 +107,30 @@ export interface HostScopeSelection {
 }
 
 /**
- * The one host-scope hook for Settings. Every host-scoped panel reads this and
- * nothing else, which is what makes the sidebar switcher authoritative rather
- * than one more picker among five.
+ * The one host-scope hook for the Host group in Settings. Every panel under the
+ * sidebar's picker reads this and nothing else, which is what makes the
+ * switcher authoritative rather than one more picker among five.
  */
 export function useHostScope(): HostScope {
   const scopedHostId = useSettingsHostScopeStore((s) => s.scopedHostId);
   const setScopedHostId = useSettingsHostScopeStore((s) => s.setScopedHostId);
   return useHostScopeFor({ scopedHostId, setScopedHostId });
+}
+
+/**
+ * Personal and Account pages never read through the picker: what they show
+ * follows the person, not a machine, so they read through the window's own
+ * host, which is `useHostScopeFor`'s answer to a `null` selection. Nothing on
+ * those pages can re-point it - the setter is a no-op - so a pick made under
+ * the Host group never changes what a Personal page shows.
+ */
+const PERSONAL_HOST_SELECTION: HostScopeSelection = {
+  scopedHostId: null,
+  setScopedHostId: () => undefined,
+};
+
+export function usePersonalHostScope(): HostScope {
+  return useHostScopeFor(PERSONAL_HOST_SELECTION);
 }
 
 /**

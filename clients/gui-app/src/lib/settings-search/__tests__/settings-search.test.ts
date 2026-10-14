@@ -114,7 +114,7 @@ describe("settings search", () => {
       "general#general-prevent-sleep",
     );
     expect(labelsFor("dictation", DESKTOP)).toContain("Voice input");
-    expect(labelsFor("proxy", DESKTOP)).toContain("Shell");
+    expect(labelsFor("proxy", DESKTOP)).toContain("Variables and shells");
   });
 
   it("reaches the replay card by the words the old General row owned", () => {
@@ -203,6 +203,48 @@ describe("settings search", () => {
       .map((result) => result.scopeLabel);
     expect(scopes).toContain("Application");
     expect(scopes).toContain("Host");
+  });
+
+  it("labels each regrouped page with the scope the sidebar files it under", () => {
+    // The scope label is read off the section's group, so a page that moves
+    // group has to move its label with it. A page result is the section-kind
+    // entry whose label is the page's own name.
+    const pageScopeFor = (
+      query: string,
+      section: string,
+      label: string,
+    ): string | undefined =>
+      searchSettings(query, DESKTOP).find(
+        (result) =>
+          result.entry.kind === "section" &&
+          result.entry.section === section &&
+          result.entry.label === label,
+      )?.scopeLabel;
+
+    for (const [query, section, label] of [
+      ["Model routing", "fallback", "Model routing"],
+      ["Variables and shells", "shell", "Variables and shells"],
+      ["Agent selection", "agents", "Agent selection"],
+      ["Browser agent access", "browser-agent-access", "Browser agent access"],
+      ["Secrets", "secrets", "Secrets"],
+      ["Providers", "providers", "Providers"],
+    ] as const) {
+      expect(pageScopeFor(query, section, label), query).toBe("Personal");
+    }
+    for (const [query, section, label] of [
+      ["Permissions", "permissions", "Permissions"],
+      ["Notifications", "notifications", "Notifications"],
+    ] as const) {
+      expect(pageScopeFor(query, section, label), query).toBe("Account");
+    }
+    expect(pageScopeFor("Worktrees", "worktrees", "Worktrees")).toBe("Host");
+  });
+
+  it("opens the Browser agent access and Secrets pages on their own words", () => {
+    expect(landingFor("browser agent access", DESKTOP)).toBe(
+      "browser-agent-access#<top>",
+    );
+    expect(landingFor("secrets", DESKTOP)).toBe("secrets#<top>");
   });
 
   it("reaches the Agent office default view row, group breadcrumb included", () => {

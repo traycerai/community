@@ -2,7 +2,12 @@ import {
   SettingsSidebar,
   type SettingsSidebarVariant,
 } from "@/components/settings/settings-sidebar";
-import { SETTINGS_SECTIONS } from "@/lib/settings-sections";
+import {
+  SETTINGS_SECTION_GROUPS,
+  SETTINGS_SECTIONS,
+  type SettingsSectionGroupId,
+  type SettingsSectionId,
+} from "@/lib/settings-sections";
 import { setMobileApp } from "@/lib/mobile-app";
 import { KeybindingProvider } from "@/providers/keybinding-provider";
 import { getDefaultBindings } from "@/lib/keybindings/actions";
@@ -38,8 +43,10 @@ const scopeOverrides = vi.hoisted((): { current: Record<string, unknown> } => ({
 vi.mock("@/components/settings/host-scope/use-host-scope", async () => {
   const { hostScopeFixture } =
     await import("@/components/settings/host-scope/host-scope-fixture");
+  const useHostScope = () => hostScopeFixture(scopeOverrides.current);
   return {
-    useHostScope: () => hostScopeFixture(scopeOverrides.current),
+    useHostScope,
+    usePersonalHostScope: useHostScope,
   };
 });
 
@@ -646,7 +653,7 @@ describe("<SettingsSidebar /> new sandbox entry", () => {
 
     expect(openLinkMock.open).toHaveBeenCalledTimes(1);
     expect(openLinkMock.open).toHaveBeenCalledWith(
-      "https://platform.example.dev/secrets",
+      "https://platform.example.dev/environments/personal/secrets",
       "account",
       expect.anything(),
     );
@@ -686,5 +693,217 @@ describe("<SettingsSidebar /> new sandbox entry", () => {
 
     expect(await screen.findByTestId("settings-new-sandbox")).toBeDefined();
     expect(screen.queryByTestId("settings-secrets-and-github")).toBeNull();
+  });
+});
+
+// The scope model, pinned. Every section's group is written out here, so
+// moving a section (or adding one) without deciding where it belongs fails
+// this suite rather than silently changing which picker, if any, it sits
+// under.
+const EXPECTED_SECTION_GROUPS: ReadonlyArray<
+  readonly [SettingsSectionId, SettingsSectionGroupId]
+> = [
+  ["getting-started", "guide"],
+  ["general", "app"],
+  ["appearance", "app"],
+  ["browser", "app"],
+  ["opening-behavior", "app"],
+  ["app-notifications", "app"],
+  ["keybindings", "app"],
+  ["app-diagnostics", "app"],
+  ["layout", "app"],
+  ["providers", "personal"],
+  ["fallback", "personal"],
+  ["shell", "personal"],
+  ["agents", "personal"],
+  ["browser-agent-access", "personal"],
+  ["secrets", "personal"],
+  ["devices", "account"],
+  ["link-phone", "account"],
+  ["usage", "account"],
+  ["permissions", "account"],
+  ["notifications", "account"],
+  ["delete-account", "account"],
+  ["host", "host"],
+  ["worktrees", "host"],
+  ["diagnostics", "host"],
+];
+
+const GROUP_HEADING_BY_ID: Readonly<Record<SettingsSectionGroupId, string>> = {
+  guide: "Guide",
+  app: "Application",
+  personal: "Personal",
+  account: "Account",
+  host: "Host",
+};
+
+describe("<SettingsSidebar /> scope groups", () => {
+  beforeEach(() => {
+    cleanup();
+    window.localStorage.clear();
+    useKeybindingStore.setState({ bindings: getDefaultBindings() });
+    setMobileApp(false);
+  });
+
+  afterEach(() => {
+    cleanup();
+    scopeOverrides.current = { client: null };
+    setMobileApp(false);
+  });
+
+  async function renderRail(): Promise<HTMLElement> {
+    const router = buildRouter("/settings/general");
+    render(
+      <KeybindingProvider router={router}>
+        <RouterProvider router={router} />
+      </KeybindingProvider>,
+    );
+    await screen.findByTestId("settings-sidebar-item-general");
+    const aside = document.querySelector<HTMLElement>(
+      "[data-settings-sidebar]",
+    );
+    if (aside === null) throw new Error("settings sidebar did not render");
+    return aside;
+  }
+
+  it("orders the groups Guide, Application, Personal, Account, Host", () => {
+    expect(SETTINGS_SECTION_GROUPS.map((group) => group.id)).toEqual([
+      "guide",
+      "app",
+      "personal",
+      "account",
+      "host",
+    ]);
+    expect(SETTINGS_SECTION_GROUPS.map((group) => group.label)).toEqual([
+      "Guide",
+      "Application",
+      "Personal",
+      "Account",
+      "Host",
+    ]);
+  });
+
+  it.each(EXPECTED_SECTION_GROUPS)(
+    "files the %s section under the %s group",
+    (id, group) => {
+      expect(
+        SETTINGS_SECTIONS.find((section) => section.id === id)?.group,
+      ).toBe(group);
+    },
+  );
+
+  it("lists exactly the sections the group table names, in the same order", () => {
+    expect(SETTINGS_SECTIONS.map((section) => section.id)).toEqual(
+      EXPECTED_SECTION_GROUPS.map(([id]) => id),
+    );
+  });
+
+  it("renders a heading for every group but Guide, in order", async () => {
+    const aside = await renderRail();
+
+    const headings = Array.from(aside.querySelectorAll("h2")).map(
+      (heading) => heading.textContent,
+    );
+    expect(headings).toEqual(["Application", "Personal", "Account", "Host"]);
+  });
+
+  it("files each rendered row under its group's heading", async () => {
+    const aside = await renderRail();
+
+    // Walk the rail in document order, filing every row under the heading
+    // above it. Guide has no heading, so its rows are the ones before the
+    // first.
+    const filed = new Map<string, Array<string>>();
+    let current = GROUP_HEADING_BY_ID.guide;
+    filed.set(current, []);
+    for (const node of aside.querySelectorAll<HTMLElement>(
+      "h2, [data-testid^='settings-sidebar-item-']",
+    )) {
+      if (node.tagName === "H2") {
+        current = node.textContent;
+        filed.set(current, []);
+        continue;
+      }
+      filed
+        .get(current)
+        ?.push(
+          node.dataset.testid?.replace("settings-sidebar-item-", "") ?? "",
+        );
+    }
+
+    // Desktop: Delete account is offered by the installed mobile app only.
+    const expected = new Map<string, Array<string>>();
+    for (const [id, group] of EXPECTED_SECTION_GROUPS) {
+      if (id === "delete-account") continue;
+      const heading = GROUP_HEADING_BY_ID[group];
+      expected.set(heading, [...(expected.get(heading) ?? []), id]);
+    }
+    expect(Object.fromEntries(filed)).toEqual(Object.fromEntries(expected));
+  });
+
+  it("renders the host picker once, after Personal and Account and before the host rows", async () => {
+    const aside = await renderRail();
+
+    const pickers = screen.getAllByTestId("settings-host-switcher");
+    expect(pickers).toHaveLength(1);
+    const picker = pickers[0];
+    const follows = (earlier: HTMLElement, later: HTMLElement): boolean =>
+      (earlier.compareDocumentPosition(later) &
+        Node.DOCUMENT_POSITION_FOLLOWING) !==
+      0;
+
+    for (const id of ["providers", "secrets", "devices", "notifications"]) {
+      expect(
+        follows(screen.getByTestId(`settings-sidebar-item-${id}`), picker),
+        id,
+      ).toBe(true);
+    }
+    for (const id of ["host", "worktrees", "diagnostics"]) {
+      expect(
+        follows(picker, screen.getByTestId(`settings-sidebar-item-${id}`)),
+        id,
+      ).toBe(true);
+    }
+    expect(aside.contains(picker)).toBe(true);
+  });
+
+  it("indents only the host rows under the picker, never Personal or Account", async () => {
+    await renderRail();
+
+    // The rows' own column is the nearest flex column around them; the host
+    // group's carries the indent that says "these are the picker's contents".
+    const columnOf = (id: string): HTMLElement => {
+      const column = screen
+        .getByTestId(`settings-sidebar-item-${id}`)
+        .closest<HTMLElement>("div.flex-col");
+      if (column === null) throw new Error(`no column around ${id}`);
+      return column;
+    };
+    for (const id of ["host", "worktrees", "diagnostics"]) {
+      expect(columnOf(id).className, id).toContain("ml-4");
+    }
+    for (const id of [
+      "general",
+      "providers",
+      "fallback",
+      "shell",
+      "agents",
+      "browser-agent-access",
+      "secrets",
+      "devices",
+      "usage",
+      "permissions",
+      "notifications",
+    ]) {
+      expect(columnOf(id).className, id).not.toContain("ml-4");
+    }
+    // And the picker is not the container of any Personal or Account row.
+    const picker = screen.getByTestId("settings-host-switcher");
+    for (const id of ["providers", "devices", "permissions"]) {
+      expect(
+        picker.contains(screen.getByTestId(`settings-sidebar-item-${id}`)),
+        id,
+      ).toBe(false);
+    }
   });
 });

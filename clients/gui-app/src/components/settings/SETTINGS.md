@@ -472,7 +472,8 @@ different answers:
   which renders for every host in every state above bodies that each gate
   themselves; everything inside a body folds into the PAGE, whose own
   vocabulary is split across the five triggers. The index test enforces it mechanically: an
-  anchored entry on a `group: "host"` section is legal only when that section
+  anchored entry on a Personal, Account or Host section (each reads a host
+  scope) is legal only when that section
   is registered with `hostScope: "connecting"`, so the executor has proved the
   anchor lands while the host has no usable client.
 - **Gated on the HOST RUNTIME** (Website sessions, which also needs a bound
@@ -820,14 +821,26 @@ Supporting pieces, all viewport-agnostic where possible:
 ## Scope: the organising idea
 
 Settings is grouped by WHAT A SETTING BELONGS TO, and the grouping is
-load-bearing rather than cosmetic.
+load-bearing rather than cosmetic. The rule, in one line: if it varies by
+computer it sits under the host picker; if it follows you it sits under
+Personal; if it is about your account rather than your settings it sits under
+Account; the rest is the app itself.
 
-- **Application** - General, Appearance, Keybindings, Diagnostics.
-- **Account** - Sessions, Usage.
+- **Application** - General, Appearance, Browser, Opening behavior, Sounds,
+  Keybindings, Diagnostics, Layout.
+- **Personal** - Providers, Model routing, Variables and shells (id `shell`),
+  Agent selection, Browser agent access, Secrets. These pages read through the
+  window's own host (`usePersonalHostScope()`), never through the picker.
+- **Account** - Sessions, Link mobile app, Usage, Permissions, Notifications,
+  and Delete account on mobile. Read through the window's own host too.
 - **Host** - headed by THE host picker (`host-scope/host-switcher.tsx`).
-  Everything under it - Overview, Providers, Worktrees, Notifications,
-  Permissions, Agent selection, Fallback, Shell, Diagnostics - is scoped by
-  that one selection, with ONE named exception: Permissions ▸ Modes (below).
+  Everything under it - Overview, Worktrees, Diagnostics - is scoped by that
+  one selection.
+
+Section ids are a compatibility surface and did not change when Providers,
+Model routing, Variables and shells, Agent selection, Permissions and
+Notifications left the Host group; only their group did. Browser agent access
+moved out of Browser into its own section, `browser-agent-access`.
 
 **Two sections are both called "Diagnostics"**, one per group, and the group
 heading above each is what distinguishes them - the same way the rail already
@@ -848,9 +861,9 @@ host scopes on one screen, with the outer one unable to describe the number
 the inner one produced. It still reads through a host CLIENT, as every RPC
 does; that is a transport fact, not a scope one.
 
-Application and Account lead because they are short, fixed and never re-shaped;
-the host group goes last because it is the only one whose contents depend on a
-selection.
+Application, Personal and Account lead because none of them depends on a
+selection; the host group goes last because it is the only one whose contents
+do.
 
 **Scope is not a level.** Settings already spends its nesting budget inside
 Providers, which is a rail plus a per-provider tab bar - so the sidebar gets
@@ -960,7 +973,9 @@ the whole surface guards against:
   boolean.
 
 `useHostScope()` (`host-scope/use-host-scope.ts`) is the single hook every
-host-scoped panel reads. Its status enum is the safety contract, because three
+panel under the picker reads; `usePersonalHostScope()` beside it is the same
+host model over a fixed "follow the active host" selection, for the Personal
+and Account pages. Its status enum is the safety contract, because three
 of its states look identical if you only check `client !== null`:
 
 | Status        | `client` | The panel must                                                                                          |

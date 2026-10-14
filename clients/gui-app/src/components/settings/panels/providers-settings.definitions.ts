@@ -139,10 +139,17 @@ export const PROVIDERS = defineSettingsSection("providers", {
   environmentVariables: {
     kind: "group",
     search: { anchor: null },
-    label: "Environment variables",
-    description: "Per-provider environment overrides.",
+    label: "Variables",
+    description: "Per-provider variable overrides.",
     breadcrumb: "Providers",
     availableWhen: alwaysAvailable,
-    keywords: ["env", "environment", "variable", "override", "secret", "proxy"],
+    keywords: [
+      "env",
+      "environment variables",
+      "variable",
+      "override",
+      "secret",
+      "proxy",
+    ],
   },
 });

@@ -51,7 +51,7 @@ import {
 } from "@/components/settings/host-scope/host-scope-gate";
 import { isHostScopeUsable } from "@/components/settings/host-scope/host-scope-status";
 import {
-  useHostScope,
+  usePersonalHostScope,
   type HostScope,
 } from "@/components/settings/host-scope/use-host-scope";
 import type { HostRpcRegistry } from "@/lib/host";
@@ -312,7 +312,7 @@ function ProviderCheckedTimestamp({
 }
 
 export function ProvidersSettingsPanel() {
-  const scope = useHostScope();
+  const scope = usePersonalHostScope();
   const setHostId = scope.setHostId;
   // A deep link that already knows which machine needs attention — the
   // composer's provider re-auth banner knows exactly whose profile expired —

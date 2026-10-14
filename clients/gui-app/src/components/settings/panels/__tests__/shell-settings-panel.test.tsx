@@ -8,8 +8,10 @@ const scopeOverrides = vi.hoisted((): { current: Record<string, unknown> } => ({
 vi.mock("@/components/settings/host-scope/use-host-scope", async () => {
   const { hostScopeFixture } =
     await import("@/components/settings/host-scope/host-scope-fixture");
+  const useHostScope = () => hostScopeFixture(scopeOverrides.current);
   return {
-    useHostScope: () => hostScopeFixture(scopeOverrides.current),
+    useHostScope,
+    usePersonalHostScope: useHostScope,
   };
 });
 
@@ -249,7 +251,7 @@ describe("<ShellSettingsPanel /> hierarchy", () => {
     ).toBeTruthy();
     expect(
       within(envCard).getByRole("heading", {
-        name: "Host environment · After restart",
+        name: "Variables · After restart",
       }),
     ).toBeTruthy();
 

@@ -59,7 +59,7 @@ export function ProviderEnvOverridesSection({
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="text-ui-sm font-medium text-foreground">
-            Environment variables
+            Variables
           </div>
           {envOverrideScope === "native-config-only" ? (
             <p className="text-ui-xs text-muted-foreground">

@@ -17,15 +17,15 @@ import {
 } from "@traycer-clients/shared/host-client/mock/mock-host-directory";
 import { MockHostMessenger } from "@traycer-clients/shared/host-client/mock/mock-host-messenger";
 import { createRequestContextFixture } from "@traycer-clients/shared/test-fixtures/request-context";
-import { BrowserSettingsSection } from "@/components/settings/browser-settings-section";
+import { BrowserAgentAccessSettingsPanel } from "@/components/settings/panels/browser-agent-access-settings-panel";
 import { hostRpcRegistry, type HostRpcRegistry } from "@/lib/host";
 import { createHostQueryInvalidator } from "@/lib/host/query-invalidator";
-import { useSettingsStore } from "@/stores/settings/settings-store";
 
 /**
- * The agent browser-access row (plan B08). It is bound to the ACTIVE host -
- * General has no host picker - so what these tests drive is the pair the row
- * reads through: the active host's id and that host's client.
+ * The Personal > Browser agent access page (plan B08). It reads through the
+ * window's own host - Personal pages have no picker - so what these tests drive
+ * is the pair the row reads through: the addressable host's id and that host's
+ * client.
  */
 const active = vi.hoisted((): { hostId: string | null } => ({ hostId: null }));
 // `current` answers the getter, `set` the setter: the two methods negotiate
@@ -37,18 +37,6 @@ const support = vi.hoisted(
   }),
 );
 const tracked = vi.hoisted(() => vi.fn());
-
-vi.mock("@/providers/use-runner-host", () => ({
-  useRunnerHostOrNull: () => null,
-}));
-
-vi.mock("@/lib/browser-view/use-browser-save-logins", () => ({
-  useBrowserSaveLogins: () => ({
-    enabled: null,
-    pending: false,
-    setEnabled: () => undefined,
-  }),
-}));
 
 vi.mock("@/hooks/host/use-addressable-host-id", () => ({
   useAddressableHostId: () => active.hostId,
@@ -69,10 +57,6 @@ vi.mock("@/hooks/host/use-host-directory-entry", () => ({
   },
 }));
 
-vi.mock("@/hooks/host/use-reactive-local-host-id", () => ({
-  useReactiveLocalHostId: () => mockLocalHostEntry.hostId,
-}));
-
 vi.mock("@/lib/analytics", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/analytics")>()),
   trackSettingChanged: (...args: ReadonlyArray<unknown>) => {
@@ -83,7 +67,6 @@ vi.mock("@/lib/analytics", async (importOriginal) => ({
 const client = vi.hoisted((): { current: unknown } => ({ current: null }));
 vi.mock("@/lib/host", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/host")>()),
-  useHostBinding: () => ({}),
   useHostClient: () => client.current,
 }));
 
@@ -167,12 +150,8 @@ function createFixture(seed: Readonly<Record<string, boolean>>): Fixture {
   };
 }
 
-function agentOpenedTabsStub(): ReactNode {
-  return <div data-testid="agent-opened-tabs-stub">Agent-opened tabs stub</div>;
-}
-
-function browserSettingsSection(): ReactNode {
-  return <BrowserSettingsSection agentOpenedTabsRow={agentOpenedTabsStub()} />;
+function agentAccessPanel(): ReactNode {
+  return <BrowserAgentAccessSettingsPanel />;
 }
 
 function row(): HTMLElement {
@@ -198,16 +177,6 @@ async function settleQueries(): Promise<void> {
   });
 }
 
-function documentPosition(
-  earlier: HTMLElement,
-  later: HTMLElement,
-): "before" | "after" | "unrelated" {
-  const relation = earlier.compareDocumentPosition(later);
-  if ((relation & Node.DOCUMENT_POSITION_FOLLOWING) !== 0) return "before";
-  if ((relation & Node.DOCUMENT_POSITION_PRECEDING) !== 0) return "after";
-  return "unrelated";
-}
-
 afterEach(() => {
   cleanup();
   support.current = true;
@@ -215,23 +184,21 @@ afterEach(() => {
   active.hostId = null;
   client.current = null;
   tracked.mockClear();
-  useSettingsStore.setState({ browserDevOrigins: [] });
 });
 
-describe("<BrowserSettingsSection /> agent browser access", () => {
-  it("hides the access row on a host that cannot answer, and still draws the Agents group around the passed row", async () => {
+const UPDATE_HOST_STATUS = "Update this host to change this setting.";
+
+describe("<BrowserAgentAccessSettingsPanel />", () => {
+  it("shows a disabled switch and the update-host status on a host that cannot answer", async () => {
     support.current = false;
     const fixture = createFixture({});
-    render(browserSettingsSection(), { wrapper: fixture.Wrapper });
+    render(agentAccessPanel(), { wrapper: fixture.Wrapper });
 
-    expect(
-      screen.queryByRole("switch", {
-        name: "Let agents use the in-app browser",
-      }),
-    ).toBeNull();
-    expect(screen.getByTestId("settings-browser-agents")).not.toBeNull();
-    expect(screen.getByTestId("agent-opened-tabs-stub")).not.toBeNull();
-    // Hidden means not asked, not asked-and-ignored. NOT `waitFor`: it passes
+    expect(row().getAttribute("data-disabled")).not.toBeNull();
+    expect(row().getAttribute("data-state")).toBe("unchecked");
+    expect(screen.getByText(UPDATE_HOST_STATUS)).not.toBeNull();
+    expect(screen.getByTestId("settings-browser-agent-access")).not.toBeNull();
+    // Disabled means not asked, not asked-and-ignored. NOT `waitFor`: it passes
     // on its first check, before anything could have fired, so it would hold
     // for a query that goes out a tick later just as happily. Settle the
     // effects and the task the request would land on, THEN assert.
@@ -239,59 +206,50 @@ describe("<BrowserSettingsSection /> agent browser access", () => {
     expect(fixture.gets()).toEqual([]);
   });
 
-  it("hides the row on a host that can read but not write the setting", async () => {
-    // A switch whose every flip would fail is worse than no switch: the two
+  it("shows the disabled switch and the status when both methods are unsupported", async () => {
+    support.current = false;
+    support.set = false;
+    const fixture = createFixture({});
+    render(agentAccessPanel(), { wrapper: fixture.Wrapper });
+
+    expect(row().getAttribute("data-disabled")).not.toBeNull();
+    expect(screen.getByText(UPDATE_HOST_STATUS)).not.toBeNull();
+    fireEvent.click(row());
+    await settleQueries();
+    expect(fixture.sets()).toEqual([]);
+    expect(fixture.gets()).toEqual([]);
+  });
+
+  it("disables the switch on a host that can read but not write the setting", async () => {
+    // A switch whose every flip would fail is worse than a live one: the two
     // methods degrade independently, so the gate demands both.
     support.set = false;
     const fixture = createFixture({ [mockLocalHostEntry.hostId]: true });
-    render(browserSettingsSection(), { wrapper: fixture.Wrapper });
+    render(agentAccessPanel(), { wrapper: fixture.Wrapper });
 
-    expect(
-      screen.queryByRole("switch", {
-        name: "Let agents use the in-app browser",
-      }),
-    ).toBeNull();
-    expect(screen.getByTestId("settings-browser-agents")).not.toBeNull();
+    expect(row().getAttribute("data-disabled")).not.toBeNull();
+    expect(screen.getByText(UPDATE_HOST_STATUS)).not.toBeNull();
     await settleQueries();
     expect(fixture.gets()).toEqual([]);
   });
 
-  it("hides the row while no handshake has answered yet", () => {
+  it("shows the disabled switch without a status while no handshake has answered yet", () => {
     support.current = null;
     const fixture = createFixture({});
-    render(browserSettingsSection(), { wrapper: fixture.Wrapper });
+    render(agentAccessPanel(), { wrapper: fixture.Wrapper });
 
-    expect(
-      screen.queryByRole("switch", {
-        name: "Let agents use the in-app browser",
-      }),
-    ).toBeNull();
-    expect(screen.getByTestId("settings-browser-agents")).not.toBeNull();
+    expect(row().getAttribute("data-disabled")).not.toBeNull();
+    expect(screen.queryByText(UPDATE_HOST_STATUS)).toBeNull();
   });
 
-  it("keeps the Agents group for the passed row and dev origins, without the access row", () => {
-    support.current = false;
-    useSettingsStore.setState({ browserDevOrigins: ["http://localhost:3000"] });
-    const fixture = createFixture({});
-    render(browserSettingsSection(), { wrapper: fixture.Wrapper });
-
-    expect(screen.getByText("Agents")).not.toBeNull();
-    expect(screen.getByText("Detected dev origins")).not.toBeNull();
-    expect(screen.getByTestId("agent-opened-tabs-stub")).not.toBeNull();
-    expect(
-      screen.queryByRole("switch", {
-        name: "Let agents use the in-app browser",
-      }),
-    ).toBeNull();
-  });
-
-  it("renders the group for the row alone, naming the active host", async () => {
+  it("renders the live switch alone on the page, naming the addressable host", async () => {
     const fixture = createFixture({ [mockLocalHostEntry.hostId]: true });
-    render(browserSettingsSection(), { wrapper: fixture.Wrapper });
+    render(agentAccessPanel(), { wrapper: fixture.Wrapper });
 
     await waitFor(() => {
       expect(row().getAttribute("data-state")).toBe("checked");
     });
+    expect(screen.queryByText(UPDATE_HOST_STATUS)).toBeNull();
     expect(screen.queryByText("Detected dev origins")).toBeNull();
     expect(
       screen.getByText(
@@ -300,38 +258,9 @@ describe("<BrowserSettingsSection /> agent browser access", () => {
     ).not.toBeNull();
   });
 
-  it("shows both members when origins exist too", async () => {
-    useSettingsStore.setState({ browserDevOrigins: ["http://localhost:3000"] });
+  it("writes the flip to the addressable host and re-reads it", async () => {
     const fixture = createFixture({ [mockLocalHostEntry.hostId]: true });
-    render(browserSettingsSection(), { wrapper: fixture.Wrapper });
-
-    await waitFor(() => {
-      expect(row()).not.toBeNull();
-    });
-    expect(screen.getByText("Detected dev origins")).not.toBeNull();
-  });
-
-  it("draws access, the passed row, and detected origins in that order when all three are present", async () => {
-    useSettingsStore.setState({ browserDevOrigins: ["http://localhost:3000"] });
-    const fixture = createFixture({ [mockLocalHostEntry.hostId]: true });
-    render(browserSettingsSection(), { wrapper: fixture.Wrapper });
-
-    const access = await screen.findByRole("switch", {
-      name: "Let agents use the in-app browser",
-    });
-    const passed = screen.getByTestId("agent-opened-tabs-stub");
-    const origins = screen.getByText("Detected dev origins");
-    const group = screen.getByTestId("settings-browser-agents");
-    expect(group.contains(access)).toBe(true);
-    expect(group.contains(passed)).toBe(true);
-    expect(group.contains(origins)).toBe(true);
-    expect(documentPosition(access, passed)).toBe("before");
-    expect(documentPosition(passed, origins)).toBe("before");
-  });
-
-  it("writes the flip to the active host and re-reads it", async () => {
-    const fixture = createFixture({ [mockLocalHostEntry.hostId]: true });
-    render(browserSettingsSection(), { wrapper: fixture.Wrapper });
+    render(agentAccessPanel(), { wrapper: fixture.Wrapper });
 
     await waitFor(() => {
       expect(row().getAttribute("data-state")).toBe("checked");
@@ -347,15 +276,18 @@ describe("<BrowserSettingsSection /> agent browser access", () => {
       expect(row().getAttribute("data-state")).toBe("unchecked");
     });
     expect(fixture.gets().length).toBeGreaterThan(1);
-    expect(tracked).toHaveBeenCalledWith("browser", "agentBrowserAccess");
+    expect(tracked).toHaveBeenCalledWith(
+      "browser-agent-access",
+      "agentBrowserAccess",
+    );
   });
 
-  it("re-queries when the active host changes", async () => {
+  it("re-queries when the addressable host changes", async () => {
     const fixture = createFixture({
       [mockLocalHostEntry.hostId]: true,
       [mockRemoteHostEntry.hostId]: false,
     });
-    const view = render(browserSettingsSection(), {
+    const view = render(agentAccessPanel(), {
       wrapper: fixture.Wrapper,
     });
 
@@ -364,7 +296,7 @@ describe("<BrowserSettingsSection /> agent browser access", () => {
     });
 
     fixture.activate(mockRemoteHostEntry);
-    view.rerender(browserSettingsSection());
+    view.rerender(agentAccessPanel());
 
     await waitFor(() => {
       expect(row().getAttribute("data-state")).toBe("unchecked");
@@ -380,7 +312,7 @@ describe("<BrowserSettingsSection /> agent browser access", () => {
   it("says so and refuses writes when the host cannot read its config", async () => {
     const fixture = createFixture({});
     fixture.failReads();
-    render(browserSettingsSection(), { wrapper: fixture.Wrapper });
+    render(agentAccessPanel(), { wrapper: fixture.Wrapper });
 
     expect(
       await screen.findByText(/Couldn't read this host's browser setting/),

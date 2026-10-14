@@ -25,6 +25,7 @@ import { Route as SettingsAppDiagnosticsRouteImport } from "./routes/settings.ap
 import { Route as SettingsAppNotificationsRouteImport } from "./routes/settings.app-notifications";
 import { Route as SettingsAppearanceRouteImport } from "./routes/settings.appearance";
 import { Route as SettingsBrowserRouteImport } from "./routes/settings.browser";
+import { Route as SettingsBrowserAgentAccessRouteImport } from "./routes/settings.browser-agent-access";
 import { Route as SettingsDeleteAccountRouteImport } from "./routes/settings.delete-account";
 import { Route as SettingsDevicesRouteImport } from "./routes/settings.devices";
 import { Route as SettingsDiagnosticsRouteImport } from "./routes/settings.diagnostics";
@@ -39,6 +40,7 @@ import { Route as SettingsNotificationsRouteImport } from "./routes/settings.not
 import { Route as SettingsOpeningBehaviorRouteImport } from "./routes/settings.opening-behavior";
 import { Route as SettingsPermissionsRouteImport } from "./routes/settings.permissions";
 import { Route as SettingsProvidersRouteImport } from "./routes/settings.providers";
+import { Route as SettingsSecretsRouteImport } from "./routes/settings.secrets";
 import { Route as SettingsServiceRouteImport } from "./routes/settings.service";
 import { Route as SettingsShellRouteImport } from "./routes/settings.shell";
 import { Route as SettingsUsageRouteImport } from "./routes/settings.usage";
@@ -126,6 +128,12 @@ const SettingsBrowserRoute = SettingsBrowserRouteImport.update({
   path: "/browser",
   getParentRoute: () => SettingsRoute,
 } as any);
+const SettingsBrowserAgentAccessRoute =
+  SettingsBrowserAgentAccessRouteImport.update({
+    id: "/browser-agent-access",
+    path: "/browser-agent-access",
+    getParentRoute: () => SettingsRoute,
+  } as any);
 const SettingsDeleteAccountRoute = SettingsDeleteAccountRouteImport.update({
   id: "/delete-account",
   path: "/delete-account",
@@ -196,6 +204,11 @@ const SettingsProvidersRoute = SettingsProvidersRouteImport.update({
   path: "/providers",
   getParentRoute: () => SettingsRoute,
 } as any);
+const SettingsSecretsRoute = SettingsSecretsRouteImport.update({
+  id: "/secrets",
+  path: "/secrets",
+  getParentRoute: () => SettingsRoute,
+} as any);
 const SettingsServiceRoute = SettingsServiceRouteImport.update({
   id: "/service",
   path: "/service",
@@ -237,6 +250,7 @@ export interface FileRoutesByFullPath {
   "/settings/app-notifications": typeof SettingsAppNotificationsRoute;
   "/settings/appearance": typeof SettingsAppearanceRoute;
   "/settings/browser": typeof SettingsBrowserRoute;
+  "/settings/browser-agent-access": typeof SettingsBrowserAgentAccessRoute;
   "/settings/delete-account": typeof SettingsDeleteAccountRoute;
   "/settings/devices": typeof SettingsDevicesRoute;
   "/settings/diagnostics": typeof SettingsDiagnosticsRoute;
@@ -251,6 +265,7 @@ export interface FileRoutesByFullPath {
   "/settings/opening-behavior": typeof SettingsOpeningBehaviorRoute;
   "/settings/permissions": typeof SettingsPermissionsRoute;
   "/settings/providers": typeof SettingsProvidersRoute;
+  "/settings/secrets": typeof SettingsSecretsRoute;
   "/settings/service": typeof SettingsServiceRoute;
   "/settings/shell": typeof SettingsShellRoute;
   "/settings/usage": typeof SettingsUsageRoute;
@@ -272,6 +287,7 @@ export interface FileRoutesByTo {
   "/settings/app-notifications": typeof SettingsAppNotificationsRoute;
   "/settings/appearance": typeof SettingsAppearanceRoute;
   "/settings/browser": typeof SettingsBrowserRoute;
+  "/settings/browser-agent-access": typeof SettingsBrowserAgentAccessRoute;
   "/settings/delete-account": typeof SettingsDeleteAccountRoute;
   "/settings/devices": typeof SettingsDevicesRoute;
   "/settings/diagnostics": typeof SettingsDiagnosticsRoute;
@@ -286,6 +302,7 @@ export interface FileRoutesByTo {
   "/settings/opening-behavior": typeof SettingsOpeningBehaviorRoute;
   "/settings/permissions": typeof SettingsPermissionsRoute;
   "/settings/providers": typeof SettingsProvidersRoute;
+  "/settings/secrets": typeof SettingsSecretsRoute;
   "/settings/service": typeof SettingsServiceRoute;
   "/settings/shell": typeof SettingsShellRoute;
   "/settings/usage": typeof SettingsUsageRoute;
@@ -310,6 +327,7 @@ export interface FileRoutesById {
   "/settings/app-notifications": typeof SettingsAppNotificationsRoute;
   "/settings/appearance": typeof SettingsAppearanceRoute;
   "/settings/browser": typeof SettingsBrowserRoute;
+  "/settings/browser-agent-access": typeof SettingsBrowserAgentAccessRoute;
   "/settings/delete-account": typeof SettingsDeleteAccountRoute;
   "/settings/devices": typeof SettingsDevicesRoute;
   "/settings/diagnostics": typeof SettingsDiagnosticsRoute;
@@ -324,6 +342,7 @@ export interface FileRoutesById {
   "/settings/opening-behavior": typeof SettingsOpeningBehaviorRoute;
   "/settings/permissions": typeof SettingsPermissionsRoute;
   "/settings/providers": typeof SettingsProvidersRoute;
+  "/settings/secrets": typeof SettingsSecretsRoute;
   "/settings/service": typeof SettingsServiceRoute;
   "/settings/shell": typeof SettingsShellRoute;
   "/settings/usage": typeof SettingsUsageRoute;
@@ -349,6 +368,7 @@ export interface FileRouteTypes {
     | "/settings/app-notifications"
     | "/settings/appearance"
     | "/settings/browser"
+    | "/settings/browser-agent-access"
     | "/settings/delete-account"
     | "/settings/devices"
     | "/settings/diagnostics"
@@ -363,6 +383,7 @@ export interface FileRouteTypes {
     | "/settings/opening-behavior"
     | "/settings/permissions"
     | "/settings/providers"
+    | "/settings/secrets"
     | "/settings/service"
     | "/settings/shell"
     | "/settings/usage"
@@ -384,6 +405,7 @@ export interface FileRouteTypes {
     | "/settings/app-notifications"
     | "/settings/appearance"
     | "/settings/browser"
+    | "/settings/browser-agent-access"
     | "/settings/delete-account"
     | "/settings/devices"
     | "/settings/diagnostics"
@@ -398,6 +420,7 @@ export interface FileRouteTypes {
     | "/settings/opening-behavior"
     | "/settings/permissions"
     | "/settings/providers"
+    | "/settings/secrets"
     | "/settings/service"
     | "/settings/shell"
     | "/settings/usage"
@@ -421,6 +444,7 @@ export interface FileRouteTypes {
     | "/settings/app-notifications"
     | "/settings/appearance"
     | "/settings/browser"
+    | "/settings/browser-agent-access"
     | "/settings/delete-account"
     | "/settings/devices"
     | "/settings/diagnostics"
@@ -435,6 +459,7 @@ export interface FileRouteTypes {
     | "/settings/opening-behavior"
     | "/settings/permissions"
     | "/settings/providers"
+    | "/settings/secrets"
     | "/settings/service"
     | "/settings/shell"
     | "/settings/usage"
@@ -570,6 +595,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof SettingsBrowserRouteImport;
       parentRoute: typeof SettingsRoute;
     };
+    "/settings/browser-agent-access": {
+      id: "/settings/browser-agent-access";
+      path: "/browser-agent-access";
+      fullPath: "/settings/browser-agent-access";
+      preLoaderRoute: typeof SettingsBrowserAgentAccessRouteImport;
+      parentRoute: typeof SettingsRoute;
+    };
     "/settings/delete-account": {
       id: "/settings/delete-account";
       path: "/delete-account";
@@ -668,6 +700,13 @@ declare module "@tanstack/react-router" {
       preLoaderRoute: typeof SettingsProvidersRouteImport;
       parentRoute: typeof SettingsRoute;
     };
+    "/settings/secrets": {
+      id: "/settings/secrets";
+      path: "/secrets";
+      fullPath: "/settings/secrets";
+      preLoaderRoute: typeof SettingsSecretsRouteImport;
+      parentRoute: typeof SettingsRoute;
+    };
     "/settings/service": {
       id: "/settings/service";
       path: "/service";
@@ -724,6 +763,7 @@ interface SettingsRouteChildren {
   SettingsAppNotificationsRoute: typeof SettingsAppNotificationsRoute;
   SettingsAppearanceRoute: typeof SettingsAppearanceRoute;
   SettingsBrowserRoute: typeof SettingsBrowserRoute;
+  SettingsBrowserAgentAccessRoute: typeof SettingsBrowserAgentAccessRoute;
   SettingsDeleteAccountRoute: typeof SettingsDeleteAccountRoute;
   SettingsDevicesRoute: typeof SettingsDevicesRoute;
   SettingsDiagnosticsRoute: typeof SettingsDiagnosticsRoute;
@@ -738,6 +778,7 @@ interface SettingsRouteChildren {
   SettingsOpeningBehaviorRoute: typeof SettingsOpeningBehaviorRoute;
   SettingsPermissionsRoute: typeof SettingsPermissionsRoute;
   SettingsProvidersRoute: typeof SettingsProvidersRoute;
+  SettingsSecretsRoute: typeof SettingsSecretsRoute;
   SettingsServiceRoute: typeof SettingsServiceRoute;
   SettingsShellRoute: typeof SettingsShellRoute;
   SettingsUsageRoute: typeof SettingsUsageRoute;
@@ -751,6 +792,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsAppNotificationsRoute: SettingsAppNotificationsRoute,
   SettingsAppearanceRoute: SettingsAppearanceRoute,
   SettingsBrowserRoute: SettingsBrowserRoute,
+  SettingsBrowserAgentAccessRoute: SettingsBrowserAgentAccessRoute,
   SettingsDeleteAccountRoute: SettingsDeleteAccountRoute,
   SettingsDevicesRoute: SettingsDevicesRoute,
   SettingsDiagnosticsRoute: SettingsDiagnosticsRoute,
@@ -765,6 +807,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsOpeningBehaviorRoute: SettingsOpeningBehaviorRoute,
   SettingsPermissionsRoute: SettingsPermissionsRoute,
   SettingsProvidersRoute: SettingsProvidersRoute,
+  SettingsSecretsRoute: SettingsSecretsRoute,
   SettingsServiceRoute: SettingsServiceRoute,
   SettingsShellRoute: SettingsShellRoute,
   SettingsUsageRoute: SettingsUsageRoute,

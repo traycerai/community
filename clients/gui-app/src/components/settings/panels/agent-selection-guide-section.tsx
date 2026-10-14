@@ -20,7 +20,7 @@ import { useAgentSelectionGuideResetGlobalMutation } from "@/hooks/agent/use-age
 import { HostRuntimeContext, useHostBinding } from "@/lib/host/runtime";
 import { HostScopeGate } from "@/components/settings/host-scope/host-scope-gate";
 import {
-  useHostScope,
+  usePersonalHostScope,
   type HostScope,
 } from "@/components/settings/host-scope/use-host-scope";
 
@@ -102,7 +102,7 @@ function agentsGuideEditorReducer(
 }
 
 export function AgentSelectionGuideSection() {
-  const scope = useHostScope();
+  const scope = usePersonalHostScope();
   const realBinding = useHostBinding();
 
   // Only a fully-resolved scope re-provides the client — a still-connecting or

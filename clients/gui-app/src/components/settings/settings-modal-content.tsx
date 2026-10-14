@@ -8,6 +8,8 @@ import {
   type SettingsSectionId,
 } from "@/lib/settings-sections";
 import { BrowserSettingsPanel } from "@/components/settings/panels/browser-settings-panel";
+import { BrowserAgentAccessSettingsPanel } from "@/components/settings/panels/browser-agent-access-settings-panel";
+import { SecretsSettingsPanel } from "@/components/settings/panels/secrets-settings-panel";
 import { GeneralSettingsPanel } from "@/components/settings/panels/general-settings-panel";
 import { AppearanceSettingsPanel } from "@/components/settings/panels/appearance-settings-panel";
 import { LayoutSettingsPanel } from "@/components/settings/panels/layout-settings-panel";
@@ -88,11 +90,13 @@ const SETTINGS_PANELS = {
   "getting-started": GettingStartedSettingsPanel,
   general: GeneralSettingsPanel,
   browser: BrowserSettingsPanel,
+  "browser-agent-access": BrowserAgentAccessSettingsPanel,
   appearance: AppearanceSettingsPanel,
   layout: LayoutSettingsPanel,
   "opening-behavior": OpeningBehaviorPanel,
   "app-notifications": AppNotificationsSettingsPanel,
   providers: ProvidersSettingsPanel,
+  secrets: SecretsSettingsPanel,
   notifications: NotificationsSettingsPanel,
   permissions: PermissionsSettingsPanel,
   agents: AgentsSettingsPanel,

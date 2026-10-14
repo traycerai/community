@@ -13,5 +13,5 @@ import { resolvePlatformBaseUrl } from "@/lib/auth/platform-base-url";
 export const SECRETS_DASHBOARD_LABEL = "Secrets and GitHub";
 
 export function secretsDashboardUrl(signInUrl: string): string {
-  return `${resolvePlatformBaseUrl(signInUrl)}/secrets`;
+  return `${resolvePlatformBaseUrl(signInUrl)}/environments/personal/secrets`;
 }

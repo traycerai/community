@@ -948,26 +948,28 @@ const hostScopeMocks: {
 vi.mock("@/components/settings/host-scope/use-host-scope", async () => {
   const { hostScopeFixture } =
     await import("@/components/settings/host-scope/host-scope-fixture");
-  return {
-    useHostScope: () => ({
-      ...hostScopeFixture({
-        setHostId: hostScopeMocks.setHostId,
-        hostId: hostScopeMocks.hostId,
-        // `host: undefined` must be OMITTED, not passed: the fixture's final
-        // spread would clobber its default host with the explicit undefined.
-        ...(hostScopeMocks.host === undefined
-          ? {}
-          : { host: hostScopeMocks.host }),
-        // Same omit-don't-pass rule as `host`: an explicit undefined would
-        // clobber the fixture's derived status.
-        ...(hostScopeMocks.status === undefined
-          ? {}
-          : { status: hostScopeMocks.status }),
-      }),
-      // Spread OUTSIDE the fixture call: the stub satisfies what the panel
-      // uses, not the full `HostClient` the fixture's type demands.
-      client: hostScopeMocks.client,
+  const useHostScope = () => ({
+    ...hostScopeFixture({
+      setHostId: hostScopeMocks.setHostId,
+      hostId: hostScopeMocks.hostId,
+      // `host: undefined` must be OMITTED, not passed: the fixture's final
+      // spread would clobber its default host with the explicit undefined.
+      ...(hostScopeMocks.host === undefined
+        ? {}
+        : { host: hostScopeMocks.host }),
+      // Same omit-don't-pass rule as `host`: an explicit undefined would
+      // clobber the fixture's derived status.
+      ...(hostScopeMocks.status === undefined
+        ? {}
+        : { status: hostScopeMocks.status }),
     }),
+    // Spread OUTSIDE the fixture call: the stub satisfies what the panel
+    // uses, not the full `HostClient` the fixture's type demands.
+    client: hostScopeMocks.client,
+  });
+  return {
+    useHostScope,
+    usePersonalHostScope: useHostScope,
   };
 });
 
@@ -2457,7 +2459,7 @@ describe("<ProvidersSettingsPanel />", () => {
 
     selectTab("Env");
 
-    expect(screen.getByText("Environment variables")).toBeDefined();
+    expect(screen.getByText("Variables")).toBeDefined();
     expect(screen.getByDisplayValue("OPENAI_API_KEY")).toBeDefined();
     expect(
       screen.getByText(/Applied when Traycer spawns the OpenCode/),
@@ -2991,7 +2993,7 @@ describe("<ProvidersSettingsPanel />", () => {
     fireEvent.click(railProviderRow("Amp", false));
     expect(screen.queryByRole("tab", { name: "MCP" })).toBeNull();
     expect(screen.getByRole("tab", { name: "Env" })).toBeDefined();
-    expect(screen.getByText("Environment variables")).toBeDefined();
+    expect(screen.getByText("Variables")).toBeDefined();
   });
 
   it("deep-links focusTab once-and-clear alongside focusHarnessId", () => {
@@ -7998,7 +8000,7 @@ describe("<ProvidersSettingsPanel /> mobile section picker", () => {
     // on a chooser for a question the caller already answered.
     expect(screen.queryByRole("tablist")).toBeNull();
     expect(screen.queryAllByRole("tab")).toHaveLength(0);
-    expect(screen.getByText("Environment variables")).toBeDefined();
+    expect(screen.getByText("Variables")).toBeDefined();
     expect(screen.getByRole("tabpanel").getAttribute("aria-label")).toBe("Env");
   });
 
