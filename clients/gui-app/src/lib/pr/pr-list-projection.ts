@@ -34,6 +34,13 @@ export type PrRepoBlock =
       readonly baseRefName: string | null;
       readonly size: number;
       readonly layers: readonly PrLightItem[];
+      /**
+       * Positions of a native stack this epic's COMPLETE list does not carry
+       * (layers opened elsewhere), fixed when the block is built so a view
+       * that later hides a layer cannot turn it into one of these. Always
+       * empty for an inferred stack.
+       */
+      readonly absentPositions: readonly number[];
     };
 
 type PrStackBlock = Extract<PrRepoBlock, { readonly kind: "stack" }>;
@@ -208,13 +215,20 @@ function buildRepoBlocks(
       (left, right) => nativePosition(left) - nativePosition(right),
     );
     const first = layers[0].stack ?? null;
+    const size = Math.max(first === null ? 0 : first.size, layers.length);
+    const present = new Set(layers.map((item) => nativeStackPosition(item)));
+    const absentPositions: number[] = [];
+    for (let position = 1; position <= size; position += 1) {
+      if (!present.has(position)) absentPositions.push(position);
+    }
     blocks.push({
       kind: "stack",
       key: `native:${number}`,
       number,
       baseRefName: first === null ? null : first.baseRefName,
-      size: Math.max(first === null ? 0 : first.size, layers.length),
+      size,
       layers,
+      absentPositions,
     });
   }
   blocks.push(...inferStackBlocks(rest));
@@ -330,6 +344,7 @@ function inferStackBlocks(
       baseRefName: bottom.baseRefName,
       size: layers.length,
       layers,
+      absentPositions: [],
     });
   }
   return blocks;
@@ -400,8 +415,10 @@ export function filterPrRepoGroups(
  * A stack drawn top layer first, the way GitHub lists one, with the layers
  * this epic's list does not carry marked where they sit. Each entry is a
  * carried row, or a run of absent positions (a native stack with layers
- * opened from elsewhere); an inferred stack is never short of layers.
- * The stack's base sits below the last entry.
+ * opened from elsewhere, read off `absentPositions`, never off which rows
+ * the view kept: a layer hidden by a filter just leaves the rail). An
+ * inferred stack is never short of layers. The base sits below the last
+ * entry.
  */
 export type PrStackRailEntry =
   | { readonly kind: "layer"; readonly item: PrLightItem }
@@ -415,30 +432,30 @@ export type PrStackRailEntry =
 export function prStackRailEntries(
   block: PrStackBlock,
 ): readonly PrStackRailEntry[] {
-  const positioned = block.layers.map((item, index) => ({
-    item,
-    position: nativeStackPosition(item) ?? index + 1,
-  }));
+  if (block.number === null) {
+    return [...block.layers]
+      .reverse()
+      .map((item): PrStackRailEntry => ({ kind: "layer", item }));
+  }
+  const byPosition = new Map(
+    block.layers.map((item) => [nativeStackPosition(item), item]),
+  );
+  const absent = new Set(block.absentPositions);
   const entries: PrStackRailEntry[] = [];
-  // An inferred stack has no positions of its own: a layer the view has
-  // filtered out is simply gone from the rail, never an absent run (which
-  // would claim the layer was opened elsewhere). Only GitHub's size can say
-  // a layer is missing.
-  let expected = block.number === null ? block.layers.length : block.size;
-  for (const { item, position } of [...positioned].reverse()) {
-    if (position < expected) {
-      entries.push({
-        kind: "absent",
-        count: expected - position,
-        topPosition: expected,
-      });
+  let run = 0;
+  for (let position = block.size; position >= 1; position -= 1) {
+    if (absent.has(position)) {
+      run += 1;
+      continue;
     }
-    entries.push({ kind: "layer", item });
-    expected = position - 1;
+    if (run > 0) {
+      entries.push({ kind: "absent", count: run, topPosition: position + run });
+      run = 0;
+    }
+    const item = byPosition.get(position);
+    if (item !== undefined) entries.push({ kind: "layer", item });
   }
-  if (expected >= 1) {
-    entries.push({ kind: "absent", count: expected, topPosition: expected });
-  }
+  if (run > 0) entries.push({ kind: "absent", count: run, topPosition: run });
   return entries;
 }
 

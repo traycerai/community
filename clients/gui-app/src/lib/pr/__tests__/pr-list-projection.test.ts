@@ -592,6 +592,25 @@ describe("groupPrItemsByRepo stack blocks", () => {
       ).toEqual(["absent:2", 4, 3, "absent:1", 1]);
     });
 
+    it("keeps a layer hidden by a filter off the rail without calling it absent", () => {
+      // Hiding position 2 of a complete two-layer stack leaves one layer,
+      // not a layer plus a "not in this task" run above it.
+      const groups = groupPrItemsByRepo([
+        pr(1, { stack: nativeStack(1, 2) }),
+        pr(2, { stack: nativeStack(2, 2), state: "merged" }),
+      ]);
+      const stack = asStack(
+        filterPrRepoGroups(groups, (row) => row.state === "open")[0].blocks[0],
+      );
+
+      expect(stack.absentPositions).toEqual([]);
+      expect(
+        prStackRailEntries(stack).map((entry) =>
+          entry.kind === "layer" ? entry.item.base?.prNumber : "absent",
+        ),
+      ).toEqual([1]);
+    });
+
     it("lists an inferred stack top first with no absent runs", () => {
       const stack = asStack(
         onlyBlocks([
