@@ -264,3 +264,86 @@ describe("ConfirmDestructiveDialog - dismissable while pending", () => {
     expect(cancel.textContent).toBe("Cancel");
   });
 });
+
+/**
+ * Mirrors a real caller that keeps the dialog dismissable while its action
+ * runs: opening also starts the pending window, and the opener is disabled for
+ * it. `withSurface` states explicitly whether the opener sits inside a
+ * focusable (`tabindex`) ancestor, standing in for the Settings dialog content.
+ */
+function PendingOpenerHarness(props: {
+  readonly withSurface: boolean;
+}): ReactNode {
+  const [open, setOpen] = useState(false);
+  const [pending, setPending] = useState(false);
+  const opener = (
+    <button
+      type="button"
+      disabled={pending}
+      onClick={() => {
+        setOpen(true);
+        setPending(true);
+      }}
+    >
+      Open
+    </button>
+  );
+  return (
+    <div>
+      {props.withSurface ? (
+        <div tabIndex={-1} data-testid="surface">
+          {opener}
+        </div>
+      ) : (
+        opener
+      )}
+      <ConfirmDestructiveDialog
+        open={open}
+        onOpenChange={setOpen}
+        title="Delete this?"
+        description="This cannot be undone."
+        cascadeSummary={null}
+        actionLabel="Delete"
+        isPending={pending}
+        dismissableWhilePending
+        blockedReason={null}
+        onConfirm={() => {
+          setOpen(false);
+        }}
+      />
+    </div>
+  );
+}
+
+describe("ConfirmDestructiveDialog - focus when the opener is disabled at close", () => {
+  it("returns focus to the opener's nearest [tabindex] ancestor", async () => {
+    render(<PendingOpenerHarness withSurface />);
+    const opener = screen.getByRole("button", { name: "Open" });
+    const surface = screen.getByTestId("surface");
+    opener.focus();
+    fireEvent.click(opener);
+    expect(opener.matches(":disabled")).toBe(true);
+    // Falsification: replace the `closest("[tabindex]")` fallback in
+    // `confirm-destructive-dialog.tsx` with `null` - focus then lands on
+    // `document.body`.
+    fireEvent.click(screen.getByTestId("confirm-cancel"));
+    await waitFor(() => {
+      expect(document.activeElement).toBe(surface);
+    });
+  });
+
+  it("with no [tabindex] ancestor, closing does not throw and focus ends on document.body", async () => {
+    render(<PendingOpenerHarness withSurface={false} />);
+    const opener = screen.getByRole("button", { name: "Open" });
+    opener.focus();
+    fireEvent.click(opener);
+    expect(opener.matches(":disabled")).toBe(true);
+    fireEvent.click(screen.getByTestId("confirm-cancel"));
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).toBeNull();
+    });
+    await waitFor(() => {
+      expect(document.activeElement).toBe(document.body);
+    });
+  });
+});

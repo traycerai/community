@@ -128,11 +128,23 @@ export function ConfirmDestructiveDialog(props: ConfirmDestructiveDialogProps) {
           // `document.body`. What is returned here is the DECISION, not the
           // outcome.
           if (opener === null || !opener.isConnected) return;
+          // A caller that keeps this dialog dismissable while its action
+          // runs disables the opener for that window, and `.focus()` on a
+          // disabled control is a silent no-op that would drop the keyboard
+          // on `document.body`. Return it to the nearest enclosing focus
+          // surface instead (the Settings dialog's own content, which Radix
+          // gives `tabindex="-1"`), so Tab resumes from there rather than
+          // from the top of the document. With no such surface, fall through
+          // to the default, which lands on the body either way.
+          const target = opener.matches(":disabled")
+            ? (opener.parentElement?.closest<HTMLElement>("[tabindex]") ?? null)
+            : opener;
+          if (target === null) return;
           // Radix's own handler runs only while the default is not prevented,
           // so preventing it here is what stops the null-trigger focus from
           // undoing this.
           event.preventDefault();
-          opener.focus();
+          target.focus();
         }}
       >
         <div className="flex min-w-0 items-start gap-3 p-5">
