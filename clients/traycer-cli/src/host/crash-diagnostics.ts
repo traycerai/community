@@ -121,8 +121,32 @@ const WINDOWS_EXIT_MEANINGS: ReadonlyMap<number, string> = new Map([
   [0xc0000005, "STATUS_ACCESS_VIOLATION (native crash)"],
   [0xc0000142, "STATUS_DLL_INIT_FAILED (spawn during session shutdown)"],
   [0x40010004, "DBG_TERMINATE_PROCESS (session teardown kill)"],
+  [
+    0xc000026b,
+    "STATUS_DLL_INIT_FAILED_LOGOFF (spawn during logoff or shutdown)",
+  ],
   [0xc00000fd, "STATUS_STACK_OVERFLOW"],
 ]);
+
+/**
+ * Windows exit statuses that mean the user's session was ending, not that the
+ * host failed: the child was torn down with the session
+ * (`DBG_TERMINATE_PROCESS`), or a relaunch attempted as the window station
+ * closed could not initialise (`STATUS_DLL_INIT_FAILED_LOGOFF`). In the fleet
+ * data the two arrive on the same host within minutes of each other.
+ *
+ * Deliberately NOT here: `0xC0000142` (`STATUS_DLL_INIT_FAILED`), which is
+ * also what an exhausted desktop heap or a security product produces, so its
+ * name does not say the session was ending.
+ */
+const WINDOWS_SESSION_END_EXIT_CODES: ReadonlySet<number> = new Set([
+  0x40010004, 0xc000026b,
+]);
+
+/** Whether a Windows exit status is the session ending rather than a crash. */
+export function isWindowsSessionEndExit(code: number): boolean {
+  return WINDOWS_SESSION_END_EXIT_CODES.has(code >>> 0);
+}
 
 /**
  * POSIX signals that mean the host CRASHED rather than being shut down. A

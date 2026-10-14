@@ -2007,6 +2007,87 @@ describe("runHostStart - Windows requested-kill arm", () => {
   });
 });
 
+// --------------------------------- Windows session-end exits
+//
+// A Windows logoff or shutdown ends the host child with DBG_TERMINATE_PROCESS
+// (0x40010004), and a relaunch attempted while the window station is already
+// closing fails at DLL initialisation with STATUS_DLL_INIT_FAILED_LOGOFF
+// (0xC000026B). Neither is a defect of the host: they are the session ending.
+// The crash marker and the diagnostics line stay (support still reads them),
+// but the fleet crash count must not carry them. Controls pin that every
+// other code, and the same code on another platform, is still reported.
+
+describe("runHostStart - Windows session-end exits", () => {
+  const exec = "/opt/traycer/host/install/traycer-host";
+  const DBG_TERMINATE_PROCESS = 0x40010004;
+  const DLL_INIT_FAILED_LOGOFF = 0xc000026b;
+
+  it.each([
+    ["DBG_TERMINATE_PROCESS", DBG_TERMINATE_PROCESS],
+    ["STATUS_DLL_INIT_FAILED_LOGOFF", DLL_INIT_FAILED_LOGOFF],
+  ])(
+    "writes the crash marker but reports no crash telemetry for %s on win32",
+    async (_name, exitCode) => {
+      const { child, recorded, deps } = makeRunStubs(sampleRecord(exec), null);
+      const win32Deps = withLifecyclePlatform(deps, "win32");
+
+      await runUntilExit(
+        () =>
+          runHostStart(
+            { environment: "production", cwd: null },
+            withChildExit(win32Deps, child, exitCode, null),
+          ),
+        recorded,
+      );
+
+      const crashed = recorded.markers.find((m) => m.phase === "crashed");
+      expect(crashed).toBeDefined();
+      expect(crashed?.fields.exitCode).toBe(exitCode);
+      expect(
+        recorded.loggerErrors.some(
+          (e) => e.message === "Host crash diagnostics",
+        ),
+      ).toBe(true);
+      expect(recorded.crashReports).toHaveLength(0);
+    },
+  );
+
+  it("control: the same code on a non-Windows platform is still reported", async () => {
+    const { child, recorded, deps } = makeRunStubs(sampleRecord(exec), null);
+    const linuxDeps = withLifecyclePlatform(deps, "linux");
+
+    await runUntilExit(
+      () =>
+        runHostStart(
+          { environment: "production", cwd: null },
+          withChildExit(linuxDeps, child, DBG_TERMINATE_PROCESS, null),
+        ),
+      recorded,
+    );
+
+    expect(recorded.crashReports).toHaveLength(1);
+    expect(recorded.crashReports[0]?.exitCode).toBe(DBG_TERMINATE_PROCESS);
+  });
+
+  it("control: a win32 native crash code is still reported", async () => {
+    const { child, recorded, deps } = makeRunStubs(sampleRecord(exec), null);
+    const win32Deps = withLifecyclePlatform(deps, "win32");
+    const accessViolation = 0xc0000005;
+
+    await runUntilExit(
+      () =>
+        runHostStart(
+          { environment: "production", cwd: null },
+          withChildExit(win32Deps, child, accessViolation, null),
+        ),
+      recorded,
+    );
+
+    expect(recorded.crashReports).toHaveLength(1);
+    expect(recorded.crashReports[0]?.exitCode).toBe(accessViolation);
+  });
+});
+
 /**
  * The harness for the console-stop describe block below: win32 platform, a
  * captured `escalateAfter` standing in for the real ~35s

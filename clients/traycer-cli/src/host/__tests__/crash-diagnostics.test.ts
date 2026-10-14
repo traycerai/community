@@ -66,6 +66,7 @@ const {
   StderrLogTee,
   crashReportsDirFor,
   describeExitCode,
+  isWindowsSessionEndExit,
   describeFatalSignal,
   findCrashReportSince,
   isFatalSignal,
@@ -319,6 +320,23 @@ describe("describeExitCode", () => {
 
   it("returns bare hex for unknown high codes", () => {
     expect(describeExitCode(0xc0de0001)).toBe("0xC0DE0001");
+  });
+});
+
+describe("isWindowsSessionEndExit", () => {
+  it("names the logoff-time spawn failure and counts both session-end codes", () => {
+    expect(describeExitCode(0xc000026b)).toContain(
+      "STATUS_DLL_INIT_FAILED_LOGOFF",
+    );
+    expect(isWindowsSessionEndExit(0x40010004)).toBe(true);
+    expect(isWindowsSessionEndExit(0xc000026b)).toBe(true);
+  });
+
+  it("does not count the codes that are crashes or that do not say the session ended", () => {
+    expect(isWindowsSessionEndExit(0xc0000005)).toBe(false);
+    expect(isWindowsSessionEndExit(0xc0000409)).toBe(false);
+    expect(isWindowsSessionEndExit(0xc0000142)).toBe(false);
+    expect(isWindowsSessionEndExit(1)).toBe(false);
   });
 });
 
