@@ -142,7 +142,10 @@ describe("chat.subscribe@1.24 (live)", () => {
 
   it("snapshot: defaults an absent key to null and keeps a number", () => {
     const parsed = live.parse(
-      snapshotFrame([CRON_ITEM, { ...CRON_ITEM, taskId: "cron-2", scheduledFor: NEXT_RUN }]),
+      snapshotFrame([
+        CRON_ITEM,
+        { ...CRON_ITEM, taskId: "cron-2", scheduledFor: NEXT_RUN },
+      ]),
     );
     if (parsed.kind !== "snapshot") throw new Error("expected snapshot");
     const crons = parsed.snapshot.backgroundItems?.filter(
@@ -153,10 +156,15 @@ describe("chat.subscribe@1.24 (live)", () => {
 
   it("turnStateChanged: defaults an absent key to null and keeps a number", () => {
     const parsed = live.parse(
-      turnStateFrame([CRON_ITEM, { ...CRON_ITEM, taskId: "cron-2", scheduledFor: NEXT_RUN }]),
+      turnStateFrame([
+        CRON_ITEM,
+        { ...CRON_ITEM, taskId: "cron-2", scheduledFor: NEXT_RUN },
+      ]),
     );
     if (parsed.kind !== "turnStateChanged") throw new Error("wrong kind");
-    const crons = parsed.backgroundItems?.filter((item) => item.kind === "cron");
+    const crons = parsed.backgroundItems?.filter(
+      (item) => item.kind === "cron",
+    );
     expect(crons?.map((item) => item.scheduledFor)).toEqual([null, NEXT_RUN]);
   });
 });
