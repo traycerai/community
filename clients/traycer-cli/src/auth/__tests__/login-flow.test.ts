@@ -206,7 +206,7 @@ describe("runDeviceAuthFlow", () => {
   it("throws AUTH_NETWORK without polling when device authorization cannot reach authn", async () => {
     startAuthMock.mockResolvedValue({
       kind: "network-error",
-      cause: { kind: "request-failed" },
+      cause: { kind: "transport" },
     });
     const err = await runDeviceAuthFlow(makeCtx()).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(CliError);

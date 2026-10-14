@@ -156,7 +156,7 @@ describe("startDeviceAuthorization", () => {
     );
     expect(result).toEqual({
       kind: "network-error",
-      cause: { kind: "request-failed" },
+      cause: { kind: "transport" },
     });
   });
 
@@ -384,13 +384,31 @@ describe("cancellation and timeout", () => {
     );
     expect(result).toEqual({
       kind: "network-error",
-      cause: { kind: "request-failed" },
+      cause: { kind: "timeout" },
+    });
+  });
+
+  it("startDeviceAuthorization reads a caller abort as transport, not timeout", async () => {
+    installHangingFetch();
+    const controller = new AbortController();
+    const started = startDeviceAuthorization(
+      AUTHN_BASE_URL,
+      { clientId: "cli", hostLabel: "host" },
+      { signal: controller.signal, timeoutMs: 30_000 },
+    );
+    controller.abort();
+    expect(await started).toEqual({
+      kind: "network-error",
+      cause: { kind: "transport" },
     });
   });
 
   it("describeDeviceAuthorizeFailure renders fixed words and the status number only", () => {
-    expect(describeDeviceAuthorizeFailure({ kind: "request-failed" })).toBe(
-      "request-failed",
+    expect(describeDeviceAuthorizeFailure({ kind: "timeout" })).toBe(
+      "timeout",
+    );
+    expect(describeDeviceAuthorizeFailure({ kind: "transport" })).toBe(
+      "transport",
     );
     expect(
       describeDeviceAuthorizeFailure({ kind: "http-status", status: 403 }),

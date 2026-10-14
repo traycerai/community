@@ -72,7 +72,8 @@ function buildRequestSignal(
  * response body.
  */
 export type DeviceAuthorizeFailureCause =
-  | { readonly kind: "request-failed" }
+  | { readonly kind: "timeout" }
+  | { readonly kind: "transport" }
   | { readonly kind: "http-status"; readonly status: number }
   | { readonly kind: "bad-body" };
 
@@ -81,8 +82,10 @@ export function describeDeviceAuthorizeFailure(
   cause: DeviceAuthorizeFailureCause,
 ): string {
   switch (cause.kind) {
-    case "request-failed":
-      return "request-failed";
+    case "timeout":
+      return "timeout";
+    case "transport":
+      return "transport";
     case "http-status":
       return `http-status status=${cause.status}`;
     case "bad-body":
@@ -166,7 +169,16 @@ export async function startDeviceAuthorization(
     // A caller abort or per-request timeout surfaces here too; both collapse
     // into the retryable `network-error` variant - the caller decides whether
     // to retry (poll loop) or give up (abort already consumed).
-    return { kind: "network-error", cause: { kind: "request-failed" } };
+    //
+    // `timeout` is read from the signals alone, never from the thrown error:
+    // the request's signal is aborted and the caller's is not, so the only
+    // abort left is the per-request timer. A caller abort, and anything the
+    // request failed on before either signal fired, reads as `transport`.
+    const timedOut = request.signal.aborted && options.signal?.aborted !== true;
+    return {
+      kind: "network-error",
+      cause: { kind: timedOut ? "timeout" : "transport" },
+    };
   } finally {
     request.clear();
   }

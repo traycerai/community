@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { log } from "../../app/logger";
+import { DEFAULT_DEVICE_REQUEST_TIMEOUT_MS } from "@traycer-clients/shared/auth/device-auth";
 import {
   DeviceFlowController,
   type DeviceFlowResultPayload,
@@ -308,7 +309,7 @@ describe("DeviceFlowController", () => {
       vi.mocked(log.warn).mockClear();
     });
 
-    it("logs request-failed when the request itself throws", async () => {
+    it("logs transport when the request itself throws", async () => {
       const original: unknown = (globalThis as { fetch?: unknown }).fetch;
       Object.defineProperty(globalThis, "fetch", {
         configurable: true,
@@ -327,8 +328,40 @@ describe("DeviceFlowController", () => {
       const outcome = await controller.start({ onResult: () => undefined });
 
       expect(outcome).toEqual({ ok: false });
+      expect(log.warn).toHaveBeenCalledTimes(1);
       expect(log.warn).toHaveBeenCalledWith(
-        `${AUTHORIZE_FAILED} cause=request-failed`,
+        `${AUTHORIZE_FAILED} cause=transport`,
+      );
+    });
+
+    it("logs timeout when the request is still unanswered at its deadline", async () => {
+      const original: unknown = (globalThis as { fetch?: unknown }).fetch;
+      Object.defineProperty(globalThis, "fetch", {
+        configurable: true,
+        writable: true,
+        value: (_input: unknown, init: RequestInit | undefined) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => {
+              reject(new DOMException("aborted", "AbortError"));
+            });
+          }),
+      });
+      restoreFetch = () =>
+        Object.defineProperty(globalThis, "fetch", {
+          configurable: true,
+          writable: true,
+          value: original,
+        });
+
+      const controller = new DeviceFlowController(AUTHN, RETURN_SCHEME);
+      const started = controller.start({ onResult: () => undefined });
+      await vi.advanceTimersByTimeAsync(DEFAULT_DEVICE_REQUEST_TIMEOUT_MS);
+      const outcome = await started;
+
+      expect(outcome).toEqual({ ok: false });
+      expect(log.warn).toHaveBeenCalledTimes(1);
+      expect(log.warn).toHaveBeenCalledWith(
+        `${AUTHORIZE_FAILED} cause=timeout`,
       );
     });
 
@@ -341,6 +374,7 @@ describe("DeviceFlowController", () => {
       const outcome = await controller.start({ onResult: () => undefined });
 
       expect(outcome).toEqual({ ok: false });
+      expect(log.warn).toHaveBeenCalledTimes(1);
       expect(log.warn).toHaveBeenCalledWith(
         `${AUTHORIZE_FAILED} cause=http-status status=503`,
       );
@@ -355,6 +389,7 @@ describe("DeviceFlowController", () => {
       const outcome = await controller.start({ onResult: () => undefined });
 
       expect(outcome).toEqual({ ok: false });
+      expect(log.warn).toHaveBeenCalledTimes(1);
       expect(log.warn).toHaveBeenCalledWith(
         `${AUTHORIZE_FAILED} cause=bad-body`,
       );
@@ -372,6 +407,7 @@ describe("DeviceFlowController", () => {
       const controller = new DeviceFlowController(AUTHN, RETURN_SCHEME);
       await controller.start({ onResult: () => undefined });
 
+      expect(log.warn).toHaveBeenCalledTimes(1);
       const lines = JSON.stringify(vi.mocked(log.warn).mock.calls);
       expect(lines).not.toContain("secret-body-token");
       expect(lines).not.toContain("secret-header-token");
