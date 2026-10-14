@@ -44,7 +44,7 @@ const queryClient = new QueryClient({
   defaultOptions: { mutations: { retry: false } },
 });
 
-const CRON_ITEM: BackgroundItem = {
+const CRON_ITEM: Extract<BackgroundItem, { kind: "cron" }> = {
   taskId: "cron-job-1",
   kind: "cron",
   title: "Every 5 minutes",
