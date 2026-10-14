@@ -66,10 +66,36 @@ function buildRequestSignal(
 }
 
 /**
+ * Why `POST /device/authorize` did not start an authorization: a closed set of
+ * words and one number, so a caller can put it in a log line (the desktop log
+ * travels in feedback reports) without carrying a URL, a header or any of the
+ * response body.
+ */
+export type DeviceAuthorizeFailureCause =
+  | { readonly kind: "request-failed" }
+  | { readonly kind: "http-status"; readonly status: number }
+  | { readonly kind: "bad-body" };
+
+/** The log rendering of a cause: fixed words and the status number only. */
+export function describeDeviceAuthorizeFailure(
+  cause: DeviceAuthorizeFailureCause,
+): string {
+  switch (cause.kind) {
+    case "request-failed":
+      return "request-failed";
+    case "http-status":
+      return `http-status status=${cause.status}`;
+    case "bad-body":
+      return "bad-body";
+  }
+}
+
+/**
  * Result of `POST /device/authorize`. `started` carries the fields the caller
  * needs to display the verification prompt and drive the poll loop; a
  * transport failure or any non-200 is a transient `network-error` (the caller
- * may retry starting a fresh authorization).
+ * may retry starting a fresh authorization). `cause` says which of those it
+ * was; no caller branches on it.
  */
 export type DeviceAuthorizationResult =
   | {
@@ -81,7 +107,10 @@ export type DeviceAuthorizationResult =
       readonly expiresInSeconds: number;
       readonly intervalSeconds: number;
     }
-  | { readonly kind: "network-error" };
+  | {
+      readonly kind: "network-error";
+      readonly cause: DeviceAuthorizeFailureCause;
+    };
 
 /**
  * Result of one `POST /device/token` poll. The variants mirror the endpoint's
@@ -137,18 +166,21 @@ export async function startDeviceAuthorization(
     // A caller abort or per-request timeout surfaces here too; both collapse
     // into the retryable `network-error` variant - the caller decides whether
     // to retry (poll loop) or give up (abort already consumed).
-    return { kind: "network-error" };
+    return { kind: "network-error", cause: { kind: "request-failed" } };
   } finally {
     request.clear();
   }
 
   if (response.status !== 200) {
-    return { kind: "network-error" };
+    return {
+      kind: "network-error",
+      cause: { kind: "http-status", status: response.status },
+    };
   }
 
   const parsed = await readAuthorization(response);
   if (parsed === null) {
-    return { kind: "network-error" };
+    return { kind: "network-error", cause: { kind: "bad-body" } };
   }
   return parsed;
 }

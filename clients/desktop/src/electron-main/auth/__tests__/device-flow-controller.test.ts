@@ -1,8 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { log } from "../../app/logger";
 import {
   DeviceFlowController,
   type DeviceFlowResultPayload,
 } from "../device-flow-controller";
+
+vi.mock("../../app/logger", () => ({
+  log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+}));
 
 /**
  * Drives the main-process device-flow controller against a mocked global
@@ -294,6 +299,84 @@ describe("DeviceFlowController", () => {
     const outcome = await controller.start({ onResult: () => undefined });
 
     expect(outcome.ok).toBe(false);
+  });
+
+  describe("when /device/authorize fails, the desktop log names the cause", () => {
+    const AUTHORIZE_FAILED = "[device-flow] authorize failed";
+
+    beforeEach(() => {
+      vi.mocked(log.warn).mockClear();
+    });
+
+    it("logs request-failed when the request itself throws", async () => {
+      const original: unknown = (globalThis as { fetch?: unknown }).fetch;
+      Object.defineProperty(globalThis, "fetch", {
+        configurable: true,
+        writable: true,
+        value: (): Promise<Response> =>
+          Promise.reject(new TypeError("fetch failed")),
+      });
+      restoreFetch = () =>
+        Object.defineProperty(globalThis, "fetch", {
+          configurable: true,
+          writable: true,
+          value: original,
+        });
+
+      const controller = new DeviceFlowController(AUTHN, RETURN_SCHEME);
+      const outcome = await controller.start({ onResult: () => undefined });
+
+      expect(outcome).toEqual({ ok: false });
+      expect(log.warn).toHaveBeenCalledWith(
+        `${AUTHORIZE_FAILED} cause=request-failed`,
+      );
+    });
+
+    it("logs http-status with the numeric status for a non-200", async () => {
+      restoreFetch = installFetch(
+        () => new Response("<html>blocked</html>", { status: 503 }),
+      );
+
+      const controller = new DeviceFlowController(AUTHN, RETURN_SCHEME);
+      const outcome = await controller.start({ onResult: () => undefined });
+
+      expect(outcome).toEqual({ ok: false });
+      expect(log.warn).toHaveBeenCalledWith(
+        `${AUTHORIZE_FAILED} cause=http-status status=503`,
+      );
+    });
+
+    it("logs bad-body when a 200 body is not a device authorization", async () => {
+      restoreFetch = installFetch(
+        () => new Response("not json at all", { status: 200 }),
+      );
+
+      const controller = new DeviceFlowController(AUTHN, RETURN_SCHEME);
+      const outcome = await controller.start({ onResult: () => undefined });
+
+      expect(outcome).toEqual({ ok: false });
+      expect(log.warn).toHaveBeenCalledWith(
+        `${AUTHORIZE_FAILED} cause=bad-body`,
+      );
+    });
+
+    it("never puts the url, the body or a header into the line", async () => {
+      restoreFetch = installFetch(
+        () =>
+          new Response("secret-body-token", {
+            status: 500,
+            headers: { "X-Secret": "secret-header-token" },
+          }),
+      );
+
+      const controller = new DeviceFlowController(AUTHN, RETURN_SCHEME);
+      await controller.start({ onResult: () => undefined });
+
+      const lines = JSON.stringify(vi.mocked(log.warn).mock.calls);
+      expect(lines).not.toContain("secret-body-token");
+      expect(lines).not.toContain("secret-header-token");
+      expect(lines).not.toContain("authn.test");
+    });
   });
 
   it("delivers a denied result terminally", async () => {

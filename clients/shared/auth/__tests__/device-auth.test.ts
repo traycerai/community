@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   applySlowDown,
   createPollSchedule,
+  describeDeviceAuthorizeFailure,
   isDeviceExpired,
   MAX_POLL_INTERVAL_SECONDS,
   pollDeviceToken,
@@ -153,7 +154,10 @@ describe("startDeviceAuthorization", () => {
       },
       REQUEST_OPTIONS,
     );
-    expect(result.kind).toBe("network-error");
+    expect(result).toEqual({
+      kind: "network-error",
+      cause: { kind: "request-failed" },
+    });
   });
 
   it("returns network-error on a non-200 status", async () => {
@@ -166,7 +170,10 @@ describe("startDeviceAuthorization", () => {
       },
       REQUEST_OPTIONS,
     );
-    expect(result.kind).toBe("network-error");
+    expect(result).toEqual({
+      kind: "network-error",
+      cause: { kind: "http-status", status: 503 },
+    });
   });
 
   it("returns network-error when required fields are missing", async () => {
@@ -181,7 +188,10 @@ describe("startDeviceAuthorization", () => {
       },
       REQUEST_OPTIONS,
     );
-    expect(result.kind).toBe("network-error");
+    expect(result).toEqual({
+      kind: "network-error",
+      cause: { kind: "bad-body" },
+    });
   });
 });
 
@@ -372,7 +382,22 @@ describe("cancellation and timeout", () => {
       { clientId: "cli", hostLabel: "host" },
       { signal: undefined, timeoutMs: 5 },
     );
-    expect(result.kind).toBe("network-error");
+    expect(result).toEqual({
+      kind: "network-error",
+      cause: { kind: "request-failed" },
+    });
+  });
+
+  it("describeDeviceAuthorizeFailure renders fixed words and the status number only", () => {
+    expect(describeDeviceAuthorizeFailure({ kind: "request-failed" })).toBe(
+      "request-failed",
+    );
+    expect(
+      describeDeviceAuthorizeFailure({ kind: "http-status", status: 403 }),
+    ).toBe("http-status status=403");
+    expect(describeDeviceAuthorizeFailure({ kind: "bad-body" })).toBe(
+      "bad-body",
+    );
   });
 });
 
