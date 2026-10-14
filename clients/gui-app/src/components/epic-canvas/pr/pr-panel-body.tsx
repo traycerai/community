@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useCallback,
   useLayoutEffect,
   useMemo,
@@ -11,6 +12,7 @@ import {
   ChevronRight,
   FolderGit2,
   GitPullRequest,
+  Layers,
 } from "lucide-react";
 import type {
   PrLightItem,
@@ -43,14 +45,17 @@ import {
 import { makePrDetailTile, prDetailTileId } from "@/lib/pr/pr-detail-tile";
 import {
   formatPrRowTitle,
+  formatPrStackCount,
   formatRepoGroupLabel,
   fullyIdentifiedPrBase,
   groupPrItemsByRepo,
   prListRowKey,
+  type PrRepoBlock,
   type PrRepoGroup,
 } from "@/lib/pr/pr-list-projection";
 import { cn } from "@/lib/utils";
 import { useMainPanelCollapsed } from "@/stores/epics/left-panel-store";
+import { usePrPanelStore } from "@/stores/epics/pr-panel-store";
 import { tileIntent } from "@/lib/canvas/tile-open/intent";
 import {
   clearSidebarNodeRevealRequest,
@@ -177,7 +182,18 @@ export function PrPanelBodyContent(props: {
   readonly hasCachedData: boolean;
 }): ReactNode {
   const { openTile } = useEpicTileNavigation();
-  const groups = useMemo(() => groupPrItemsByRepo(props.items), [props.items]);
+  const openOnly = usePrPanelStore((state) => state.openOnly);
+  const visibleItems = useMemo(
+    () =>
+      openOnly
+        ? props.items.filter((item) => item.state === "open")
+        : props.items,
+    [openOnly, props.items],
+  );
+  const groups = useMemo(
+    () => groupPrItemsByRepo(visibleItems),
+    [visibleItems],
+  );
   const [collapsedRepos, setCollapsedRepos] = useState<ReadonlySet<string>>(
     new Set<string>(),
   );
@@ -325,6 +341,15 @@ export function PrPanelBodyContent(props: {
           testId="pr-panel-error-notice"
         />
       ) : null}
+      {visibleItems.length === 0 && props.items.length > 0 ? (
+        <p
+          role="status"
+          className="px-3 py-2 text-ui-xs text-muted-foreground"
+          data-testid="pr-panel-all-hidden"
+        >
+          {formatAllHiddenMessage(props.items.length)}
+        </p>
+      ) : null}
       {/* One clock for every row's owners card, across repos. */}
       <HoverCardGroup>
         {groups.map((group) => (
@@ -394,22 +419,72 @@ function PrRepoGroupSection(props: {
       </button>
       {props.collapsed ? null : (
         <div className="flex min-w-0 flex-col divide-y divide-border/25 border-y border-border/25">
-          {props.group.items.map((item) => {
-            const entry = props.buildEntry(item);
+          {props.group.blocks.map((block) => {
+            if (block.kind === "single") {
+              const entry = props.buildEntry(block.item);
+              return (
+                <PrRow
+                  key={entry.key}
+                  entry={entry}
+                  hostId={props.hostId}
+                  epicId={props.epicId}
+                  tabId={props.tabId}
+                />
+              );
+            }
             return (
-              <PrRow
-                key={entry.key}
-                entry={entry}
-                hostId={props.hostId}
-                epicId={props.epicId}
-                tabId={props.tabId}
-              />
+              <Fragment key={block.key}>
+                <PrStackHeader block={block} />
+                {block.layers.map((item) => {
+                  const entry = props.buildEntry(item);
+                  return (
+                    <PrRow
+                      key={entry.key}
+                      entry={entry}
+                      hostId={props.hostId}
+                      epicId={props.epicId}
+                      tabId={props.tabId}
+                    />
+                  );
+                })}
+              </Fragment>
             );
           })}
         </div>
       )}
     </div>
   );
+}
+
+/**
+ * The line above a stack's layers: the branch the whole stack lands on and
+ * how many layers it has. It sits in the group's ruled list as a row of its
+ * own, but in the label register (small, muted) so it reads as a heading
+ * for the rows below rather than as one of them.
+ */
+function PrStackHeader(props: {
+  readonly block: Extract<PrRepoBlock, { readonly kind: "stack" }>;
+}): ReactNode {
+  return (
+    <div
+      className="flex min-w-0 items-center gap-1.5 px-3 py-1 text-ui-xs text-muted-foreground"
+      data-testid="pr-stack-header"
+    >
+      <Layers className="size-3.5 shrink-0" aria-hidden />
+      <span className="min-w-0 flex-1 truncate">
+        Stack → {props.block.baseRefName ?? "unknown"}
+      </span>
+      <span className="shrink-0 tabular-nums">
+        {formatPrStackCount(props.block)}
+      </span>
+    </div>
+  );
+}
+
+function formatAllHiddenMessage(count: number): string {
+  return count === 1
+    ? "The only pull request is merged or closed"
+    : `All ${count} pull requests are merged or closed`;
 }
 
 function formatPrFallbackKey(item: PrLightItem): string {

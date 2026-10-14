@@ -12,8 +12,29 @@ import type {
 
 export interface PrRepoGroup {
   readonly repoIdentifier: PrRepoIdentifier;
+  /** Every row of the group, open → merged → closed, ignoring stacks. */
   readonly items: readonly PrLightItem[];
+  /** The same rows as the panel draws them: stacks gathered, then singles. */
+  readonly blocks: readonly PrRepoBlock[];
 }
+
+/**
+ * One drawable unit of a repo group: a lone PR, or a stack of PRs each
+ * targeting the one below it. `size` counts every layer of the stack,
+ * including ones this epic's list does not carry, so it may exceed
+ * `layers.length`. Layers run bottom (closest to `baseRefName`) to top.
+ */
+export type PrRepoBlock =
+  | { readonly kind: "single"; readonly item: PrLightItem }
+  | {
+      readonly kind: "stack";
+      readonly key: string;
+      readonly baseRefName: string | null;
+      readonly size: number;
+      readonly layers: readonly PrLightItem[];
+    };
+
+type PrStackBlock = Extract<PrRepoBlock, { readonly kind: "stack" }>;
 
 const STATE_RANK: Record<PrLightItem["state"], number> = {
   open: 0,
@@ -145,8 +166,228 @@ export function groupPrItemsByRepo(
     if (groupItems === undefined || repoIdentifier === undefined) {
       throw new Error(`pr-list-projection: missing group for key "${key}"`);
     }
-    return { repoIdentifier, items: orderPrItemsWithinGroup(groupItems) };
+    const ordered = orderPrItemsWithinGroup(groupItems);
+    return { repoIdentifier, items: ordered, blocks: buildRepoBlocks(ordered) };
   });
+}
+
+/**
+ * Gathers a group's rows into stacks. GitHub's native stack membership wins:
+ * rows sharing a `stack.number` are one stack, in `position` order. Rows with
+ * no native stack fall back to inference - a row whose base branch is another
+ * row's head branch sits on it - which covers hand-built stacks and hosts
+ * that do not report the native field.
+ *
+ * Blocks are ordered by their best state (open → merged → closed), then by
+ * their most recent update; inside a stack, layer order wins over state.
+ * `items` must already be in {@link orderPrItemsWithinGroup} order: it breaks
+ * the remaining ties, so a group with no stacks reads exactly as before.
+ */
+function buildRepoBlocks(
+  items: readonly PrLightItem[],
+): readonly PrRepoBlock[] {
+  const nativeByNumber = new Map<number, PrLightItem[]>();
+  const rest: PrLightItem[] = [];
+  for (const item of items) {
+    const stack = item.stack ?? null;
+    // A stack of one is not a stack: GitHub reports none, but a fact that
+    // did would still read as a lone row.
+    if (stack === null || stack.size <= 1) {
+      rest.push(item);
+      continue;
+    }
+    const bucket = nativeByNumber.get(stack.number);
+    if (bucket === undefined) nativeByNumber.set(stack.number, [item]);
+    else bucket.push(item);
+  }
+  const blocks: PrRepoBlock[] = [];
+  for (const [number, members] of nativeByNumber) {
+    const layers = [...members].sort(
+      (left, right) => nativePosition(left) - nativePosition(right),
+    );
+    const first = layers[0].stack ?? null;
+    blocks.push({
+      kind: "stack",
+      key: `native:${number}`,
+      baseRefName: first === null ? null : first.baseRefName,
+      size: Math.max(first === null ? 0 : first.size, layers.length),
+      layers,
+    });
+  }
+  blocks.push(...inferStackBlocks(rest));
+  const firstSeen = new Map(items.map((item, index) => [item, index]));
+  const rankOf = (block: PrRepoBlock): number =>
+    Math.min(...blockItems(block).map((item) => STATE_RANK[item.state]));
+  const updatedOf = (block: PrRepoBlock): number | null => {
+    const stamps = blockItems(block)
+      .map((item) => item.updatedAt)
+      .filter((stamp): stamp is number => stamp !== null);
+    return stamps.length === 0 ? null : Math.max(...stamps);
+  };
+  const firstSeenOf = (block: PrRepoBlock): number =>
+    Math.min(...blockItems(block).map((item) => firstSeen.get(item) ?? 0));
+  return blocks.sort((left, right) => {
+    const rankDelta = rankOf(left) - rankOf(right);
+    if (rankDelta !== 0) return rankDelta;
+    const leftUpdated = updatedOf(left);
+    const rightUpdated = updatedOf(right);
+    if (leftUpdated !== rightUpdated) {
+      if (leftUpdated === null) return 1;
+      if (rightUpdated === null) return -1;
+      return rightUpdated - leftUpdated;
+    }
+    return firstSeenOf(left) - firstSeenOf(right);
+  });
+}
+
+function nativePosition(item: PrLightItem): number {
+  return item.stack?.position ?? Number.MAX_SAFE_INTEGER;
+}
+
+function blockItems(block: PrRepoBlock): readonly PrLightItem[] {
+  return block.kind === "single" ? [block.item] : block.layers;
+}
+
+/**
+ * Inferred stacks over rows with no native stack: row A sits on row B when
+ * A's base branch is B's head branch, and no other row shares either end of
+ * that edge (fan-in or fan-out breaks it). Connected rows form one stack, ordered
+ * by how many layers lie beneath each; a component with a cycle in it keeps
+ * first-seen order rather than inventing a bottom.
+ */
+function inferStackBlocks(
+  items: readonly PrLightItem[],
+): readonly PrRepoBlock[] {
+  const parent = items.map((_, index) => index);
+  const find = (index: number): number => {
+    let root = index;
+    while (parent[root] !== root) root = parent[root];
+    return root;
+  };
+  const indicesByHead = new Map<string, number[]>();
+  items.forEach((item, index) => {
+    if (item.headRefName === null || item.headRefName.length === 0) return;
+    const bucket = indicesByHead.get(item.headRefName);
+    if (bucket === undefined) indicesByHead.set(item.headRefName, [index]);
+    else bucket.push(index);
+  });
+  // Each row's candidate supports: the rows whose head is its base.
+  const candidatesOf = items.map((item, index) =>
+    item.baseRefName === null
+      ? []
+      : (indicesByHead.get(item.baseRefName) ?? []).filter(
+          (other) => other !== index,
+        ),
+  );
+  const dependentCount = items.map(() => 0);
+  for (const candidates of candidatesOf) {
+    for (const candidate of candidates) dependentCount[candidate] += 1;
+  }
+  // A stack is a chain, not a tree: an edge counts only when it is the sole
+  // way down from its upper row AND the sole way up from its lower one. A
+  // promotion PR whose head several feature PRs target stays a lone row, and
+  // so does each feature PR.
+  const supportsOf = candidatesOf.map((candidates) =>
+    candidates.length === 1 && dependentCount[candidates[0]] === 1
+      ? candidates
+      : [],
+  );
+  supportsOf.forEach((supports, index) => {
+    for (const support of supports) parent[find(index)] = find(support);
+  });
+  const components = new Map<number, number[]>();
+  items.forEach((_, index) => {
+    const root = find(index);
+    const bucket = components.get(root);
+    if (bucket === undefined) components.set(root, [index]);
+    else bucket.push(index);
+  });
+
+  const blocks: PrRepoBlock[] = [];
+  for (const members of components.values()) {
+    if (members.length === 1) {
+      blocks.push({ kind: "single", item: items[members[0]] });
+      continue;
+    }
+    const depths = layerDepths(members, supportsOf);
+    const ordered =
+      depths === null
+        ? members
+        : [...members].sort(
+            (left, right) =>
+              (depths.get(left) ?? 0) - (depths.get(right) ?? 0) ||
+              left - right,
+          );
+    const layers = ordered.map((index) => items[index]);
+    const bottom = layers[0];
+    blocks.push({
+      kind: "stack",
+      key: `inferred:${prListRowKey(bottom, "")}`,
+      baseRefName: bottom.baseRefName,
+      size: layers.length,
+      layers,
+    });
+  }
+  return blocks;
+}
+
+/**
+ * Each member's distance from the bottom of its stack, or `null` when the
+ * component holds a cycle (no bottom exists to measure from).
+ */
+function layerDepths(
+  members: readonly number[],
+  supportsOf: readonly (readonly number[])[],
+): ReadonlyMap<number, number> | null {
+  const depths = new Map<number, number>();
+  const visiting = new Set<number>();
+  const walk = { cyclic: false };
+  const depthOf = (index: number): number => {
+    const known = depths.get(index);
+    if (known !== undefined) return known;
+    if (visiting.has(index)) {
+      walk.cyclic = true;
+      return 0;
+    }
+    visiting.add(index);
+    const supports = supportsOf[index];
+    const depth =
+      supports.length === 0 ? 0 : 1 + Math.max(...supports.map(depthOf));
+    visiting.delete(index);
+    depths.set(index, depth);
+    return depth;
+  };
+  for (const index of members) depthOf(index);
+  return walk.cyclic ? null : depths;
+}
+
+/**
+ * A stack member's place in its stack, e.g. `layer 3 of 12`. A native stack
+ * counts against GitHub's own size; an inferred one against the rows it was
+ * built from. `null` when `item` is not one of the block's layers.
+ */
+export function prStackLayerLabel(
+  item: PrLightItem,
+  block: PrStackBlock,
+): string | null {
+  const index = block.layers.indexOf(item);
+  if (index === -1) return null;
+  // Inferred stacks only ever hold rows with no native stack of 2+.
+  const stack = item.stack ?? null;
+  if (stack !== null && stack.size > 1) {
+    return `layer ${stack.position} of ${stack.size}`;
+  }
+  return `layer ${index + 1} of ${block.layers.length}`;
+}
+
+/**
+ * The stack sub-header's count: the whole stack's size, or `n of size` when
+ * this list carries only some of its layers.
+ */
+export function formatPrStackCount(block: PrStackBlock): string {
+  return block.layers.length < block.size
+    ? `${block.layers.length} of ${block.size}`
+    : String(block.size);
 }
 
 /**
