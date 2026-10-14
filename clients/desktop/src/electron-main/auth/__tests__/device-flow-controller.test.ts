@@ -309,6 +309,37 @@ describe("DeviceFlowController", () => {
       vi.mocked(log.warn).mockClear();
     });
 
+    it("logs transport with the errno word of a nested cause.code", async () => {
+      const original: unknown = (globalThis as { fetch?: unknown }).fetch;
+      Object.defineProperty(globalThis, "fetch", {
+        configurable: true,
+        writable: true,
+        value: (): Promise<Response> =>
+          Promise.reject(
+            Object.assign(new TypeError("fetch failed"), {
+              cause: Object.assign(new Error("getaddrinfo authn.test"), {
+                code: "ENOTFOUND",
+              }),
+            }),
+          ),
+      });
+      restoreFetch = () =>
+        Object.defineProperty(globalThis, "fetch", {
+          configurable: true,
+          writable: true,
+          value: original,
+        });
+
+      const controller = new DeviceFlowController(AUTHN, RETURN_SCHEME);
+      const outcome = await controller.start({ onResult: () => undefined });
+
+      expect(outcome).toEqual({ ok: false });
+      expect(log.warn).toHaveBeenCalledTimes(1);
+      expect(log.warn).toHaveBeenCalledWith(
+        `${AUTHORIZE_FAILED} cause=transport code=ENOTFOUND`,
+      );
+    });
+
     it("logs transport when the request itself throws", async () => {
       const original: unknown = (globalThis as { fetch?: unknown }).fetch;
       Object.defineProperty(globalThis, "fetch", {
@@ -330,7 +361,7 @@ describe("DeviceFlowController", () => {
       expect(outcome).toEqual({ ok: false });
       expect(log.warn).toHaveBeenCalledTimes(1);
       expect(log.warn).toHaveBeenCalledWith(
-        `${AUTHORIZE_FAILED} cause=transport`,
+        `${AUTHORIZE_FAILED} cause=transport code=other`,
       );
     });
 

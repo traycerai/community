@@ -156,7 +156,74 @@ describe("startDeviceAuthorization", () => {
     );
     expect(result).toEqual({
       kind: "network-error",
-      cause: { kind: "transport" },
+      cause: { kind: "transport", code: "other" },
+    });
+  });
+
+  it.each([
+    ["ENOTFOUND", "ENOTFOUND"],
+    ["EAI_AGAIN", "EAI_AGAIN"],
+    ["ECONNREFUSED", "ECONNREFUSED"],
+    ["ECONNRESET", "ECONNRESET"],
+    ["ETIMEDOUT", "ETIMEDOUT"],
+    ["EHOSTUNREACH", "EHOSTUNREACH"],
+    ["ENETUNREACH", "ENETUNREACH"],
+    ["SELF_SIGNED_CERT_IN_CHAIN", "cert"],
+    ["DEPTH_ZERO_SELF_SIGNED_CERT", "cert"],
+    ["UNABLE_TO_VERIFY_LEAF_SIGNATURE", "cert"],
+    ["ERR_TLS_CERT_ALTNAME_INVALID", "cert"],
+    ["CERT_HAS_EXPIRED", "cert"],
+    ["EPIPE", "other"],
+    ["something-unexpected-with-a-host.example", "other"],
+  ])(
+    "reads a nested cause.code %s as the transport word %s",
+    async (code, word) => {
+      globalThis.fetch = (async (): Promise<Response> => {
+        throw Object.assign(new TypeError("fetch failed"), {
+          cause: Object.assign(new Error("authn.example.test unreachable"), {
+            code,
+          }),
+        });
+      }) as typeof fetch;
+      const result = await startDeviceAuthorization(
+        AUTHN_BASE_URL,
+        { clientId: "desktop", hostLabel: "host" },
+        REQUEST_OPTIONS,
+      );
+      expect(result).toEqual({
+        kind: "network-error",
+        cause: { kind: "transport", code: word },
+      });
+    },
+  );
+
+  it("reads the error's own code when it has no cause", async () => {
+    globalThis.fetch = (async (): Promise<Response> => {
+      throw Object.assign(new Error("x"), { code: "ECONNRESET" });
+    }) as typeof fetch;
+    const result = await startDeviceAuthorization(
+      AUTHN_BASE_URL,
+      { clientId: "desktop", hostLabel: "host" },
+      REQUEST_OPTIONS,
+    );
+    expect(result).toEqual({
+      kind: "network-error",
+      cause: { kind: "transport", code: "ECONNRESET" },
+    });
+  });
+
+  it("never reads the message: a code-looking message is other", async () => {
+    globalThis.fetch = (async (): Promise<Response> => {
+      throw new TypeError("getaddrinfo ENOTFOUND authn.example.test");
+    }) as typeof fetch;
+    const result = await startDeviceAuthorization(
+      AUTHN_BASE_URL,
+      { clientId: "desktop", hostLabel: "host" },
+      REQUEST_OPTIONS,
+    );
+    expect(result).toEqual({
+      kind: "network-error",
+      cause: { kind: "transport", code: "other" },
     });
   });
 
@@ -399,7 +466,7 @@ describe("cancellation and timeout", () => {
     controller.abort();
     expect(await started).toEqual({
       kind: "network-error",
-      cause: { kind: "transport" },
+      cause: { kind: "transport", code: "other" },
     });
   });
 
@@ -407,9 +474,9 @@ describe("cancellation and timeout", () => {
     expect(describeDeviceAuthorizeFailure({ kind: "timeout" })).toBe(
       "timeout",
     );
-    expect(describeDeviceAuthorizeFailure({ kind: "transport" })).toBe(
-      "transport",
-    );
+    expect(
+      describeDeviceAuthorizeFailure({ kind: "transport", code: "ENOTFOUND" }),
+    ).toBe("transport code=ENOTFOUND");
     expect(
       describeDeviceAuthorizeFailure({ kind: "http-status", status: 403 }),
     ).toBe("http-status status=403");
