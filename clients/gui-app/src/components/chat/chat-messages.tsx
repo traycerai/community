@@ -60,6 +60,7 @@ import {
   commitChatTabStateToDurable,
   peekSavedChatTabState,
   restoreChatTabState,
+  restoreChatTabStateForMount,
   saveChatTabState,
   type ChatTabScrollMode,
   type SavedChatTabScrollState,
@@ -2011,7 +2012,7 @@ function ChatMessagesInner(props: ChatMessagesInnerProps) {
   // render would only repeat an O(n) row scan whose result the
   // initializers below already captured.
   const [restoredTabState] = useState<SavedChatTabScrollState>(() =>
-    restoreChatTabState(
+    restoreChatTabStateForMount(
       identity,
       listRows.map((row) => row.key),
     ),
@@ -2760,9 +2761,8 @@ function ChatMessagesInner(props: ChatMessagesInnerProps) {
     // fine to scroll by and useless to persist: reindex the transcript before
     // the tab is reopened and that same key names a different row, which
     // `restoreChatTabState` accepts as an exact match and restores to. Saving
-    // no anchor at all is the better answer - restore falls back to the offset
-    // and to its pending-hydration correction, both of which are built for
-    // "the anchor is not resolvable yet".
+    // no anchor at all is the better answer - with no row to restore to, the
+    // reopened tab follows the latest content.
     const anchorMessageId =
       resolvedAnchorMessageId !== null &&
       isUnplacedRowKey(resolvedAnchorMessageId)
