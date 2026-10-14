@@ -1058,6 +1058,7 @@ import {
 } from "@traycer/protocol/host/git-contracts";
 import {
   prSubscribeListForEpicV10,
+  prSubscribeListForEpicV11,
   prSubscribeDetailV10,
   prGetLocalDiffV10,
   prGetLocalDiffSummaryV10,
@@ -13361,10 +13362,15 @@ const HOST_STREAM_RPC_REGISTRY_OTHER_DEFINITION = {
   },
   "pr.subscribeListForEpic": {
     1: {
-      latestMinor: 0,
+      // @1.1 adds each row's GitHub-native stack membership (`stack`); @1.0
+      // stays bound to its frozen row so an older peer's re-parse strips it.
+      latestMinor: 1,
       versions: {
         0: {
           contract: prSubscribeListForEpicV10,
+        },
+        1: {
+          contract: prSubscribeListForEpicV11,
         },
       },
     },
