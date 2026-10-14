@@ -58,6 +58,14 @@ export interface HostCrashTelemetry {
   readonly hasDiagnosticReport: boolean;
   /** Wall-clock lifetime of the child, spawn to exit. */
   readonly uptimeMs: number;
+  /**
+   * Whether a stop was asked for when the child ended (the shutdown latch, or
+   * a stop intent the supervisor read). Only the verdict: the intent itself
+   * is not carried.
+   */
+  readonly stopRequested: boolean;
+  /** Whether the child wrote nothing at all to stderr. Only the verdict. */
+  readonly stderrEmpty: boolean;
 }
 
 /** The host's own identity, read from pid.json after the crash. */
@@ -88,6 +96,35 @@ export interface HostCrashEvent {
 }
 
 export const HOST_CRASH_FINGERPRINT_ROOT = "host-crash";
+
+/**
+ * How far the crashed child got, from the one thing the supervisor can read
+ * after the fact: the pid.json the child itself publishes once it is serving.
+ * `published` - the file is this child's; `before-publish` - a file exists but
+ * is another process's, so this child died before it published; `unknown` -
+ * no readable file, so nothing can be said.
+ */
+export type HostCrashPhase = "published" | "before-publish" | "unknown";
+
+export function hostCrashPhase(
+  identity: HostCrashIdentity | null,
+): HostCrashPhase {
+  if (identity === null) return "unknown";
+  return identity.runningVersion !== null ? "published" : "before-publish";
+}
+
+/**
+ * A closed set of lifetimes, so "exits within seconds of spawn" and "ran for
+ * a day" are separate groups in the issue's tag view instead of one number.
+ */
+export function uptimeBucket(uptimeMs: number): string {
+  if (uptimeMs < 10_000) return "lt-10s";
+  if (uptimeMs < 60_000) return "lt-1m";
+  if (uptimeMs < 10 * 60_000) return "lt-10m";
+  if (uptimeMs < 60 * 60_000) return "lt-1h";
+  if (uptimeMs < 24 * 60 * 60_000) return "lt-24h";
+  return "gte-24h";
+}
 
 // The identity read is a single small file, but it is on the exit path of a
 // supervisor that may be about to relaunch, so it gets the same treatment as
@@ -168,6 +205,14 @@ export function buildHostCrashEvent(
       ...(externallyTerminated
         ? { host_exit_kind: "external-termination" }
         : {}),
+      // The four tags below split one exit status into its causes: a stop
+      // that was asked for, a child that never got as far as publishing, one
+      // that said nothing before dying, and how long it ran. Closed sets, so
+      // none can carry a path, a message or an id.
+      stop_requested: telemetry.stopRequested ? "yes" : "no",
+      host_output: telemetry.stderrEmpty ? "silent" : "wrote",
+      host_phase: hostCrashPhase(identity),
+      uptime_bucket: uptimeBucket(telemetry.uptimeMs),
     },
     extra: {
       attemptId: telemetry.attemptId,

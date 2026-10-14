@@ -122,6 +122,8 @@ function sampleTelemetry(
     exitMeaning: "some crash meaning",
     hasDiagnosticReport: true,
     uptimeMs: 1500,
+    stopRequested: false,
+    stderrEmpty: false,
     ...overrides,
   };
 }
@@ -190,10 +192,14 @@ describe("buildHostCrashEvent", () => {
         "cli_version",
         "crash_kind",
         "host_environment",
+        "host_output",
+        "host_phase",
         "host_running_version",
         "host_version",
         "os_release",
         "platform",
+        "stop_requested",
+        "uptime_bucket",
       ].sort(),
     );
     expect(Object.keys(event.extra).sort()).toEqual(
@@ -215,7 +221,6 @@ describe("buildHostCrashEvent", () => {
       ...Object.keys(event.tags),
       ...Object.keys(event.extra),
     ]) {
-      expect(key.toLowerCase()).not.toContain("stderr");
       expect(key.toLowerCase()).not.toContain("bundle");
       expect(key.toLowerCase()).not.toContain("path");
     }
@@ -244,6 +249,10 @@ describe("buildHostCrashEvent", () => {
       arch: arch(),
       os_release: release(),
       crash_kind: "1",
+      stop_requested: "no",
+      host_output: "wrote",
+      host_phase: "published",
+      uptime_bucket: "lt-10s",
     });
   });
 
@@ -296,6 +305,46 @@ describe("buildHostCrashEvent", () => {
         "0xC0000005",
       ]);
       expect(event.tags).not.toHaveProperty("host_exit_kind");
+    });
+  });
+
+  describe("exit-cause tags", () => {
+    it("tags a requested stop and a silent child as closed-set verdicts", () => {
+      const event = buildHostCrashEvent(
+        sampleTelemetry({ stopRequested: true, stderrEmpty: true }),
+        null,
+      );
+      expect(event.tags.stop_requested).toBe("yes");
+      expect(event.tags.host_output).toBe("silent");
+    });
+
+    it("derives host_phase from whether the child published its own pid.json", () => {
+      const published = buildHostCrashEvent(sampleTelemetry({}), {
+        hostId: "host-a",
+        runningVersion: "1.2.4",
+      });
+      const beforePublish = buildHostCrashEvent(sampleTelemetry({}), {
+        hostId: "host-a",
+        runningVersion: null,
+      });
+      const unknown = buildHostCrashEvent(sampleTelemetry({}), null);
+      expect(published.tags.host_phase).toBe("published");
+      expect(beforePublish.tags.host_phase).toBe("before-publish");
+      expect(unknown.tags.host_phase).toBe("unknown");
+    });
+
+    it.each([
+      [0, "lt-10s"],
+      [9_999, "lt-10s"],
+      [10_000, "lt-1m"],
+      [59_999, "lt-1m"],
+      [60_000, "lt-10m"],
+      [10 * 60_000, "lt-1h"],
+      [60 * 60_000, "lt-24h"],
+      [24 * 60 * 60_000, "gte-24h"],
+    ])("buckets an uptime of %d ms as %s", (uptimeMs, bucket) => {
+      const event = buildHostCrashEvent(sampleTelemetry({ uptimeMs }), null);
+      expect(event.tags.uptime_bucket).toBe(bucket);
     });
   });
 

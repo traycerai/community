@@ -3624,6 +3624,8 @@ async function persistChildExit(input: {
         exitMeaning: fatalMeaning,
         hasDiagnosticReport: crashReport !== null,
         uptimeMs: Math.max(0, input.childEndedAtMs - input.childSpawnedAtMs),
+        stopRequested: input.stopRequested,
+        stderrEmpty: input.stderrTee.capture.isEmpty(),
       });
     }
     return outcome;
@@ -3774,6 +3776,8 @@ async function persistChildExit(input: {
     exitMeaning: exitMeaning ?? null,
     hasDiagnosticReport: crashReport !== null,
     uptimeMs: Math.max(0, input.childEndedAtMs - input.childSpawnedAtMs),
+    stopRequested: input.stopRequested,
+    stderrEmpty: input.stderrTee.capture.isEmpty(),
   });
   return outcome;
 }
