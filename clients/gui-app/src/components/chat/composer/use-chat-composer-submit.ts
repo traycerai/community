@@ -236,16 +236,17 @@ export function useChatComposerSubmit(
   } = args;
   const appendMessage = useChatStore((state) => state.appendMessage);
   const { connectionStatus } = use(QueuedMessageStagesContext);
-  // When the last refused-submit line was written. A held Enter repeats the
-  // refusal every few tens of milliseconds, and a press is one event to triage.
+  // When the last refused-submit line was written, for the window above.
   const lastRefusedSubmitLogAt = useRef<number | null>(null);
   const noteRefusedSubmit = useCallback((): void => {
     const now = Date.now();
     const last = lastRefusedSubmitLogAt.current;
     if (last !== null && now - last < REFUSED_SUBMIT_LOG_WINDOW_MS) return;
     lastRefusedSubmitLogAt.current = now;
+    // `sendDisabled` folds viewer role, profile and stream state, so the
+    // message is neutral and `connectionStatus` + `reason` discriminate.
     // Ids and a status only - never the draft, and no account identifier.
-    appLogger.info("[composer] submit refused: chat stream not open", {
+    appLogger.info("[composer] submit refused: send disabled", {
       chatId: taskId,
       hostId: targetHostId,
       connectionStatus,
@@ -1160,16 +1161,17 @@ export function useChatComposerSubmit(
 }
 
 /**
+ * At most one refused-submit line per this window, counted from the last line
+ * written: a held Enter repeats the refusal every few tens of milliseconds and
+ * would otherwise write one line each.
+ */
+const REFUSED_SUBMIT_LOG_WINDOW_MS = 2_000;
+
+/**
  * The synchronous path's empty resolution map. Shared so the "nothing to
  * re-inline" send reads as the deliberate case it is rather than allocating a
  * map per keystroke-free submit.
  */
-/**
- * Two refusals closer together than this are one key press held down, not two
- * attempts, and share one log line.
- */
-const REFUSED_SUBMIT_LOG_WINDOW_MS = 2_000;
-
 const NO_DRAFT_IMAGE_BYTES: ReadonlyMap<string, string> = new Map<
   string,
   string

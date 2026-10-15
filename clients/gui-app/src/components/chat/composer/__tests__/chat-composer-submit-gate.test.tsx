@@ -409,7 +409,12 @@ describe("chat-composer submit after re-key", () => {
  * the user typed.
  */
 describe("chat-composer submit gate (paused send diagnostics)", () => {
-  const REFUSED_LINE = "[composer] submit refused: chat stream not open";
+  const REFUSED_LINE = "[composer] submit refused: send disabled";
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
 
   function mountPaused(args: {
     readonly sendDisabled: boolean;
@@ -471,7 +476,57 @@ describe("chat-composer submit gate (paused send diagnostics)", () => {
       ],
     ]);
     expect(JSON.stringify(info.mock.calls)).not.toContain("hello");
-    info.mockRestore();
+  });
+
+  it("writes a second line once the window from the last line has passed", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-15T12:00:00Z"));
+    const info = vi.spyOn(appLogger, "info");
+    const { result } = mountPaused({
+      sendDisabled: true,
+      connectionStatus: "reconnecting",
+      onSubmitMessage: vi.fn(acceptSubmit),
+    });
+
+    act(() => {
+      result.current.submitDraft("enter");
+    });
+    vi.setSystemTime(new Date("2026-10-15T12:00:01.999Z"));
+    act(() => {
+      result.current.submitDraft("enter");
+    });
+    expect(refusedLines(info)).toHaveLength(1);
+
+    vi.setSystemTime(new Date("2026-10-15T12:00:02Z"));
+    act(() => {
+      result.current.submitDraft("enter");
+    });
+    expect(refusedLines(info)).toHaveLength(2);
+  });
+
+  it("names an open stream's refusal as send-disabled (viewer or signed-out profile)", () => {
+    const info = vi.spyOn(appLogger, "info");
+    const { result } = mountPaused({
+      sendDisabled: true,
+      connectionStatus: "open",
+      onSubmitMessage: vi.fn(acceptSubmit),
+    });
+
+    act(() => {
+      result.current.submitDraft("enter");
+    });
+
+    expect(refusedLines(info)).toEqual([
+      [
+        REFUSED_LINE,
+        {
+          chatId: "chat-paused",
+          hostId: "host-tab",
+          connectionStatus: "open",
+          reason: "send-disabled",
+        },
+      ],
+    ]);
   });
 
   it("logs nothing when the send is not disabled", () => {
@@ -487,7 +542,6 @@ describe("chat-composer submit gate (paused send diagnostics)", () => {
     });
 
     expect(refusedLines(info)).toEqual([]);
-    info.mockRestore();
   });
 });
 

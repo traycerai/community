@@ -61,12 +61,15 @@ const ROUTER: AppRouter = createRouter({
   },
 });
 
-function chatRef(hostId: string): EpicCanvasTileRef {
+function recordRef(
+  type: "chat" | "terminal-agent" | "spec" | "ticket",
+  hostId: string,
+): EpicCanvasTileRef {
   return {
-    id: "chat-1",
-    instanceId: "instance-1",
-    type: "chat",
-    name: "Chat",
+    id: `${type}-1`,
+    instanceId: `instance-${type}`,
+    type,
+    name: type,
     hostId,
   };
 }
@@ -80,7 +83,7 @@ afterEach(() => {
 
 describe("SupportContextRegistryBridge tab host", () => {
   it("records the chat tab's own host beside the app-wide host", () => {
-    mocks.activeRef = chatRef("host-tab-bound");
+    mocks.activeRef = recordRef("chat", "host-tab-bound");
 
     render(<SupportContextRegistryBridge router={ROUTER} />);
 
@@ -95,7 +98,31 @@ describe("SupportContextRegistryBridge tab host", () => {
     });
   });
 
-  it("leaves the tab host unavailable when the active tile is not a chat or agent", () => {
+  it("records a terminal-agent tab's host the same way", () => {
+    mocks.activeRef = recordRef("terminal-agent", "host-agent-bound");
+
+    render(<SupportContextRegistryBridge router={ROUTER} />);
+
+    expect(getSupportContextSnapshot().tabHostId).toEqual({
+      status: "known",
+      value: "host-agent-bound",
+    });
+  });
+
+  it.each(["spec", "ticket"] as const)(
+    "leaves the tab host unavailable for a %s tile, which carries a host but is not bound for life",
+    (type) => {
+      mocks.activeRef = recordRef(type, "host-doc");
+
+      render(<SupportContextRegistryBridge router={ROUTER} />);
+
+      expect(getSupportContextSnapshot().tabHostId).toEqual({
+        status: "unavailable",
+      });
+    },
+  );
+
+  it("leaves the tab host unavailable when there is no active tile", () => {
     mocks.activeRef = null;
 
     render(<SupportContextRegistryBridge router={ROUTER} />);

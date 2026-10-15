@@ -208,6 +208,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   harness?.handle.dispose();
   harness = null;
   vi.useRealTimers();
@@ -237,7 +238,6 @@ describe("the deadline of a send that outlived its connection", () => {
         },
       ],
     ]);
-    info.mockRestore();
   });
 
   it("logs nothing for a send that is unconfirmed on its own connection", () => {
@@ -252,7 +252,6 @@ describe("the deadline of a send that outlived its connection", () => {
         message.startsWith("[chat] send deadline"),
       ),
     ).toEqual([]);
-    info.mockRestore();
   });
 });
 
