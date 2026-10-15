@@ -43,7 +43,10 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ConfirmDestructiveDialog } from "@/components/ui/confirm-destructive-dialog";
 import { useProvidersMcpList } from "@/hooks/providers/use-providers-mcp-list-query";
-import { useProvidersMcpMutate } from "@/hooks/providers/use-providers-mcp-mutate-mutation";
+import {
+  useProvidersMcpApplyRemedy,
+  useProvidersMcpMutate,
+} from "@/hooks/providers/use-providers-mcp-mutate-mutation";
 import { useProvidersMcpDiscover } from "@/hooks/providers/use-providers-mcp-discover-mutation";
 import { useProvidersMcpAuth } from "@/hooks/providers/use-providers-mcp-auth-mutation";
 import { isProviderNativeRpcError } from "@/hooks/providers/native-response-map";
@@ -368,7 +371,6 @@ export function ProviderMcpTab(props: {
   const [confirmationError, setConfirmationError] = useState<string | null>(
     null,
   );
-  const [confirmationPending, setConfirmationPending] = useState(false);
   const [pendingServerNames, setPendingServerNames] = useState<
     ReadonlySet<string>
   >(() => new Set());
@@ -485,6 +487,7 @@ export function ProviderMcpTab(props: {
   }, [effectiveScope, projectListForShadow.data?.servers]);
 
   const mutate = useProvidersMcpMutate();
+  const confirmationMutate = useProvidersMcpApplyRemedy();
   const discover = useProvidersMcpDiscover();
   const auth = useProvidersMcpAuth();
   const openLink = useOpenLink();
@@ -640,7 +643,7 @@ export function ProviderMcpTab(props: {
   const handleConfirmation = useCallback(() => {
     if (
       activeConfirmationTarget === null ||
-      confirmationPending ||
+      confirmationMutate.isPending ||
       !canApplyRemedy ||
       !isCurrentMcpConfirmation({
         target: activeConfirmationTarget,
@@ -653,10 +656,9 @@ export function ProviderMcpTab(props: {
     const name =
       target.kind === "notice" ? target.remedy.id : target.serverName;
     markPending(name, true);
-    setConfirmationPending(true);
     setConfirmationError(null);
-    if (target.kind === "enable") clearRowError(name);
-    void mutate
+    if (target.kind !== "notice") clearRowError(name);
+    void confirmationMutate
       .mutateAsync({
         providerId: target.scope.providerId,
         scope: target.scope.scope,
@@ -681,18 +683,16 @@ export function ProviderMcpTab(props: {
       })
       .finally(() => {
         markPending(name, false);
-        setConfirmationPending(false);
       });
   }, [
     activeConfirmationTarget,
     canApplyRemedy,
     clearRowError,
     confirmationScope,
-    confirmationPending,
+    confirmationMutate,
     listData,
     listQuery,
     markPending,
-    mutate,
   ]);
 
   const handleToggleTool = useCallback(
@@ -948,7 +948,7 @@ export function ProviderMcpTab(props: {
       <McpHostNotices
         notices={notices}
         canApplyRemedy={canApplyRemedy}
-        pending={mutate.isPending}
+        pending={confirmationMutate.isPending}
         onRemedy={(remedy) => {
           setConfirmationError(null);
           setConfirmationTarget({
@@ -1053,7 +1053,7 @@ export function ProviderMcpTab(props: {
       <McpConfirmationDialog
         target={activeConfirmationTarget}
         error={confirmationError}
-        isPending={confirmationPending}
+        isPending={confirmationMutate.isPending}
         onClose={() => {
           setConfirmationTarget(null);
           setConfirmationError(null);

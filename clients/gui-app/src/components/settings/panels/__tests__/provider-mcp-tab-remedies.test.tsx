@@ -12,6 +12,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ProviderMcpTab } from "@/components/settings/panels/provider-mcp-tab";
+import { ProviderNativeRpcError } from "@/hooks/providers/native-response-map";
 import { useMcpPendingAuthStore } from "@/stores/settings/mcp-pending-auth-store";
 import { useProvidersWorkspaceSelectionStore } from "@/stores/settings/providers-workspace-selection-store";
 import { useWorkspaceFoldersStore } from "@/stores/workspace/workspace-folders-store";
@@ -50,6 +51,7 @@ const mcpMocks = vi.hoisted(() => ({
   mutate: vi.fn(),
   mutateAsync: vi.fn(),
   mutateIsPending: false,
+  confirmationIsPending: false,
   discoverMutate: vi.fn(),
   authMutate: vi.fn(),
   openLink: vi.fn(),
@@ -211,6 +213,10 @@ vi.mock("@/hooks/providers/use-providers-mcp-mutate-mutation", () => ({
     mutate: mcpMocks.mutate,
     mutateAsync: mcpMocks.mutateAsync,
     isPending: mcpMocks.mutateIsPending,
+  }),
+  useProvidersMcpApplyRemedy: () => ({
+    mutateAsync: mcpMocks.mutateAsync,
+    isPending: mcpMocks.confirmationIsPending,
   }),
 }));
 
@@ -388,6 +394,7 @@ describe("<ProviderMcpTab /> host remedies and confirmations", () => {
     mcpMocks.authMutate.mockReset();
     mcpMocks.openLink.mockReset();
     mcpMocks.mutateIsPending = false;
+    mcpMocks.confirmationIsPending = false;
     mcpMocks.listCalls = [];
     worktreeMocks.workspaces = [];
     worktreeMocks.loaded = true;
@@ -610,6 +617,59 @@ describe("<ProviderMcpTab /> host remedies and confirmations", () => {
     expect(confirm.hasAttribute("disabled")).toBe(false);
     fireEvent.click(confirm);
     expect(mcpMocks.mutateAsync).toHaveBeenCalledTimes(1);
+  });
+
+  it("an unrelated row mutation does not disable a notice remedy", () => {
+    mcpMocks.mutateIsPending = true;
+    mcpMocks.listResult.data = { servers: [], notices: [BLOCKING_NOTICE] };
+    renderTab(REMEDY_CAPS, "kimi");
+
+    const remedyButton = screen.getByRole("button", {
+      name: TRUST_REMEDY.label,
+    });
+    expect(remedyButton.hasAttribute("disabled")).toBe(false);
+    fireEvent.click(remedyButton);
+    expect(screen.getByRole("dialog")).toBeDefined();
+  });
+
+  it("clears an old row error when applying that row's remedy", () => {
+    mcpMocks.listResult.data = {
+      servers: [
+        connectedServer({ name: "docs", enabled: true, remedy: TRUST_REMEDY }),
+      ],
+      notices: [],
+    };
+    mcpMocks.mutate.mockImplementation(
+      (
+        _variables: unknown,
+        callbacks: {
+          readonly onError: (error: ProviderNativeRpcError) => void;
+          readonly onSettled: () => void;
+        },
+      ) => {
+        callbacks.onError(
+          new ProviderNativeRpcError({
+            code: "external_drift",
+            detail: "Earlier failure",
+            method: "providers.nativeMutate",
+          }),
+        );
+        callbacks.onSettled();
+      },
+    );
+    renderTab(REMEDY_CAPS, "kimi");
+
+    fireEvent.click(screen.getByRole("switch", { name: "Disable docs" }));
+    expect(screen.getByText("Earlier failure")).toBeDefined();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Trust this folder docs" }),
+    );
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: TRUST_REMEDY.label,
+      }),
+    );
+    expect(screen.queryByText("Earlier failure")).toBeNull();
   });
 
   it("disabling a server never asks, even when it carries an enable confirmation", () => {

@@ -179,3 +179,13 @@ export function useProvidersMcpMutate(): UseMutationResult<
     },
   });
 }
+
+/** Give confirmations their own Query observer and pending state. */
+export function useProvidersMcpApplyRemedy(): UseMutationResult<
+  McpMutateResult,
+  HostRpcError,
+  McpMutateVariables,
+  McpMutateContext
+> {
+  return useProvidersMcpMutate();
+}
