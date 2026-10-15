@@ -126,6 +126,7 @@ vi.mock("@/hooks/auth/use-auth-user-query", () => ({
 }));
 
 import { SandboxCard } from "@/components/hosts/sandbox-card";
+import { SANDBOX_STAND_IN_CLAUSE } from "@/lib/sandboxes/sandbox-grants-view";
 import {
   buildHostScopeOptions,
   type HostScopeSandbox,
@@ -1250,6 +1251,91 @@ describe("<SandboxCard /> grants list", () => {
 
     expect(screen.getByTestId("sandbox-card-grant").textContent).toContain(
       "through connector office-vpc",
+    );
+  });
+
+  it("says agents see a stand-in when a grant is brokered", () => {
+    mocks.grantsData = grantsOf(
+      [grantOf({ mode: "exposed", routes: [] }), grantOf({})],
+      null,
+    );
+
+    renderCard(sandboxOf("awake", false, { phase: "ready" }));
+
+    expect(screen.getByTestId("sandbox-card-stand-in").textContent).toBe(
+      SANDBOX_STAND_IN_CLAUSE,
+    );
+  });
+
+  it("says nothing of a stand-in when every grant is exposed", () => {
+    mocks.grantsData = grantsOf(
+      [
+        grantOf({ secretName: "API_TOKEN", mode: "exposed", routes: [] }),
+        grantOf({ secretName: "OTHER", mode: "exposed", routes: [] }),
+      ],
+      null,
+    );
+
+    renderCard(sandboxOf("awake", false, { phase: "ready" }));
+
+    expect(screen.getByTestId("sandbox-card-grants")).toBeTruthy();
+    expect(screen.queryByTestId("sandbox-card-stand-in")).toBeNull();
+  });
+
+  it("shows each grant's rotation line, and none for a grant without one", () => {
+    mocks.grantsData = grantsOf(
+      [
+        grantOf({
+          rotation: {
+            state: "enforced",
+            classes: [
+              {
+                workerClass: "postgres",
+                status: "acknowledged",
+                evidence: [{ kind: "session_closed", count: 1 }],
+              },
+            ],
+          },
+        }),
+        grantOf({ secretName: "CACHE_KEY", protocol: "redis" }),
+      ],
+      null,
+    );
+
+    renderCard(sandboxOf("awake", false, { phase: "ready" }));
+
+    const grants = screen.getAllByTestId("sandbox-card-grant");
+    expect(
+      within(grants[0]).getByTestId("sandbox-card-grant-rotation").textContent,
+    ).toBe("New value enforced: postgres, 1 session closed.");
+    expect(
+      within(grants[1]).queryByTestId("sandbox-card-grant-rotation"),
+    ).toBeNull();
+  });
+
+  it("keeps a grant accepted until its class has proved the old value out of use", () => {
+    mocks.grantsData = grantsOf(
+      [
+        grantOf({
+          rotation: {
+            state: "enforced",
+            classes: [
+              {
+                workerClass: "postgres",
+                status: "acknowledged",
+                evidence: [{ kind: "session_closed", count: 0 }],
+              },
+            ],
+          },
+        }),
+      ],
+      null,
+    );
+
+    renderCard(sandboxOf("awake", false, { phase: "ready" }));
+
+    expect(screen.getByTestId("sandbox-card-grant-rotation").textContent).toBe(
+      "New value accepted, closing old sessions.",
     );
   });
 

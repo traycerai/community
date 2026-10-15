@@ -34,7 +34,16 @@ export function SecretsSettingsPanel(): ReactNode {
   let body: ReactNode = null;
   if (teamName !== null) body = <TeamSecretsView teamName={teamName} />;
   else if (supported === true && scope.client !== null) {
-    body = <SecretsPage client={scope.client} hostId={scope.hostId} />;
+    body = (
+      <SecretsPage
+        client={scope.client}
+        hostId={scope.hostId}
+        hostName={(hostId) =>
+          scope.hosts.find((host) => host.hostId === hostId)?.name ??
+          "a sandbox"
+        }
+      />
+    );
   } else if (supported === false) body = <SecretsDashboardGroup />;
   return (
     <SettingsPanelShell

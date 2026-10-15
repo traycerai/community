@@ -151,6 +151,14 @@ export const environmentItemStatusSchema = lazySchema(() =>
       exitStatus: z.number().int().nullable(),
       stage: z.string().max(64).nullable(),
       durationMs: z.number().int().nonnegative().nullable(),
+      /**
+       * Which case of the code, when one code covers several the client
+       * words differently (ticket E11, checkpoint 4). Known: on
+       * `unsupported_kind`, `headers_in_sandbox` (an MCP server whose
+       * credential is custom headers, on a sandbox). Open, so a newer case
+       * never fails the parse; absent from a host that predates it.
+       */
+      kind: z.string().min(1).max(64).nullable().default(null),
     }),
     /**
      * The broker-enforced half for a `secret` item: whether every incarnation

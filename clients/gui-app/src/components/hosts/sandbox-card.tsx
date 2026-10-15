@@ -59,7 +59,9 @@ import { useSandboxEgressEvents } from "@/hooks/sandboxes/use-sandbox-egress-eve
 import { useSandboxGrants } from "@/hooks/sandboxes/use-sandbox-grants-query";
 import {
   sandboxGitHubLine,
+  SANDBOX_STAND_IN_CLAUSE,
   sandboxGrantViews,
+  sandboxHasBrokeredGrant,
   sandboxRouteAddresses,
   type SandboxGrantView,
 } from "@/lib/sandboxes/sandbox-grants-view";
@@ -488,6 +490,14 @@ function SandboxGrantsList(props: {
   const views = sandboxGrantViews(summary, props.routes);
   return (
     <div className="flex flex-col gap-1" data-testid="sandbox-card-grants">
+      {sandboxHasBrokeredGrant(summary) ? (
+        <p
+          className="text-ui-xs text-muted-foreground"
+          data-testid="sandbox-card-stand-in"
+        >
+          {SANDBOX_STAND_IN_CLAUSE}
+        </p>
+      ) : null}
       {views.length === 0 ? (
         <p className="text-ui-xs text-muted-foreground">
           No secrets are granted to this sandbox.
@@ -568,6 +578,19 @@ function SandboxGrantRow(props: {
             </li>
           ))}
         </ul>
+      )}
+      {view.rotation === null ? null : (
+        <p
+          className={cn(
+            "pl-3",
+            view.rotation.tone === "success" && "text-success-foreground",
+            view.rotation.tone === "warning" && "text-warning-foreground",
+            view.rotation.tone === "muted" && "text-muted-foreground",
+          )}
+          data-testid="sandbox-card-grant-rotation"
+        >
+          {view.rotation.text}
+        </p>
       )}
     </li>
   );

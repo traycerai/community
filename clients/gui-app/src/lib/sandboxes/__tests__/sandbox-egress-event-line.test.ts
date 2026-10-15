@@ -135,11 +135,11 @@ describe("sandboxEgressEventLine: egress.teardown", () => {
     expect(new Set(descriptions).size).toBe(5);
   });
 
-  it("tells the person a rotated secret closed the old connections", () => {
+  it("tells the person a rotated secret cut the old connections, and what that does not undo", () => {
     const line = sandboxEgressEventLine(teardown("secret_rotated"));
 
     expect(line.description).toBe(
-      "This secret's value was replaced, so connections opened with the old value were closed. Reconnect.",
+      "This secret's value was replaced, so connections opened with the old value were cut. Anything the destination had already accepted is not undone. Reconnect.",
     );
   });
 

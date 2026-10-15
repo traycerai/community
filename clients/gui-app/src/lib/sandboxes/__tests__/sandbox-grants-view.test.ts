@@ -6,8 +6,10 @@ import type {
   SandboxGrantsSummary,
 } from "@traycer/protocol/host/sandbox-secrets";
 import {
+  SANDBOX_STAND_IN_CLAUSE,
   sandboxGitHubLine,
   sandboxGrantViews,
+  sandboxHasBrokeredGrant,
   sandboxRouteAddresses,
 } from "@/lib/sandboxes/sandbox-grants-view";
 
@@ -67,6 +69,7 @@ describe("sandboxGrantViews", () => {
           readinessText: "ready",
         },
       ],
+      rotation: null,
     });
   });
 
@@ -362,6 +365,80 @@ describe("sandboxGrantViews", () => {
     expect(views.map((view) => view.secretName)).toEqual(["A", "B"]);
     expect(views[0].routes[0].readiness).toBe("pending");
     expect(views[1].routes[0].readiness).toBe("ready");
+  });
+});
+
+describe("a grant's rotation", () => {
+  it("carries the rotation line, null when the grant has none", () => {
+    const views = sandboxGrantViews(
+      summary([
+        grant({ secretName: "PLAIN" }),
+        grant({
+          secretName: "ROTATED",
+          rotation: {
+            state: "enforced",
+            classes: [
+              {
+                workerClass: "postgres",
+                status: "acknowledged",
+                evidence: [{ kind: "session_closed", count: 3 }],
+              },
+            ],
+          },
+        }),
+        grant({
+          secretName: "OPEN",
+          rotation: {
+            state: "enforced",
+            classes: [
+              {
+                workerClass: "postgres",
+                status: "acknowledged",
+                evidence: [{ kind: "session_closed", count: 0 }],
+              },
+            ],
+          },
+        }),
+      ]),
+      [],
+    );
+    expect(views.map((view) => view.rotation)).toEqual([
+      null,
+      {
+        tone: "success",
+        text: "New value enforced: postgres, 3 sessions closed.",
+      },
+      { tone: "muted", text: "New value accepted, closing old sessions." },
+    ]);
+  });
+});
+
+describe("the stand-in clause", () => {
+  it("applies when any grant is brokered", () => {
+    expect(
+      sandboxHasBrokeredGrant(
+        summary([grant({ mode: "exposed", routes: [] }), grant({})]),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not apply when every grant is exposed, or there are none", () => {
+    expect(
+      sandboxHasBrokeredGrant(
+        summary([
+          grant({ mode: "exposed", routes: [] }),
+          grant({ mode: "exposed", routes: [] }),
+        ]),
+      ),
+    ).toBe(false);
+    expect(sandboxHasBrokeredGrant(summary([]))).toBe(false);
+  });
+
+  it("says a stand-in is seen and the real value is attached on the way out", () => {
+    expect(SANDBOX_STAND_IN_CLAUSE).toContain("stand-in");
+    expect(SANDBOX_STAND_IN_CLAUSE).toContain(
+      "the real value is attached as a request leaves the sandbox",
+    );
   });
 });
 

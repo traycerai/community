@@ -30,7 +30,7 @@ function itemFixture(input: ItemFixtureInput) {
     desiredRevision: 4,
     status: "applied",
     code: "ok",
-    args: { exitStatus: null, stage: null, durationMs: 120 },
+    args: { exitStatus: null, stage: null, durationMs: 120, kind: null },
     brokerEnforced: null,
     minimumHostVersion: null,
     appliedAs: input.appliedAs,
@@ -130,6 +130,62 @@ describe("environmentItemStatusSchema appliedAs", () => {
         "name",
       ]);
     }
+  });
+});
+
+/**
+ * `EnvironmentItemStatus.args.kind` (ticket E11, checkpoint 4): which case of
+ * a code the client words differently. Open, and absent from a host that
+ * predates it.
+ */
+describe("environmentItemStatusSchema args.kind", () => {
+  function itemWithArgs(args: Record<string, unknown>) {
+    return {
+      ...itemFixture({ kind: "mcp_server", key: "gh", appliedAs: null }),
+      args,
+    };
+  }
+
+  it("parses an item whose args lack kind, as null", () => {
+    const result = environmentItemStatusSchema.safeParse(
+      itemWithArgs({ exitStatus: null, stage: null, durationMs: 120 }),
+    );
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.args.kind).toBeNull();
+    }
+  });
+
+  it("keeps the kind a host names", () => {
+    const result = environmentItemStatusSchema.safeParse(
+      itemWithArgs({
+        exitStatus: null,
+        stage: null,
+        durationMs: null,
+        kind: "headers_in_sandbox",
+      }),
+    );
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.args.kind).toBe("headers_in_sandbox");
+    }
+  });
+
+  it("keeps a kind a newer host names, and refuses an empty or overlong one", () => {
+    const args = { exitStatus: null, stage: null, durationMs: null };
+    const newer = environmentItemStatusSchema.safeParse(
+      itemWithArgs({ ...args, kind: "from_a_newer_host" }),
+    );
+    expect(newer.success).toBe(true);
+    expect(
+      environmentItemStatusSchema.safeParse(itemWithArgs({ ...args, kind: "" }))
+        .success,
+    ).toBe(false);
+    expect(
+      environmentItemStatusSchema.safeParse(
+        itemWithArgs({ ...args, kind: "k".repeat(65) }),
+      ).success,
+    ).toBe(false);
   });
 });
 

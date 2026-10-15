@@ -8,6 +8,10 @@ import {
   type SandboxGrantsSummary,
 } from "@traycer/protocol/host/sandbox-secrets";
 import { sandboxEgressRefusalCopyFor } from "@/lib/sandboxes/sandbox-egress-refusal-copy";
+import {
+  grantRotationLine,
+  type SecretRotationLine,
+} from "@/lib/sandboxes/secret-rotation-line";
 
 /**
  * The sandbox card's secrets summary: each secret the sandbox may use, how it
@@ -39,6 +43,28 @@ export interface SandboxGrantView {
   /** Why this sandbox has it, or `null` for a source this build has no word for. */
   readonly source: string | null;
   readonly routes: readonly SandboxGrantRouteView[];
+  /**
+   * A replaced value's progress on this sandbox: "New value accepted, closing
+   * old sessions.", then "New value enforced: postgres, 3 sessions closed."
+   * `null` when the grant has no rotation.
+   */
+  readonly rotation: SecretRotationLine | null;
+}
+
+/**
+ * The card's one clause about what an agent sees: for a brokered secret, a
+ * stand-in, with the real value attached as a request leaves the sandbox.
+ */
+export const SANDBOX_STAND_IN_CLAUSE =
+  "Agents here see a stand-in for each brokered secret; the real value is attached as a request leaves the sandbox.";
+
+/** Whether the card says the stand-in clause: any brokered grant. */
+export function sandboxHasBrokeredGrant(
+  summary: SandboxGrantsSummary,
+): boolean {
+  return summary.grants.some(
+    (grant) => grant.mode === SANDBOX_GRANT_MODE_BROKERED,
+  );
 }
 
 const SOURCE_WORDS: Readonly<Record<string, string>> = {
@@ -147,6 +173,7 @@ export function sandboxGrantViews(
     routes: grant.routes.map((route) =>
       routeView(grant, route, readinessByRoute),
     ),
+    rotation: grantRotationLine(grant.rotation),
   }));
 }
 

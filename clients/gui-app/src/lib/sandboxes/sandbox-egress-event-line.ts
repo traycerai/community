@@ -52,7 +52,7 @@ const TEARDOWN_DESCRIPTION: Record<
   drain:
     "Traycer's gateway was restarting, so the route's connections were closed. Reconnect.",
   secret_rotated:
-    "This secret's value was replaced, so connections opened with the old value were closed. Reconnect.",
+    "This secret's value was replaced, so connections opened with the old value were cut. Anything the destination had already accepted is not undone. Reconnect.",
 };
 
 /** "0.4 s", "12 s", "3 min". */
