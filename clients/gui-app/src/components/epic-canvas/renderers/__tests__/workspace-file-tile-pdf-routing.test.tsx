@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Mock } from "vitest";
 import {
   cleanup,
+  fireEvent,
   render,
   screen,
   type RenderResult,
@@ -24,6 +25,7 @@ import type {
 } from "@/hooks/assets/use-file-asset";
 import type { HostDirectoryEntry } from "@traycer-clients/shared/host-client/host-directory";
 import type { WorkspaceFileRef } from "@/stores/epics/canvas/types";
+import type { EditorId } from "@traycer/protocol/host";
 
 interface PdfRoutingTestState {
   asset: FileAssetState;
@@ -34,6 +36,9 @@ interface PdfRoutingTestState {
   hostEntry: HostDirectoryEntry | null;
   /** Drives the mocked `PdfPreviewLazy` to call `onUnavailable` from an effect. */
   viewerUnavailable: boolean;
+  /** The install probe's answer; `undefined` is still in flight. */
+  installedEditorIds: ReadonlyArray<EditorId> | undefined;
+  noticeToast: Mock;
 }
 
 const state = vi.hoisted((): PdfRoutingTestState => ({
@@ -52,6 +57,22 @@ const state = vi.hoisted((): PdfRoutingTestState => ({
   triggerOpenExternally: vi.fn(),
   hostEntry: null,
   viewerUnavailable: false,
+  installedEditorIds: undefined,
+  noticeToast: vi.fn(),
+}));
+
+vi.mock("@/hooks/editor/use-editor-availability-query", () => ({
+  useEditorAvailability: () => ({ data: state.installedEditorIds }),
+}));
+
+// Held closed: on a Mac the probe-found-nothing case falls to Finder, which is
+// not what the Linux report this suite pins is about.
+vi.mock("@/hooks/editor/use-finder-open-availability", () => ({
+  useFinderOpenAvailability: () => false,
+}));
+
+vi.mock("sonner", () => ({
+  toast: { info: state.noticeToast },
 }));
 
 vi.mock("@/hooks/host/use-host-directory-entry", () => ({
@@ -323,6 +344,7 @@ describe("workspace file tile PDF routing", () => {
     state.readFileCalls = 0;
     state.hostEntry = hostEntry("local");
     state.viewerUnavailable = false;
+    state.installedEditorIds = undefined;
   });
 
   afterEach(() => {
@@ -489,6 +511,42 @@ describe("workspace file tile PDF routing", () => {
       screen.queryByRole("button", { name: "Open Externally" }),
     ).toBeNull();
     expect(state.openPaths).not.toHaveBeenCalled();
+  });
+
+  describe("with no editor installed on this machine", () => {
+    // A Linux machine whose editor is not in the catalog: the probe finds
+    // nothing, and the button must say which editors Traycer opens instead of
+    // sending the stored default to a host that answers "<editor> isn't
+    // installed".
+    it("tells the user which editors Traycer can open and sends nothing", () => {
+      state.installedEditorIds = [];
+      state.asset = { ...state.asset, status: "ready", url: "blob:img" };
+      renderTile(nodeFor("images/logo.png"));
+
+      fireEvent.click(screen.getByRole("button", { name: "Open externally" }));
+
+      expect(state.openPaths).not.toHaveBeenCalled();
+      expect(state.noticeToast).toHaveBeenCalledTimes(1);
+      expect(state.noticeToast).toHaveBeenCalledWith(
+        expect.stringContaining("VS Code"),
+      );
+      expect(state.noticeToast).toHaveBeenCalledWith(
+        expect.stringContaining("Code - OSS"),
+      );
+    });
+
+    it("still sends the stored default when some editor was found", () => {
+      state.installedEditorIds = ["zed"];
+      renderTile(nodeFor("images/logo.png"));
+
+      fireEvent.click(screen.getByRole("button", { name: "Open externally" }));
+
+      expect(state.noticeToast).not.toHaveBeenCalled();
+      expect(state.openPaths).toHaveBeenCalledWith({
+        editorId: "cursor",
+        paths: ["/work/repo/images/logo.png"],
+      });
+    });
   });
 
   it("keeps image routing untouched by the PDF branch", () => {

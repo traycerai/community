@@ -1,5 +1,9 @@
 import type { ComponentType } from "react";
-import type { EditorEntry, EditorId } from "@traycer/protocol/host";
+import {
+  EDITORS,
+  type EditorEntry,
+  type EditorId,
+} from "@traycer/protocol/host";
 import {
   CursorIcon,
   FinderIcon,
@@ -32,6 +36,9 @@ export const OPEN_TARGET_ICONS: Readonly<
   windsurf: WindsurfIcon,
   zed: ZedIcon,
   vscodium: VSCodiumIcon,
+  // Code - OSS is the open-source build VS Code is made from, with no logo of
+  // its own, so it wears VS Code's.
+  "code-oss": VisualStudioCodeIcon,
   finder: FinderIcon,
 };
 
@@ -85,6 +92,50 @@ export function resolveEffectiveDefaultEditor(
     return defaultTarget;
   }
   return catalog[0]?.id ?? "vscode";
+}
+
+function joinWithOr(labels: ReadonlyArray<string>): string {
+  if (labels.length <= 1) return labels.join("");
+  return `${labels.slice(0, -1).join(", ")} or ${labels[labels.length - 1]}`;
+}
+
+/**
+ * What a surface with no menu says instead of sending an editor nobody has.
+ * Built from `EDITORS`, so it names an editor the day one is added.
+ */
+export const NO_EDITOR_INSTALLED_MESSAGE = `None of ${joinWithOr(
+  EDITORS.map((editor) => editor.label),
+)} is installed on this machine; install one to open files from Traycer.`;
+
+/**
+ * The target a surface with no menu sends, or `null` when it has nothing it may
+ * honestly send.
+ *
+ * Same as {@link resolveEffectiveDefaultEditor} - a stored editor is sent
+ * whether or not it is installed - except when `installedEditorIds` says the
+ * probe found NO editor at all. Then every editor id would only come back as
+ * "<editor> isn't installed", so editors leave the catalog: Finder (which ships
+ * with the OS) still resolves where this host is offered it, and otherwise the
+ * answer is `null`, which the surface turns into
+ * {@link NO_EDITOR_INSTALLED_MESSAGE}. `null` for `installedEditorIds` is a
+ * probe still in flight or failed, and changes nothing.
+ */
+export function resolveNoMenuOpenTarget(args: {
+  readonly catalog: ReadonlyArray<OpenTargetEntry>;
+  readonly installedEditorIds: ReadonlyArray<EditorId> | null;
+  readonly defaultTarget: DefaultOpenTarget | null;
+}): DefaultOpenTarget | null {
+  if (
+    args.installedEditorIds !== null &&
+    args.installedEditorIds.length === 0
+  ) {
+    const finderOnly = args.catalog.filter(
+      (target) => target.id === FINDER_TARGET,
+    );
+    if (finderOnly.length === 0) return null;
+    return resolveEffectiveDefaultEditor(finderOnly, args.defaultTarget);
+  }
+  return resolveEffectiveDefaultEditor(args.catalog, args.defaultTarget);
 }
 
 export interface OpenMenuState {

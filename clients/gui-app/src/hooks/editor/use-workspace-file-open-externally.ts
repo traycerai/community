@@ -5,20 +5,22 @@ import { useEditorOpenForClient } from "@/hooks/editor/use-editor-open-mutation"
 import { useHostPathOpenAvailability } from "@/hooks/editor/use-host-path-open-availability";
 import { useTabHostId } from "@/components/epic-canvas/hooks/use-tab-host-id";
 import { useTabHostClient } from "@/hooks/host/use-tab-host-client";
+import { showNoEditorInstalledNotice } from "@/lib/editor/no-editor-installed-notice";
 import { resolveAbsolutePath } from "@/lib/path/cross-platform-path";
 
 /**
  * The one Open Externally wiring for a workspace file tile: the tab host's
  * `editor.openPaths` mutation plus the shared pressed-feedback window, keyed
  * to the caller's target (an editor id, or `"system"` for the OS default
- * app). The file lives on the TAB's host - opening it app-wide would ask
+ * app), or `null` when this machine has no editor to send - the action then
+ * says which editors Traycer can open and sends nothing. The file lives on the TAB's host - opening it app-wide would ask
  * whichever machine the app is pointed at for a path it may not have. Remote
  * tabs expose no action: this RPC opens on the host, not on the client.
  */
 export function useWorkspaceFileOpenExternally(args: {
   readonly workspacePath: string;
   readonly filePath: string;
-  readonly target: OpenPathsTarget;
+  readonly target: OpenPathsTarget | null;
 }): {
   readonly opening: boolean;
   readonly onOpenExternally: (() => void) | null;
@@ -31,6 +33,10 @@ export function useWorkspaceFileOpenExternally(args: {
   const { workspacePath, filePath, target } = args;
   const onOpenExternally = useCallback(() => {
     if (!canOpenHostPaths || opening) return;
+    if (target === null) {
+      showNoEditorInstalledNotice();
+      return;
+    }
     triggerFeedback();
     editorOpen.mutate({
       editorId: target,

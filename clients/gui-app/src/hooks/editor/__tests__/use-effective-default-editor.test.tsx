@@ -13,6 +13,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook } from "@testing-library/react";
 import type { SchemaVersion } from "@traycer/protocol/framework/index";
+import type { EditorId } from "@traycer/protocol/host";
 import type { HostDirectoryEntry } from "@traycer-clients/shared/host-client/host-directory";
 import { useSettingsStore } from "@/stores/settings/settings-store";
 
@@ -22,13 +23,21 @@ const state = vi.hoisted(
     hostEntry: HostDirectoryEntry | null;
     isMac: boolean;
     isMobileApp: boolean;
+    installedEditorIds: ReadonlyArray<EditorId> | undefined;
   } => ({
     version: { major: 1, minor: 1 },
     hostEntry: null,
     isMac: true,
     isMobileApp: false,
+    installedEditorIds: undefined,
   }),
 );
+
+// The install probe: `undefined` is a probe still in flight (or failed), which
+// leaves the resolution untouched.
+vi.mock("@/hooks/editor/use-editor-availability-query", () => ({
+  useEditorAvailability: () => ({ data: state.installedEditorIds }),
+}));
 
 vi.mock("@/hooks/host/use-host-supports-method", () => ({
   useHostMethodSchemaVersion: () => state.version,
@@ -69,6 +78,7 @@ function armFinderGate(): void {
   state.hostEntry = hostEntry("local");
   state.isMac = true;
   state.isMobileApp = false;
+  state.installedEditorIds = undefined;
 }
 
 describe("useEffectiveDefaultEditor", () => {
@@ -150,6 +160,46 @@ describe("useEffectiveDefaultEditor", () => {
       useSettingsStore.setState({ defaultEditor: "finder" });
       const { result } = renderHook(() => useEffectiveDefaultEditor("host-A"));
       expect(result.current).toBe("vscode");
+    });
+  });
+
+  describe("with the install probe", () => {
+    it("keeps the stored default while the probe has not answered", () => {
+      useSettingsStore.setState({ defaultEditor: "cursor" });
+      const { result } = renderHook(() => useEffectiveDefaultEditor("host-A"));
+      expect(result.current).toBe("cursor");
+    });
+
+    it("keeps the stored default when the probe found some other editor", () => {
+      state.installedEditorIds = ["zed"];
+      useSettingsStore.setState({ defaultEditor: "cursor" });
+      const { result } = renderHook(() => useEffectiveDefaultEditor("host-A"));
+      expect(result.current).toBe("cursor");
+    });
+
+    it("is null when the probe found no editor, so nothing is sent to the host", () => {
+      state.installedEditorIds = [];
+      state.isMac = false;
+      useSettingsStore.setState({ defaultEditor: "vscode" });
+      const { result } = renderHook(() => useEffectiveDefaultEditor("host-A"));
+      expect(result.current).toBeNull();
+    });
+
+    it("falls to Finder when the probe found no editor on a Mac", () => {
+      state.installedEditorIds = [];
+      useSettingsStore.setState({ defaultEditor: "vscode" });
+      const { result } = renderHook(() => useEffectiveDefaultEditor("host-A"));
+      expect(result.current).toBe("finder");
+    });
+
+    it("lets a code-oss default through on a 1.3 host and not on a 1.2 one", () => {
+      useSettingsStore.setState({ defaultEditor: "code-oss" });
+      state.version = { major: 1, minor: 3 };
+      const v13 = renderHook(() => useEffectiveDefaultEditor("host-A"));
+      expect(v13.result.current).toBe("code-oss");
+      state.version = { major: 1, minor: 2 };
+      const v12 = renderHook(() => useEffectiveDefaultEditor("host-A"));
+      expect(v12.result.current).toBe("vscode");
     });
   });
 });

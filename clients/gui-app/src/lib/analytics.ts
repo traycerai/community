@@ -140,6 +140,7 @@ export type AnalyticsUsageImageExportSource = "epic_dialog" | "settings";
  * warehouse that no dashboard was built to expect.
  */
 export type AnalyticsEditor =
+  | "code-oss"
   | "cursor"
   | "vscode"
   | "vscodium"

@@ -61,6 +61,7 @@ import { GitWatcherStatusNotice } from "@/components/epic-canvas/git-diff/git-wa
 import { useTabHostId } from "@/components/epic-canvas/hooks/use-tab-host-id";
 import { useEffectiveDefaultEditor } from "@/hooks/editor/use-effective-default-editor";
 import { openTargetActionLabel } from "@/lib/editor/editor-menu-catalog";
+import { showNoEditorInstalledNotice } from "@/lib/editor/no-editor-installed-notice";
 import { useHostReachability } from "@/hooks/agent/use-host-reachability";
 import { BoundedTileLoad } from "@/components/epic-canvas/renderers/tile-host-load-state";
 import { useTabHostClient } from "@/hooks/host/use-tab-host-client";
@@ -361,6 +362,10 @@ function GitDiffTileToolbar(props: GitDiffTileToolbarProps): ReactNode {
   const handleOpenFile = useCallback(() => {
     if (!canOpenHostPaths || props.onOpenFile === null) return;
     if (openFileOpening) return;
+    if (effectiveEditor === null) {
+      showNoEditorInstalledNotice();
+      return;
+    }
     triggerOpenFileFeedback();
     editorOpen.mutate({
       editorId: effectiveEditor,
@@ -398,7 +403,10 @@ function GitDiffTileToolbar(props: GitDiffTileToolbarProps): ReactNode {
         canOpenHostPaths && props.onOpenFile !== null
           ? {
               onClick: handleOpenFile,
-              label: openTargetActionLabel(effectiveEditor),
+              label:
+                effectiveEditor === null
+                  ? "Open in editor"
+                  : openTargetActionLabel(effectiveEditor),
               disabled: openFileOpening,
               pending: openFileOpening,
             }
@@ -612,6 +620,10 @@ function GitFileDiffPanel(props: GitFileDiffPanelProps): ReactNode {
 
   const handleOpenExternally = useCallback(() => {
     if (!canOpenHostPaths || openExternallyOpening) return;
+    if (effectiveEditor === null) {
+      showNoEditorInstalledNotice();
+      return;
+    }
     triggerOpenExternallyFeedback();
     editorOpen.mutate({
       editorId: effectiveEditor,
