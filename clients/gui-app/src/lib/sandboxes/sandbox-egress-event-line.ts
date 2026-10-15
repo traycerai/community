@@ -51,6 +51,8 @@ const TEARDOWN_DESCRIPTION: Record<
     "The sandbox woke with a new gateway credential, so connections from before it slept were closed. Reconnect.",
   drain:
     "Traycer's gateway was restarting, so the route's connections were closed. Reconnect.",
+  secret_rotated:
+    "This secret's value was replaced, so connections opened with the old value were closed. Reconnect.",
 };
 
 /** "0.4 s", "12 s", "3 min". */
