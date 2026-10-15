@@ -4,6 +4,7 @@ import {
   Bell,
   Bot,
   Boxes,
+  FileText,
   GitBranch,
   ListChecks,
   Globe,
@@ -13,10 +14,13 @@ import {
   MousePointerClick,
   LineChart,
   Palette,
+  Plug,
   PanelBottom,
   PanelsTopLeft,
   QrCode,
   Server,
+  Sparkles,
+  Wrench,
   ShieldCheck,
   Settings as SettingsIcon,
   TerminalSquare,
@@ -37,6 +41,10 @@ export type SettingsSectionId =
   | "app-notifications"
   | "providers"
   | "secrets"
+  | "mcp-servers"
+  | "skills"
+  | "agent-definitions"
+  | "machine-setup"
   | "notifications"
   | "permissions"
   | "agents"
@@ -240,6 +248,21 @@ export const SETTINGS_SECTIONS: ReadonlyArray<SettingsSection> = [
     icon: Boxes,
     group: "personal",
   },
+  // MCP servers and Skills were tabs inside each provider. They are pages of
+  // their own because each entry is one of the person's settings: managed
+  // entries follow them to every host, and a local one is added on a click.
+  {
+    id: "mcp-servers",
+    label: "MCP servers",
+    icon: Plug,
+    group: "personal",
+  },
+  {
+    id: "skills",
+    label: "Skills",
+    icon: Sparkles,
+    group: "personal",
+  },
   // "Model routing" and not "Route automatically" - the section is the whole
   // subject, and "Route automatically" is the master toggle INSIDE it, so using
   // the same words for both would make the rail row read as a switch.
@@ -283,6 +306,21 @@ export const SETTINGS_SECTIONS: ReadonlyArray<SettingsSection> = [
     id: "secrets",
     label: "Secrets",
     icon: LockKeyhole,
+    group: "personal",
+  },
+  // The agent definition files every host gets ("Agent definitions", never
+  // "Agents": that word is the agents running in a task).
+  {
+    id: "agent-definitions",
+    label: "Agent definitions",
+    icon: FileText,
+    group: "personal",
+  },
+  // The script each computer runs once to set itself up, one per OS.
+  {
+    id: "machine-setup",
+    label: "Machine setup",
+    icon: Wrench,
     group: "personal",
   },
   {

@@ -1,5 +1,9 @@
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import {
+  PersonalEntryMark,
+  type PersonalMarkTarget,
+} from "@/components/settings/personal/personal-entry-mark";
+import {
   PROVIDER_DISPLAY_NAMES,
   type ProviderCliState,
   type ProviderId,
@@ -530,6 +534,7 @@ function ProviderSkillsTabBody({
       ) : null}
 
       <SkillsListBody
+        markTarget={{ entryKind: "skills", providerId, scope: effectiveScope }}
         projectNeedsWorkspace={projectNeedsWorkspace}
         workspacesLoading={workspacesLoading}
         listLoading={listLoading}
@@ -782,6 +787,7 @@ function SkillUpdateConfirm({
 }
 
 function SkillsListBody({
+  markTarget,
   projectNeedsWorkspace,
   workspacesLoading,
   listLoading,
@@ -797,6 +803,7 @@ function SkillsListBody({
   onOpenComposer,
   onOpenSkill,
 }: {
+  readonly markTarget: PersonalMarkTarget;
   readonly projectNeedsWorkspace: boolean;
   readonly workspacesLoading: boolean;
   readonly listLoading: boolean;
@@ -878,6 +885,7 @@ function SkillsListBody({
         <SkillRow
           key={`${skill.source}:${skill.path}`}
           skill={skill}
+          markTarget={markTarget}
           onOpen={() => {
             onOpenSkill(skill);
           }}
@@ -966,13 +974,16 @@ function skillOpenLabel(skill: ProviderSkill): string {
 
 function SkillRow({
   skill,
+  markTarget,
   onOpen,
 }: {
   readonly skill: ProviderSkill;
+  /** Where the row's Personal mark reads from (`PersonalEntryMark`). */
+  readonly markTarget: PersonalMarkTarget;
   readonly onOpen: () => void;
 }): ReactNode {
   return (
-    <li>
+    <li className="flex items-center gap-2">
       <button
         type="button"
         onClick={onOpen}
@@ -983,7 +994,7 @@ function SkillRow({
         // (rows are keyed `source:path`), which would leave a screen reader
         // with several buttons all reading "Open deploy".
         aria-label={skillOpenLabel(skill)}
-        className="flex w-full items-center gap-3 rounded-lg border border-border/60 px-3 py-2 text-left transition-colors hover:bg-foreground/5 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+        className="flex min-w-0 flex-1 items-center gap-3 rounded-lg border border-border/60 px-3 py-2 text-left transition-colors hover:bg-foreground/5 focus-visible:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
       >
         {/* No leading tile. A skill is a markdown directory; no provider's
             format carries artwork for one, so anything here would be a glyph
@@ -1031,6 +1042,8 @@ function SkillRow({
         </span>
         <ChevronRight className="size-3.5 shrink-0 text-muted-foreground" />
       </button>
+      {/* Beside the row, not inside it: the mark can hold its own button. */}
+      <PersonalEntryMark target={markTarget} name={skill.name} />
     </li>
   );
 }

@@ -973,7 +973,11 @@ vi.mock("@/components/settings/host-scope/use-host-scope", async () => {
   };
 });
 
-import { ProvidersSettingsPanel } from "@/components/settings/panels/providers-settings-panel";
+import {
+  McpServersSettingsPanel,
+  ProvidersSettingsPanel,
+  SkillsSettingsPanel,
+} from "@/components/settings/panels/providers-settings-panel";
 import { ProviderProfileScopedSection } from "@/components/settings/panels/provider-profile-scoped-section";
 import {
   AMBIENT_AUTH_PENDING_REPOLL_CAP,
@@ -2753,9 +2757,11 @@ describe("<ProvidersSettingsPanel />", () => {
     expect(screen.getByRole("tab", { name: "CLI & Args" })).toBeDefined();
     expect(screen.getByRole("tab", { name: "Env" })).toBeDefined();
     expect(screen.getByRole("tab", { name: "Usage limits" })).toBeDefined();
-    expect(screen.getByRole("tab", { name: "MCP" })).toBeDefined();
+    // MCP servers and Skills are Personal pages of their own, so Providers
+    // draws neither tab even where the provider advertises them.
+    expect(screen.queryByRole("tab", { name: "MCP" })).toBeNull();
     expect(screen.getByRole("tab", { name: "Plugins" })).toBeDefined();
-    expect(screen.getByRole("tab", { name: "Skills" })).toBeDefined();
+    expect(screen.queryByRole("tab", { name: "Skills" })).toBeNull();
 
     expectPinnedRailLayout();
 
@@ -2764,9 +2770,9 @@ describe("<ProvidersSettingsPanel />", () => {
     expect(screen.queryByRole("tab", { name: "CLI & Args" })).toBeNull();
     expect(screen.queryByRole("tab", { name: "Usage limits" })).toBeNull();
     expect(screen.getByRole("tab", { name: "Env" })).toBeDefined();
-    expect(screen.getByRole("tab", { name: "MCP" })).toBeDefined();
+    expect(screen.queryByRole("tab", { name: "MCP" })).toBeNull();
     expect(screen.getByRole("tab", { name: "Plugins" })).toBeDefined();
-    expect(screen.getByRole("tab", { name: "Skills" })).toBeDefined();
+    expect(screen.queryByRole("tab", { name: "Skills" })).toBeNull();
   });
 
   it("offers the provider's Limits pick on its usage tab, which the Layout page no longer carries", () => {
@@ -2987,18 +2993,20 @@ describe("<ProvidersSettingsPanel />", () => {
       </TooltipProvider>,
     );
 
-    selectTab("MCP");
-    expect(screen.getByTestId("provider-mcp-tab")).toBeDefined();
+    selectTab("Plugins");
+    expect(
+      screen.getByRole("button", { name: /^Plugins location/ }),
+    ).toBeDefined();
 
     fireEvent.click(railProviderRow("Amp", false));
-    expect(screen.queryByRole("tab", { name: "MCP" })).toBeNull();
+    expect(screen.queryByRole("tab", { name: "Plugins" })).toBeNull();
     expect(screen.getByRole("tab", { name: "Env" })).toBeDefined();
     expect(screen.getByText("Variables")).toBeDefined();
   });
 
   it("deep-links focusTab once-and-clear alongside focusHarnessId", () => {
     useProvidersFocusStore.getState().setFocusHarnessId("cursor");
-    useProvidersFocusStore.getState().setFocusTab("mcp");
+    useProvidersFocusStore.getState().setFocusTab("plugins");
 
     providerMocks.listResult.data = {
       providers: [
@@ -3025,9 +3033,41 @@ describe("<ProvidersSettingsPanel />", () => {
       </TooltipProvider>,
     );
 
-    expect(screen.getByTestId("provider-mcp-tab")).toBeDefined();
     expect(
-      screen.getByRole("tab", { name: "MCP" }).getAttribute("data-state"),
+      screen.getByRole("tab", { name: "Plugins" }).getAttribute("data-state"),
+    ).toBe("active");
+    expect(useProvidersFocusStore.getState().focusHarnessId).toBeNull();
+    expect(useProvidersFocusStore.getState().focusTab).toBeNull();
+  });
+
+  it("does not open a focusTab the Providers page no longer draws (mcp), and still clears the link", () => {
+    useProvidersFocusStore.getState().setFocusHarnessId("cursor");
+    useProvidersFocusStore.getState().setFocusTab("mcp");
+
+    providerMocks.listResult.data = {
+      providers: [
+        providerState({
+          providerId: "cursor",
+          selected: { kind: "bundled" },
+          candidates: [],
+          envOverrides: [],
+          nativeCapabilities: CURSOR_TABS,
+        }),
+      ],
+    };
+
+    render(
+      <TooltipProvider>
+        <ProvidersSettingsPanel />
+      </TooltipProvider>,
+    );
+
+    // The MCP tab lives on its own page now: the deep link opens the
+    // provider's own first tab here instead of a tab that is not drawn.
+    expect(screen.queryByRole("tab", { name: "MCP" })).toBeNull();
+    expect(screen.queryByTestId("provider-mcp-tab")).toBeNull();
+    expect(
+      screen.getByRole("tab", { name: "Env" }).getAttribute("data-state"),
     ).toBe("active");
     expect(useProvidersFocusStore.getState().focusHarnessId).toBeNull();
     expect(useProvidersFocusStore.getState().focusTab).toBeNull();
@@ -3112,7 +3152,7 @@ describe("<ProvidersSettingsPanel />", () => {
     ).toBe("active");
   });
 
-  it("shows Plugins tab body and Skills tab body", () => {
+  it("shows the Plugins tab body, and no Skills tab, which has its own page", () => {
     render(
       <TooltipProvider>
         <ProvidersSettingsPanel />
@@ -3128,13 +3168,8 @@ describe("<ProvidersSettingsPanel />", () => {
       screen.getByRole("button", { name: /^Plugins location/ }),
     ).toBeDefined();
 
-    selectTab("Skills");
-    expect(
-      screen.getByRole("textbox", { name: "Search skills" }),
-    ).toBeDefined();
-    expect(
-      screen.getByRole("button", { name: /^Skills location/ }),
-    ).toBeDefined();
+    expect(screen.queryByRole("tab", { name: "Skills" })).toBeNull();
+    expect(screen.queryByRole("textbox", { name: "Search skills" })).toBeNull();
   });
 
   it("does not flush terminal-agent args on keystroke alone", () => {
@@ -7768,6 +7803,159 @@ describe("<ProvidersSettingsPanel />", () => {
 
     expect(screen.queryByRole("tab", { name: "Permissions" })).toBeNull();
   });
+
+  describe("MCP servers and Skills pages (the Providers rail, narrowed to one tab)", () => {
+    beforeEach(() => {
+      // Opencode and Cursor advertise MCP and Skills; Amp advertises Env only.
+      providerMocks.listResult.data = {
+        providers: [
+          providerState({
+            providerId: "opencode",
+            selected: { kind: "bundled" },
+            candidates: OPENCODE_CANDIDATES,
+            envOverrides: [],
+            nativeCapabilities: FULL_TABS,
+          }),
+          providerState({
+            providerId: "cursor",
+            selected: { kind: "bundled" },
+            candidates: [],
+            envOverrides: [],
+            nativeCapabilities: CURSOR_TABS,
+          }),
+          providerState({
+            providerId: "amp",
+            selected: { kind: "bundled" },
+            candidates: [],
+            envOverrides: [],
+            nativeCapabilities: ENV_ONLY_TABS,
+          }),
+        ],
+      };
+    });
+
+    function railProviderNames(): string[] {
+      const nav = screen.getByRole("navigation", { name: "Providers" });
+      const list = within(nav).getByRole("list", { name: "Providers" });
+      return within(list)
+        .getAllByRole("button")
+        .map((button) => button.textContent);
+    }
+
+    it("draws the MCP servers page with only the providers that have MCP, on the MCP tab alone", () => {
+      render(
+        <TooltipProvider>
+          <McpServersSettingsPanel />
+        </TooltipProvider>,
+      );
+
+      expect(
+        screen.getByRole("heading", { name: "MCP servers" }),
+      ).toBeDefined();
+      const names = railProviderNames();
+      expect(names.some((name) => /OpenCode/.test(name))).toBe(true);
+      expect(names.some((name) => /Cursor/.test(name))).toBe(true);
+      // Amp has no MCP tab, so it has nothing on this page.
+      expect(names.some((name) => /Amp/.test(name))).toBe(false);
+      // Only the MCP tab: its body, and none of the Providers tabs.
+      expect(screen.getByTestId("provider-mcp-tab")).toBeDefined();
+      expect(
+        screen.getByRole("tab", { name: "MCP" }).getAttribute("data-state"),
+      ).toBe("active");
+      expect(screen.getAllByRole("tab")).toHaveLength(1);
+      expect(screen.queryByRole("tab", { name: "Env" })).toBeNull();
+      expect(screen.queryByRole("tab", { name: "Plugins" })).toBeNull();
+      expect(screen.queryByRole("tab", { name: "Skills" })).toBeNull();
+    });
+
+    it("draws the Skills page with only the providers that have Skills, on the Skills tab alone", () => {
+      render(
+        <TooltipProvider>
+          <SkillsSettingsPanel />
+        </TooltipProvider>,
+      );
+
+      expect(screen.getByRole("heading", { name: "Skills" })).toBeDefined();
+      const names = railProviderNames();
+      expect(names.some((name) => /OpenCode/.test(name))).toBe(true);
+      expect(names.some((name) => /Cursor/.test(name))).toBe(true);
+      expect(names.some((name) => /Amp/.test(name))).toBe(false);
+      expect(
+        screen.getByRole("textbox", { name: "Search skills" }),
+      ).toBeDefined();
+      expect(screen.getAllByRole("tab")).toHaveLength(1);
+      expect(
+        screen.getByRole("tab", { name: "Skills" }).getAttribute("data-state"),
+      ).toBe("active");
+      expect(screen.queryByRole("tab", { name: "MCP" })).toBeNull();
+      expect(screen.queryByTestId("provider-mcp-tab")).toBeNull();
+    });
+
+    it("opens the MCP tab for a deep link to one provider's MCP tab", () => {
+      useProvidersFocusStore.getState().setFocusHarnessId("cursor");
+      useProvidersFocusStore.getState().setFocusTab("mcp");
+
+      render(
+        <TooltipProvider>
+          <McpServersSettingsPanel />
+        </TooltipProvider>,
+      );
+
+      expect(screen.getByTestId("provider-mcp-tab")).toBeDefined();
+      expect(
+        screen.getByRole("tab", { name: "MCP" }).getAttribute("data-state"),
+      ).toBe("active");
+      expect(useProvidersFocusStore.getState().focusHarnessId).toBeNull();
+      expect(useProvidersFocusStore.getState().focusTab).toBeNull();
+    });
+
+    it("says no provider supports MCP servers or skills when none of them has the tab", () => {
+      providerMocks.listResult.data = {
+        providers: [
+          providerState({
+            providerId: "amp",
+            selected: { kind: "bundled" },
+            candidates: [],
+            envOverrides: [],
+            nativeCapabilities: ENV_ONLY_TABS,
+          }),
+        ],
+      };
+
+      const mcp = render(
+        <TooltipProvider>
+          <McpServersSettingsPanel />
+        </TooltipProvider>,
+      );
+      expect(
+        screen.getByText("No provider on this host supports MCP servers."),
+      ).toBeDefined();
+      expect(screen.queryAllByRole("tab")).toEqual([]);
+      mcp.unmount();
+
+      render(
+        <TooltipProvider>
+          <SkillsSettingsPanel />
+        </TooltipProvider>,
+      );
+      expect(
+        screen.getByText("No provider on this host supports skills."),
+      ).toBeDefined();
+    });
+
+    it("keeps the Providers page's own copy and rail on every provider", () => {
+      render(
+        <TooltipProvider>
+          <ProvidersSettingsPanel />
+        </TooltipProvider>,
+      );
+
+      expect(screen.getByRole("heading", { name: "Providers" })).toBeDefined();
+      // Amp is on the Providers rail (it has Env), though it is not on the MCP
+      // or Skills pages.
+      expect(railProviderNames().some((name) => /Amp/.test(name))).toBe(true);
+    });
+  });
 });
 
 // -----------------------------------------------------------------------------
@@ -7936,9 +8124,7 @@ describe("<ProvidersSettingsPanel /> mobile section picker", () => {
       "Env",
       "Permissions",
       "Model Providers",
-      "MCP",
       "Plugins",
-      "Skills",
     ]);
   });
 

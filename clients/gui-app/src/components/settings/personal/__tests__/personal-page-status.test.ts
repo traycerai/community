@@ -350,6 +350,19 @@ describe("personalPageItemKinds", () => {
     ).toBe(true);
   });
 
+  it("lists the item kinds the four checkpoint-4 pages edit", () => {
+    expect([...(personalPageItemKinds("mcp-servers") ?? [])]).toEqual([
+      "mcp_server",
+    ]);
+    expect([...(personalPageItemKinds("skills") ?? [])]).toEqual(["skill"]);
+    expect([...(personalPageItemKinds("agent-definitions") ?? [])]).toEqual([
+      "agent_definition",
+    ]);
+    expect([...(personalPageItemKinds("machine-setup") ?? [])]).toEqual([
+      "setup_script",
+    ]);
+  });
+
   it("is null for a page that is not a Personal page", () => {
     expect(personalPageItemKinds("general")).toBeNull();
   });

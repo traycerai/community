@@ -828,9 +828,10 @@ Account; the rest is the app itself.
 
 - **Application** - General, Appearance, Browser, Opening behavior, Sounds,
   Keybindings, Diagnostics, Layout.
-- **Personal** - Providers, Model routing, Variables and shells (id `shell`),
-  Agent selection, Browser agent access, Secrets. These pages read through the
-  window's own host (`usePersonalHostScope()`), never through the picker.
+- **Personal** - Providers, MCP servers, Skills, Model routing, Variables and
+  shells (id `shell`), Agent selection, Browser agent access, Secrets, Agent
+  definitions, Machine setup. These pages read through the window's own host
+  (`usePersonalHostScope()`), never through the picker.
 - **Account** - Sessions, Link mobile app, Usage, Permissions, Notifications,
   and Delete account on mobile. Read through the window's own host too.
 - **Host** - headed by THE host picker (`host-scope/host-switcher.tsx`).
@@ -841,6 +842,20 @@ Section ids are a compatibility surface and did not change when Providers,
 Model routing, Variables and shells, Agent selection, Permissions and
 Notifications left the Host group; only their group did. Browser agent access
 moved out of Browser into its own section, `browser-agent-access`.
+
+MCP servers (`mcp-servers`) and Skills (`skills`) were tabs inside each
+provider. They are now pages of their own drawn by the same panel
+(`ProvidersSettingsPanel` under a `ProvidersPanelView`): the same provider
+rail and the same tab body, narrowed to that one tab (`tabsForView`), and
+Providers stops showing those two tabs. The host's `supportedTabs` wire is
+unchanged. On both pages a global-scope entry carries whether it is one of the
+person's settings (`PersonalEntryMark`): "Personal" when the host applied one
+of their items as that entry (`environment.status` `appliedAs`), otherwise "On
+<host> only" with "Add to Personal" (`providers.nativeMutate@1.1`
+`promoteToPersonal`, shown only on a host that negotiated 1.1). A project's
+entries stay with the project and carry no mark. Adding or editing an entry in
+the page's own dialog already writes the person's settings, so it needs no
+second step.
 
 **Two sections are both called "Diagnostics"**, one per group, and the group
 heading above each is what distinguishes them - the same way the rail already

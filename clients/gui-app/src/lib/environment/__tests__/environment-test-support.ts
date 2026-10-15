@@ -74,6 +74,7 @@ export function itemStatusFixture(
     args: { exitStatus: null, stage: null, durationMs: null },
     brokerEnforced: null,
     minimumHostVersion: null,
+    appliedAs: null,
     ...overrides,
   };
 }

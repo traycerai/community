@@ -1,4 +1,12 @@
-import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
+import {
+  createContext,
+  useContext,
+  useEffect,
+  useId,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
 import type { UseQueryResult } from "@tanstack/react-query";
 import {
   PROVIDER_DISPLAY_NAMES,
@@ -101,7 +109,9 @@ import {
   providerTabInputs,
   providerTabLabel,
   supportedTabsFor as resolveSupportedTabs,
+  tabsForView,
   type ProviderTabKey,
+  type ProvidersPanelView,
 } from "./provider-settings-tabs";
 
 import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
@@ -151,6 +161,72 @@ function initialActiveProviderId(
   return providers[0].providerId;
 }
 
+/** The tabs `state` shows on the page `view` draws. */
+function viewTabs(
+  state: ProviderCliState,
+  permissionsTab: boolean,
+  view: ProvidersPanelView,
+): readonly ProviderTabKey[] {
+  return tabsForView(
+    resolveSupportedTabs(providerTabInputs(state, permissionsTab)),
+    view,
+  );
+}
+
+/** Which page this panel is drawn as; Providers unless a section says so. */
+const ProvidersPanelViewContext =
+  createContext<ProvidersPanelView>("providers");
+
+const VIEW_COPY: Readonly<
+  Record<
+    ProvidersPanelView,
+    {
+      readonly title: string;
+      readonly description: string;
+      readonly empty: string;
+    }
+  >
+> = {
+  providers: {
+    title: "Providers",
+    description:
+      "Choose the CLI binary Traycer runs for each coding agent. Pick the bundled binary, one found on your PATH, or a custom install. Disable a provider to hide it when creating an agent.",
+    empty: "No providers on this host.",
+  },
+  "mcp-servers": {
+    title: "MCP servers",
+    description:
+      "The MCP servers each coding agent can use. Yours follow you to every host; one added on this computer stays here until you add it to Personal.",
+    empty: "No provider on this host supports MCP servers.",
+  },
+  skills: {
+    title: "Skills",
+    description:
+      "The skills each coding agent can use. Yours follow you to every host; one added on this computer stays here until you add it to Personal.",
+    empty: "No provider on this host supports skills.",
+  },
+};
+
+/**
+ * Settings > Personal > MCP servers and Skills: the Providers rail and tab
+ * bodies, narrowed to that one tab.
+ */
+export function McpServersSettingsPanel(): ReactNode {
+  return (
+    <ProvidersPanelViewContext.Provider value="mcp-servers">
+      <ProvidersSettingsPanel />
+    </ProvidersPanelViewContext.Provider>
+  );
+}
+
+export function SkillsSettingsPanel(): ReactNode {
+  return (
+    <ProvidersPanelViewContext.Provider value="skills">
+      <ProvidersSettingsPanel />
+    </ProvidersPanelViewContext.Provider>
+  );
+}
+
 // Initial tab for the deep-linked (or first) provider: honor `focusTab` when
 // the target supports it, else the first supported tab in
 // {@link PROVIDER_TAB_ORDER} (account → usage → general → …).
@@ -158,10 +234,11 @@ function initialActiveTab(
   providers: readonly ProviderCliState[],
   providerId: ProviderId,
   permissionsTab: boolean,
+  view: ProvidersPanelView,
 ): ProviderTabKey {
   const state =
     providers.find((p) => p.providerId === providerId) ?? providers[0];
-  const tabs = resolveSupportedTabs(providerTabInputs(state, permissionsTab));
+  const tabs = viewTabs(state, permissionsTab, view);
   // `focusTab` is a plain `string` in the store, so a deep link CAN name the
   // client-only `account` tab even though it is absent from the wire enum -
   // the match below is against the resolved tab list, not the schema. When no
@@ -183,8 +260,9 @@ function resolveTabForProvider(
   state: ProviderCliState,
   preferred: ProviderTabKey,
   permissionsTab: boolean,
+  view: ProvidersPanelView,
 ): ProviderTabKey {
-  const tabs = resolveSupportedTabs(providerTabInputs(state, permissionsTab));
+  const tabs = viewTabs(state, permissionsTab, view);
   if (tabs.includes(preferred)) return preferred;
   return tabs[0] ?? "general";
 }
@@ -403,20 +481,17 @@ function ProvidersSettingsPanelInner({
   readonly isSelectedHostLocal: boolean;
 }) {
   const isMobile = useIsMobileViewport();
+  const copy = VIEW_COPY[useContext(ProvidersPanelViewContext)];
   return (
     <SettingsPanelShell
-      title="Providers"
+      title={copy.title}
       // The blurb is desktop-only, and its absence is what puts the global
       // status control on the TITLE's line. The shell's header is a wrapping
       // row of [title + description] and [action]; the description's flex base
       // size is its max-content width, which on a phone exceeds the row on its
       // own, so the action wraps to a line of its own and spends a whole row of
       // the shortest viewport restating what the panel's contents already show.
-      description={
-        isMobile
-          ? undefined
-          : "Choose the CLI binary Traycer runs for each coding agent. Pick the bundled binary, one found on your PATH, or a custom install. Disable a provider to hide it when creating an agent."
-      }
+      description={isMobile ? undefined : copy.description}
       // Desktop only, and this is the whole mobile scroll model. `fillHeight`
       // stretches the card to the settings scroll container and lets the ACTIVE
       // PANE own an internal scroll, which needs `min-h-0` at every level
@@ -561,6 +636,7 @@ function ProvidersPanelBody({
   readonly hostId: string | null;
   readonly isSelectedHostLocal: boolean;
 }): ReactNode {
+  const view = useContext(ProvidersPanelViewContext);
   if (query.isPending) {
     return (
       <div className="flex items-center gap-2 px-6 py-8 text-ui-sm text-muted-foreground">
@@ -669,9 +745,24 @@ function ProvidersPanelBody({
       </div>
     );
   }
+  // On MCP servers and Skills, only the providers that have that tab: the
+  // permissions tab is never one of them, so its gate does not matter here.
+  const providers =
+    view === "providers"
+      ? query.data.providers
+      : query.data.providers.filter(
+          (state) => viewTabs(state, false, view).length > 0,
+        );
+  if (providers.length === 0) {
+    return (
+      <div className="px-6 py-8 text-ui-sm text-muted-foreground">
+        {VIEW_COPY[view].empty}
+      </div>
+    );
+  }
   return (
     <ProvidersRailLayout
-      providers={query.data.providers}
+      providers={providers}
       hostId={hostId}
       isSelectedHostLocal={isSelectedHostLocal}
     />
@@ -687,6 +778,7 @@ function ProvidersRailLayout({
   readonly hostId: string | null;
   readonly isSelectedHostLocal: boolean;
 }) {
+  const view = useContext(ProvidersPanelViewContext);
   const orderedProviders = useMemo(
     () => sortProviderStatesByProviderOrder(providers),
     [providers],
@@ -772,6 +864,7 @@ function ProvidersRailLayout({
       orderedProviders,
       initialActiveProviderId(orderedProviders, initialFocus.harnessId),
       permissionsTab,
+      view,
     ),
   );
   useEffect(() => {
@@ -782,7 +875,12 @@ function ProvidersRailLayout({
   const active =
     orderedProviders.find((p) => p.providerId === activeId) ??
     orderedProviders[0];
-  const resolvedTab = resolveTabForProvider(active, activeTab, permissionsTab);
+  const resolvedTab = resolveTabForProvider(
+    active,
+    activeTab,
+    permissionsTab,
+    view,
+  );
 
   // The rail's own view state. Resolved against `orderedProviders` for the ROWS
   // only - `active` above is deliberately unaffected, so narrowing the rail
@@ -804,7 +902,7 @@ function ProvidersRailLayout({
     const next =
       orderedProviders.find((p) => p.providerId === providerId) ??
       orderedProviders[0];
-    setActiveTab(resolveTabForProvider(next, activeTab, permissionsTab));
+    setActiveTab(resolveTabForProvider(next, activeTab, permissionsTab, view));
   };
 
   return (
@@ -1156,7 +1254,11 @@ function ProviderDetail({
   const enabledProviderCount = providers.filter(
     (provider) => provider.enabled,
   ).length;
-  const tabs = resolveSupportedTabs(providerTabInputs(state, permissionsTab));
+  const tabs = viewTabs(
+    state,
+    permissionsTab,
+    useContext(ProvidersPanelViewContext),
+  );
   // Bundled once here (rather than threaded as eight separate props) since
   // only the "usage" ("Profiles & Limits") tab body needs the profile-
   // management surface - the other tabs never see it.

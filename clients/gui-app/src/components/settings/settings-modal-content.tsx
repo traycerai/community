@@ -24,7 +24,13 @@ import { DeleteAccountSettingsPanel } from "@/components/settings/panels/delete-
 import { AppDiagnosticsSettingsPanel } from "@/components/settings/panels/app-diagnostics-settings-panel";
 import { AppNotificationsSettingsPanel } from "@/components/settings/panels/app-notifications-settings-panel";
 import { DiagnosticsSettingsPanel } from "@/components/settings/panels/diagnostics-settings-panel";
-import { ProvidersSettingsPanel } from "@/components/settings/panels/providers-settings-panel";
+import {
+  McpServersSettingsPanel,
+  ProvidersSettingsPanel,
+  SkillsSettingsPanel,
+} from "@/components/settings/panels/providers-settings-panel";
+import { AgentDefinitionsSettingsPanel } from "@/components/settings/panels/agent-definitions-settings-panel";
+import { MachineSetupSettingsPanel } from "@/components/settings/panels/machine-setup-settings-panel";
 import { AgentsSettingsPanel } from "@/components/settings/panels/agents-settings-panel";
 import { PermissionsSettingsPanel } from "@/components/settings/panels/permissions-settings-panel";
 import { FallbackSettingsPanel } from "@/components/settings/panels/fallback-settings-panel";
@@ -98,6 +104,10 @@ const SETTINGS_PANELS = {
   "app-notifications": AppNotificationsSettingsPanel,
   providers: ProvidersSettingsPanel,
   secrets: SecretsSettingsPanel,
+  "mcp-servers": McpServersSettingsPanel,
+  skills: SkillsSettingsPanel,
+  "agent-definitions": AgentDefinitionsSettingsPanel,
+  "machine-setup": MachineSetupSettingsPanel,
   notifications: NotificationsSettingsPanel,
   permissions: PermissionsSettingsPanel,
   agents: AgentsSettingsPanel,

@@ -2203,7 +2203,12 @@ export const HOST_METHOD_POLL_TABLE = {
   "environment.secrets.rotation": { ...LATEST_SCHEDULING, poll: null },
   "environment.agentDefinitions.list": { ...LATEST_SCHEDULING, poll: null },
   "environment.setup.get": { ...LATEST_SCHEDULING, poll: null },
-  "environment.setup.attempts": { ...LATEST_SCHEDULING, poll: null },
+  // Machine setup re-reads it while open: a run started by a save, a retry or
+  // a restart ends on its own, and nothing else tells the page it did.
+  "environment.setup.attempts": {
+    ...LATEST_SCHEDULING,
+    poll: { kind: "fixed", intervalMs: 5_000 },
+  },
   // A Personal page re-reads it while open: an edit goes from "applying" to
   // "applied" in seconds and nothing else tells the page it did.
   "environment.status": {

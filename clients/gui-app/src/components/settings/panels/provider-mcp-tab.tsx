@@ -25,6 +25,10 @@ import type {
 } from "@traycer/protocol/host/provider-native-schemas";
 import { MutedAgentSpinner } from "@/components/ui/agent-spinning-dots";
 import { Badge } from "@/components/ui/badge";
+import {
+  PersonalEntryMark,
+  type PersonalMarkTarget,
+} from "@/components/settings/personal/personal-entry-mark";
 import { Button } from "@/components/ui/button";
 import {
   Collapsible,
@@ -759,6 +763,7 @@ export function ProviderMcpTab(props: {
       ) : null}
 
       <McpServerList
+        markTarget={{ entryKind: "mcp", providerId, scope: effectiveScope }}
         projectNeedsWorkspace={projectNeedsWorkspace}
         multiWorkspace={multiWorkspace}
         workspacesLoading={workspacesLoading}
@@ -947,6 +952,7 @@ function McpCapabilityNotices(props: {
 }
 
 function McpServerList(props: {
+  readonly markTarget: PersonalMarkTarget;
   readonly projectNeedsWorkspace: boolean;
   readonly multiWorkspace: boolean;
   readonly workspacesLoading: boolean;
@@ -1086,6 +1092,7 @@ function McpServerList(props: {
                 canAuth={props.canAuth}
                 canSignIn={props.canSignIn}
                 toolsReadOnly={props.toolsReadOnly}
+                markTarget={props.markTarget}
                 onRefresh={() => {
                   props.onRefresh(server.name);
                 }}
@@ -1248,6 +1255,8 @@ function McpServerRow(props: {
   /** `canAuth`, less a host that takes no credentials (a sandbox). */
   readonly canSignIn: boolean;
   readonly toolsReadOnly: boolean;
+  /** Where the row's Personal mark reads from (`PersonalEntryMark`). */
+  readonly markTarget: PersonalMarkTarget;
   readonly onRefresh: () => void;
   readonly onToggleServer: (enabled: boolean) => void;
   readonly onToggleTool: (toolName: string, enabled: boolean) => void;
@@ -1318,6 +1327,8 @@ function McpServerRow(props: {
               <ServerRowBadges server={server} shadowed={shadowed} />
             </button>
           </CollapsibleTrigger>
+
+          <PersonalEntryMark target={props.markTarget} name={server.name} />
 
           <ServerRowActions
             serverName={server.name}

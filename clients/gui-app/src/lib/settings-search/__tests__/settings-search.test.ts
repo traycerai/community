@@ -227,6 +227,10 @@ describe("settings search", () => {
       ["Agent selection", "agents", "Agent selection"],
       ["Browser agent access", "browser-agent-access", "Browser agent access"],
       ["Secrets", "secrets", "Secrets"],
+      ["MCP servers", "mcp-servers", "MCP servers"],
+      ["Skills", "skills", "Skills"],
+      ["Agent definitions", "agent-definitions", "Agent definitions"],
+      ["Machine setup", "machine-setup", "Machine setup"],
       ["Providers", "providers", "Providers"],
     ] as const) {
       expect(pageScopeFor(query, section, label), query).toBe("Personal");
@@ -245,6 +249,14 @@ describe("settings search", () => {
       "browser-agent-access#<top>",
     );
     expect(landingFor("secrets", DESKTOP)).toBe("secrets#<top>");
+  });
+
+  it("opens the four checkpoint-4 pages on their own words", () => {
+    expect(landingFor("mcp servers", DESKTOP)).toBe("mcp-servers#<top>");
+    expect(landingFor("agent definitions", DESKTOP)).toBe(
+      "agent-definitions#<top>",
+    );
+    expect(landingFor("machine setup", DESKTOP)).toBe("machine-setup#<top>");
   });
 
   it("reaches the Agent office default view row, group breadcrumb included", () => {

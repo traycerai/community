@@ -113,6 +113,10 @@ export type AnalyticsSettingsSection =
   | "getting-started"
   | "browser"
   | "browser-agent-access"
+  | "mcp-servers"
+  | "skills"
+  | "agent-definitions"
+  | "machine-setup"
   | "host"
   | "keybindings"
   | "layout"
@@ -1362,6 +1366,10 @@ const ANALYTICS_SETTINGS_SECTIONS = new Set<string>(
     "getting-started": true,
     browser: true,
     "browser-agent-access": true,
+    "mcp-servers": true,
+    skills: true,
+    "agent-definitions": true,
+    "machine-setup": true,
     host: true,
     keybindings: true,
     layout: true,

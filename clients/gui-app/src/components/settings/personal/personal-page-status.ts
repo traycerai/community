@@ -24,6 +24,10 @@ const PAGE_ITEM_KINDS: Readonly<
   shell: new Set(["variable", "shell"]),
   agents: new Set(["agent_selection_guide"]),
   "browser-agent-access": new Set(["browser_agent_access"]),
+  "mcp-servers": new Set(["mcp_server"]),
+  skills: new Set(["skill"]),
+  "agent-definitions": new Set(["agent_definition"]),
+  "machine-setup": new Set(["setup_script"]),
 };
 
 /** Whether `section` is a Personal page that reports status. */

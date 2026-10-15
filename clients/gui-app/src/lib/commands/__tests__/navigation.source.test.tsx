@@ -158,6 +158,20 @@ describe("navigationSource", () => {
     expect(secrets?.statusBadge).toBe("Personal");
   });
 
+  it("lists the four checkpoint-4 Personal pages in the settings sub-page", () => {
+    const items = captureSettingsSubpage("/");
+    for (const [id, label] of [
+      ["mcp-servers", "MCP servers"],
+      ["skills", "Skills"],
+      ["agent-definitions", "Agent definitions"],
+      ["machine-setup", "Machine setup"],
+    ] as const) {
+      const item = items.find((i) => i.id === `nav:settings/${id}`);
+      expect(item?.label, id).toBe(label);
+      expect(item?.statusBadge, id).toBe("Personal");
+    }
+  });
+
   it("badges the regrouped pages with the scope the sidebar now files them under", () => {
     const items = captureSettingsSubpage("/");
     const badgeOf = (id: string): string | undefined =>
