@@ -9,6 +9,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -36,6 +37,7 @@ function emptyListQueryMock(): {
   isError: boolean;
   error: { message: string } | null;
   isFetching: boolean;
+  refetch: () => Promise<void>;
 } {
   return {
     data: { servers: [], notices: [] },
@@ -43,6 +45,7 @@ function emptyListQueryMock(): {
     isError: false,
     error: null,
     isFetching: false,
+    refetch: vi.fn(() => Promise.resolve()),
   };
 }
 
@@ -862,6 +865,41 @@ describe("<ProviderMcpTab /> host remedies and confirmations", () => {
     );
     expect(screen.getByRole("dialog")).toBeDefined();
     expect(screen.queryByText("Earlier offer failed")).toBeNull();
+  });
+
+  it("keeps a valid remedy confirmation retryable after a typed error", async () => {
+    mcpMocks.listResult.data = {
+      servers: [connectedServer({ name: "docs", remedy: TRUST_REMEDY })],
+      notices: [],
+    };
+    mcpMocks.mutateAsync
+      .mockRejectedValueOnce(
+        new ProviderNativeRpcError({
+          code: "external_drift",
+          detail: "An unrelated config entry changed",
+          method: "providers.nativeMutate",
+        }),
+      )
+      .mockResolvedValueOnce(undefined);
+    renderTab(REMEDY_CAPS, "kimi");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Trust this folder docs" }),
+    );
+    const confirm = within(screen.getByRole("dialog")).getByRole("button", {
+      name: TRUST_REMEDY.label,
+    });
+    fireEvent.click(confirm);
+    await waitFor(() =>
+      expect(screen.getByRole("alert").textContent).toContain(
+        "An unrelated config entry changed",
+      ),
+    );
+    expect(mcpMocks.listResult.refetch).toHaveBeenCalledTimes(1);
+    expect(confirm.hasAttribute("disabled")).toBe(false);
+
+    fireEvent.click(confirm);
+    expect(mcpMocks.mutateAsync).toHaveBeenCalledTimes(2);
   });
 
   it("keeps a confirmation when refreshed rows retain the same offer id", () => {

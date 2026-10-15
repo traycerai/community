@@ -1096,7 +1096,7 @@ function McpConfirmationDialog(props: {
   const description = target?.remedy.confirmation ?? "";
   return (
     <ConfirmDestructiveDialog
-      blockedReason={props.error}
+      blockedReason={null}
       open={target !== null}
       onOpenChange={(open) => {
         if (!open) props.onClose();
@@ -1107,7 +1107,16 @@ function McpConfirmationDialog(props: {
       actionLabel={isEnable ? "Enable" : (target?.remedy.label ?? "Apply")}
       isPending={props.isPending}
       onConfirm={props.onConfirm}
-    />
+    >
+      {props.error === null ? null : (
+        <p
+          role="alert"
+          className="px-5 pb-4 text-ui-sm text-destructive wrap-anywhere"
+        >
+          {props.error}
+        </p>
+      )}
+    </ConfirmDestructiveDialog>
   );
 }
 
