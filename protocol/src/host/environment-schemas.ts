@@ -166,6 +166,19 @@ export const environmentItemStatusSchema = lazySchema(() =>
       .nullable(),
     /** An `unsupported` item's compatibility floor: the host version needed. */
     minimumHostVersion: z.string().max(64).nullable(),
+    /**
+     * The native entry this host wrote an `mcp_server` or `skill` item as, by
+     * name in the provider's global config (ticket E7 checkpoint 4 ruling).
+     * The desktop marks a native row Personal by it, since a skill's item key
+     * is not something a client can compose. `null` for every other kind and
+     * until the item is applied.
+     */
+    appliedAs: z
+      .object({
+        entryKind: z.enum(["mcp", "skills"]),
+        name: z.string().min(1),
+      })
+      .nullable(),
   }),
 );
 export type EnvironmentItemStatus = z.infer<typeof environmentItemStatusSchema>;
