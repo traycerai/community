@@ -2737,6 +2737,30 @@ describe("DesktopSupportService.submitReport - the environment context's leaves 
       },
     },
     {
+      leaf: "policy.teamState",
+      section: {
+        ...BASE,
+        policy: {
+          source: "account",
+          readState: "ready",
+          teamState: LEAK,
+          teamPolicyVersion: null,
+        },
+      },
+    },
+    {
+      leaf: "policy.teamPolicyVersion",
+      section: {
+        ...BASE,
+        policy: {
+          source: "account",
+          readState: "ready",
+          teamState: "applied",
+          teamPolicyVersion: LEAK,
+        },
+      },
+    },
+    {
       leaf: "rotation.secretName",
       section: {
         ...BASE,

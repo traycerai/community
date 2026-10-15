@@ -172,6 +172,9 @@ function sameRead(
   );
 }
 
+/** How often the support section re-asks the policy: half its lease. */
+const SUPPORT_POLICY_REFRESH_MS = 30_000;
+
 /**
  * The account policy's source and read state and a team host's policy state
  * and version; no body ever leaves here.
@@ -182,6 +185,19 @@ function SupportPolicyRead(props: {
   const { onRead } = props;
   const policy = useAutoPolicyQuery();
   const data = policy.data ?? null;
+  const { refetch, isFetched } = policy;
+  // A team host's policy state moves with its 60-second lease, and the
+  // policy query never polls on its own (nor does this bridge's status
+  // read): re-ask every half lease while the bridge is mounted. Only once
+  // this viewer's read has run: `refetch` ignores the query's `enabled`,
+  // which is what keeps a read off the empty viewer.
+  useEffect(() => {
+    if (!isFetched) return;
+    const timer = setInterval(() => {
+      void refetch();
+    }, SUPPORT_POLICY_REFRESH_MS);
+    return () => clearInterval(timer);
+  }, [isFetched, refetch]);
   useEffect(() => {
     onRead(
       data === null
