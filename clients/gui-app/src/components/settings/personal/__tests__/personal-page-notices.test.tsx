@@ -216,9 +216,9 @@ describe("a Personal page's convergence notices", () => {
     );
     renderPage(host, SHELL_PAGE);
 
-    expect((await screen.findByTestId("personal-notice")).textContent).toContain(
-      "LOG_LEVEL from another host now applies everywhere.",
-    );
+    expect(
+      (await screen.findByTestId("personal-notice")).textContent,
+    ).toContain("LOG_LEVEL from another host now applies everywhere.");
   });
 
   it("shows only the notices of this page's kinds", async () => {
@@ -357,7 +357,9 @@ describe("Undo on a notice", () => {
 
     expect(
       (await screen.findByTestId("personal-notice-refusal")).textContent,
-    ).toBe("Couldn't undo: it needs your confirmation. Sign in again and retry.");
+    ).toBe(
+      "Couldn't undo: it needs your confirmation. Sign in again and retry.",
+    );
   });
 });
 
@@ -538,9 +540,9 @@ describe("Keep this host's value", () => {
     // the value itself.
     renderPage(host, { ...SHELL_PAGE, section: "providers" });
 
-    expect((await screen.findByTestId("personal-notice")).textContent).toContain(
-      "ANTHROPIC_BASE_URL from dev-box now applies everywhere.",
-    );
+    expect(
+      (await screen.findByTestId("personal-notice")).textContent,
+    ).toContain("ANTHROPIC_BASE_URL from dev-box now applies everywhere.");
     fireEvent.click(await screen.findByRole("button", { name: KEEP }));
 
     await waitFor(() => {
@@ -599,9 +601,7 @@ describe("a Personal page's 'needs you' rows", () => {
       expect.stringContaining(
         "DATABASE_URL is waiting for you: looks like a secret.",
       ),
-      expect.stringContaining(
-        "SHELL_INIT is waiting for you: runs a command.",
-      ),
+      expect.stringContaining("SHELL_INIT is waiting for you: runs a command."),
       expect.stringContaining(
         "LOG_LEVEL is waiting for you: was changed without your confirmation.",
       ),

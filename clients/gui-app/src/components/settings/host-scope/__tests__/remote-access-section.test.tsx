@@ -62,10 +62,7 @@ function hostWithRemoteAccess(
   });
 }
 
-function renderTab(
-  host: AccessHost,
-  methods: readonly string[],
-): QueryClient {
+function renderTab(host: AccessHost, methods: readonly string[]): QueryClient {
   recordNegotiatedHostMethods(ACCESS_HOST_ID, methods);
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -221,16 +218,16 @@ describe("<RemoteAccessSection /> in Access and setup", () => {
     const host = hostWithRemoteAccess("on", "turning_off");
     renderTab(host, ACCESS_METHODS);
     await shownState();
-    expect(
-      useHostAccessPromptsStore.getState().remoteAccessAnswered,
-    ).toEqual({});
+    expect(useHostAccessPromptsStore.getState().remoteAccessAnswered).toEqual(
+      {},
+    );
 
     fireEvent.click(await screen.findByRole("button", { name: "Turn off" }));
 
     await waitFor(() => {
-      expect(
-        useHostAccessPromptsStore.getState().remoteAccessAnswered,
-      ).toEqual({ [ACCESS_HOST_ID]: true });
+      expect(useHostAccessPromptsStore.getState().remoteAccessAnswered).toEqual(
+        { [ACCESS_HOST_ID]: true },
+      );
     });
     expect(
       useHostAccessPromptsStore.getState().remoteAccessAnswered["host-b"],

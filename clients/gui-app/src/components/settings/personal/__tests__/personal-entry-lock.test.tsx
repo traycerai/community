@@ -531,7 +531,9 @@ describe("A local MCP server row", () => {
     const row = mcpRow("github");
     await statusRead();
     expect(within(row).queryByTestId(LOCKED_TESTID)).toBeNull();
-    fireEvent.click(within(row).getByRole("switch", { name: "Disable github" }));
+    fireEvent.click(
+      within(row).getByRole("switch", { name: "Disable github" }),
+    );
     await waitFor(() => {
       expect(rig.sent).toHaveLength(1);
     });
@@ -586,9 +588,7 @@ describe("A Personal skill", () => {
     expect(
       within(dialog).queryByRole("button", { name: "Update from source" }),
     ).toBeNull();
-    expect(
-      within(dialog).getByRole("button", { name: "Remove" }),
-    ).toBeTruthy();
+    expect(within(dialog).getByRole("button", { name: "Remove" })).toBeTruthy();
     expect(rig.sent).toEqual([]);
   });
 
@@ -601,7 +601,9 @@ describe("A Personal skill", () => {
       await screen.findByRole("button", { name: /^Open deploy / }),
     );
     const skillDialog = await screen.findByRole("dialog");
-    fireEvent.click(within(skillDialog).getByRole("button", { name: "Remove" }));
+    fireEvent.click(
+      within(skillDialog).getByRole("button", { name: "Remove" }),
+    );
 
     const confirm = await screen.findByTestId("confirm-destructive-dialog");
     expect(rig.sent).toEqual([]);
@@ -639,9 +641,7 @@ describe("A local skill", () => {
       within(dialog).getByRole("button", { name: "Update from source" }),
     ).toBeTruthy();
     expect(within(dialog).queryByTestId(SKILL_NOTE)).toBeNull();
-    expect(
-      within(dialog).getByRole("button", { name: "Remove" }),
-    ).toBeTruthy();
+    expect(within(dialog).getByRole("button", { name: "Remove" })).toBeTruthy();
   });
 
   it("is not locked by an MCP server of the same name", async () => {

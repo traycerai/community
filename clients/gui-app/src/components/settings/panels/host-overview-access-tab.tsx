@@ -103,7 +103,10 @@ function AccessTabBody(props: {
   const status = useEnvironmentStatusRead(props.client, props.hostId, true);
   if (status.supported === false) {
     return (
-      <p className="text-ui-sm text-muted-foreground" data-testid="access-tab-update-host">
+      <p
+        className="text-ui-sm text-muted-foreground"
+        data-testid="access-tab-update-host"
+      >
         Update this host to use your settings.
       </p>
     );
@@ -178,7 +181,8 @@ function MovedNotice(props: {
 }): ReactNode {
   const setupDone =
     props.status.setup !== null &&
-    (props.status.setup.state === "done" || props.status.setup.stage === "done");
+    (props.status.setup.state === "done" ||
+      props.status.setup.stage === "done");
   const notices = useEnvironmentNoticesRead(
     props.client,
     props.hostId,

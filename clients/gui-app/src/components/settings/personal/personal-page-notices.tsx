@@ -44,7 +44,10 @@ export function PersonalPageNotices(): ReactNode {
   if (value.notices.length === 0 && value.review.length === 0) return null;
   const { client } = value;
   return (
-    <ul className="flex max-w-[72ch] flex-col gap-1.5" data-testid="personal-page-notices">
+    <ul
+      className="flex max-w-[72ch] flex-col gap-1.5"
+      data-testid="personal-page-notices"
+    >
       {value.notices.map((notice) => (
         <NoticeRow
           key={notice.noticeId}
@@ -258,7 +261,9 @@ function useCurrentValue(
   );
 }
 
-function ReviewRow(props: { readonly entry: EnvironmentReviewEntry }): ReactNode {
+function ReviewRow(props: {
+  readonly entry: EnvironmentReviewEntry;
+}): ReactNode {
   return (
     <li className={ROW_CLASS} data-testid="personal-review-row">
       <span className="min-w-0 text-foreground">{reviewText(props.entry)}</span>

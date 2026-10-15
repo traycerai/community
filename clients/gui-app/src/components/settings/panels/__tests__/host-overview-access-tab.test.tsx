@@ -182,9 +182,9 @@ describe("<HostOverviewAccessTab /> before the host can answer", () => {
     const host = hostWith({}, {});
     renderTab(host, { ...READY, connecting: true });
 
-    expect(
-      plainText(await screen.findByTestId("host-scope-connecting")),
-    ).toBe("Connecting to dev-box…");
+    expect(plainText(await screen.findByTestId("host-scope-connecting"))).toBe(
+      "Connecting to dev-box…",
+    );
     await settle();
     expect(host.reads.status).toBe(0);
   });
@@ -358,10 +358,7 @@ describe("<HostOverviewAccessTab /> setup", () => {
   });
 
   it("has no setup section once setup is done, or when the host has no setup record", async () => {
-    const done = hostWith(
-      { setup: { stage: "applying", state: "done" } },
-      {},
-    );
+    const done = hostWith({ setup: { stage: "applying", state: "done" } }, {});
     renderTab(done, READY);
     await screen.findByTestId("remote-access-section");
     expect(screen.queryByTestId("host-setup-section")).toBeNull();
@@ -437,7 +434,9 @@ describe("<HostOverviewAccessTab /> on a team's host", () => {
     renderTab(host, READY);
 
     expect(await screen.findByTestId("team-owned-line")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "Open the dashboard" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Open the dashboard" }),
+    ).toBeNull();
   });
 
   it("shows no team line, and nothing inert, on the person's own host", async () => {
@@ -597,7 +596,9 @@ describe("<HostOverviewAccessTab /> this host's own values", () => {
     expect(field).toHaveProperty("value", "debug");
     // Nothing to save until the value differs.
     expect(
-      within(row).getByRole("button", { name: "Save" }).hasAttribute("disabled"),
+      within(row)
+        .getByRole("button", { name: "Save" })
+        .hasAttribute("disabled"),
     ).toBe(true);
     fireEvent.change(field, { target: { value: "info" } });
     fireEvent.click(within(row).getByRole("button", { name: "Save" }));
@@ -631,7 +632,9 @@ describe("<HostOverviewAccessTab /> this host's own values", () => {
 
     fireEvent.click(within(row).getByRole("button", { name: "Edit" }));
     fireEvent.change(
-      within(row).getByLabelText("Claude Code: ANTHROPIC_BASE_URL value on this host"),
+      within(row).getByLabelText(
+        "Claude Code: ANTHROPIC_BASE_URL value on this host",
+      ),
       { target: { value: "b" } },
     );
     fireEvent.click(within(row).getByRole("button", { name: "Save" }));
@@ -660,9 +663,12 @@ describe("<HostOverviewAccessTab /> this host's own values", () => {
     const row = await screen.findByTestId("local-value-row");
 
     fireEvent.click(within(row).getByRole("button", { name: "Edit" }));
-    fireEvent.change(within(row).getByLabelText("LOG_LEVEL value on this host"), {
-      target: { value: "info" },
-    });
+    fireEvent.change(
+      within(row).getByLabelText("LOG_LEVEL value on this host"),
+      {
+        target: { value: "info" },
+      },
+    );
     fireEvent.click(within(row).getByRole("button", { name: "Cancel" }));
 
     expect(screen.queryByLabelText("LOG_LEVEL value on this host")).toBeNull();
@@ -716,7 +722,9 @@ describe("<HostOverviewAccessTab /> the moved-to-Personal notice", () => {
         "Your settings moved to Personal. Review what changed.",
       ),
     ).toBeTruthy();
-    expect(within(notice).getByRole("button", { name: "Dismiss" })).toBeTruthy();
+    expect(
+      within(notice).getByRole("button", { name: "Dismiss" }),
+    ).toBeTruthy();
   });
 
   it("is not shown while setup is still running", async () => {

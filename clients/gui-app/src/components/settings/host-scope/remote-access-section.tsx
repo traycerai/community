@@ -35,9 +35,7 @@ export function RemoteAccessSection(props: {
   const writable =
     useHostMethodSupport(props.hostId, "host.remoteAccess.set") === true;
   // The host's last answer to a switch made here.
-  const [lastAnswer, setLastAnswer] = useState<RemoteAccessState | null>(
-    null,
-  );
+  const [lastAnswer, setLastAnswer] = useState<RemoteAccessState | null>(null);
   // Once the host reports `off`, the answer has done its job.
   if (lastAnswer === "turning_off" && props.status === "off") {
     setLastAnswer(null);

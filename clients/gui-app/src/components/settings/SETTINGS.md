@@ -5813,7 +5813,7 @@ set-state-in-effect` forbids the effect form, and an effect would also
        computer."), Off ("Other devices and agents can't reach this computer.
        Your settings still reach it."), and Turning off ("Other devices and
        agents are being disconnected.") with a spinner. `host.remoteAccess.set
-       {enabled: false}` answers `turning_off` until the host has closed its
+{enabled: false}` answers `turning_off` until the host has closed its
        sessions, and the section keeps saying so until the host's status
        reports `off` (`shownRemoteAccess`), even when a status read still says
        `on`.
@@ -5827,8 +5827,8 @@ set-state-in-effect` forbids the effect form, and an effect would also
        the executable-write grant) and Clear, under "Agents started after a
        change use the new value; restart the host for the host itself to
        pick it up."
-    On a team's host every section is read-only (`inert`) under "These
-    settings belong to <team>. Change them in the dashboard." with a link.
+       On a team's host every section is read-only (`inert`) under "These
+       settings belong to <team>. Change them in the dashboard." with a link.
   - **The notices strip, top to bottom, drawing only what applies**
     (`host-overview-notices.tsx`, between the header and the tab bar; its
     decisions are in `host-overview-status-model.ts`, and the panel resolves

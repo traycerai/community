@@ -27,8 +27,7 @@ export const REMOTE_ACCESS_QUESTION =
 
 export const REMOTE_ACCESS_TEXT: Readonly<Record<RemoteAccessState, string>> = {
   on: "On. Other devices and agents signed in to your account can reach this computer.",
-  turning_off:
-    "Turning off. Other devices and agents are being disconnected.",
+  turning_off: "Turning off. Other devices and agents are being disconnected.",
   off: "Off. Other devices and agents can't reach this computer. Your settings still reach it.",
 };
 
@@ -71,7 +70,10 @@ export const SETUP_STEPS: ReadonlyArray<{
   readonly label: string;
 }> = [
   { stage: "registering", label: "Registering this host" },
-  { stage: "moving_settings", label: "Moving this host's settings to Personal" },
+  {
+    stage: "moving_settings",
+    label: "Moving this host's settings to Personal",
+  },
   { stage: "applying", label: "Applying your settings" },
 ];
 
@@ -208,9 +210,7 @@ export function keepLocalTarget(
   // An env override's item key is `<providerId>:<variable>`.
   const separator = notice.key.indexOf(":");
   if (separator === -1) return null;
-  const providerId = providerIdSchema.safeParse(
-    notice.key.slice(0, separator),
-  );
+  const providerId = providerIdSchema.safeParse(notice.key.slice(0, separator));
   if (!providerId.success) return null;
   return {
     kind: "env_override",

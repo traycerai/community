@@ -208,7 +208,12 @@ function ProviderSkillsTabBody({
     personal: openSkillPersonal,
     editable: openSkillEditable,
     updatable: openSkillUpdatable,
-  } = useOpenSkillActions(openSkill, canEditHere, canUpdateHere, effectiveScope);
+  } = useOpenSkillActions(
+    openSkill,
+    canEditHere,
+    canUpdateHere,
+    effectiveScope,
+  );
   const globalOnly = !multiScope && effectiveScope === "global";
   // Hoisted: eslint rewrites `a && b` in JSX attrs to `a ? b : null`, widening
   // boolean props to `boolean | null`.

@@ -157,7 +157,12 @@ describe("remoteAccessQuestionShown", () => {
       false,
     ],
     ["team principal", { principal: team, remoteAccess: "off" }, false, false],
-    ["no principal yet", { principal: null, remoteAccess: "off" }, false, false],
+    [
+      "no principal yet",
+      { principal: null, remoteAccess: "off" },
+      false,
+      false,
+    ],
     [
       "personal, remote access on",
       { principal: personal, remoteAccess: "on" },

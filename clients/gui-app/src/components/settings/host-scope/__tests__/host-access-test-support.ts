@@ -132,7 +132,10 @@ export function buildAccessHostOn(
         return { entries: [...state.review] };
       },
       "environment.localOverrides": () => ({ overrides: [...state.overrides] }),
-      "providers.list": () => ({ providers: [...state.providers], native: null }),
+      "providers.list": () => ({
+        providers: [...state.providers],
+        native: null,
+      }),
       "config.env.list": () => ({ entries: [...state.envEntries] }),
       "host.remoteAccess.set": (request) => {
         requests.push({ method: "host.remoteAccess.set", params: request });
