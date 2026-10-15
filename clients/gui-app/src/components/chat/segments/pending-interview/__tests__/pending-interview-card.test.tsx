@@ -2783,6 +2783,38 @@ describe("PendingInterviewCard long option labels", () => {
     expect(labelEl.classList.contains("min-w-0")).toBe(true);
     expect(labelEl.className).not.toMatch(/text-ellipsis|line-clamp/);
   });
+
+  // jsdom evaluates no container queries either, so the narrow-pane rule is
+  // pinned on its two halves: the option list is the named query container,
+  // and the number badge is `display: none` until that container is wide
+  // enough. The `1. ...` aria-label is untouched, so keyboard numbering and
+  // screen readers lose nothing.
+  it("hides the number badge and its spacer below a narrow container width", () => {
+    renderCard(
+      [singleSelect("q", "Where does it live?", ["First option", "Short"])],
+      vi.fn(),
+      null,
+    );
+
+    const rowButton = screen.getByRole("button", { name: "1. First option" });
+    const row = rowButton.parentElement;
+    expect(row).not.toBeNull();
+    const badge = Array.from(row?.querySelectorAll("span[aria-hidden]") ?? [])
+      .filter((el) => el.textContent === "1")
+      .at(0);
+    expect(badge).toBeDefined();
+    expect(badge?.classList.contains("hidden")).toBe(true);
+    expect(badge?.className).toMatch(
+      /@\[[\d.]+rem\]\/interview-options:inline-flex/,
+    );
+    // The badge itself carries the right-edge push, so no empty flex-1 spacer
+    // is left behind to hold a gap once the badge is gone.
+    expect(badge?.classList.contains("ml-auto")).toBe(true);
+    expect(row?.querySelector("span.flex-1")).toBeNull();
+    expect(
+      rowButton.closest('[class~="@container/interview-options"]'),
+    ).not.toBeNull();
+  });
 });
 
 describe("PendingInterviewCard choice mode chrome", () => {
