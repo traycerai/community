@@ -1175,7 +1175,9 @@ import {
   providersMcpAuthRequestSchema,
   providersMcpAuthResponseSchema,
   providersNativeMutateRequestSchema,
+  providersNativeMutateRequestSchemaV10Preimage,
   providersNativeMutateResponseSchema,
+  providersNativeMutateResponseSchemaV10Preimage,
   providersCancelLoginResponseSchemaV10,
   providersClearApiKeyRequestSchema,
   providersClearApiKeyRequestSchemaV10,
@@ -1209,6 +1211,7 @@ import {
   // shape.
   providersListRequestSchema,
   providersListResponseSchema,
+  providersListResponseSchemaV100Preimage,
   providersListResponseSchemaV80,
   providersListResponseSchemaV90,
   providersListResponseSchemaV91,
@@ -2671,7 +2674,24 @@ export const providersListV100 = defineRpcContract({
   method: "providers.list",
   schemaVersion: { major: 10, minor: 0 } as const,
   requestSchema: providersListRequestSchema,
+  responseSchema: providersListResponseSchemaV100Preimage,
+});
+
+export const providersListV101 = defineRpcContract({
+  method: "providers.list",
+  schemaVersion: { major: 10, minor: 1 } as const,
+  requestSchema: providersListRequestSchema,
   responseSchema: providersListResponseSchema,
+});
+
+export const providersListUpgradeV100ToV101 = defineUpgradePath<
+  typeof providersListV100,
+  typeof providersListV101
+>({
+  from: { major: 10, minor: 0 },
+  to: { major: 10, minor: 1 },
+  upgradeRequest: (request) => request,
+  upgradeResponse: (response) => response,
 });
 
 export const providersListUpgradeV92ToV100 = defineUpgradePath<
@@ -3254,10 +3274,10 @@ export const providersListDowngradeV9ToV1 = defineDowngradePath<
 });
 
 export const providersListDowngradeV10ToV9 = defineDowngradePath<
-  typeof providersListV100,
+  typeof providersListV101,
   typeof providersListV92
 >({
-  from: { major: 10, minor: 0 },
+  from: { major: 10, minor: 1 },
   // Lands on 9.2, major 9's latest installed minor; a 9.0 or 9.1 caller's own
   // contract parse then strips the keys its minor predates.
   to: { major: 9, minor: 2 },
@@ -3279,10 +3299,10 @@ export const providersListDowngradeV10ToV9 = defineDowngradePath<
 });
 
 export const providersListDowngradeV10ToV8 = defineDowngradePath<
-  typeof providersListV100,
+  typeof providersListV101,
   typeof providersListV80
 >({
-  from: { major: 10, minor: 0 },
+  from: { major: 10, minor: 1 },
   to: { major: 8, minor: 0 },
   downgradeRequest: (request) => ({
     ok: true,
@@ -3301,10 +3321,10 @@ export const providersListDowngradeV10ToV8 = defineDowngradePath<
 });
 
 export const providersListDowngradeV10ToV7 = defineDowngradePath<
-  typeof providersListV100,
+  typeof providersListV101,
   typeof providersListV70
 >({
-  from: { major: 10, minor: 0 },
+  from: { major: 10, minor: 1 },
   to: { major: 7, minor: 0 },
   downgradeRequest: (request) => ({
     ok: true,
@@ -3323,10 +3343,10 @@ export const providersListDowngradeV10ToV7 = defineDowngradePath<
 });
 
 export const providersListDowngradeV10ToV6 = defineDowngradePath<
-  typeof providersListV100,
+  typeof providersListV101,
   typeof providersListV60
 >({
-  from: { major: 10, minor: 0 },
+  from: { major: 10, minor: 1 },
   to: { major: 6, minor: 0 },
   downgradeRequest: (request) => ({
     ok: true,
@@ -3343,10 +3363,10 @@ export const providersListDowngradeV10ToV6 = defineDowngradePath<
 });
 
 export const providersListDowngradeV10ToV5 = defineDowngradePath<
-  typeof providersListV100,
+  typeof providersListV101,
   typeof providersListV50
 >({
-  from: { major: 10, minor: 0 },
+  from: { major: 10, minor: 1 },
   to: { major: 5, minor: 0 },
   downgradeRequest: (request) => ({
     ok: true,
@@ -3363,10 +3383,10 @@ export const providersListDowngradeV10ToV5 = defineDowngradePath<
 });
 
 export const providersListDowngradeV10ToV4 = defineDowngradePath<
-  typeof providersListV100,
+  typeof providersListV101,
   typeof providersListV40
 >({
-  from: { major: 10, minor: 0 },
+  from: { major: 10, minor: 1 },
   to: { major: 4, minor: 0 },
   downgradeRequest: (request) => ({
     ok: true,
@@ -3383,10 +3403,10 @@ export const providersListDowngradeV10ToV4 = defineDowngradePath<
 });
 
 export const providersListDowngradeV10ToV3 = defineDowngradePath<
-  typeof providersListV100,
+  typeof providersListV101,
   typeof providersListV30
 >({
-  from: { major: 10, minor: 0 },
+  from: { major: 10, minor: 1 },
   to: { major: 3, minor: 0 },
   downgradeRequest: (request) => ({
     ok: true,
@@ -3403,10 +3423,10 @@ export const providersListDowngradeV10ToV3 = defineDowngradePath<
 });
 
 export const providersListDowngradeV10ToV2 = defineDowngradePath<
-  typeof providersListV100,
+  typeof providersListV101,
   typeof providersListV20
 >({
-  from: { major: 10, minor: 0 },
+  from: { major: 10, minor: 1 },
   to: { major: 2, minor: 0 },
   downgradeRequest: (request) => ({
     ok: true,
@@ -3423,10 +3443,10 @@ export const providersListDowngradeV10ToV2 = defineDowngradePath<
 });
 
 export const providersListDowngradeV10ToV1 = defineDowngradePath<
-  typeof providersListV100,
+  typeof providersListV101,
   typeof providersListV10
 >({
-  from: { major: 10, minor: 0 },
+  from: { major: 10, minor: 1 },
   to: { major: 1, minor: 0 },
   downgradeRequest: (request) => ({
     ok: true,
@@ -4321,8 +4341,25 @@ export const providersCancelMcpAuthV10 = defineRpcContract({
 export const providersNativeMutateV10 = defineRpcContract({
   method: "providers.nativeMutate",
   schemaVersion: { major: 1, minor: 0 } as const,
+  requestSchema: providersNativeMutateRequestSchemaV10Preimage,
+  responseSchema: providersNativeMutateResponseSchemaV10Preimage,
+});
+
+export const providersNativeMutateV11 = defineRpcContract({
+  method: "providers.nativeMutate",
+  schemaVersion: { major: 1, minor: 1 } as const,
   requestSchema: providersNativeMutateRequestSchema,
   responseSchema: providersNativeMutateResponseSchema,
+});
+
+export const providersNativeMutateUpgradeV10ToV11 = defineUpgradePath<
+  typeof providersNativeMutateV10,
+  typeof providersNativeMutateV11
+>({
+  from: { major: 1, minor: 0 },
+  to: { major: 1, minor: 1 },
+  upgradeRequest: (request) => request,
+  upgradeResponse: (response) => response,
 });
 
 // ── Per-pack version-manager methods + the on-demand discovery refresh ─────
@@ -11031,11 +11068,15 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
   "providers.nativeMutate": {
     degrade: { kind: "unsupported" },
     1: {
-      latestMinor: 0,
+      latestMinor: 1,
       versions: {
         0: {
           contract: providersNativeMutateV10,
           upgradeFromPreviousVersion: null,
+        },
+        1: {
+          contract: providersNativeMutateV11,
+          upgradeFromPreviousVersion: providersNativeMutateUpgradeV10ToV11,
         },
       },
       downgradePathsFromLatest: {},
@@ -12214,11 +12255,15 @@ const HOST_RPC_PROVIDERS_LIST_REGISTRY_DEFINITION = {
     // whose three minors are frozen at the twenty-one ids that release
     // negotiated.
     10: {
-      latestMinor: 0,
+      latestMinor: 1,
       versions: {
         0: {
           contract: providersListV100,
           upgradeFromPreviousVersion: providersListUpgradeV92ToV100,
+        },
+        1: {
+          contract: providersListV101,
+          upgradeFromPreviousVersion: providersListUpgradeV100ToV101,
         },
       },
       downgradePathsFromLatest: {

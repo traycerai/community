@@ -18,6 +18,8 @@ import {
 import type { ProviderId } from "@traycer/protocol/host/provider-schemas";
 import type {
   ProviderMcpCapabilities,
+  ProviderMcpNotice,
+  ProviderMcpRemedy,
   ProviderMcpServer,
   ProviderMcpServerStatus,
   ProviderMcpTool,
@@ -45,6 +47,7 @@ import { useProvidersMcpMutate } from "@/hooks/providers/use-providers-mcp-mutat
 import { useProvidersMcpDiscover } from "@/hooks/providers/use-providers-mcp-discover-mutation";
 import { useProvidersMcpAuth } from "@/hooks/providers/use-providers-mcp-auth-mutation";
 import { isProviderNativeRpcError } from "@/hooks/providers/native-response-map";
+import type { McpListData } from "@/hooks/providers/native-response-map";
 import { useOpenLink } from "@/lib/links/open-link";
 import { nativeErrorMessage } from "@/lib/providers/native-error-copy";
 import { mcpBinaryAbsentNotice } from "./provider-mcp-binary-gate";
@@ -69,6 +72,23 @@ import {
 import { useProviderNativeScope } from "./use-provider-native-scope";
 
 const EMPTY_MCP_SERVERS: readonly ProviderMcpServer[] = [];
+function mcpListPresentation(listData: McpListData | undefined): {
+  readonly servers: readonly ProviderMcpServer[];
+  readonly notices: readonly ProviderMcpNotice[];
+  readonly blockingNoRows: boolean;
+} {
+  const servers = listData?.servers ?? EMPTY_MCP_SERVERS;
+  const notices = listData?.notices ?? [];
+  return {
+    servers,
+    notices,
+    blockingNoRows:
+      servers.length === 0 && notices.some((notice) => notice.blocking),
+  };
+}
+type McpConfirmationTarget =
+  | { readonly kind: "remedy"; readonly remedy: ProviderMcpRemedy }
+  | { readonly kind: "enable"; readonly server: ProviderMcpServer };
 
 /**
  * The one definition of "this server's auth has not settled yet". Both the
@@ -209,6 +229,8 @@ function mcpMutationFlags(
   // code. Restore canUpdate + pencil + editTarget + dialog mode="edit" when a
   // provider actually implements update.
   const canToggleServer = scopes.toggleServer.includes(effectiveScope);
+  const canApplyRemedy =
+    scopes.applyRemedy?.includes(effectiveScope) ?? false;
   const canToggleTool = scopes.toggleTool.includes(effectiveScope);
   const canDiscover = scopes.discover.includes(effectiveScope);
   const canAuth = scopes.auth.includes(effectiveScope);
@@ -220,6 +242,7 @@ function mcpMutationFlags(
     canAdd,
     canRemove,
     canToggleServer,
+    canApplyRemedy,
     canDiscover,
     canAuth,
     toolsReadOnly,
@@ -259,6 +282,9 @@ export function ProviderMcpTab(props: {
 
   const [addOpen, setAddOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
+  const [confirmationTarget, setConfirmationTarget] =
+    useState<McpConfirmationTarget | null>(null);
+  const [confirmationError, setConfirmationError] = useState<string | null>(null);
   const [pendingServerNames, setPendingServerNames] = useState<
     ReadonlySet<string>
   >(() => new Set());
@@ -299,7 +325,7 @@ export function ProviderMcpTab(props: {
 
   const listData = listQuery.data;
   const listError = listQuery.error ?? listData?.refreshError ?? null;
-  const servers = listData?.servers ?? EMPTY_MCP_SERVERS;
+  const { servers, notices, blockingNoRows } = mcpListPresentation(listData);
   const filteredServers = useMemo(
     () => filterProviderMcpServers(servers, searchQuery),
     [servers, searchQuery],
@@ -390,6 +416,7 @@ export function ProviderMcpTab(props: {
     canAdd,
     canRemove,
     canToggleServer,
+    canApplyRemedy,
     canDiscover,
     canAuth,
     toolsReadOnly,
@@ -460,6 +487,11 @@ export function ProviderMcpTab(props: {
 
   const handleToggleServer = useCallback(
     (server: ProviderMcpServer, enabled: boolean) => {
+      if (enabled && server.enableConfirmation) {
+        setConfirmationError(null);
+        setConfirmationTarget({ kind: "enable", server });
+        return;
+      }
       markPending(server.name, true);
       clearRowError(server.name);
       mutate.mutate(
@@ -485,6 +517,39 @@ export function ProviderMcpTab(props: {
     },
     [clearRowError, markPending, mutate, scopeTuple, setRowError],
   );
+
+  const handleConfirmation = useCallback(() => {
+    if (confirmationTarget === null) return;
+    const target = confirmationTarget;
+    const name =
+      target.kind === "enable" ? target.server.name : target.remedy.id;
+    markPending(name, true);
+    setConfirmationError(null);
+    mutate.mutate(
+      {
+        ...scopeTuple,
+        mutation:
+          target.kind === "enable"
+            ? { action: "toggleServer", name, enabled: true }
+            : { action: "applyRemedy", remedyId: target.remedy.id },
+        suppressToast: true,
+      },
+      {
+        onSuccess: () => setConfirmationTarget(null),
+        onError: (error) => {
+          if (isProviderNativeRpcError(error)) {
+            setConfirmationError(
+              nativeErrorMessage(error.nativeCode, error.nativeDetail),
+            );
+            if (error.nativeCode === "external_drift") {
+              void listQuery.refetch();
+            }
+          }
+        },
+        onSettled: () => markPending(name, false),
+      },
+    );
+  }, [confirmationTarget, listQuery, markPending, mutate, scopeTuple]);
 
   const handleToggleTool = useCallback(
     (serverName: string, toolName: string, enabled: boolean) => {
@@ -736,6 +801,16 @@ export function ProviderMcpTab(props: {
         )}
       />
 
+      <McpHostNotices
+        notices={notices}
+        canApplyRemedy={canApplyRemedy}
+        pending={mutate.isPending}
+        onRemedy={(remedy) => {
+          setConfirmationError(null);
+          setConfirmationTarget({ kind: "remedy", remedy });
+        }}
+      />
+
       {!projectNeedsWorkspace ? (
         <ProviderListSearch
           query={searchQuery}
@@ -758,6 +833,7 @@ export function ProviderMcpTab(props: {
           listWorkspaceRoot,
         ])}
         listError={listError !== null}
+        blockingNoRows={blockingNoRows}
         errorMessage={listError?.message ?? null}
         onRetryList={async () => {
           await listQuery.refetch();
@@ -773,11 +849,16 @@ export function ProviderMcpTab(props: {
         rowErrors={rowErrors}
         canRemove={canRemove}
         canToggleServer={canToggleServer}
+        canApplyRemedy={canApplyRemedy}
         canDiscover={canDiscover}
         canAuth={canAuth}
         toolsReadOnly={toolsReadOnly}
         onRefresh={handleRefresh}
         onToggleServer={handleToggleServer}
+        onRemedy={(remedy) => {
+          setConfirmationError(null);
+          setConfirmationTarget({ kind: "remedy", remedy });
+        }}
         onToggleTool={handleToggleTool}
         onToggleAllTools={(server, enabled) => {
           void handleToggleAllTools(server, enabled);
@@ -815,7 +896,48 @@ export function ProviderMcpTab(props: {
         isPending={deleteDialogPending}
         onConfirm={handleDelete}
       />
+
+      <McpConfirmationDialog
+        target={confirmationTarget}
+        error={confirmationError}
+        isPending={mutate.isPending}
+        onClose={() => {
+          setConfirmationTarget(null);
+          setConfirmationError(null);
+        }}
+        onConfirm={handleConfirmation}
+      />
     </div>
+  );
+}
+
+function McpConfirmationDialog(props: {
+  readonly target: McpConfirmationTarget | null;
+  readonly error: string | null;
+  readonly isPending: boolean;
+  readonly onClose: () => void;
+  readonly onConfirm: () => void;
+}): ReactNode {
+  const target = props.target;
+  const isEnable = target?.kind === "enable";
+  const title = isEnable ? "Enable MCP server" : target?.remedy.label ?? "Apply fix";
+  const description = isEnable
+    ? target.server.enableConfirmation ?? ""
+    : target?.remedy.confirmation ?? "";
+  return (
+    <ConfirmDestructiveDialog
+      blockedReason={props.error}
+      open={target !== null}
+      onOpenChange={(open) => {
+        if (!open) props.onClose();
+      }}
+      title={title}
+      description={description}
+      cascadeSummary={null}
+      actionLabel={isEnable ? "Enable" : target?.remedy.label ?? "Apply"}
+      isPending={props.isPending}
+      onConfirm={props.onConfirm}
+    />
   );
 }
 
@@ -932,6 +1054,40 @@ function McpCapabilityNotices(props: {
   );
 }
 
+function McpHostNotices(props: {
+  readonly notices: readonly ProviderMcpNotice[];
+  readonly canApplyRemedy: boolean;
+  readonly pending: boolean;
+  readonly onRemedy: (remedy: ProviderMcpRemedy) => void;
+}): ReactNode {
+  return props.notices.map((notice) => {
+    const remedy = notice.remedy;
+    return <div
+      key={notice.id}
+      className={cn(
+        "flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2 text-ui-xs",
+        notice.tone === "warning"
+          ? "border-warning/30 bg-warning/10 text-warning-foreground"
+          : "border-info/30 bg-info/10 text-info-foreground",
+      )}
+      role={notice.tone === "warning" ? "alert" : "status"}
+    >
+      <span>{notice.text}</span>
+      {props.canApplyRemedy && remedy !== null ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={props.pending}
+          onClick={() => props.onRemedy(remedy)}
+        >
+          {remedy.label}
+        </Button>
+      ) : null}
+    </div>;
+  });
+}
+
 function McpServerList(props: {
   readonly projectNeedsWorkspace: boolean;
   readonly multiWorkspace: boolean;
@@ -940,6 +1096,7 @@ function McpServerList(props: {
   readonly listHasData: boolean;
   readonly listIdentity: string;
   readonly listError: boolean;
+  readonly blockingNoRows: boolean;
   readonly errorMessage: string | null;
   readonly onRetryList: () => Promise<void>;
   readonly servers: readonly ProviderMcpServer[];
@@ -953,6 +1110,7 @@ function McpServerList(props: {
   readonly rowErrors: ReadonlyMap<string, string>;
   readonly canRemove: boolean;
   readonly canToggleServer: boolean;
+  readonly canApplyRemedy: boolean;
   readonly canDiscover: boolean;
   readonly canAuth: boolean;
   readonly toolsReadOnly: boolean;
@@ -961,6 +1119,7 @@ function McpServerList(props: {
     server: ProviderMcpServer,
     enabled: boolean,
   ) => void;
+  readonly onRemedy: (remedy: ProviderMcpRemedy) => void;
   readonly onToggleTool: (
     serverName: string,
     toolName: string,
@@ -1024,6 +1183,7 @@ function McpServerList(props: {
       />
     );
   }
+  if (props.blockingNoRows && !props.listError) return null;
   if (props.unfilteredServerCount === 0 && !props.listError) {
     return (
       <EmptyState
@@ -1066,6 +1226,7 @@ function McpServerList(props: {
                 rowError={props.rowErrors.get(server.name) ?? null}
                 canRemove={props.canRemove}
                 canToggleServer={props.canToggleServer}
+                canApplyRemedy={props.canApplyRemedy}
                 canDiscover={props.canDiscover}
                 canAuth={props.canAuth}
                 toolsReadOnly={props.toolsReadOnly}
@@ -1074,6 +1235,9 @@ function McpServerList(props: {
                 }}
                 onToggleServer={(enabled) => {
                   props.onToggleServer(server, enabled);
+                }}
+                onRemedy={() => {
+                  if (server.remedy) props.onRemedy(server.remedy);
                 }}
                 onToggleTool={(toolName, enabled) => {
                   props.onToggleTool(server.name, toolName, enabled);
@@ -1225,11 +1389,13 @@ function McpServerRow(props: {
   readonly rowError: string | null;
   readonly canRemove: boolean;
   readonly canToggleServer: boolean;
+  readonly canApplyRemedy: boolean;
   readonly canDiscover: boolean;
   readonly canAuth: boolean;
   readonly toolsReadOnly: boolean;
   readonly onRefresh: () => void;
   readonly onToggleServer: (enabled: boolean) => void;
+  readonly onRemedy: () => void;
   readonly onToggleTool: (toolName: string, enabled: boolean) => void;
   readonly onToggleAllTools: (enabled: boolean) => void;
   readonly onLogin: () => void;
@@ -1245,11 +1411,13 @@ function McpServerRow(props: {
     rowError,
     canRemove,
     canToggleServer,
+    canApplyRemedy,
     canDiscover,
     canAuth,
     toolsReadOnly,
     onRefresh,
     onToggleServer,
+    onRemedy,
     onToggleTool,
     onToggleAllTools,
     onLogin,
@@ -1307,6 +1475,7 @@ function McpServerRow(props: {
             showForceReauth={showForceReauth}
             canRemove={canRemove}
             canToggleServer={canToggleServer}
+            remedy={canApplyRemedy ? server.remedy ?? null : null}
             canDiscover={canDiscover}
             onLogin={onLogin}
             onLogout={onLogout}
@@ -1314,6 +1483,7 @@ function McpServerRow(props: {
             onRefresh={onRefresh}
             onDelete={onDelete}
             onToggleServer={onToggleServer}
+            onRemedy={onRemedy}
           />
         </div>
 
@@ -1395,6 +1565,7 @@ function ServerRowActions(props: {
   readonly showForceReauth: boolean;
   readonly canRemove: boolean;
   readonly canToggleServer: boolean;
+  readonly remedy: ProviderMcpRemedy | null;
   readonly canDiscover: boolean;
   readonly onLogin: () => void;
   readonly onLogout: () => void;
@@ -1402,6 +1573,7 @@ function ServerRowActions(props: {
   readonly onRefresh: () => void;
   readonly onDelete: () => void;
   readonly onToggleServer: (enabled: boolean) => void;
+  readonly onRemedy: () => void;
 }): ReactNode {
   return (
     <div className="flex shrink-0 items-center gap-1">
@@ -1463,6 +1635,18 @@ function ServerRowActions(props: {
           aria-label={`Delete ${props.serverName}`}
         >
           <Trash2 className="size-3.5" />
+        </Button>
+      ) : null}
+      {props.remedy !== null ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={props.pending}
+          onClick={props.onRemedy}
+          aria-label={`${props.remedy.label} ${props.serverName}`}
+        >
+          {props.remedy.label}
         </Button>
       ) : null}
       {props.canToggleServer ? (

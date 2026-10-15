@@ -54,6 +54,7 @@ import {
   providersListRequestSchema,
   providersListRequestSchemaBeforeV70,
   providersListResponseSchema,
+  providersListResponseSchemaV100Preimage,
   providersListResponseSchemaV70,
   providersListResponseSchemaV90,
   providersListResponseSchemaV91,
@@ -205,7 +206,8 @@ const FIXTURES = {
   // live shape goes red on this row rather than on the release that ships the
   // growth. Same response then applies - freeze the line that stopped being
   // head, open the next one.
-  "providers.list@10.0": dump(providersListResponseSchema),
+  "providers.list@10.0": dump(providersListResponseSchemaV100Preimage),
+  "providers.list@10.1": dump(providersListResponseSchema),
   // The REQUEST lines carry their own freeze history (`native` grew the
   // already-shipped v4.0/v5.0/v6.0 requests before `host-v1.1.10` re-pinned
   // them), and nothing pinned them locally until now - the tag-based gate was
