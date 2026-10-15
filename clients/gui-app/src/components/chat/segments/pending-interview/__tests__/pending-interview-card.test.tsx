@@ -2814,6 +2814,15 @@ describe("PendingInterviewCard long option labels", () => {
     expect(
       rowButton.closest('[class~="@container/interview-options"]'),
     ).not.toBeNull();
+
+    // The custom-answer row has no number badge; its pencil badge is the
+    // right-edge element, so it needs the same `ml-auto` the spacer provided.
+    const otherRow = screen.getByRole("button", {
+      name: "Other",
+    }).parentElement;
+    const pencilBadge = otherRow?.querySelector("span[aria-hidden].size-5");
+    expect(pencilBadge).not.toBeNull();
+    expect(pencilBadge?.classList.contains("ml-auto")).toBe(true);
   });
 });
 
