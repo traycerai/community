@@ -1057,6 +1057,7 @@ describe("<SandboxCard /> grants list", () => {
       mode: "brokered",
       source: "approved",
       connectorName: null,
+      rotation: null,
       routes: [
         {
           route: "route-1",
@@ -1143,6 +1144,7 @@ describe("<SandboxCard /> grants list", () => {
       [
         grantOf({
           connectorName: "office-vpc",
+          rotation: null,
           routes: [
             {
               route: "route-1",

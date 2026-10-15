@@ -51,6 +51,7 @@ const SUMMARY: SandboxGrantsSummary = {
       mode: "brokered",
       source: "approved",
       connectorName: null,
+      rotation: null,
       routes: [
         {
           route: "route-1",

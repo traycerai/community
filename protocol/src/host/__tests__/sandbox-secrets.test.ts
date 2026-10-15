@@ -27,6 +27,7 @@ const BROKERED_GRANT = {
   mode: "brokered",
   source: "approved",
   connectorName: "office-vpn",
+  rotation: null,
   routes: [ROUTE],
 };
 
@@ -37,6 +38,7 @@ const EXPOSED_GRANT = {
   mode: "exposed",
   source: "default",
   connectorName: null,
+  rotation: null,
   routes: [],
 };
 

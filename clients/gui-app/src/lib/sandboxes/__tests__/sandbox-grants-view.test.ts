@@ -19,6 +19,7 @@ function grant(overrides: Partial<SandboxGrant>): SandboxGrant {
     mode: "brokered",
     source: "approved",
     connectorName: null,
+    rotation: null,
     routes: [
       {
         route: "route-1",
@@ -111,6 +112,7 @@ describe("sandboxGrantViews", () => {
       summary([
         grant({
           connectorName: "office-vpc",
+          rotation: null,
           routes: [
             {
               route: "route-1",
@@ -134,6 +136,7 @@ describe("sandboxGrantViews", () => {
   it("puts the broker's word ahead of what the sandbox last reported", () => {
     const offline = grant({
       connectorName: "office-vpc",
+      rotation: null,
       routes: [
         {
           route: "route-1",
@@ -156,6 +159,7 @@ describe("sandboxGrantViews", () => {
       summary([
         grant({
           connectorName: "office-vpc",
+          rotation: null,
           routes: [
             {
               route: "route-1",
@@ -199,6 +203,7 @@ describe("sandboxGrantViews", () => {
       summary([
         grant({
           connectorName: "office-vpc",
+          rotation: null,
           routes: [
             {
               route: "route-1",

@@ -29,6 +29,7 @@ const SUMMARY_RESULT: SandboxGrantsFetchResult = {
         mode: "brokered",
         source: "approved",
         connectorName: null,
+        rotation: null,
         routes: [
           {
             route: "route-1",

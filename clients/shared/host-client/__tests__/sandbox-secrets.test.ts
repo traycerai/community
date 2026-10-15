@@ -39,6 +39,7 @@ const SUMMARY_BODY = {
       mode: "brokered",
       source: "approved",
       connectorName: null,
+      rotation: null,
       routes: [
         {
           route: "route-1",
@@ -170,6 +171,7 @@ describe("fetchSandboxGrantsViaHttp", () => {
             mode: "exposed",
             source: "default",
             connectorName: null,
+            rotation: null,
             routes: [],
           },
         ],
