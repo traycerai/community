@@ -3,6 +3,8 @@ import {
   agentListDowngradeV9ToV8,
   agentListUpgradeV90ToV91,
   agentListUpgradeV91ToV92,
+  agentListUpgradeV92ToV100,
+  agentListUpgradeV100ToV101,
 } from "@traycer/protocol/host/agent/contracts";
 import {
   agentSummarySchemaV90,
@@ -64,8 +66,13 @@ describe("agent.list v9.0 -> v9.1 upgrade path", () => {
     expect(chained.agents).toEqual([
       { ...V90_AGENT, sessionState: null, lastExit: null, archived: null },
     ]);
-    const parsed = listAgentsResponseSchema.parse(chained);
-    expect(parsed.agents).toEqual(chained.agents);
+    // Two more hops reach the head: `@10.0` is a pass-through and `@10.1`
+    // fills the reach pair, so only then is the row a canonical one.
+    const head = agentListUpgradeV100ToV101.upgradeResponse(
+      agentListUpgradeV92ToV100.upgradeResponse(chained),
+    );
+    const parsed = listAgentsResponseSchema.parse(head);
+    expect(parsed.agents).toEqual(head.agents);
   });
 });
 

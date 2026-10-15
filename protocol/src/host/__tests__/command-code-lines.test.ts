@@ -178,6 +178,9 @@ function agentRow(id: string, harnessId: string | null) {
     lastExit: null,
     // `agent.list@9.2` put `archived` on the row; 10.0 carries it live.
     archived: null,
+    // `agent.list@10.1` put the reach pair on the row (ticket E17).
+    reach: null,
+    hostConnectivity: { kind: "unknown" },
   };
 }
 

@@ -245,6 +245,7 @@ function SandboxCreateForm(props: {
             burst: false,
             createdByHostId: null,
             createdByAgentId: null,
+            environmentId: null,
           },
           { onSuccess: () => props.onDone() },
         );

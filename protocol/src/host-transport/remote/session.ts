@@ -95,6 +95,7 @@ import {
   FINE_INITIAL_BULK_SEND_CREDITS,
   MuxFrameDecodeError,
   MuxFrameType,
+  type CredentialUpdatePayload,
   MuxMessageSizeError,
   QosClass,
   SESSION_CONTROL_STREAM_ID,
@@ -1921,7 +1922,7 @@ export class RemoteSession<
       type: MuxFrameType.CREDENTIAL_UPDATE,
       streamId: SESSION_CONTROL_STREAM_ID,
       qos: QosClass.INTERACTIVE,
-      json: { bearer },
+      json: { bearer, memberCredential: null } satisfies CredentialUpdatePayload,
       binary: null,
     });
   }

@@ -276,6 +276,15 @@ export const RPC_ERROR_CODES = [
   // yet), so nothing can be linked now; the dialog says "Connect to Traycer
   // to link this profile." Additive, as above.
   "PROVIDER_LINK_UNAVAILABLE",
+  // ─── Same principal (ticket E17) ────────────────────────────────────────
+  //
+  // The two hosts belong to different owners (a person and a team, or two
+  // people): an agent message, or a host-agent attach, between them is
+  // refused. One reason name on every wire that carries the refusal, so the
+  // GUI picks its sentence from it alone; distinct from a transport failure,
+  // which says nothing about who owns the target. Additive, as above: a
+  // released peer narrows it to RPC_ERROR and keeps the status.
+  "principal_mismatch",
 ] as const;
 
 export type RpcErrorCode = (typeof RPC_ERROR_CODES)[number];

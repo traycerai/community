@@ -568,6 +568,7 @@ describe("the other sandbox routes parse or fail the same way", () => {
       burst: false,
       createdByHostId: null,
       createdByAgentId: null,
+      environmentId: null,
     });
     expect(fetchMock.mock.calls[0][1]?.headers).toMatchObject({
       "Content-Type": "application/json",

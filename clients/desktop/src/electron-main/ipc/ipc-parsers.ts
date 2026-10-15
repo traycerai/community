@@ -565,6 +565,9 @@ export function parseSandboxCreateRequest(
     createdByAgentId: nullOr(obj.createdByAgentId, (v) =>
       requireNonEmptyString(v, "createSandbox.request.createdByAgentId"),
     ),
+    environmentId: nullOr(obj.environmentId, (v) =>
+      requireNonEmptyString(v, "createSandbox.request.environmentId"),
+    ),
   };
 }
 

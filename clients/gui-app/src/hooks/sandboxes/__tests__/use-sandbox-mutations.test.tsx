@@ -421,6 +421,7 @@ const CREATE_REQUEST: SandboxCreateRequest = {
   burst: false,
   createdByHostId: null,
   createdByAgentId: null,
+  environmentId: null,
 };
 
 const CREATE_OK: SandboxCreateFetchResult = {

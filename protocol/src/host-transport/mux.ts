@@ -23,6 +23,7 @@ import {
   type ClientHandshakeIdentity,
 } from "../framework/client-identity";
 import { lazySchema } from "@traycer/protocol/framework/lazy-schema";
+import { isoMillisecondTimestampSchema } from "@traycer/protocol/common/schemas";
 
 /**
  * Shared client<->host mux wire contract carried E2E-encrypted inside the
@@ -122,7 +123,10 @@ export const MuxFrameType = {
   REAUTH_NOTICE: 10,
   /** RESERVED (R4-E3): resume-ticket message type. Not built in v1. */
   RESUME: 11,
-  /** In-place bearer rotation: `{bearer}` on streamId 0. */
+  /**
+   * In-place credential update on streamId 0: the rotated user bearer, or a
+   * team host's member credential (`memberCredential`, `bearer: null`).
+   */
   CREDENTIAL_UPDATE: 12,
   /** In-place cloud-verdict change: `{cloudAuthorized}` on streamId 0. */
   CLOUD_VERDICT_UPDATE: 13,
@@ -399,7 +403,34 @@ export interface CreditPayload {
 }
 
 export interface CredentialUpdatePayload {
-  readonly bearer: string;
+  /**
+   * The client's rotated user bearer, or `null` on a frame that rotates
+   * none: a member-credential frame to a team host's session-grant session,
+   * which holds no user bearer. `null` only beside a `memberCredential`.
+   */
+  readonly bearer: string | null;
+  /**
+   * A team host's member credential for the session's member (ticket E17,
+   * consumed by E13): the four fields of the member mint response from
+   * `POST /api/v3/hosts/token`. Sent only to a host that offered
+   * {@link SESSION_CAPABILITY_MEMBER_CREDENTIAL}, which a released host never
+   * does; `null` on every other frame, and read as `null` from a client that
+   * predates it.
+   */
+  readonly memberCredential: MemberCredentialHandoff | null;
+}
+
+/**
+ * A member credential as it is handed to a team host: the member mint
+ * response's access token, refresh token, refresh family and the time the
+ * server recorded it. The host keeps the greater `(provisionedAt, familyId)`
+ * per member, the adoption rule of its own credential.
+ */
+export interface MemberCredentialHandoff {
+  readonly token: string;
+  readonly refreshToken: string;
+  readonly familyId: string;
+  readonly provisionedAt: string;
 }
 
 /**
@@ -520,14 +551,57 @@ export const reauthNoticePayloadSchema: z.ZodType<ReauthNoticePayload> =
     }),
   );
 
+export const memberCredentialHandoffSchema: z.ZodType<MemberCredentialHandoff> =
+  lazySchema(() =>
+    z
+      .object({
+        token: z.string().min(1),
+        refreshToken: z.string().min(1),
+        familyId: z.string().min(1),
+        // The adoption rule orders by this value, so its exact wire form is
+        // checked here, as on the mint response and the `/stream` provision.
+        provisionedAt: isoMillisecondTimestampSchema,
+      })
+      .strict(),
+  );
+
 export const credentialUpdatePayloadSchema: z.ZodType<CredentialUpdatePayload> =
-  lazySchema(() => z.object({ bearer: z.string() }));
+  lazySchema(() =>
+    z
+      .object({
+        bearer: z.string().nullable(),
+        memberCredential: memberCredentialHandoffSchema
+          .nullable()
+          .default(null),
+      })
+      // A frame must carry something: no bearer means a member credential.
+      .refine(
+        (payload) => payload.bearer !== null || payload.memberCredential !== null,
+        "a credential update with no bearer carries a member credential",
+      ),
+  );
 
 export const cloudVerdictUpdatePayloadSchema: z.ZodType<CloudVerdictUpdatePayload> =
   lazySchema(() => z.object({ cloudAuthorized: z.boolean() }));
 
 /** Capability tag advertised in `openAck.capabilities` for bearer rotation. */
 export const SESSION_CAPABILITY_CREDENTIAL_UPDATE = "credentialUpdate";
+
+/**
+ * Offered in `openAck.capabilities` by a TEAM host, and only to a
+ * session-grant session (ticket E17; E13 offers it): the host takes the
+ * session member's credential from a {@link MuxFrameType.CREDENTIAL_UPDATE}
+ * carrying `memberCredential` and `bearer: null`. A client sends that frame
+ * only after seeing this tag. A personal host never offers it and ignores the
+ * field, and a released host never offers it, so a released client never
+ * sends it.
+ *
+ * Never offered beside {@link SESSION_CAPABILITY_CREDENTIAL_UPDATE}, which
+ * invites the client's USER bearer and stays unoffered to a sandbox. No
+ * `/stream` twin: a team host admits no `/stream` connection, so a member
+ * reaches it only through the relay.
+ */
+export const SESSION_CAPABILITY_MEMBER_CREDENTIAL = "memberCredential";
 
 /**
  * Advertised in `openAck.capabilities` by a host that accepts

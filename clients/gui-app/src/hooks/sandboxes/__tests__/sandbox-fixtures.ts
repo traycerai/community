@@ -33,6 +33,8 @@ export function sandboxSummaryFixture(
     routes: null,
     priceMcPerHour: { awakeMc: 120, suspendedMc: 4, stoppedMc: 2 },
     environmentId: null,
+    createdBy: null,
+    wakePayer: null,
     ...overrides,
   };
 }

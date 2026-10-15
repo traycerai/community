@@ -138,6 +138,7 @@ describe("parseSandboxCreateRequest", () => {
     burst: false,
     createdByHostId: null,
     createdByAgentId: null,
+    environmentId: null,
   };
 
   it("returns a valid request unchanged, nulls kept as the server's defaults", () => {
@@ -153,6 +154,7 @@ describe("parseSandboxCreateRequest", () => {
         burst: true,
         createdByHostId: "host-1",
         createdByAgentId: "agent-1",
+        environmentId: "env_1",
       }),
     ).toMatchObject({
       os: "windows",
@@ -163,7 +165,22 @@ describe("parseSandboxCreateRequest", () => {
       burst: true,
       createdByHostId: "host-1",
       createdByAgentId: "agent-1",
+      environmentId: "env_1",
     });
+  });
+
+  it("keeps a null environmentId as the caller's own principal's environment", () => {
+    expect(
+      parseSandboxCreateRequest({ ...VALID, environmentId: null })
+        .environmentId,
+    ).toBeNull();
+  });
+
+  it("throws when the environmentId key is absent altogether", () => {
+    const { environmentId: _omitted, ...withoutEnvironment } = VALID;
+    expect(() => parseSandboxCreateRequest(withoutEnvironment)).toThrow(
+      "createSandbox.request.environmentId",
+    );
   });
 
   it("drops a field it does not know rather than forwarding it to the control plane", () => {
@@ -197,6 +214,12 @@ describe("parseSandboxCreateRequest", () => {
       ["idleMinutes", { idleMinutes: 0 }],
       ["createdByHostId", { createdByHostId: "" }],
       ["createdByAgentId", { createdByAgentId: 7 }],
+      // Like `createdByHostId`: an empty string is not an id, and a missing key
+      // is not a null (only an explicit null picks the caller's own
+      // environment).
+      ["environmentId", { environmentId: "" }],
+      ["environmentId", { environmentId: undefined }],
+      ["environmentId", { environmentId: 7 }],
     ];
     for (const [field, override] of cases) {
       expect(() =>

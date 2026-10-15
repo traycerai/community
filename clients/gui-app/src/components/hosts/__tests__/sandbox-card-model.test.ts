@@ -48,6 +48,8 @@ function summaryOf(overrides: Partial<SandboxSummary>): SandboxSummary {
     routes: null,
     priceMcPerHour: null,
     environmentId: null,
+    createdBy: null,
+    wakePayer: null,
     ...overrides,
   };
 }

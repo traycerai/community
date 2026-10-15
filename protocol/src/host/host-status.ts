@@ -241,6 +241,14 @@ export type HostListItem = {
    */
   profile?: HostProfile | null;
   /**
+   * With `?include=owner` (ticket E12, the team arm's `name` from E17): the
+   * principal that owns the host, a person or a team. The host list groups a
+   * team's sandboxes and pods under the team's name from it, and a host's
+   * sending-side gate compares it to its own owner (E13). Absent unless asked
+   * for, so a client that does not ask parses the row it always did.
+   */
+  owner?: HostOwnerPrincipal;
+  /**
    * This host's configured update policy (Architecture §13, T16): `manual`
    * (default) surfaces "Update now" as an explicit action; `auto` means the
    * reconciler applies an approved `desiredVersion` without a per-update
@@ -324,6 +332,29 @@ export const hostStatusDtoSchema: z.ZodType<HostStatusDTO> = lazySchema(() =>
     .strict(),
 );
 
+/**
+ * A host's owner as authn's `?include=owner` sends it: `user` with the
+ * person's id, or `team` with the team's id and display name. The person's
+ * arm carries no name: a person reads only their own hosts and their teams'.
+ */
+export type HostOwnerPrincipal =
+  | { readonly kind: "user"; readonly id: string }
+  | { readonly kind: "team"; readonly id: string; readonly name: string };
+
+export const hostOwnerPrincipalSchema: z.ZodType<HostOwnerPrincipal> =
+  lazySchema(() =>
+    z.discriminatedUnion("kind", [
+      z.object({ kind: z.literal("user"), id: z.string().min(1) }).strict(),
+      z
+        .object({
+          kind: z.literal("team"),
+          id: z.string().min(1),
+          name: z.string().min(1),
+        })
+        .strict(),
+    ]),
+  );
+
 export const hostListItemSchema: z.ZodType<HostListItem> = lazySchema(() =>
   z
     .object({
@@ -348,6 +379,9 @@ export const hostListItemSchema: z.ZodType<HostListItem> = lazySchema(() =>
       sandboxState: hostSandboxStateSchema.nullable().optional(),
       sandboxFrozen: z.boolean().nullable().optional(),
       profile: hostProfileSchema.nullable().optional(),
+      // Behind `?include=owner`. Like the sandbox fields, a `@1.0` inventory
+      // frame never carries it: that line is frozen below.
+      owner: hostOwnerPrincipalSchema.optional(),
       updatePolicy: hostUpdatePolicySchema,
     })
     .strict(),
@@ -362,7 +396,7 @@ export const hostListItemSchema: z.ZodType<HostListItem> = lazySchema(() =>
  */
 export type HostListItemV10 = Omit<
   HostListItem,
-  "sandboxState" | "sandboxFrozen" | "profile"
+  "sandboxState" | "sandboxFrozen" | "profile" | "owner"
 >;
 
 export const hostListItemSchemaV10: z.ZodType<HostListItemV10> = lazySchema(

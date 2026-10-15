@@ -74,10 +74,10 @@ const textFrameFields = {
  *
  * @1.0 is FROZEN on {@link hostListItemSchemaV10}, the row before sandbox
  * hosts. @1.1 carries the live {@link hostListItemSchema}, whose rows may hold
- * `sandboxState`, `sandboxFrozen` and `profile`, and whose set may include
- * `kind: sandbox` rows. The serving host gates on the negotiated minor: a 1.0
- * subscriber receives rows with the three fields stripped and the sandbox rows
- * removed, so a released client sees the fleet it always saw.
+ * `sandboxState`, `sandboxFrozen`, `profile` and `owner`, and whose set may
+ * include `kind: sandbox` rows. The serving host gates on the negotiated
+ * minor: a 1.0 subscriber receives rows rebuilt without those fields and with
+ * the sandbox rows removed, so a released client sees the fleet it always saw.
  */
 export const hostInventorySubscribeOpenRequestSchemaV10 = lazySchema(() =>
   z.object({}),

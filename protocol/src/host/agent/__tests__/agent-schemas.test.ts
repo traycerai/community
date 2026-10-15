@@ -341,6 +341,10 @@ describe("agent host schemas", () => {
             lastExit: null,
             // The `@9.2` archive flag: required and nullable the same way.
             archived: false,
+            // The `@10.1` reach pair: required, filled by the upgrade path
+            // for an older host.
+            reach: null,
+            hostConnectivity: { kind: "unknown" },
           },
         ],
       }),
@@ -371,6 +375,8 @@ describe("agent host schemas", () => {
           sessionState: null,
           lastExit: null,
           archived: false,
+          reach: null,
+          hostConnectivity: { kind: "unknown" },
           runConfig: {
             model: { kind: "concrete", slug: "gpt-5.6-codex" },
             reasoningEffort: "high",
@@ -414,6 +420,8 @@ describe("agent host schemas", () => {
           sessionState: null,
           lastExit: null,
           archived: false,
+          reach: null,
+          hostConnectivity: { kind: "unknown" },
         },
       ],
     });
@@ -621,11 +629,15 @@ describe("agent.list@9.2 archived flag", () => {
 
   it("requires archived on the canonical row and accepts true, false and null", () => {
     const { archived: _omitted, ...keyless } = V92_ROW;
+    const reach = { reach: null, hostConnectivity: { kind: "unknown" } };
 
-    expect(agentSummarySchema.safeParse(keyless).success).toBe(false);
+    expect(
+      agentSummarySchema.safeParse({ ...keyless, ...reach }).success,
+    ).toBe(false);
     for (const archived of [true, false, null]) {
       expect(
-        agentSummarySchema.safeParse({ ...V92_ROW, archived }).success,
+        agentSummarySchema.safeParse({ ...V92_ROW, ...reach, archived })
+          .success,
       ).toBe(true);
     }
   });
@@ -634,16 +646,28 @@ describe("agent.list@9.2 archived flag", () => {
 // Major 10 opened for `commandcode`, the first harness id after `1.5.0`, and
 // major 9 (whose latest minor is 9.2) froze at the id set that release
 // negotiated. The hop between them is an id-only change: `archived`, which
-// 9.2 put on the row, is live on 10.0 and survives the bridge.
-describe("agent.list@10.0 against the frozen 9.2 line", () => {
+// 9.2 put on the row, is live on 10.0 and survives the bridge. The response
+// below is the head (10.1) shape, whose `reach` pair the bridge drops too.
+describe("agent.list@10.x against the frozen 9.2 line", () => {
+  const REACH_UNKNOWN = {
+    reach: null,
+    hostConnectivity: { kind: "unknown" },
+  } as const;
   const V100_RESPONSE: ListAgentsResponse = {
     caller: { agentId: "agent-1", canSendMessages: true },
     scope: "user",
     agents: [
-      V92_ROW,
-      { ...V92_ROW, id: "agent-2", isSelf: false, archived: null },
+      { ...V92_ROW, ...REACH_UNKNOWN },
       {
         ...V92_ROW,
+        ...REACH_UNKNOWN,
+        id: "agent-2",
+        isSelf: false,
+        archived: null,
+      },
+      {
+        ...V92_ROW,
+        ...REACH_UNKNOWN,
         id: "agent-commandcode",
         isSelf: false,
         harnessId: "commandcode",
@@ -659,7 +683,8 @@ describe("agent.list@10.0 against the frozen 9.2 line", () => {
     );
   });
 
-  it("downgrades to @9.2 by dropping the commandcode row alone, archived kept", () => {
+  it("downgrades from @10.1 to @9.2 by dropping the commandcode row alone, archived kept", () => {
+    expect(agentListDowngradeV10ToV9.from).toEqual({ major: 10, minor: 1 });
     expect(agentListDowngradeV10ToV9.to).toEqual({ major: 9, minor: 2 });
     const downgraded =
       agentListDowngradeV10ToV9.downgradeResponse(V100_RESPONSE);

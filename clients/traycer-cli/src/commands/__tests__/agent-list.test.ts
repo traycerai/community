@@ -64,6 +64,11 @@ const LEGACY_LIST_RESPONSE = {
       // `null` for an older host ("never asked"), and this mock stands in for
       // the transport that has already run that chain.
       archived: null,
+      // `agent.list@10.1`'s reach pair. The `@10.0 -> @10.1` upgrade fills
+      // `null` and `unknown` for an older host ("never asked", not
+      // "unreachable" or "offline").
+      reach: null,
+      hostConnectivity: { kind: "unknown" as const },
     },
   ],
 };
@@ -85,8 +90,8 @@ worktree: <path>: the agent runs in a dedicated git worktree`;
 // Key ORDER is load-bearing: the assertions below compare `JSON.stringify`
 // bytes, and zod emits in schema-declaration order - `runConfig` comes from
 // the `@9.0` row, the session facet extends it at `@9.1` and `archived` at
-// `@9.2`, so they trail `runConfig` in that order however the fixture above
-// happens to be written.
+// `@9.2` and the reach pair at `@10.1`, so they trail `runConfig` in that order
+// however the fixture above happens to be written.
 const EXPECTED_DEFAULT_FILLED_DATA = {
   ...LEGACY_LIST_RESPONSE,
   agents: [
@@ -96,6 +101,8 @@ const EXPECTED_DEFAULT_FILLED_DATA = {
       sessionState: null,
       lastExit: null,
       archived: null,
+      reach: null,
+      hostConnectivity: { kind: "unknown" as const },
     },
   ],
 };

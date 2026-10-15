@@ -12,6 +12,7 @@ import {
 } from "@traycer/protocol/host/agent-session-state";
 import { permissionModeSchema } from "@traycer/protocol/persistence/epic/foundation";
 import { lazySchema } from "@traycer/protocol/framework/lazy-schema";
+import { lastKnownConnectivitySchema } from "@traycer/protocol/host/last-known-connectivity";
 
 export { DEFAULT_AGENT_MODE, agentModeSchema, type AgentMode };
 
@@ -1042,6 +1043,36 @@ export const agentSummarySchemaV92 = lazySchema(() =>
 );
 export type AgentSummaryV92 = z.infer<typeof agentSummarySchemaV92>;
 
+/**
+ * The `agent.list@10.0` row, frozen when `@10.1` put `reach` and
+ * `hostConnectivity` on the head (ticket E17). Released (`1.5.1` serves
+ * major 10), so it never grows a key again: a `@10.1` answer re-parses
+ * through it on the way down, which strips both keys for a `@10.0` caller.
+ *
+ * Built off the live base like the head it was, so it tracks the live
+ * harness id enum; major 10 is still the line that carries new ids.
+ */
+export const agentSummarySchemaV100 = lazySchema(() =>
+  releasedAgentSummarySchema.extend({
+    runConfig: agentRunConfigSchema.nullable().default(null),
+    sessionState: agentSessionStateSchema.nullable(),
+    lastExit: agentSessionLastExitSchema.nullable(),
+    archived: z.boolean().nullable(),
+  }),
+);
+export type AgentSummaryV100 = z.infer<typeof agentSummarySchemaV100>;
+
+/**
+ * Whether the answering host can reach the agent's host for the caller
+ * (ticket E17): `same_principal` when both hosts belong to one principal,
+ * `other_principal` when the agent's host is a collaborator's or another
+ * team's, `null` when this host cannot say (a host that predates the field).
+ */
+export const agentReachSchema = lazySchema(() =>
+  z.enum(["same_principal", "other_principal"]),
+);
+export type AgentReach = z.infer<typeof agentReachSchema>;
+
 // THE CANONICAL NAME STAYS ON THE HEAD, which is the rule
 // `head-names-canonical-alias.test.ts` enforces: writing the new row under a
 // suffix would leave `agentSummarySchema` exported, structurally plausible and
@@ -1050,7 +1081,7 @@ export type AgentSummaryV92 = z.infer<typeof agentSummarySchemaV92>;
 // Built off the live base rather than `agentSummarySchemaV90`, which pins the
 // harness id major 9 shipped: this row is the head (major 10) and is the only
 // one that tracks the live enum. It carries every key the frozen major-9
-// minors carry (`runConfig`, the session facet, `archived`), so a 10.0 answer
+// minors carry (`runConfig`, the session facet, `archived`), so a 10.x answer
 // downgrades to 9.2 by dropping rows alone.
 export const agentSummarySchema = lazySchema(() =>
   releasedAgentSummarySchema.extend({
@@ -1076,6 +1107,19 @@ export const agentSummarySchema = lazySchema(() =>
      * `false` reports an archived agent on an older host as live.
      */
     archived: z.boolean().nullable(),
+    /**
+     * Whether a message from this host can reach the agent (ticket E17), or
+     * `null` when the answering host predates the field. An `other_principal`
+     * agent is listed and its transcript may be readable, but
+     * `agent.sendMessage` refuses it with `principal_mismatch`.
+     */
+    reach: agentReachSchema.nullable(),
+    /**
+     * What the answering host last observed about the agent's host. `unknown`
+     * unless a source this host is authorized to read said otherwise, and
+     * never `offline` for want of one.
+     */
+    hostConnectivity: lastKnownConnectivitySchema,
   }),
 );
 export type AgentSummary = z.infer<typeof agentSummarySchema>;
@@ -1300,6 +1344,20 @@ export const listAgentsResponseSchemaV92 = lazySchema(() =>
   }),
 );
 export type ListAgentsResponseV92 = z.infer<typeof listAgentsResponseSchemaV92>;
+
+/**
+ * The `agent.list@10.0` response, frozen off the canonical one when `@10.1`
+ * put `reach` and `hostConnectivity` on the row. See
+ * {@link agentSummarySchemaV100}.
+ */
+export const listAgentsResponseSchemaV100 = lazySchema(() =>
+  listAgentsResponseSchema.extend({
+    agents: z.array(agentSummarySchemaV100),
+  }),
+);
+export type ListAgentsResponseV100 = z.infer<
+  typeof listAgentsResponseSchemaV100
+>;
 
 /**
  * `agent.sendMessage@1.0` - fire-and-forget enqueue from one agent to

@@ -24,6 +24,7 @@ import {
   listAgentsResponseSchemaV90,
   listAgentsResponseSchemaV91,
   listAgentsResponseSchemaV92,
+  listAgentsResponseSchemaV100,
   listAgentsResponseSchema,
 } from "../../src/host/agent/shared";
 import {
@@ -142,7 +143,13 @@ const FIXTURES = {
   // that line.
   "agent.list@9.1": dump(listAgentsResponseSchemaV91),
   "agent.list@9.2": dump(listAgentsResponseSchemaV92),
-  "agent.list@10.0": dump(listAgentsResponseSchema),
+  // 10.0 froze when 10.1 opened to put `reach` and `hostConnectivity` on the
+  // row (ticket E17); `1.5.1` shipped 10.0, and its dump did not change by the
+  // freeze.
+  "agent.list@10.0": dump(listAgentsResponseSchemaV100),
+  // The head line. It dumps LIVE, so the next attempt to grow the row goes red
+  // on this line.
+  "agent.list@10.1": dump(listAgentsResponseSchema),
   "providers.list@1.0": dump(providersListResponseSchemaV10),
   "providers.list@2.0": dump(providersListResponseSchemaV20),
   // Frozen with Amp, before `profiles` (the v4.0 cut) - pinned now that this

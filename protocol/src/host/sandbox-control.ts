@@ -197,7 +197,34 @@ export interface SandboxSummary {
    * predates environments, which reads as the person's Personal one.
    */
   readonly environmentId: string | null;
+  /**
+   * The member who created a team sandbox (ticket E17, served by E14);
+   * `null` on a personal sandbox, a pod, and from a server before it.
+   */
+  readonly createdBy: SandboxMember | null;
+  /**
+   * The member paying for the current wake of a team sandbox; `null` while
+   * it is not awake, on a personal sandbox (its owner pays), and from a server
+   * before it.
+   */
+  readonly wakePayer: SandboxMember | null;
 }
+
+/**
+ * A team member as a team sandbox's card names them. `userId` lets the card
+ * say "you"; `displayName` is `null` when the member has none to show.
+ */
+export interface SandboxMember {
+  readonly userId: string;
+  readonly displayName: string | null;
+}
+
+export const sandboxMemberSchema: z.ZodType<SandboxMember> = lazySchema(() =>
+  z.object({
+    userId: z.string().min(1),
+    displayName: z.string().nullable(),
+  }),
+);
 
 /** Days a frozen sandbox is kept before the control plane destroys it. */
 export const SANDBOX_FROZEN_RETENTION_DAYS = 30;
@@ -242,6 +269,9 @@ export const sandboxSummarySchema: z.ZodType<SandboxSummary> = lazySchema(() =>
       .catch(null),
     priceMcPerHour: sandboxHourlyPriceSchema.nullable(),
     environmentId: z.string().min(1).nullable().default(null),
+    // Read as `null` when absent, so a server before E14 fills them parses.
+    createdBy: sandboxMemberSchema.nullable().default(null),
+    wakePayer: sandboxMemberSchema.nullable().default(null),
   }),
 );
 
@@ -403,6 +433,12 @@ export interface SandboxCreateRequest {
   readonly burst: boolean;
   readonly createdByHostId: string | null;
   readonly createdByAgentId: string | null;
+  /**
+   * The environment to create into (ticket E17): a team's, from the form's
+   * Belongs to; `null` for the caller's own principal's environment, which is
+   * what a server before environments always did.
+   */
+  readonly environmentId: string | null;
 }
 
 /** `202` body of `POST /api/sandboxes`: the row exists, in `creating`. */
