@@ -84,6 +84,7 @@ const decideSecretRequestViaHttpMock = vi.hoisted(() =>
   vi.fn<typeof decideSecretRequestViaHttp>(async () => ({
     kind: "ok",
     status: "approved",
+    decidedBy: null,
   })),
 );
 vi.mock(
@@ -1076,46 +1077,77 @@ describe("RunnerIpcBridge", () => {
       throw new Error("a secrets handler is missing");
     }
 
-    await expect(grants(bareEvent(), "bearer-1", "host-1")).resolves.toEqual({
+    await expect(
+      grants(bareEvent(), "bearer-1", "env-1", "host-1"),
+    ).resolves.toEqual({
       kind: "ok",
       summary: { version: 3, grants: [], github: null },
     });
-    expect(fetchSandboxGrantsViaHttpMock).toHaveBeenCalledWith(
+    expect(fetchSandboxGrantsViaHttpMock).toHaveBeenLastCalledWith(
       "http://localhost:5005",
       "bearer-1",
+      "env-1",
       "host-1",
     );
 
     await expect(
-      decide(bareEvent(), "bearer-2", "request-1", "approve_default"),
-    ).resolves.toEqual({ kind: "ok", status: "approved" });
-    expect(decideSecretRequestViaHttpMock).toHaveBeenCalledWith(
+      decide(bareEvent(), "bearer-2", "env-1", "request-1", "approve_default"),
+    ).resolves.toEqual({ kind: "ok", status: "approved", decidedBy: null });
+    expect(decideSecretRequestViaHttpMock).toHaveBeenLastCalledWith(
       "http://localhost:5005",
       "bearer-2",
+      "env-1",
       "request-1",
       "approve_default",
     );
 
+    // A null environment (a server that predates environments) crosses as null.
+    await grants(bareEvent(), "bearer-1", null, "host-1");
+    expect(fetchSandboxGrantsViaHttpMock).toHaveBeenLastCalledWith(
+      "http://localhost:5005",
+      "bearer-1",
+      null,
+      "host-1",
+    );
+    await decide(bareEvent(), "bearer-2", null, "request-1", "approve");
+    expect(decideSecretRequestViaHttpMock).toHaveBeenLastCalledWith(
+      "http://localhost:5005",
+      "bearer-2",
+      null,
+      "request-1",
+      "approve",
+    );
+
     for (const bad of [null, undefined, 7, {}]) {
-      await expect(grants(bareEvent(), bad, "host-1")).rejects.toThrow(
+      await expect(grants(bareEvent(), bad, "env-1", "host-1")).rejects.toThrow(
         "getSandboxGrants.bearerToken",
       );
-      await expect(grants(bareEvent(), "bearer-1", bad)).rejects.toThrow(
-        "getSandboxGrants.hostId",
-      );
       await expect(
-        decide(bareEvent(), bad, "request-1", "approve"),
+        grants(bareEvent(), "bearer-1", "env-1", bad),
+      ).rejects.toThrow("getSandboxGrants.hostId");
+      await expect(
+        decide(bareEvent(), bad, "env-1", "request-1", "approve"),
       ).rejects.toThrow("decideSecretRequest.bearerToken");
       await expect(
-        decide(bareEvent(), "bearer-2", bad, "approve"),
+        decide(bareEvent(), "bearer-2", "env-1", bad, "approve"),
       ).rejects.toThrow("decideSecretRequest.requestId");
+    }
+    // An environment that is neither a string nor null is refused in the
+    // main process, before any request.
+    for (const bad of [undefined, 7, {}, true]) {
+      await expect(
+        grants(bareEvent(), "bearer-1", bad, "host-1"),
+      ).rejects.toThrow("getSandboxGrants.environmentId");
+      await expect(
+        decide(bareEvent(), "bearer-2", bad, "request-1", "approve"),
+      ).rejects.toThrow("decideSecretRequest.environmentId");
     }
     // A decision outside the three is refused in the main process.
     await expect(
-      decide(bareEvent(), "bearer-2", "request-1", "approve_once"),
+      decide(bareEvent(), "bearer-2", "env-1", "request-1", "approve_once"),
     ).rejects.toThrow();
-    expect(fetchSandboxGrantsViaHttpMock).toHaveBeenCalledTimes(1);
-    expect(decideSecretRequestViaHttpMock).toHaveBeenCalledTimes(1);
+    expect(fetchSandboxGrantsViaHttpMock).toHaveBeenCalledTimes(2);
+    expect(decideSecretRequestViaHttpMock).toHaveBeenCalledTimes(2);
     bridge.dispose();
   });
 

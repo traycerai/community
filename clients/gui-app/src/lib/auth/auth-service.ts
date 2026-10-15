@@ -3043,16 +3043,20 @@ export class AuthService {
    * `sandboxControlRefusal` here: the broker is authn, which every build
    * reaches, and a build with no sandboxes simply never asks.
    */
-  async getSandboxGrants(hostId: string): Promise<SandboxGrantsFetchResult> {
+  async getSandboxGrants(
+    environmentId: string | null,
+    hostId: string,
+  ): Promise<SandboxGrantsFetchResult> {
     const bearer = this.cloudBearer();
     if (bearer === null) {
       return { kind: "unauthorized" };
     }
-    return this.runnerHost.getSandboxGrants(bearer, hostId);
+    return this.runnerHost.getSandboxGrants(bearer, environmentId, hostId);
   }
 
   /** The user's answer to an agent's grant request. */
   async decideSecretRequest(
+    environmentId: string | null,
     requestId: string,
     decision: SecretRequestDecision,
   ): Promise<SecretRequestDecideFetchResult> {
@@ -3060,7 +3064,12 @@ export class AuthService {
     if (bearer === null) {
       return { kind: "unauthorized" };
     }
-    return this.runnerHost.decideSecretRequest(bearer, requestId, decision);
+    return this.runnerHost.decideSecretRequest(
+      bearer,
+      environmentId,
+      requestId,
+      decision,
+    );
   }
 
   /**

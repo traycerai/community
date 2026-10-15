@@ -166,7 +166,9 @@ describe("AuthService secrets-broker calls", () => {
       const { service, host } = makeService();
       const getSandboxGrants = vi.spyOn(host, "getSandboxGrants");
 
-      await expect(service.getSandboxGrants("host-1")).resolves.toEqual({
+      await expect(
+        service.getSandboxGrants("env-1", "host-1"),
+      ).resolves.toEqual({
         kind: "unauthorized",
       });
 
@@ -178,7 +180,7 @@ describe("AuthService secrets-broker calls", () => {
       const decideSecretRequest = vi.spyOn(host, "decideSecretRequest");
 
       await expect(
-        service.decideSecretRequest("req-1", "approve"),
+        service.decideSecretRequest("env-1", "req-1", "approve"),
       ).resolves.toEqual({ kind: "unauthorized" });
 
       expect(decideSecretRequest).not.toHaveBeenCalled();
@@ -192,12 +194,12 @@ describe("AuthService secrets-broker calls", () => {
         .spyOn(host, "getSandboxGrants")
         .mockResolvedValue(SUMMARY_RESULT);
 
-      await expect(service.getSandboxGrants("host-1")).resolves.toBe(
+      await expect(service.getSandboxGrants("env-1", "host-1")).resolves.toBe(
         SUMMARY_RESULT,
       );
 
       expect(getSandboxGrants).toHaveBeenCalledTimes(1);
-      expect(getSandboxGrants).toHaveBeenCalledWith(BEARER, "host-1");
+      expect(getSandboxGrants).toHaveBeenCalledWith(BEARER, "env-1", "host-1");
     });
 
     it("getSandboxGrants returns a failure the runner host reports unchanged", async () => {
@@ -205,7 +207,9 @@ describe("AuthService secrets-broker calls", () => {
       const failure: SandboxGrantsFetchResult = { kind: "not-found" };
       vi.spyOn(host, "getSandboxGrants").mockResolvedValue(failure);
 
-      await expect(service.getSandboxGrants("host-1")).resolves.toBe(failure);
+      await expect(service.getSandboxGrants("env-1", "host-1")).resolves.toBe(
+        failure,
+      );
     });
 
     it("decideSecretRequest hands the runner host the bearer, the request and the decision and returns its result", async () => {
@@ -213,20 +217,43 @@ describe("AuthService secrets-broker calls", () => {
       const result: SecretRequestDecideFetchResult = {
         kind: "ok",
         status: "approved",
+        decidedBy: "Ana",
       };
       const decideSecretRequest = vi
         .spyOn(host, "decideSecretRequest")
         .mockResolvedValue(result);
 
       await expect(
-        service.decideSecretRequest("req-1", "approve"),
+        service.decideSecretRequest("env-1", "req-1", "approve"),
       ).resolves.toBe(result);
 
       expect(decideSecretRequest).toHaveBeenCalledTimes(1);
       expect(decideSecretRequest).toHaveBeenCalledWith(
         BEARER,
+        "env-1",
         "req-1",
         "approve",
+      );
+    });
+
+    it("hands the runner host a null environment as null", async () => {
+      const { service, host } = await signedInService();
+      const getSandboxGrants = vi
+        .spyOn(host, "getSandboxGrants")
+        .mockResolvedValue(SUMMARY_RESULT);
+      const decideSecretRequest = vi
+        .spyOn(host, "decideSecretRequest")
+        .mockResolvedValue({ kind: "not-found" });
+
+      await service.getSandboxGrants(null, "host-1");
+      await service.decideSecretRequest(null, "req-1", "decline");
+
+      expect(getSandboxGrants).toHaveBeenCalledWith(BEARER, null, "host-1");
+      expect(decideSecretRequest).toHaveBeenCalledWith(
+        BEARER,
+        null,
+        "req-1",
+        "decline",
       );
     });
 
@@ -236,11 +263,12 @@ describe("AuthService secrets-broker calls", () => {
         kind: "conflict",
         status: "pending",
         code: "secret_required",
+        decidedBy: null,
       };
       vi.spyOn(host, "decideSecretRequest").mockResolvedValue(conflict);
 
       await expect(
-        service.decideSecretRequest("req-1", "approve_default"),
+        service.decideSecretRequest("env-1", "req-1", "approve_default"),
       ).resolves.toBe(conflict);
     });
   });

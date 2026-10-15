@@ -7,6 +7,7 @@ import {
 
 const BASE = "https://auth.example.test";
 const BEARER = "user-jwt";
+const ENV_ID = "env_team-1";
 const HOST_ID = "host_abc-123";
 const REQUEST_ID = "req_01JBZ8K3M4N5P6Q7R8S9T0VWXY";
 
@@ -88,11 +89,11 @@ describe("fetchSandboxGrantsViaHttp", () => {
   it("GETs the host's grants route with the user bearer and no body", async () => {
     const fetchMock = stubFetch(() => jsonResponse(200, SUMMARY_BODY));
 
-    await fetchSandboxGrantsViaHttp(BASE, BEARER, HOST_ID);
+    await fetchSandboxGrantsViaHttp(BASE, BEARER, ENV_ID, HOST_ID);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledWith(
-      `${BASE}/api/v3/secrets/hosts/${HOST_ID}/grants`,
+      `${BASE}/api/v3/environments/${ENV_ID}/secrets/hosts/${HOST_ID}/grants`,
       expect.objectContaining({
         method: "GET",
         headers: {
@@ -108,10 +109,10 @@ describe("fetchSandboxGrantsViaHttp", () => {
   it("joins the path onto a base URL that already ends in a slash", async () => {
     const fetchMock = stubFetch(() => jsonResponse(200, SUMMARY_BODY));
 
-    await fetchSandboxGrantsViaHttp(`${BASE}/`, BEARER, HOST_ID);
+    await fetchSandboxGrantsViaHttp(`${BASE}/`, BEARER, ENV_ID, HOST_ID);
 
     expect(fetchMock).toHaveBeenCalledWith(
-      `${BASE}/api/v3/secrets/hosts/${HOST_ID}/grants`,
+      `${BASE}/api/v3/environments/${ENV_ID}/secrets/hosts/${HOST_ID}/grants`,
       expect.objectContaining({ method: "GET" }),
     );
   });
@@ -119,10 +120,10 @@ describe("fetchSandboxGrantsViaHttp", () => {
   it("keeps a path prefix on the base URL", async () => {
     const fetchMock = stubFetch(() => jsonResponse(200, SUMMARY_BODY));
 
-    await fetchSandboxGrantsViaHttp(`${BASE}/gateway`, BEARER, HOST_ID);
+    await fetchSandboxGrantsViaHttp(`${BASE}/gateway`, BEARER, ENV_ID, HOST_ID);
 
     expect(fetchMock).toHaveBeenCalledWith(
-      `${BASE}/gateway/api/v3/secrets/hosts/${HOST_ID}/grants`,
+      `${BASE}/gateway/api/v3/environments/${ENV_ID}/secrets/hosts/${HOST_ID}/grants`,
       expect.objectContaining({ method: "GET" }),
     );
   });
@@ -134,7 +135,12 @@ describe("fetchSandboxGrantsViaHttp", () => {
   it("returns the parsed summary on a 200", async () => {
     stubFetch(() => jsonResponse(200, SUMMARY_BODY));
 
-    const result = await fetchSandboxGrantsViaHttp(BASE, BEARER, HOST_ID);
+    const result = await fetchSandboxGrantsViaHttp(
+      BASE,
+      BEARER,
+      ENV_ID,
+      HOST_ID,
+    );
 
     expect(result).toEqual({ kind: "ok", summary: SUMMARY_BODY });
   });
@@ -157,7 +163,12 @@ describe("fetchSandboxGrantsViaHttp", () => {
       }),
     );
 
-    const result = await fetchSandboxGrantsViaHttp(BASE, BEARER, HOST_ID);
+    const result = await fetchSandboxGrantsViaHttp(
+      BASE,
+      BEARER,
+      ENV_ID,
+      HOST_ID,
+    );
 
     expect(result).toEqual({
       kind: "ok",
@@ -184,7 +195,7 @@ describe("fetchSandboxGrantsViaHttp", () => {
     stubFetch(() => jsonResponse(200, { grants: "none" }));
 
     await expect(
-      fetchSandboxGrantsViaHttp(BASE, BEARER, HOST_ID),
+      fetchSandboxGrantsViaHttp(BASE, BEARER, ENV_ID, HOST_ID),
     ).resolves.toEqual({
       kind: "network-error",
       detail: "the grants summary did not match the contract",
@@ -195,7 +206,7 @@ describe("fetchSandboxGrantsViaHttp", () => {
     stubFetch(() => textResponse(200, "<html>proxy error</html>"));
 
     await expect(
-      fetchSandboxGrantsViaHttp(BASE, BEARER, HOST_ID),
+      fetchSandboxGrantsViaHttp(BASE, BEARER, ENV_ID, HOST_ID),
     ).resolves.toEqual({
       kind: "network-error",
       detail: "the grants summary did not match the contract",
@@ -206,7 +217,7 @@ describe("fetchSandboxGrantsViaHttp", () => {
     stubFetch(() => textResponse(200, ""));
 
     await expect(
-      fetchSandboxGrantsViaHttp(BASE, BEARER, HOST_ID),
+      fetchSandboxGrantsViaHttp(BASE, BEARER, ENV_ID, HOST_ID),
     ).resolves.toEqual({
       kind: "network-error",
       detail: "the grants summary did not match the contract",
@@ -217,7 +228,7 @@ describe("fetchSandboxGrantsViaHttp", () => {
     stubFetch(() => jsonResponse(status, { error: "no" }));
 
     await expect(
-      fetchSandboxGrantsViaHttp(BASE, BEARER, HOST_ID),
+      fetchSandboxGrantsViaHttp(BASE, BEARER, ENV_ID, HOST_ID),
     ).resolves.toEqual({ kind: "unauthorized" });
   });
 
@@ -225,7 +236,7 @@ describe("fetchSandboxGrantsViaHttp", () => {
     stubFetch(() => textResponse(404, "<html>not found</html>"));
 
     await expect(
-      fetchSandboxGrantsViaHttp(BASE, BEARER, HOST_ID),
+      fetchSandboxGrantsViaHttp(BASE, BEARER, ENV_ID, HOST_ID),
     ).resolves.toEqual({ kind: "not-found" });
   });
 
@@ -235,7 +246,7 @@ describe("fetchSandboxGrantsViaHttp", () => {
       stubFetch(() => jsonResponse(status, SUMMARY_BODY));
 
       await expect(
-        fetchSandboxGrantsViaHttp(BASE, BEARER, HOST_ID),
+        fetchSandboxGrantsViaHttp(BASE, BEARER, ENV_ID, HOST_ID),
       ).resolves.toEqual({
         kind: "network-error",
         detail: `the broker answered HTTP ${status}`,
@@ -247,7 +258,7 @@ describe("fetchSandboxGrantsViaHttp", () => {
     stubRejectingFetch(new TypeError("connect ECONNREFUSED 10.0.0.1:443"));
 
     await expect(
-      fetchSandboxGrantsViaHttp(BASE, BEARER, HOST_ID),
+      fetchSandboxGrantsViaHttp(BASE, BEARER, ENV_ID, HOST_ID),
     ).resolves.toEqual({
       kind: "network-error",
       detail: "the request never completed (TypeError)",
@@ -258,7 +269,7 @@ describe("fetchSandboxGrantsViaHttp", () => {
     stubRejectingFetch("offline");
 
     await expect(
-      fetchSandboxGrantsViaHttp(BASE, BEARER, HOST_ID),
+      fetchSandboxGrantsViaHttp(BASE, BEARER, ENV_ID, HOST_ID),
     ).resolves.toEqual({
       kind: "network-error",
       detail: "the request never completed",
@@ -271,7 +282,7 @@ describe("fetchSandboxGrantsViaHttp", () => {
       const fetchMock = stubFetch(() => jsonResponse(200, SUMMARY_BODY));
 
       await expect(
-        fetchSandboxGrantsViaHttp(BASE, BEARER, hostId),
+        fetchSandboxGrantsViaHttp(BASE, BEARER, ENV_ID, hostId),
       ).resolves.toEqual(INVALID_ID_RESULT);
 
       expect(fetchMock).not.toHaveBeenCalled();
@@ -282,7 +293,7 @@ describe("fetchSandboxGrantsViaHttp", () => {
     const fetchMock = stubFetch(() => jsonResponse(200, SUMMARY_BODY));
     const hostId = "h".repeat(128);
 
-    await fetchSandboxGrantsViaHttp(BASE, BEARER, hostId);
+    await fetchSandboxGrantsViaHttp(BASE, BEARER, ENV_ID, hostId);
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -294,11 +305,17 @@ describe("decideSecretRequestViaHttp", () => {
       jsonResponse(200, { status: "approved" }),
     );
 
-    await decideSecretRequestViaHttp(BASE, BEARER, REQUEST_ID, "approve");
+    await decideSecretRequestViaHttp(
+      BASE,
+      BEARER,
+      ENV_ID,
+      REQUEST_ID,
+      "approve",
+    );
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock).toHaveBeenCalledWith(
-      `${BASE}/api/v3/secrets/requests/${REQUEST_ID}/decide`,
+      `${BASE}/api/v3/environments/${ENV_ID}/secrets/requests/${REQUEST_ID}/decide`,
       expect.objectContaining({
         method: "POST",
         headers: {
@@ -319,7 +336,13 @@ describe("decideSecretRequestViaHttp", () => {
         jsonResponse(200, { status: "approved" }),
       );
 
-      await decideSecretRequestViaHttp(BASE, BEARER, REQUEST_ID, decision);
+      await decideSecretRequestViaHttp(
+        BASE,
+        BEARER,
+        ENV_ID,
+        REQUEST_ID,
+        decision,
+      );
 
       expect(fetchMock).toHaveBeenCalledWith(
         expect.stringContaining("/decide"),
@@ -332,23 +355,33 @@ describe("decideSecretRequestViaHttp", () => {
     stubFetch(() => jsonResponse(200, { status: "approved_default" }));
 
     await expect(
-      decideSecretRequestViaHttp(BASE, BEARER, REQUEST_ID, "approve_default"),
-    ).resolves.toEqual({ kind: "ok", status: "approved_default" });
+      decideSecretRequestViaHttp(
+        BASE,
+        BEARER,
+        ENV_ID,
+        REQUEST_ID,
+        "approve_default",
+      ),
+    ).resolves.toEqual({
+      kind: "ok",
+      status: "approved_default",
+      decidedBy: null,
+    });
   });
 
   it("returns ok when a 200 carries a code too", async () => {
     stubFetch(() => jsonResponse(200, { status: "declined", code: null }));
 
     await expect(
-      decideSecretRequestViaHttp(BASE, BEARER, REQUEST_ID, "decline"),
-    ).resolves.toEqual({ kind: "ok", status: "declined" });
+      decideSecretRequestViaHttp(BASE, BEARER, ENV_ID, REQUEST_ID, "decline"),
+    ).resolves.toEqual({ kind: "ok", status: "declined", decidedBy: null });
   });
 
   it("fails a 200 whose body does not match the contract", async () => {
     stubFetch(() => jsonResponse(200, { decided: true }));
 
     await expect(
-      decideSecretRequestViaHttp(BASE, BEARER, REQUEST_ID, "approve"),
+      decideSecretRequestViaHttp(BASE, BEARER, ENV_ID, REQUEST_ID, "approve"),
     ).resolves.toEqual({
       kind: "network-error",
       detail: "the decision's answer did not match the contract",
@@ -359,7 +392,7 @@ describe("decideSecretRequestViaHttp", () => {
     stubFetch(() => textResponse(200, "ok"));
 
     await expect(
-      decideSecretRequestViaHttp(BASE, BEARER, REQUEST_ID, "approve"),
+      decideSecretRequestViaHttp(BASE, BEARER, ENV_ID, REQUEST_ID, "approve"),
     ).resolves.toEqual({
       kind: "network-error",
       detail: "the decision's answer did not match the contract",
@@ -370,7 +403,7 @@ describe("decideSecretRequestViaHttp", () => {
     stubFetch(() => jsonResponse(200, { status: "" }));
 
     await expect(
-      decideSecretRequestViaHttp(BASE, BEARER, REQUEST_ID, "approve"),
+      decideSecretRequestViaHttp(BASE, BEARER, ENV_ID, REQUEST_ID, "approve"),
     ).resolves.toEqual({
       kind: "network-error",
       detail: "the decision's answer did not match the contract",
@@ -381,16 +414,26 @@ describe("decideSecretRequestViaHttp", () => {
     stubFetch(() => jsonResponse(409, { status: "declined" }));
 
     await expect(
-      decideSecretRequestViaHttp(BASE, BEARER, REQUEST_ID, "approve"),
-    ).resolves.toEqual({ kind: "conflict", status: "declined", code: null });
+      decideSecretRequestViaHttp(BASE, BEARER, ENV_ID, REQUEST_ID, "approve"),
+    ).resolves.toEqual({
+      kind: "conflict",
+      status: "declined",
+      code: null,
+      decidedBy: null,
+    });
   });
 
   it("returns a conflict for an expired request", async () => {
     stubFetch(() => jsonResponse(409, { status: "expired" }));
 
     await expect(
-      decideSecretRequestViaHttp(BASE, BEARER, REQUEST_ID, "approve"),
-    ).resolves.toEqual({ kind: "conflict", status: "expired", code: null });
+      decideSecretRequestViaHttp(BASE, BEARER, ENV_ID, REQUEST_ID, "approve"),
+    ).resolves.toEqual({
+      kind: "conflict",
+      status: "expired",
+      code: null,
+      decidedBy: null,
+    });
   });
 
   it("returns a conflict carrying the secret_required code", async () => {
@@ -399,11 +442,12 @@ describe("decideSecretRequestViaHttp", () => {
     );
 
     await expect(
-      decideSecretRequestViaHttp(BASE, BEARER, REQUEST_ID, "approve"),
+      decideSecretRequestViaHttp(BASE, BEARER, ENV_ID, REQUEST_ID, "approve"),
     ).resolves.toEqual({
       kind: "conflict",
       status: "pending",
       code: "secret_required",
+      decidedBy: null,
     });
   });
 
@@ -413,11 +457,12 @@ describe("decideSecretRequestViaHttp", () => {
     );
 
     await expect(
-      decideSecretRequestViaHttp(BASE, BEARER, REQUEST_ID, "approve"),
+      decideSecretRequestViaHttp(BASE, BEARER, ENV_ID, REQUEST_ID, "approve"),
     ).resolves.toEqual({
       kind: "conflict",
       status: "pending",
       code: "some_future_code",
+      decidedBy: null,
     });
   });
 
@@ -425,7 +470,7 @@ describe("decideSecretRequestViaHttp", () => {
     stubFetch(() => textResponse(409, "<html>conflict</html>"));
 
     await expect(
-      decideSecretRequestViaHttp(BASE, BEARER, REQUEST_ID, "approve"),
+      decideSecretRequestViaHttp(BASE, BEARER, ENV_ID, REQUEST_ID, "approve"),
     ).resolves.toEqual({
       kind: "network-error",
       detail: "the decision's answer did not match the contract",
@@ -436,7 +481,7 @@ describe("decideSecretRequestViaHttp", () => {
     stubFetch(() => textResponse(409, ""));
 
     await expect(
-      decideSecretRequestViaHttp(BASE, BEARER, REQUEST_ID, "approve"),
+      decideSecretRequestViaHttp(BASE, BEARER, ENV_ID, REQUEST_ID, "approve"),
     ).resolves.toEqual({
       kind: "network-error",
       detail: "the decision's answer did not match the contract",
@@ -447,7 +492,7 @@ describe("decideSecretRequestViaHttp", () => {
     stubFetch(() => jsonResponse(409, { code: "secret_required" }));
 
     await expect(
-      decideSecretRequestViaHttp(BASE, BEARER, REQUEST_ID, "approve"),
+      decideSecretRequestViaHttp(BASE, BEARER, ENV_ID, REQUEST_ID, "approve"),
     ).resolves.toEqual({
       kind: "network-error",
       detail: "the decision's answer did not match the contract",
@@ -458,7 +503,7 @@ describe("decideSecretRequestViaHttp", () => {
     stubFetch(() => jsonResponse(status, { error: "no" }));
 
     await expect(
-      decideSecretRequestViaHttp(BASE, BEARER, REQUEST_ID, "approve"),
+      decideSecretRequestViaHttp(BASE, BEARER, ENV_ID, REQUEST_ID, "approve"),
     ).resolves.toEqual({ kind: "unauthorized" });
   });
 
@@ -466,7 +511,7 @@ describe("decideSecretRequestViaHttp", () => {
     stubFetch(() => textResponse(404, "<html>not found</html>"));
 
     await expect(
-      decideSecretRequestViaHttp(BASE, BEARER, REQUEST_ID, "approve"),
+      decideSecretRequestViaHttp(BASE, BEARER, ENV_ID, REQUEST_ID, "approve"),
     ).resolves.toEqual({ kind: "not-found" });
   });
 
@@ -476,7 +521,7 @@ describe("decideSecretRequestViaHttp", () => {
       stubFetch(() => jsonResponse(status, { status: "approved" }));
 
       await expect(
-        decideSecretRequestViaHttp(BASE, BEARER, REQUEST_ID, "approve"),
+        decideSecretRequestViaHttp(BASE, BEARER, ENV_ID, REQUEST_ID, "approve"),
       ).resolves.toEqual({
         kind: "network-error",
         detail: `the broker answered HTTP ${status}`,
@@ -488,7 +533,7 @@ describe("decideSecretRequestViaHttp", () => {
     stubRejectingFetch(new TypeError("connect ECONNREFUSED 10.0.0.1:443"));
 
     await expect(
-      decideSecretRequestViaHttp(BASE, BEARER, REQUEST_ID, "approve"),
+      decideSecretRequestViaHttp(BASE, BEARER, ENV_ID, REQUEST_ID, "approve"),
     ).resolves.toEqual({
       kind: "network-error",
       detail: "the request never completed (TypeError)",
@@ -503,10 +548,286 @@ describe("decideSecretRequestViaHttp", () => {
       );
 
       await expect(
-        decideSecretRequestViaHttp(BASE, BEARER, requestId, "approve"),
+        decideSecretRequestViaHttp(BASE, BEARER, ENV_ID, requestId, "approve"),
       ).resolves.toEqual(INVALID_ID_RESULT);
 
       expect(fetchMock).not.toHaveBeenCalled();
     },
   );
+});
+
+const ME_URL = `${BASE}/api/v3/environments/me`;
+const PERSONAL_ENV_ID = "env_personal-9";
+
+/** Stubs `fetch` with one responder per call, in order, and records the urls. */
+function stubFetchSequence(
+  responders: readonly (() => Response)[],
+): Mock<typeof fetch> {
+  let index = 0;
+  const fetchMock = vi.fn<typeof fetch>(() => {
+    const respond = responders[index];
+    index += 1;
+    if (respond === undefined) {
+      return Promise.reject(new Error("unexpected extra fetch"));
+    }
+    return Promise.resolve(respond());
+  });
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+describe("an environment id of null (Personal)", () => {
+  it("reads environments/me first, then roots the grants call there", async () => {
+    const fetchMock = stubFetchSequence([
+      () => jsonResponse(200, { environmentId: PERSONAL_ENV_ID }),
+      () => jsonResponse(200, SUMMARY_BODY),
+    ]);
+
+    const result = await fetchSandboxGrantsViaHttp(BASE, BEARER, null, HOST_ID);
+
+    expect(result).toEqual({ kind: "ok", summary: SUMMARY_BODY });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      ME_URL,
+      expect.objectContaining({
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${BEARER}`,
+          Accept: "application/json",
+        },
+        body: null,
+      }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      `${BASE}/api/v3/environments/${PERSONAL_ENV_ID}/secrets/hosts/${HOST_ID}/grants`,
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("reads environments/me first, then roots the decide call there", async () => {
+    const fetchMock = stubFetchSequence([
+      () => jsonResponse(200, { environmentId: PERSONAL_ENV_ID }),
+      () => jsonResponse(200, { status: "approved" }),
+    ]);
+
+    const result = await decideSecretRequestViaHttp(
+      BASE,
+      BEARER,
+      null,
+      REQUEST_ID,
+      "approve",
+    );
+
+    expect(result).toEqual({ kind: "ok", status: "approved", decidedBy: null });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      1,
+      ME_URL,
+      expect.objectContaining({ method: "GET" }),
+    );
+    expect(fetchMock).toHaveBeenNthCalledWith(
+      2,
+      `${BASE}/api/v3/environments/${PERSONAL_ENV_ID}/secrets/requests/${REQUEST_ID}/decide`,
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({ decision: "approve" }),
+      }),
+    );
+  });
+
+  it("does not read environments/me when the environment is given", async () => {
+    const fetchMock = stubFetch(() => jsonResponse(200, SUMMARY_BODY));
+
+    await fetchSandboxGrantsViaHttp(BASE, BEARER, ENV_ID, HOST_ID);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalledWith(ME_URL, expect.anything());
+  });
+
+  it.each([401, 403])(
+    "returns a %i from environments/me as unauthorized, without the second call",
+    async (status) => {
+      const fetchMock = stubFetch(() => jsonResponse(status, { error: "no" }));
+
+      await expect(
+        fetchSandboxGrantsViaHttp(BASE, BEARER, null, HOST_ID),
+      ).resolves.toEqual({ kind: "unauthorized" });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("returns a 404 from environments/me as not-found, without the second call", async () => {
+    const fetchMock = stubFetch(() => textResponse(404, "<html>nope</html>"));
+
+    await expect(
+      decideSecretRequestViaHttp(BASE, BEARER, null, REQUEST_ID, "approve"),
+    ).resolves.toEqual({ kind: "not-found" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it.each([
+    [
+      "an HTTP 500",
+      () => jsonResponse(500, { environmentId: PERSONAL_ENV_ID }),
+    ],
+    ["a body that is not JSON", () => textResponse(200, "<html>proxy</html>")],
+    ["an empty body", () => textResponse(200, "")],
+    ["a body with no environmentId", () => jsonResponse(200, { id: "x" })],
+    ["an empty environmentId", () => jsonResponse(200, { environmentId: "" })],
+  ])(
+    "returns %s from environments/me as a network error, without the second call",
+    async (_name, respond) => {
+      const fetchMock = stubFetch(respond);
+
+      await expect(
+        fetchSandboxGrantsViaHttp(BASE, BEARER, null, HOST_ID),
+      ).resolves.toEqual({
+        kind: "network-error",
+        detail: expect.any(String),
+      });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it("names the contract mismatch when environments/me answers a bad body", async () => {
+    stubFetch(() => jsonResponse(200, { id: "x" }));
+
+    await expect(
+      fetchSandboxGrantsViaHttp(BASE, BEARER, null, HOST_ID),
+    ).resolves.toEqual({
+      kind: "network-error",
+      detail: "the environment answer did not match the contract",
+    });
+  });
+
+  it("returns a thrown environments/me fetch as a network error, without the second call", async () => {
+    const fetchMock = stubRejectingFetch(new TypeError("offline"));
+
+    await expect(
+      decideSecretRequestViaHttp(BASE, BEARER, null, REQUEST_ID, "approve"),
+    ).resolves.toEqual({
+      kind: "network-error",
+      detail: "the request never completed (TypeError)",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses an environmentId from environments/me that is not one path segment", async () => {
+    const fetchMock = stubFetch(() =>
+      jsonResponse(200, { environmentId: "../secrets" }),
+    );
+
+    await expect(
+      fetchSandboxGrantsViaHttp(BASE, BEARER, null, HOST_ID),
+    ).resolves.toEqual(INVALID_ID_RESULT);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses a bad host id before even reading environments/me", async () => {
+    const fetchMock = stubFetch(() => jsonResponse(200, SUMMARY_BODY));
+
+    await expect(
+      fetchSandboxGrantsViaHttp(BASE, BEARER, null, "a/b"),
+    ).resolves.toEqual(INVALID_ID_RESULT);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("a bad environment id", () => {
+  it.each(UNSAFE_IDS)(
+    "refuses the environment id %j for the grants call before any request",
+    async (environmentId) => {
+      const fetchMock = stubFetch(() => jsonResponse(200, SUMMARY_BODY));
+
+      await expect(
+        fetchSandboxGrantsViaHttp(BASE, BEARER, environmentId, HOST_ID),
+      ).resolves.toEqual(INVALID_ID_RESULT);
+
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each(UNSAFE_IDS)(
+    "refuses the environment id %j for the decide call before any request",
+    async (environmentId) => {
+      const fetchMock = stubFetch(() =>
+        jsonResponse(200, { status: "approved" }),
+      );
+
+      await expect(
+        decideSecretRequestViaHttp(
+          BASE,
+          BEARER,
+          environmentId,
+          REQUEST_ID,
+          "approve",
+        ),
+      ).resolves.toEqual(INVALID_ID_RESULT);
+
+      expect(fetchMock).not.toHaveBeenCalled();
+    },
+  );
+});
+
+describe("decidedBy on the decide answer", () => {
+  it("carries the name of the person whose answer settled a 200", async () => {
+    stubFetch(() =>
+      jsonResponse(200, { status: "approved_default", decidedBy: "Ana" }),
+    );
+
+    await expect(
+      decideSecretRequestViaHttp(
+        BASE,
+        BEARER,
+        ENV_ID,
+        REQUEST_ID,
+        "approve_default",
+      ),
+    ).resolves.toEqual({
+      kind: "ok",
+      status: "approved_default",
+      decidedBy: "Ana",
+    });
+  });
+
+  it("carries the name of the person who got there first on a 409", async () => {
+    stubFetch(() =>
+      jsonResponse(409, { status: "approved", decidedBy: "Ana" }),
+    );
+
+    await expect(
+      decideSecretRequestViaHttp(BASE, BEARER, ENV_ID, REQUEST_ID, "decline"),
+    ).resolves.toEqual({
+      kind: "conflict",
+      status: "approved",
+      code: null,
+      decidedBy: "Ana",
+    });
+  });
+
+  it("reads a null decidedBy as null", async () => {
+    stubFetch(() => jsonResponse(409, { status: "expired", decidedBy: null }));
+
+    await expect(
+      decideSecretRequestViaHttp(BASE, BEARER, ENV_ID, REQUEST_ID, "approve"),
+    ).resolves.toEqual({
+      kind: "conflict",
+      status: "expired",
+      code: null,
+      decidedBy: null,
+    });
+  });
+
+  it("fails an answer whose decidedBy is an empty string", async () => {
+    stubFetch(() => jsonResponse(200, { status: "approved", decidedBy: "" }));
+
+    await expect(
+      decideSecretRequestViaHttp(BASE, BEARER, ENV_ID, REQUEST_ID, "approve"),
+    ).resolves.toEqual({
+      kind: "network-error",
+      detail: "the decision's answer did not match the contract",
+    });
+  });
 });

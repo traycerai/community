@@ -247,10 +247,12 @@ export interface DesktopPreloadBridge {
   ): Promise<SandboxAutomationOpenFetchResult>;
   getSandboxGrants(
     bearerToken: string,
+    environmentId: string | null,
     hostId: string,
   ): Promise<SandboxGrantsFetchResult>;
   decideSecretRequest(
     bearerToken: string,
+    environmentId: string | null,
     requestId: string,
     decision: SecretRequestDecision,
   ): Promise<SecretRequestDecideFetchResult>;
@@ -1202,17 +1204,24 @@ export class DesktopRunnerHost implements IRunnerHost {
 
   getSandboxGrants(
     bearerToken: string,
+    environmentId: string | null,
     hostId: string,
   ): Promise<SandboxGrantsFetchResult> {
-    return this.bridge.getSandboxGrants(bearerToken, hostId);
+    return this.bridge.getSandboxGrants(bearerToken, environmentId, hostId);
   }
 
   decideSecretRequest(
     bearerToken: string,
+    environmentId: string | null,
     requestId: string,
     decision: SecretRequestDecision,
   ): Promise<SecretRequestDecideFetchResult> {
-    return this.bridge.decideSecretRequest(bearerToken, requestId, decision);
+    return this.bridge.decideSecretRequest(
+      bearerToken,
+      environmentId,
+      requestId,
+      decision,
+    );
   }
 
   mintExecutableWriteGrant(

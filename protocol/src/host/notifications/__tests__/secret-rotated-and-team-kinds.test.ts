@@ -585,6 +585,164 @@ describe("secret_grant_request environmentId", () => {
   });
 });
 
+describe("secret_grant_request team and decision fields", () => {
+  const BASE = {
+    kind: "secret_grant_request",
+    requestId: "request-1",
+    hostId: "host-1",
+    secretName: "DB_PASSWORD",
+    destination: "db.example.com",
+    port: 3306,
+    protocol: "mysql",
+    reason: "Run the migration",
+    environmentId: "env-team-1",
+  };
+
+  it("parses with teamName, decision and decidedBy", () => {
+    const parsed = hostNotificationSecretGrantRequestPayloadSchema.parse({
+      ...BASE,
+      teamName: "Acme",
+      decision: "approved",
+      decidedBy: "Ana",
+    });
+    expect(parsed.teamName).toBe("Acme");
+    expect(parsed.decision).toBe("approved");
+    expect(parsed.decidedBy).toBe("Ana");
+  });
+
+  it("parses with the three fields null", () => {
+    const parsed = hostNotificationSecretGrantRequestPayloadSchema.parse({
+      ...BASE,
+      teamName: null,
+      decision: null,
+      decidedBy: null,
+    });
+    expect(parsed.teamName).toBeNull();
+    expect(parsed.decision).toBeNull();
+    expect(parsed.decidedBy).toBeNull();
+  });
+
+  it("parses with the three fields left out", () => {
+    const parsed = hostNotificationSecretGrantRequestPayloadSchema.parse(BASE);
+    expect(parsed.teamName).toBeUndefined();
+    expect(parsed.decision).toBeUndefined();
+    expect(parsed.decidedBy).toBeUndefined();
+  });
+
+  it("keeps a decision this build does not list", () => {
+    const parsed = hostNotificationSecretGrantRequestPayloadSchema.parse({
+      ...BASE,
+      decision: "revoked",
+    });
+    expect(parsed.decision).toBe("revoked");
+  });
+
+  it("refuses an empty decidedBy", () => {
+    expect(
+      hostNotificationSecretGrantRequestPayloadSchema.safeParse({
+        ...BASE,
+        decidedBy: "",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("parses under its own kind, fields included", () => {
+    const parsed = parseKnownHostNotificationPayloadForKind(
+      "secret.grant.requested",
+      { ...BASE, teamName: "Acme", decision: "declined", decidedBy: "Ana" },
+    );
+    expect(parsed).toMatchObject({
+      kind: "secret_grant_request",
+      teamName: "Acme",
+      decision: "declined",
+      decidedBy: "Ana",
+    });
+  });
+});
+
+describe("secret.grant.requested presentation of a resolved row", () => {
+  const PAYLOAD = {
+    kind: "secret_grant_request",
+    requestId: "request-1",
+    hostId: "host-1",
+    secretName: "DB_PASSWORD",
+    destination: "db.example.com",
+    port: 3306,
+    protocol: "mysql",
+    reason: "Run the migration",
+    environmentId: "env-team-1",
+    teamName: "Acme",
+  };
+
+  function grantEntry(
+    resolvedAt: number | null,
+    payload: Record<string, unknown>,
+  ) {
+    return hostNotificationEntrySchemaV23.parse({
+      ...ENTRY_BASE,
+      kind: "secret.grant.requested",
+      severity: "needs_action",
+      outcome: null,
+      resolvedAt,
+      payload,
+    });
+  }
+
+  it("reads Approved by Ana when the payload names her as the approver", () => {
+    const presentation = formatHostNotificationPresentation(
+      grantEntry(1_700_000_000_500, {
+        ...PAYLOAD,
+        decision: "approved",
+        decidedBy: "Ana",
+      }),
+    );
+    expect(presentation.title).toBe("Secret requested");
+    expect(presentation.body).toBe("DB_PASSWORD • Approved by Ana");
+  });
+
+  it("reads Declined by Ana when the payload names her as the decliner", () => {
+    expect(
+      formatHostNotificationPresentation(
+        grantEntry(1_700_000_000_500, {
+          ...PAYLOAD,
+          decision: "declined",
+          decidedBy: "Ana",
+        }),
+      ).body,
+    ).toBe("DB_PASSWORD • Declined by Ana");
+  });
+
+  it.each([
+    ["no decision or name", {}],
+    ["a name but no decision", { decidedBy: "Ana" }],
+    ["a decision but no name", { decision: "approved" }],
+    ["a null name", { decision: "approved", decidedBy: null }],
+    ["an expiry", { decision: "expired", decidedBy: "Ana" }],
+    [
+      "a decision this build does not know",
+      { decision: "revoked", decidedBy: "Ana" },
+    ],
+  ])("reads Decided when the payload carries %s", (_name, fields) => {
+    expect(
+      formatHostNotificationPresentation(
+        grantEntry(1_700_000_000_500, { ...PAYLOAD, ...fields }),
+      ).body,
+    ).toBe("DB_PASSWORD • Decided");
+  });
+
+  it("still waits for a decision while the row is open, whatever the payload names", () => {
+    expect(
+      formatHostNotificationPresentation(
+        grantEntry(null, {
+          ...PAYLOAD,
+          decision: "approved",
+          decidedBy: "Ana",
+        }),
+      ).body,
+    ).toBe("DB_PASSWORD • Waiting for your decision");
+  });
+});
+
 describe("sandbox grant rotation", () => {
   const GRANT = {
     secretName: "DB_PASSWORD",

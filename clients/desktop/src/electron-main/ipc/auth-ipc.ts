@@ -39,6 +39,7 @@ import { createDesktopBearerVerifier } from "../auth/bearer-verifier";
 import { log } from "../app/logger";
 import {
   assertNumber,
+  assertNullableString,
   assertString,
   parseDesktopAuthSession,
   parseMintHostCredentialRequest,
@@ -314,12 +315,19 @@ export function registerAuthIpc(bridge: RunnerIpcBridge): void {
 
   bridge.handleInvoke(
     RunnerHostInvoke.getSandboxGrants,
-    async (_event, bearerToken: unknown, hostId: unknown) => {
+    async (
+      _event,
+      bearerToken: unknown,
+      environmentId: unknown,
+      hostId: unknown,
+    ) => {
       assertString(bearerToken, "getSandboxGrants.bearerToken");
+      assertNullableString(environmentId, "getSandboxGrants.environmentId");
       assertString(hostId, "getSandboxGrants.hostId");
       return fetchSandboxGrantsViaHttp(
         bridge.options.authnBaseUrl,
         bearerToken,
+        environmentId,
         hostId,
       );
     },
@@ -343,14 +351,17 @@ export function registerAuthIpc(bridge: RunnerIpcBridge): void {
     async (
       _event,
       bearerToken: unknown,
+      environmentId: unknown,
       requestId: unknown,
       decision: unknown,
     ) => {
       assertString(bearerToken, "decideSecretRequest.bearerToken");
+      assertNullableString(environmentId, "decideSecretRequest.environmentId");
       assertString(requestId, "decideSecretRequest.requestId");
       return decideSecretRequestViaHttp(
         bridge.options.authnBaseUrl,
         bearerToken,
+        environmentId,
         requestId,
         parseSecretRequestDecision(decision),
       );

@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
-  SECRET_GRANT_DECISIONS,
   secretExportNotice,
+  secretGrantDecisions,
+  secretGrantDefaultConfirmation,
   secretGrantRequestDestination,
   secretGrantRequestReason,
+  secretRequestDecidedByLine,
   secretRequestStatusLine,
   secretsNotificationDetail,
   type SecretsNotificationDetail,
@@ -63,6 +65,10 @@ function grantDetail(
     protocol: null,
     reason: "Run the migration",
     sandboxName: null,
+    environmentId: null,
+    teamName: null,
+    decision: null,
+    decidedBy: null,
     ...overrides,
   };
 }
@@ -92,6 +98,52 @@ describe("secretsNotificationDetail", () => {
       protocol: "mysql",
       reason: "Run the migration",
       sandboxName: "build-box",
+      environmentId: null,
+      teamName: null,
+      decision: null,
+      decidedBy: null,
+    });
+  });
+
+  it("reads a team request's environment and team, and who settled it", () => {
+    expect(
+      secretsNotificationDetail("secret.grant.requested", {
+        ...GRANT_PAYLOAD,
+        environmentId: "env-team-1",
+        teamName: "Acme",
+        decision: "approved",
+        decidedBy: "Ana",
+      }),
+    ).toEqual({
+      kind: "grant-request",
+      requestId: "request-1",
+      secretName: "DB_PASSWORD",
+      destination: "db.example.com",
+      port: 3306,
+      protocol: "mysql",
+      reason: "Run the migration",
+      sandboxName: "build-box",
+      environmentId: "env-team-1",
+      teamName: "Acme",
+      decision: "approved",
+      decidedBy: "Ana",
+    });
+  });
+
+  it("reads null team fields, as a Personal request carries them, as null", () => {
+    expect(
+      secretsNotificationDetail("secret.grant.requested", {
+        ...GRANT_PAYLOAD,
+        environmentId: null,
+        teamName: null,
+        decision: null,
+        decidedBy: null,
+      }),
+    ).toMatchObject({
+      environmentId: null,
+      teamName: null,
+      decision: null,
+      decidedBy: null,
     });
   });
 
@@ -110,6 +162,10 @@ describe("secretsNotificationDetail", () => {
       protocol: null,
       reason: "",
       sandboxName: null,
+      environmentId: null,
+      teamName: null,
+      decision: null,
+      decidedBy: null,
     });
   });
 
@@ -218,13 +274,64 @@ describe("secretGrantRequestDestination", () => {
   });
 });
 
-describe("SECRET_GRANT_DECISIONS", () => {
-  it("offers the three decisions in order with their labels", () => {
-    expect(SECRET_GRANT_DECISIONS).toEqual([
+describe("secretGrantDecisions", () => {
+  it("offers the three decisions in order with their labels on a personal request", () => {
+    expect(secretGrantDecisions(null)).toEqual([
       { decision: "approve", label: "Approve for this sandbox" },
       { decision: "approve_default", label: "Approve for all sandboxes" },
       { decision: "decline", label: "Decline" },
     ]);
+  });
+
+  it("names the team on the wide approval of a team request", () => {
+    expect(secretGrantDecisions("Acme")).toEqual([
+      { decision: "approve", label: "Approve for this sandbox" },
+      {
+        decision: "approve_default",
+        label: "Approve for all Acme sandboxes",
+      },
+      { decision: "decline", label: "Decline" },
+    ]);
+  });
+});
+
+describe("secretGrantDefaultConfirmation", () => {
+  it("is null on a personal request, which needs none", () => {
+    expect(secretGrantDefaultConfirmation(null, "DB_PASSWORD")).toBeNull();
+    expect(secretGrantDefaultConfirmation(null, null)).toBeNull();
+  });
+
+  it("names the team and the secret on a team request", () => {
+    expect(secretGrantDefaultConfirmation("Acme", "DB_PASSWORD")).toBe(
+      "Every current and future Acme sandbox will hold DB_PASSWORD.",
+    );
+  });
+
+  it("says this secret when the request names none", () => {
+    expect(secretGrantDefaultConfirmation("Acme", null)).toBe(
+      "Every current and future Acme sandbox will hold this secret.",
+    );
+  });
+});
+
+describe("secretRequestDecidedByLine", () => {
+  it.each([
+    ["approved", "Approved by Ana."],
+    ["approved_default", "Approved by Ana."],
+    ["declined", "Declined by Ana."],
+  ])("reads %s as a line naming who answered", (status, line) => {
+    expect(secretRequestDecidedByLine(status, "Ana")).toBe(line);
+  });
+
+  it("is null when nobody is named", () => {
+    expect(secretRequestDecidedByLine("approved", null)).toBeNull();
+    expect(secretRequestDecidedByLine("declined", null)).toBeNull();
+  });
+
+  it("is null for a status that no person settled", () => {
+    expect(secretRequestDecidedByLine("expired", "Ana")).toBeNull();
+    expect(secretRequestDecidedByLine("pending", "Ana")).toBeNull();
+    expect(secretRequestDecidedByLine("revoked", "Ana")).toBeNull();
   });
 });
 

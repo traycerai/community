@@ -971,11 +971,41 @@ describe("merged notifications feed", () => {
         protocol: "mysql",
         reason: "Run the migration",
         sandboxName: "build-box",
+        environmentId: null,
+        teamName: null,
+        decision: null,
+        decidedBy: null,
       });
       expect(row.payload).toEqual({
         kind: "chat",
         epicId: "epic-1",
         chatId: "chat-1",
+      });
+    });
+
+    it("projects a resolved team grant request with its team and who answered", () => {
+      const row = rowFromHostEntry({
+        ...grantEntry,
+        resolvedAt: 30,
+        payload: {
+          kind: "secret_grant_request",
+          requestId: "request-1",
+          hostId: "host-1",
+          secretName: "DB_PASSWORD",
+          destination: "db.example.com",
+          reason: "Run the migration",
+          environmentId: "env-team-1",
+          teamName: "Acme",
+          decision: "approved",
+          decidedBy: "Ana",
+        },
+      });
+      expect(row.secrets).toMatchObject({
+        kind: "grant-request",
+        environmentId: "env-team-1",
+        teamName: "Acme",
+        decision: "approved",
+        decidedBy: "Ana",
       });
     });
 

@@ -17,28 +17,36 @@ import { sandboxMutationKeys, sandboxQueryKeys } from "@/lib/query-keys";
  *  - `decided`: the request now stands at `status`, by this decision (or by
  *    the same one made a moment ago).
  *  - `already`: it had been decided otherwise, or had expired; `status` is
- *    where it stands. Nothing this click did changed it.
+ *    where it stands and `decidedBy` names who settled it, when the broker
+ *    says. Nothing this click did changed it.
  *  - `secret-required`: the request names only a destination, and there is no
  *    secret to grant until one is stored on the dashboard.
  *  - `gone`: the broker has no such request for this user any more.
  */
 export type SecretRequestDecideOutcome =
   | { readonly kind: "decided"; readonly status: string }
-  | { readonly kind: "already"; readonly status: string }
+  | {
+      readonly kind: "already";
+      readonly status: string;
+      readonly decidedBy: string | null;
+    }
   | { readonly kind: "secret-required" }
   | { readonly kind: "gone" };
 
 /**
- * `POST /api/v3/secrets/requests/:id/decide` for one grant request: the
- * approval card's three answers. Bound to the request at hook level, so a
- * re-render cannot re-point a decision already in flight, and one mutation
- * key per request, so the card holds all three buttons while any one runs.
+ * `POST /api/v3/environments/:environmentId/secrets/requests/:id/decide` for
+ * one grant request, in the environment the request names (`null` resolves
+ * Personal): the approval card's three answers. Bound to the request at
+ * hook level, so a re-render cannot re-point a decision already in flight,
+ * and one mutation key per request, so the card holds all three buttons
+ * while any one runs.
  *
  * Only a transport or sign-in failure is an error (toasted here). Every
  * answer the broker gives about the request itself is an outcome the card
  * words. A decision that landed refreshes every sandbox's grants summary.
  */
 export function useSecretRequestDecide(
+  environmentId: string | null,
   requestId: string,
 ): UseMutationResult<SecretRequestDecideOutcome, Error, SecretRequestDecision> {
   const binding = useHostBinding();
@@ -52,6 +60,7 @@ export function useSecretRequestDecide(
         throw new Error("Sign in to answer this request.");
       }
       const result = await binding.auth.decideSecretRequest(
+        environmentId,
         requestId,
         decision,
       );
@@ -61,7 +70,11 @@ export function useSecretRequestDecide(
         case "conflict":
           return result.code === SECRET_REQUEST_CODE_SECRET_REQUIRED
             ? { kind: "secret-required" }
-            : { kind: "already", status: result.status };
+            : {
+                kind: "already",
+                status: result.status,
+                decidedBy: result.decidedBy,
+              };
         case "not-found":
           return { kind: "gone" };
         case "unauthorized":

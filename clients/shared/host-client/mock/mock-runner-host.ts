@@ -678,9 +678,15 @@ export class MockRunnerHost implements IRunnerHost {
 
   getSandboxGrants(
     bearerToken: string,
+    environmentId: string | null,
     hostId: string,
   ): Promise<SandboxGrantsFetchResult> {
-    return fetchSandboxGrantsViaHttp(this.authnBaseUrl, bearerToken, hostId);
+    return fetchSandboxGrantsViaHttp(
+      this.authnBaseUrl,
+      bearerToken,
+      environmentId,
+      hostId,
+    );
   }
 
   mintExecutableWriteGrant(
@@ -696,12 +702,14 @@ export class MockRunnerHost implements IRunnerHost {
 
   decideSecretRequest(
     bearerToken: string,
+    environmentId: string | null,
     requestId: string,
     decision: SecretRequestDecision,
   ): Promise<SecretRequestDecideFetchResult> {
     return decideSecretRequestViaHttp(
       this.authnBaseUrl,
       bearerToken,
+      environmentId,
       requestId,
       decision,
     );

@@ -403,7 +403,7 @@ function SandboxSecretsSection(props: {
   readonly frozen: boolean;
 }): ReactNode {
   const { summary } = props;
-  const grants = useSandboxGrants(summary.hostId);
+  const grants = useSandboxGrants(summary.environmentId, summary.hostId);
   const grantsSummary = grants.data ?? null;
   // A sandbox with no phase and no grant set has no secrets to speak of (a
   // server or broker from before them): the section, and every live hook

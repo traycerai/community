@@ -66,12 +66,14 @@ export const sandboxQueryKeys = {
   grants: (
     authService: object,
     userId: string | null,
+    environmentId: string | null,
     hostId: string,
   ): readonly unknown[] => [
     "auth",
     "sandbox-grants",
     authService,
     userId,
+    environmentId,
     hostId,
   ],
   grantsAll: (): readonly unknown[] => ["auth", "sandbox-grants"],

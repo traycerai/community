@@ -47,6 +47,7 @@ function summaryOf(overrides: Partial<SandboxSummary>): SandboxSummary {
     phase: null,
     routes: null,
     priceMcPerHour: null,
+    environmentId: null,
     ...overrides,
   };
 }

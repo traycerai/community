@@ -20,13 +20,14 @@ const mocks = vi.hoisted(() => {
   return {
     state,
     mutate: vi.fn<(decision: SecretRequestDecision) => void>(),
-    decideRequestId: vi.fn<(requestId: string) => void>(),
+    decideArgs:
+      vi.fn<(environmentId: string | null, requestId: string) => void>(),
   };
 });
 
 vi.mock("@/hooks/sandboxes/use-secret-request-decide-mutation", () => ({
-  useSecretRequestDecide: (requestId: string) => {
-    mocks.decideRequestId(requestId);
+  useSecretRequestDecide: (environmentId: string | null, requestId: string) => {
+    mocks.decideArgs(environmentId, requestId);
     return {
       data: mocks.state.data,
       isPending: mocks.state.isPending,
@@ -59,6 +60,17 @@ const DETAIL: GrantRequestDetail = {
   protocol: "mysql",
   reason: "Run the migration",
   sandboxName: "build-box",
+  environmentId: null,
+  teamName: null,
+  decision: null,
+  decidedBy: null,
+};
+
+/** The same request, made in a team's environment. */
+const TEAM_DETAIL: GrantRequestDetail = {
+  ...DETAIL,
+  environmentId: "env-team-1",
+  teamName: "Acme",
 };
 
 const ANSWER_IDS = [
@@ -89,7 +101,7 @@ beforeEach(() => {
   mocks.state.isPending = false;
   mocks.state.variables = undefined;
   mocks.mutate.mockClear();
-  mocks.decideRequestId.mockClear();
+  mocks.decideArgs.mockClear();
 });
 afterEach(cleanup);
 
@@ -104,9 +116,14 @@ describe("<SecretGrantRequestCard />", () => {
     expect(textOf("secret-grant-request-reason")).toBe("Run the migration");
   });
 
-  it("binds the decision to the request's id", () => {
+  it("binds the decision to the request's id, in a Personal request's environment", () => {
     renderCard(DETAIL, false);
-    expect(mocks.decideRequestId).toHaveBeenCalledWith("request-1");
+    expect(mocks.decideArgs).toHaveBeenCalledWith(null, "request-1");
+  });
+
+  it("binds the decision to the request's id, in the team's environment", () => {
+    renderCard(TEAM_DETAIL, false);
+    expect(mocks.decideArgs).toHaveBeenCalledWith("env-team-1", "request-1");
   });
 
   it("omits the sections the request does not carry", () => {
@@ -185,13 +202,13 @@ describe("<SecretGrantRequestCard />", () => {
     ],
     [
       "a request decided otherwise",
-      { kind: "already", status: "declined" },
+      { kind: "already", status: "declined", decidedBy: null },
       "already",
       "Already answered. Declined. Nothing was granted and the agent has been told.",
     ],
     [
       "an expired request",
-      { kind: "already", status: "expired" },
+      { kind: "already", status: "expired", decidedBy: null },
       "already",
       "Already answered. This request expired before it was answered.",
     ],
@@ -242,5 +259,195 @@ describe("<SecretGrantRequestCard />", () => {
     for (const testId of ANSWER_IDS) {
       expect(isAbsent(testId)).toBe(true);
     }
+  });
+
+  it("posts approve_default straight away on a personal request, with no confirmation", () => {
+    renderCard(DETAIL, false);
+    fireEvent.click(screen.getByTestId("secret-grant-request-approve_default"));
+    expect(isAbsent("secret-grant-request-confirm-default")).toBe(true);
+    expect(mocks.mutate).toHaveBeenCalledTimes(1);
+    expect(mocks.mutate).toHaveBeenCalledWith("approve_default");
+  });
+});
+
+describe("<SecretGrantRequestCard /> on a team request", () => {
+  it("names the team on the wide approval and leaves the other two labels alone", () => {
+    renderCard(TEAM_DETAIL, false);
+    expect(textOf("secret-grant-request-approve")).toBe(
+      "Approve for this sandbox",
+    );
+    expect(textOf("secret-grant-request-approve_default")).toBe(
+      "Approve for all Acme sandboxes",
+    );
+    expect(textOf("secret-grant-request-decline")).toBe("Decline");
+  });
+
+  it("asks first when the wide approval is clicked, and posts nothing yet", () => {
+    renderCard(TEAM_DETAIL, false);
+    fireEvent.click(screen.getByTestId("secret-grant-request-approve_default"));
+
+    expect(textOf("secret-grant-request-confirm-default")).toContain(
+      "Every current and future Acme sandbox will hold DB_PASSWORD.",
+    );
+    expect(textOf("secret-grant-request-confirm-default-yes")).toBe(
+      "Approve for all",
+    );
+    expect(textOf("secret-grant-request-confirm-default-cancel")).toBe(
+      "Cancel",
+    );
+    for (const testId of ANSWER_IDS) {
+      expect(isAbsent(testId)).toBe(true);
+    }
+    expect(mocks.mutate).not.toHaveBeenCalled();
+  });
+
+  it("returns to the three answers on Cancel, with nothing posted", () => {
+    renderCard(TEAM_DETAIL, false);
+    fireEvent.click(screen.getByTestId("secret-grant-request-approve_default"));
+    fireEvent.click(
+      screen.getByTestId("secret-grant-request-confirm-default-cancel"),
+    );
+
+    expect(isAbsent("secret-grant-request-confirm-default")).toBe(true);
+    for (const testId of ANSWER_IDS) {
+      expect(isDisabled(testId)).toBe(false);
+    }
+    expect(mocks.mutate).not.toHaveBeenCalled();
+  });
+
+  it("posts approve_default exactly once when the confirmation is accepted", () => {
+    renderCard(TEAM_DETAIL, false);
+    fireEvent.click(screen.getByTestId("secret-grant-request-approve_default"));
+    fireEvent.click(
+      screen.getByTestId("secret-grant-request-confirm-default-yes"),
+    );
+
+    expect(mocks.mutate).toHaveBeenCalledTimes(1);
+    expect(mocks.mutate).toHaveBeenCalledWith("approve_default");
+    expect(isAbsent("secret-grant-request-confirm-default")).toBe(true);
+  });
+
+  it("asks again, and does not post, after a Cancel and a second click on the wide approval", () => {
+    renderCard(TEAM_DETAIL, false);
+    fireEvent.click(screen.getByTestId("secret-grant-request-approve_default"));
+    fireEvent.click(
+      screen.getByTestId("secret-grant-request-confirm-default-cancel"),
+    );
+    fireEvent.click(screen.getByTestId("secret-grant-request-approve_default"));
+
+    expect(
+      screen.getByTestId("secret-grant-request-confirm-default"),
+    ).toBeTruthy();
+    expect(mocks.mutate).not.toHaveBeenCalled();
+  });
+
+  it.each<SecretRequestDecision>(["approve", "decline"])(
+    "posts %s straight away, with no confirmation",
+    (decision) => {
+      renderCard(TEAM_DETAIL, false);
+      fireEvent.click(screen.getByTestId(`secret-grant-request-${decision}`));
+
+      expect(isAbsent("secret-grant-request-confirm-default")).toBe(true);
+      expect(mocks.mutate).toHaveBeenCalledTimes(1);
+      expect(mocks.mutate).toHaveBeenCalledWith(decision);
+    },
+  );
+
+  it("says this secret in the confirmation when the request names none", () => {
+    renderCard({ ...TEAM_DETAIL, secretName: null }, false);
+    fireEvent.click(screen.getByTestId("secret-grant-request-approve_default"));
+
+    expect(textOf("secret-grant-request-confirm-default")).toContain(
+      "Every current and future Acme sandbox will hold this secret.",
+    );
+  });
+});
+
+describe("A team grant request decided by one admin reads 'approved by <admin>' for the other", () => {
+  const RESOLVED_BY_ANA: GrantRequestDetail = {
+    ...TEAM_DETAIL,
+    decision: "approved",
+    decidedBy: "Ana",
+  };
+
+  it("shows Approved by Ana. and no answer buttons on the resolved row", () => {
+    renderCard(RESOLVED_BY_ANA, true);
+
+    expect(textOf("secret-grant-request-decided-by")).toBe("Approved by Ana.");
+    for (const testId of ANSWER_IDS) {
+      expect(isAbsent(testId)).toBe(true);
+    }
+    expect(isAbsent("secret-grant-request-confirm-default")).toBe(true);
+    expect(mocks.mutate).not.toHaveBeenCalled();
+  });
+
+  it("shows Declined by Ana. when she declined it", () => {
+    renderCard({ ...RESOLVED_BY_ANA, decision: "declined" }, true);
+
+    expect(textOf("secret-grant-request-decided-by")).toBe("Declined by Ana.");
+    for (const testId of ANSWER_IDS) {
+      expect(isAbsent(testId)).toBe(true);
+    }
+  });
+
+  it.each([
+    ["names nobody", { decision: "approved", decidedBy: null }],
+    ["expired", { decision: "expired", decidedBy: "Ana" }],
+    ["carries no decision", { decision: null, decidedBy: "Ana" }],
+  ])("shows no decided-by line when the row %s", (_name, fields) => {
+    renderCard({ ...RESOLVED_BY_ANA, ...fields }, true);
+
+    expect(isAbsent("secret-grant-request-decided-by")).toBe(true);
+    for (const testId of ANSWER_IDS) {
+      expect(isAbsent(testId)).toBe(true);
+    }
+  });
+
+  it("shows no decided-by line while the row is still open, even when the payload names one", () => {
+    renderCard(RESOLVED_BY_ANA, false);
+
+    expect(isAbsent("secret-grant-request-decided-by")).toBe(true);
+  });
+
+  it("reads Already answered. Approved by Ana. when this admin's answer is refused with a 409 naming her", () => {
+    mocks.state.data = {
+      kind: "already",
+      status: "approved",
+      decidedBy: "Ana",
+    };
+    renderCard(TEAM_DETAIL, false);
+
+    const outcomeLine = screen.getByTestId("secret-grant-request-outcome");
+    expect(outcomeLine.textContent).toBe("Already answered. Approved by Ana.");
+    expect(outcomeLine.getAttribute("data-outcome")).toBe("already");
+    for (const testId of ANSWER_IDS) {
+      expect(isAbsent(testId)).toBe(true);
+    }
+  });
+
+  it("reads Already answered. Declined by Ana. when she declined it first", () => {
+    mocks.state.data = {
+      kind: "already",
+      status: "declined",
+      decidedBy: "Ana",
+    };
+    renderCard(TEAM_DETAIL, false);
+
+    expect(textOf("secret-grant-request-outcome")).toBe(
+      "Already answered. Declined by Ana.",
+    );
+  });
+
+  it("falls back to the status line when a 409 names nobody", () => {
+    mocks.state.data = {
+      kind: "already",
+      status: "approved",
+      decidedBy: null,
+    };
+    renderCard(TEAM_DETAIL, false);
+
+    expect(textOf("secret-grant-request-outcome")).toBe(
+      "Already answered. Approved for this sandbox, for as long as it exists.",
+    );
   });
 });

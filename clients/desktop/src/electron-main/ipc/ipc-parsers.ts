@@ -53,6 +53,15 @@ export function assertString(
   }
 }
 
+export function assertNullableString(
+  value: unknown,
+  context: string,
+): asserts value is string | null {
+  if (value !== null && typeof value !== "string") {
+    throw new Error(`${context} requires a string or null argument`);
+  }
+}
+
 export function assertNumber(
   value: unknown,
   context: string,

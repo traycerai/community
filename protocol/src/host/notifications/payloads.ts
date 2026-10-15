@@ -534,7 +534,11 @@ export type HostNotificationBrowserHumanNeededPayload = z.infer<
  * deep link; an agent outside a chat leaves them out.
  *
  * `environmentId` is the environment the request is decided in: null (or left
- * out by a host that predates it) resolves Personal.
+ * out by a host that predates it) resolves Personal. `teamName` names a team
+ * environment's team (null or absent for Personal). Once the row resolves,
+ * `decision` says how (known: approved, declined, expired) and `decidedBy`
+ * names the person whose answer settled it (a display name, never an id), so
+ * every other admin of a team reads who answered.
  */
 export const hostNotificationSecretGrantRequestPayloadSchema = lazySchema(() =>
   z
@@ -550,6 +554,9 @@ export const hostNotificationSecretGrantRequestPayloadSchema = lazySchema(() =>
       sandboxName: z.string().optional(),
       agentId: z.string().min(1).nullable().optional(),
       environmentId: idSchema.nullable().optional(),
+      teamName: z.string().nullable().optional(),
+      decision: z.string().min(1).nullable().optional(),
+      decidedBy: z.string().min(1).nullable().optional(),
       epicId: idSchema.optional(),
       chatId: idSchema.optional(),
     })

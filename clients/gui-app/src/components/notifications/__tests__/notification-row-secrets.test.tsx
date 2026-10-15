@@ -71,6 +71,10 @@ const GRANT: GrantRequestDetail = {
   protocol: "mysql",
   reason: "Run the migration",
   sandboxName: "build-box",
+  environmentId: null,
+  teamName: null,
+  decision: null,
+  decidedBy: null,
 };
 
 const EXPORT: ExportMintedDetail = {

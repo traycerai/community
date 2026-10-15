@@ -15,7 +15,7 @@
 import { z } from "zod";
 import { lazySchema } from "@traycer/protocol/framework/lazy-schema";
 
-// ─── `GET /api/v3/secrets/hosts/:hostId/grants` ─────────────────────────────
+// ─── `GET /api/v3/environments/:environmentId/secrets/hosts/:hostId/grants` ─
 
 /** How a sandbox holds a secret. Anything else is shown as its own word. */
 export const SANDBOX_GRANT_MODE_BROKERED = "brokered";
@@ -187,7 +187,7 @@ export const sandboxGrantsSummarySchema: z.ZodType<SandboxGrantsSummary> =
     }),
   );
 
-// ─── `POST /api/v3/secrets/requests/:id/decide` ─────────────────────────────
+// ─── `POST /api/v3/environments/:environmentId/secrets/requests/:id/decide` ─
 
 /**
  * The three answers to an agent's grant request:
@@ -238,6 +238,12 @@ export const SECRET_REQUEST_CODE_SECRET_REQUIRED = "secret_required";
 export interface SecretRequestDecideBody {
   readonly status: string;
   readonly code: string | null;
+  /**
+   * The display name of the person whose answer settled the request, or
+   * `null` (an expired request, or a broker that does not report it). On a
+   * team request it lets every other admin read who answered.
+   */
+  readonly decidedBy: string | null;
 }
 
 export const secretRequestDecideBodySchema: z.ZodType<SecretRequestDecideBody> =
@@ -245,5 +251,6 @@ export const secretRequestDecideBodySchema: z.ZodType<SecretRequestDecideBody> =
     z.object({
       status: z.string().min(1),
       code: z.string().nullable().default(null),
+      decidedBy: z.string().min(1).nullable().default(null),
     }),
   );

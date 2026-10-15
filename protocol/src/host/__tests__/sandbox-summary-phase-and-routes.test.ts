@@ -219,3 +219,45 @@ describe("RPC_ERROR_CODES carries the secrets refusals", () => {
     expect(RPC_ERROR_CODES).toContain(code);
   });
 });
+
+describe("sandbox summary environmentId", () => {
+  it("keeps the environment the sandbox belongs to", () => {
+    const parsed = sandboxSummarySchema.parse({
+      ...SANDBOX_VIEW,
+      environmentId: "env-team-1",
+    });
+    expect(parsed.environmentId).toBe("env-team-1");
+  });
+
+  it("reads a server that predates environments (no key) as null", () => {
+    expect(sandboxSummarySchema.parse(SANDBOX_VIEW).environmentId).toBeNull();
+  });
+
+  it("keeps an explicit null", () => {
+    const parsed = sandboxSummarySchema.parse({
+      ...SANDBOX_VIEW,
+      environmentId: null,
+    });
+    expect(parsed.environmentId).toBeNull();
+  });
+
+  it("refuses an empty environment id", () => {
+    expect(
+      sandboxSummarySchema.safeParse({ ...SANDBOX_VIEW, environmentId: "" })
+        .success,
+    ).toBe(false);
+  });
+
+  it("carries the environment through a list response", () => {
+    const parsed = sandboxListResponseSchema.parse({
+      sandboxes: [
+        { ...SANDBOX_VIEW, environmentId: "env-team-1" },
+        SANDBOX_VIEW,
+      ],
+    });
+    expect(parsed.sandboxes.map((row) => row.environmentId)).toEqual([
+      "env-team-1",
+      null,
+    ]);
+  });
+});

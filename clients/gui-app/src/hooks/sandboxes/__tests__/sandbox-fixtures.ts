@@ -32,6 +32,7 @@ export function sandboxSummaryFixture(
     phase: null,
     routes: null,
     priceMcPerHour: { awakeMc: 120, suspendedMc: 4, stoppedMc: 2 },
+    environmentId: null,
     ...overrides,
   };
 }

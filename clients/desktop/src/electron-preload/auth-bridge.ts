@@ -145,10 +145,12 @@ export interface AuthBridgeSurface {
   ): Promise<SandboxAutomationOpenFetchResult>;
   getSandboxGrants(
     bearerToken: string,
+    environmentId: string | null,
     hostId: string,
   ): Promise<SandboxGrantsFetchResult>;
   decideSecretRequest(
     bearerToken: string,
+    environmentId: string | null,
     requestId: string,
     decision: SecretRequestDecision,
   ): Promise<SecretRequestDecideFetchResult>;
@@ -282,10 +284,11 @@ export function buildAuthBridge(): AuthBridgeSurface {
         bearerToken,
       ) as Promise<SandboxAutomationOpenFetchResult>,
 
-    getSandboxGrants: (bearerToken, hostId) =>
+    getSandboxGrants: (bearerToken, environmentId, hostId) =>
       ipcRenderer.invoke(
         RunnerHostInvoke.getSandboxGrants,
         bearerToken,
+        environmentId,
         hostId,
       ) as Promise<SandboxGrantsFetchResult>,
 
@@ -296,10 +299,11 @@ export function buildAuthBridge(): AuthBridgeSurface {
         hostId,
       ) as Promise<ExecutableWriteGrantFetchResult>,
 
-    decideSecretRequest: (bearerToken, requestId, decision) =>
+    decideSecretRequest: (bearerToken, environmentId, requestId, decision) =>
       ipcRenderer.invoke(
         RunnerHostInvoke.decideSecretRequest,
         bearerToken,
+        environmentId,
         requestId,
         decision,
       ) as Promise<SecretRequestDecideFetchResult>,

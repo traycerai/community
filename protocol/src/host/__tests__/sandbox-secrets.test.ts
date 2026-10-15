@@ -299,19 +299,52 @@ describe("secretRequestDecideBodySchema", () => {
         status: "pending",
         code: SECRET_REQUEST_CODE_SECRET_REQUIRED,
       }),
-    ).toEqual({ status: "pending", code: "secret_required" });
+    ).toEqual({ status: "pending", code: "secret_required", decidedBy: null });
   });
 
   it("defaults a missing code to null", () => {
     expect(secretRequestDecideBodySchema.parse({ status: "approved" })).toEqual(
-      { status: "approved", code: null },
+      { status: "approved", code: null, decidedBy: null },
     );
+  });
+
+  it("keeps the display name of the person who answered", () => {
+    expect(
+      secretRequestDecideBodySchema.parse({
+        status: "approved",
+        decidedBy: "Ana",
+      }),
+    ).toEqual({ status: "approved", code: null, decidedBy: "Ana" });
+  });
+
+  it("accepts an explicit null decidedBy", () => {
+    expect(
+      secretRequestDecideBodySchema.parse({
+        status: "expired",
+        decidedBy: null,
+      }),
+    ).toEqual({ status: "expired", code: null, decidedBy: null });
+  });
+
+  it("rejects an empty or non-string decidedBy", () => {
+    expect(
+      secretRequestDecideBodySchema.safeParse({
+        status: "approved",
+        decidedBy: "",
+      }).success,
+    ).toBe(false);
+    expect(
+      secretRequestDecideBodySchema.safeParse({
+        status: "approved",
+        decidedBy: 7,
+      }).success,
+    ).toBe(false);
   });
 
   it("accepts an explicit null code", () => {
     expect(
       secretRequestDecideBodySchema.parse({ status: "declined", code: null }),
-    ).toEqual({ status: "declined", code: null });
+    ).toEqual({ status: "declined", code: null, decidedBy: null });
   });
 
   it("accepts a status and a code it does not know", () => {
@@ -321,13 +354,17 @@ describe("secretRequestDecideBodySchema", () => {
         status: "revoked",
         code: "some_future_code",
       }),
-    ).toEqual({ status: "revoked", code: "some_future_code" });
+    ).toEqual({
+      status: "revoked",
+      code: "some_future_code",
+      decidedBy: null,
+    });
   });
 
   it("ignores unknown extra keys", () => {
     expect(
       secretRequestDecideBodySchema.parse({ status: "approved", extra: 1 }),
-    ).toEqual({ status: "approved", code: null });
+    ).toEqual({ status: "approved", code: null, decidedBy: null });
   });
 
   it("rejects a missing or empty status", () => {

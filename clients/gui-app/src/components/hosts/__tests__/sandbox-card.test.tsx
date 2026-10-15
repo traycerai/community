@@ -54,7 +54,8 @@ const mocks = vi.hoisted(() => ({
   grantsError: false,
   grantsFetching: false,
   grantsRefetch: vi.fn<() => void>(),
-  useGrants: vi.fn<(hostId: string | null) => void>(),
+  useGrants:
+    vi.fn<(environmentId: string | null, hostId: string | null) => void>(),
 }));
 
 vi.mock("sonner", () => ({
@@ -83,8 +84,8 @@ vi.mock("@/hooks/sandboxes/use-sandbox-egress-events", () => ({
   },
 }));
 vi.mock("@/hooks/sandboxes/use-sandbox-grants-query", () => ({
-  useSandboxGrants: (hostId: string | null) => {
-    mocks.useGrants(hostId);
+  useSandboxGrants: (environmentId: string | null, hostId: string | null) => {
+    mocks.useGrants(environmentId, hostId);
     return {
       data: mocks.grantsData,
       isError: mocks.grantsError,
@@ -1077,12 +1078,28 @@ describe("<SandboxCard /> grants list", () => {
     return { version: 3, grants, github };
   }
 
-  it("asks the broker about the summary's host", () => {
+  it("asks the broker about the summary's host, in the summary's environment", () => {
+    mocks.grantsData = grantsOf([], null);
+
+    renderCard(
+      sandboxOf("awake", false, {
+        phase: "ready",
+        environmentId: "env-team-1",
+      }),
+    );
+
+    expect(mocks.useGrants).toHaveBeenLastCalledWith(
+      "env-team-1",
+      "host-sbx-1",
+    );
+  });
+
+  it("asks in the Personal environment when the summary names none", () => {
     mocks.grantsData = grantsOf([], null);
 
     renderCard(sandboxOf("awake", false, { phase: "ready" }));
 
-    expect(mocks.useGrants).toHaveBeenLastCalledWith("host-sbx-1");
+    expect(mocks.useGrants).toHaveBeenLastCalledWith(null, "host-sbx-1");
   });
 
   it("lists each grant with its routes and their readiness", () => {

@@ -192,6 +192,11 @@ export interface SandboxSummary {
   readonly routes: readonly SandboxRouteReadiness[] | null;
   /** `null` when this server has no price configured for the provider. */
   readonly priceMcPerHour: SandboxHourlyPrice | null;
+  /**
+   * The environment the sandbox belongs to; `null` from a server that
+   * predates environments, which reads as the person's Personal one.
+   */
+  readonly environmentId: string | null;
 }
 
 /** Days a frozen sandbox is kept before the control plane destroys it. */
@@ -236,6 +241,7 @@ export const sandboxSummarySchema: z.ZodType<SandboxSummary> = lazySchema(() =>
       .default(null)
       .catch(null),
     priceMcPerHour: sandboxHourlyPriceSchema.nullable(),
+    environmentId: z.string().min(1).nullable().default(null),
   }),
 );
 

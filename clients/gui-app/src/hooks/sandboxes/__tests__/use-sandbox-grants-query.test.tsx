@@ -14,7 +14,10 @@ import type { SandboxGrantsFetchResult } from "@traycer-clients/shared/host-clie
 import type { SandboxGrantsSummary } from "@traycer/protocol/host/sandbox-secrets";
 import { useAuthStore } from "@/stores/auth/auth-store";
 
-type GetSandboxGrants = (hostId: string) => Promise<SandboxGrantsFetchResult>;
+type GetSandboxGrants = (
+  environmentId: string | null,
+  hostId: string,
+) => Promise<SandboxGrantsFetchResult>;
 
 interface FakeGrantsBinding {
   readonly auth: { readonly getSandboxGrants: Mock<GetSandboxGrants> };
@@ -89,6 +92,16 @@ function answerFor(hostId: string): SandboxGrantsFetchResult {
   return { kind: "not-found" };
 }
 
+/** env-team has a grant set; every other environment has none. */
+function answerForEnvironment(
+  environmentId: string | null,
+): SandboxGrantsFetchResult {
+  if (environmentId === "env-team") {
+    return { kind: "ok", summary: SUMMARY };
+  }
+  return { kind: "not-found" };
+}
+
 interface HostIdProps {
   readonly hostId: string | null;
 }
@@ -105,7 +118,7 @@ afterEach(() => {
 
 describe("useSandboxGrants", () => {
   it("does not fetch while there is no host id", async () => {
-    const { result } = renderHook(() => useSandboxGrants(null), {
+    const { result } = renderHook(() => useSandboxGrants("env-1", null), {
       wrapper: wrapper(),
     });
 
@@ -119,7 +132,7 @@ describe("useSandboxGrants", () => {
 
   it("does not fetch while there is no host binding", async () => {
     mocks.binding = null;
-    const { result } = renderHook(() => useSandboxGrants("host-1"), {
+    const { result } = renderHook(() => useSandboxGrants("env-1", "host-1"), {
       wrapper: wrapper(),
     });
 
@@ -132,7 +145,7 @@ describe("useSandboxGrants", () => {
 
   it("does not fetch while signed out", async () => {
     useAuthStore.setState({ status: "signed-out" });
-    const { result } = renderHook(() => useSandboxGrants("host-1"), {
+    const { result } = renderHook(() => useSandboxGrants("env-1", "host-1"), {
       wrapper: wrapper(),
     });
 
@@ -147,7 +160,7 @@ describe("useSandboxGrants", () => {
     getSandboxGrantsSpy().mockResolvedValue({ kind: "ok", summary: SUMMARY });
     const initialProps: HostIdProps = { hostId: null };
     const { result, rerender } = renderHook(
-      ({ hostId }: HostIdProps) => useSandboxGrants(hostId),
+      ({ hostId }: HostIdProps) => useSandboxGrants("env-1", hostId),
       { wrapper: wrapper(), initialProps },
     );
     expect(getSandboxGrantsSpy()).not.toHaveBeenCalled();
@@ -158,12 +171,12 @@ describe("useSandboxGrants", () => {
       expect(result.current.data).toEqual(SUMMARY);
     });
     expect(getSandboxGrantsSpy()).toHaveBeenCalledTimes(1);
-    expect(getSandboxGrantsSpy()).toHaveBeenCalledWith("host-1");
+    expect(getSandboxGrantsSpy()).toHaveBeenCalledWith("env-1", "host-1");
   });
 
   it("returns the summary on ok", async () => {
     getSandboxGrantsSpy().mockResolvedValue({ kind: "ok", summary: SUMMARY });
-    const { result } = renderHook(() => useSandboxGrants("host-1"), {
+    const { result } = renderHook(() => useSandboxGrants("env-1", "host-1"), {
       wrapper: wrapper(),
     });
 
@@ -171,12 +184,12 @@ describe("useSandboxGrants", () => {
       expect(result.current.data).toEqual(SUMMARY);
     });
     expect(result.current.isError).toBe(false);
-    expect(getSandboxGrantsSpy()).toHaveBeenCalledWith("host-1");
+    expect(getSandboxGrantsSpy()).toHaveBeenCalledWith("env-1", "host-1");
   });
 
   it("answers null, not an error, when the broker has no grant set for the host", async () => {
     getSandboxGrantsSpy().mockResolvedValue({ kind: "not-found" });
-    const { result } = renderHook(() => useSandboxGrants("host-1"), {
+    const { result } = renderHook(() => useSandboxGrants("env-1", "host-1"), {
       wrapper: wrapper(),
     });
 
@@ -189,7 +202,7 @@ describe("useSandboxGrants", () => {
 
   it("errors with a sign-in message on unauthorized", async () => {
     getSandboxGrantsSpy().mockResolvedValue({ kind: "unauthorized" });
-    const { result } = renderHook(() => useSandboxGrants("host-1"), {
+    const { result } = renderHook(() => useSandboxGrants("env-1", "host-1"), {
       wrapper: wrapper(),
     });
 
@@ -207,7 +220,7 @@ describe("useSandboxGrants", () => {
       kind: "network-error",
       detail: "the broker answered HTTP 500",
     });
-    const { result } = renderHook(() => useSandboxGrants("host-1"), {
+    const { result } = renderHook(() => useSandboxGrants("env-1", "host-1"), {
       wrapper: wrapper(),
     });
 
@@ -221,14 +234,14 @@ describe("useSandboxGrants", () => {
   });
 
   it("keeps a separate answer per host", async () => {
-    getSandboxGrantsSpy().mockImplementation((hostId) =>
+    getSandboxGrantsSpy().mockImplementation((_environmentId, hostId) =>
       Promise.resolve(answerFor(hostId)),
     );
     const shared = wrapper();
-    const first = renderHook(() => useSandboxGrants("host-1"), {
+    const first = renderHook(() => useSandboxGrants("env-1", "host-1"), {
       wrapper: shared,
     });
-    const second = renderHook(() => useSandboxGrants("host-2"), {
+    const second = renderHook(() => useSandboxGrants("env-1", "host-2"), {
       wrapper: shared,
     });
 
@@ -237,6 +250,44 @@ describe("useSandboxGrants", () => {
       expect(second.result.current.isSuccess).toBe(true);
     });
     expect(second.result.current.data).toBeNull();
+    expect(getSandboxGrantsSpy()).toHaveBeenCalledTimes(2);
+  });
+
+  it("asks in the environment it is given, with a null one passed through as null", async () => {
+    getSandboxGrantsSpy().mockResolvedValue({ kind: "ok", summary: SUMMARY });
+    const shared = wrapper();
+    const team = renderHook(() => useSandboxGrants("env-team", "host-1"), {
+      wrapper: shared,
+    });
+    const personal = renderHook(() => useSandboxGrants(null, "host-1"), {
+      wrapper: shared,
+    });
+
+    await waitFor(() => {
+      expect(team.result.current.data).toEqual(SUMMARY);
+      expect(personal.result.current.data).toEqual(SUMMARY);
+    });
+    expect(getSandboxGrantsSpy()).toHaveBeenCalledWith("env-team", "host-1");
+    expect(getSandboxGrantsSpy()).toHaveBeenCalledWith(null, "host-1");
+  });
+
+  it("keeps a separate answer per environment for the same host", async () => {
+    getSandboxGrantsSpy().mockImplementation((environmentId) =>
+      Promise.resolve(answerForEnvironment(environmentId)),
+    );
+    const shared = wrapper();
+    const team = renderHook(() => useSandboxGrants("env-team", "host-1"), {
+      wrapper: shared,
+    });
+    const other = renderHook(() => useSandboxGrants("env-other", "host-1"), {
+      wrapper: shared,
+    });
+
+    await waitFor(() => {
+      expect(team.result.current.data).toEqual(SUMMARY);
+      expect(other.result.current.isSuccess).toBe(true);
+    });
+    expect(other.result.current.data).toBeNull();
     expect(getSandboxGrantsSpy()).toHaveBeenCalledTimes(2);
   });
 });

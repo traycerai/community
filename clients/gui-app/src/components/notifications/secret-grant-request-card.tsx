@@ -1,4 +1,5 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
+import type { SecretRequestDecision } from "@traycer/protocol/host/sandbox-secrets";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
 import { Button } from "@/components/ui/button";
 import { SecretsDashboardLink } from "@/components/providers/secrets-dashboard-link";
@@ -7,9 +8,11 @@ import {
   type SecretRequestDecideOutcome,
 } from "@/hooks/sandboxes/use-secret-request-decide-mutation";
 import {
-  SECRET_GRANT_DECISIONS,
+  secretGrantDecisions,
+  secretGrantDefaultConfirmation,
   secretGrantRequestDestination,
   secretGrantRequestReason,
+  secretRequestDecidedByLine,
   secretRequestStatusLine,
   type SecretsNotificationDetail,
 } from "@/lib/notifications/secrets-notification-detail";
@@ -26,15 +29,35 @@ type GrantRequestDetail = Extract<
  * without it.
  *
  * `resolved` is the row's own state (the host recorded an answer, from this
- * card or from the dashboard): the answers are then withdrawn and the row's
- * body says it was decided.
+ * card, the dashboard or another admin of the team): the answers are then
+ * withdrawn and the card says who answered, when the row names them.
+ *
+ * On a team request the wider approval names the team and asks first: it
+ * reaches every current and future sandbox of the team.
  */
 export function SecretGrantRequestCard(props: {
   readonly detail: GrantRequestDetail;
   readonly resolved: boolean;
 }): ReactNode {
   const { detail } = props;
-  const decide = useSecretRequestDecide(detail.requestId);
+  const decide = useSecretRequestDecide(detail.environmentId, detail.requestId);
+  const [confirmingDefault, setConfirmingDefault] = useState(false);
+  const confirmation = secretGrantDefaultConfirmation(
+    detail.teamName,
+    detail.secretName,
+  );
+  const answer = (decision: SecretRequestDecision): void => {
+    if (
+      decision === "approve_default" &&
+      confirmation !== null &&
+      !confirmingDefault
+    ) {
+      setConfirmingDefault(true);
+      return;
+    }
+    setConfirmingDefault(false);
+    decide.mutate(decision);
+  };
   const destination = secretGrantRequestDestination(detail);
   const reason = secretGrantRequestReason(detail.reason);
   const outcome = decide.data ?? null;
@@ -82,10 +105,40 @@ export function SecretGrantRequestCard(props: {
           </>
         )}
       </dl>
+      {props.resolved ? <ResolvedByLine detail={detail} /> : null}
       <SecretGrantOutcomeLine outcome={outcome} />
-      {answerable ? (
+      {answerable && confirmingDefault && confirmation !== null ? (
+        <div
+          data-testid="secret-grant-request-confirm-default"
+          className="flex flex-col gap-1.5"
+        >
+          <p>{confirmation}</p>
+          <div className="flex flex-wrap gap-1.5">
+            <Button
+              type="button"
+              size="sm"
+              variant="default"
+              disabled={decide.isPending}
+              data-testid="secret-grant-request-confirm-default-yes"
+              onClick={() => answer("approve_default")}
+            >
+              Approve for all
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              data-testid="secret-grant-request-confirm-default-cancel"
+              onClick={() => setConfirmingDefault(false)}
+            >
+              Cancel
+            </Button>
+          </div>
+        </div>
+      ) : null}
+      {answerable && !confirmingDefault ? (
         <div className="flex flex-wrap gap-1.5">
-          {SECRET_GRANT_DECISIONS.map(({ decision, label }) => (
+          {secretGrantDecisions(detail.teamName).map(({ decision, label }) => (
             <Button
               key={decision}
               type="button"
@@ -93,7 +146,7 @@ export function SecretGrantRequestCard(props: {
               variant={decisionVariant(decision)}
               disabled={decide.isPending}
               data-testid={`secret-grant-request-${decision}`}
-              onClick={() => decide.mutate(decision)}
+              onClick={() => answer(decision)}
             >
               {decide.isPending && decide.variables === decision ? (
                 <AgentSpinningDots
@@ -112,7 +165,7 @@ export function SecretGrantRequestCard(props: {
 }
 
 function decisionVariant(
-  decision: (typeof SECRET_GRANT_DECISIONS)[number]["decision"],
+  decision: SecretRequestDecision,
 ): "default" | "outline" | "ghost" {
   if (decision === "approve") return "default";
   return decision === "approve_default" ? "outline" : "ghost";
@@ -159,8 +212,29 @@ function outcomeText(
     case "decided":
       return secretRequestStatusLine(outcome.status);
     case "already":
-      return `Already answered. ${secretRequestStatusLine(outcome.status)}`;
+      return `Already answered. ${
+        secretRequestDecidedByLine(outcome.status, outcome.decidedBy) ??
+        secretRequestStatusLine(outcome.status)
+      }`;
     case "gone":
       return "This request is no longer open.";
   }
+}
+
+/** Who settled a resolved row, when its payload names them. */
+function ResolvedByLine(props: {
+  readonly detail: GrantRequestDetail;
+}): ReactNode {
+  const { decision, decidedBy } = props.detail;
+  const line =
+    decision === null ? null : secretRequestDecidedByLine(decision, decidedBy);
+  if (line === null) return null;
+  return (
+    <p
+      data-testid="secret-grant-request-decided-by"
+      className="text-muted-foreground"
+    >
+      {line}
+    </p>
+  );
 }

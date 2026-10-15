@@ -407,10 +407,12 @@ export interface IRunnerHost {
    */
   getSandboxGrants(
     bearerToken: string,
+    environmentId: string | null,
     hostId: string,
   ): Promise<SandboxGrantsFetchResult>;
   decideSecretRequest(
     bearerToken: string,
+    environmentId: string | null,
     requestId: string,
     decision: SecretRequestDecision,
   ): Promise<SecretRequestDecideFetchResult>;

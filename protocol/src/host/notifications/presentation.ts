@@ -99,7 +99,7 @@ export function formatHostNotificationPresentation(
     case "secret.grant.requested":
       return {
         title: "Secret requested",
-        body: `${secretGrantRequestSubject(known) ?? "A sandbox agent"} • ${resolvableRequestStatus(entry.resolvedAt, "Waiting for your decision", "Decided")}`,
+        body: `${secretGrantRequestSubject(known) ?? "A sandbox agent"} • ${resolvableRequestStatus(entry.resolvedAt, "Waiting for your decision", secretGrantDecidedBy(known) ?? "Decided")}`,
       };
     case "secret.export.minted":
       return {
@@ -308,6 +308,21 @@ function secretGrantRequestSubject(
 ): string | null {
   if (known?.kind !== "secret_grant_request") return null;
   return known.secretName ?? known.destination;
+}
+
+/**
+ * "Approved by Ana" or "Declined by Ana" for a resolved request whose payload
+ * names who answered (a team's other admins read it), else `null`.
+ */
+function secretGrantDecidedBy(
+  known: HostNotificationKnownPayload | null,
+): string | null {
+  if (known?.kind !== "secret_grant_request") return null;
+  const decidedBy = known.decidedBy ?? null;
+  if (decidedBy === null) return null;
+  if (known.decision === "approved") return `Approved by ${decidedBy}`;
+  if (known.decision === "declined") return `Declined by ${decidedBy}`;
+  return null;
 }
 
 function secretExportMintedSubject(

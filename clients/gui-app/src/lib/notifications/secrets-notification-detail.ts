@@ -26,6 +26,14 @@ export type SecretsNotificationDetail =
       readonly protocol: string | null;
       readonly reason: string;
       readonly sandboxName: string | null;
+      /** The environment the request is decided in; `null` is Personal. */
+      readonly environmentId: string | null;
+      /** A team request's team, by display name; `null` for Personal. */
+      readonly teamName: string | null;
+      /** Once resolved: how (known: approved, declined, expired). */
+      readonly decision: string | null;
+      /** Once resolved: whose answer settled it, by display name. */
+      readonly decidedBy: string | null;
     }
   | {
       readonly kind: "export-minted";
@@ -51,6 +59,10 @@ export function secretsNotificationDetail(
       protocol: known.protocol,
       reason: known.reason,
       sandboxName: known.sandboxName ?? null,
+      environmentId: known.environmentId ?? null,
+      teamName: known.teamName ?? null,
+      decision: known.decision ?? null,
+      decidedBy: known.decidedBy ?? null,
     };
   }
   if (known.kind === "secret_export_minted") {
@@ -87,15 +99,56 @@ export function secretGrantRequestDestination(
   return detail.protocol === null ? address : `${address} (${detail.protocol})`;
 }
 
-/** The three answers, in the order the card offers them. */
-export const SECRET_GRANT_DECISIONS: readonly {
+/**
+ * The three answers, in the order the card offers them. On a team request
+ * the wider approval names the team: it reaches every sandbox of the team,
+ * including ones other members create.
+ */
+export function secretGrantDecisions(teamName: string | null): readonly {
   readonly decision: SecretRequestDecision;
   readonly label: string;
-}[] = [
-  { decision: "approve", label: "Approve for this sandbox" },
-  { decision: "approve_default", label: "Approve for all sandboxes" },
-  { decision: "decline", label: "Decline" },
-];
+}[] {
+  return [
+    { decision: "approve", label: "Approve for this sandbox" },
+    {
+      decision: "approve_default",
+      label:
+        teamName === null
+          ? "Approve for all sandboxes"
+          : `Approve for all ${teamName} sandboxes`,
+    },
+    { decision: "decline", label: "Decline" },
+  ];
+}
+
+/**
+ * The confirmation a team's wider approval asks first, or `null` for a
+ * personal request, which needs none.
+ */
+export function secretGrantDefaultConfirmation(
+  teamName: string | null,
+  secretName: string | null,
+): string | null {
+  if (teamName === null) return null;
+  const secret = secretName ?? "this secret";
+  return `Every current and future ${teamName} sandbox will hold ${secret}.`;
+}
+
+/**
+ * Who settled a request, in words: "Approved by Ana." or "Declined by Ana.",
+ * or `null` when the answer names nobody (an older broker, an expiry).
+ */
+export function secretRequestDecidedByLine(
+  status: string,
+  decidedBy: string | null,
+): string | null {
+  if (decidedBy === null) return null;
+  if (status === "approved" || status === "approved_default") {
+    return `Approved by ${decidedBy}.`;
+  }
+  if (status === "declined") return `Declined by ${decidedBy}.`;
+  return null;
+}
 
 const STATUS_LINE: Readonly<Record<string, string>> = {
   [SECRET_REQUEST_STATUS_OF_DECISION.approve]:

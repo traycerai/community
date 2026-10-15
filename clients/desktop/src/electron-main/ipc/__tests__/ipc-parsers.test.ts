@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  assertNullableString,
   parseQuitDecision,
   parseSandboxCreateRequest,
   parseSandboxLifecycleVerb,
@@ -64,6 +65,27 @@ describe("parseSandboxLifecycleVerb", () => {
     ]) {
       expect(() => parseSandboxLifecycleVerb(bad)).toThrow(
         'runSandboxVerb.verb must be "suspend", "resume", "stop" or "start"',
+      );
+    }
+  });
+});
+
+// The sandbox environment of a secrets call crosses IPC as `unknown`; null is a
+// real value (a server that predates environments), so it is accepted, and
+// `undefined` is not.
+describe("assertNullableString", () => {
+  it("accepts a string and null", () => {
+    expect(() =>
+      assertNullableString("env-1", "ctx.environmentId"),
+    ).not.toThrow();
+    expect(() => assertNullableString("", "ctx.environmentId")).not.toThrow();
+    expect(() => assertNullableString(null, "ctx.environmentId")).not.toThrow();
+  });
+
+  it("throws on anything else, naming the field", () => {
+    for (const bad of [undefined, 7, true, {}, ["env-1"]]) {
+      expect(() => assertNullableString(bad, "ctx.environmentId")).toThrow(
+        "ctx.environmentId requires a string or null argument",
       );
     }
   });

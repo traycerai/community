@@ -951,13 +951,33 @@ describe("DesktopRunnerHost.getSandboxGrants", () => {
       signInUrl: "https://auth.example.invalid/sign-in",
     });
 
-    await expect(host.getSandboxGrants("bearer-1", "host-1")).resolves.toEqual({
+    await expect(
+      host.getSandboxGrants("bearer-1", "env-1", "host-1"),
+    ).resolves.toEqual({
       kind: "ok",
       summary,
     });
 
     expect(getSandboxGrants).toHaveBeenCalledTimes(1);
-    expect(getSandboxGrants).toHaveBeenCalledWith("bearer-1", "host-1");
+    expect(getSandboxGrants).toHaveBeenCalledWith(
+      "bearer-1",
+      "env-1",
+      "host-1",
+    );
+  });
+
+  it("passes a null environment through to the bridge", async () => {
+    const getSandboxGrants = vi.fn<DesktopPreloadBridge["getSandboxGrants"]>(
+      async () => ({ kind: "not-found" }),
+    );
+    const host = new DesktopRunnerHost({
+      bridge: { ...buildFakeBridge(null).bridge, getSandboxGrants },
+      signInUrl: "https://auth.example.invalid/sign-in",
+    });
+
+    await host.getSandboxGrants("bearer-1", null, "host-1");
+
+    expect(getSandboxGrants).toHaveBeenCalledWith("bearer-1", null, "host-1");
   });
 
   it("returns a failure the bridge reports unchanged", async () => {
@@ -969,7 +989,9 @@ describe("DesktopRunnerHost.getSandboxGrants", () => {
       signInUrl: "https://auth.example.invalid/sign-in",
     });
 
-    await expect(host.getSandboxGrants("bearer-1", "host-1")).resolves.toEqual({
+    await expect(
+      host.getSandboxGrants("bearer-1", "env-1", "host-1"),
+    ).resolves.toEqual({
       kind: "not-found",
     });
   });
@@ -979,21 +1001,49 @@ describe("DesktopRunnerHost.decideSecretRequest", () => {
   it("hands the preload bridge the bearer, the request and the decision, and returns its answer", async () => {
     const decideSecretRequest = vi.fn<
       DesktopPreloadBridge["decideSecretRequest"]
-    >(async () => ({ kind: "ok", status: "approved_default" }));
+    >(async () => ({
+      kind: "ok",
+      status: "approved_default",
+      decidedBy: "Ana",
+    }));
     const host = new DesktopRunnerHost({
       bridge: { ...buildFakeBridge(null).bridge, decideSecretRequest },
       signInUrl: "https://auth.example.invalid/sign-in",
     });
 
     await expect(
-      host.decideSecretRequest("bearer-1", "req-1", "approve_default"),
-    ).resolves.toEqual({ kind: "ok", status: "approved_default" });
+      host.decideSecretRequest("bearer-1", "env-1", "req-1", "approve_default"),
+    ).resolves.toEqual({
+      kind: "ok",
+      status: "approved_default",
+      decidedBy: "Ana",
+    });
 
     expect(decideSecretRequest).toHaveBeenCalledTimes(1);
     expect(decideSecretRequest).toHaveBeenCalledWith(
       "bearer-1",
+      "env-1",
       "req-1",
       "approve_default",
+    );
+  });
+
+  it("passes a null environment through to the bridge", async () => {
+    const decideSecretRequest = vi.fn<
+      DesktopPreloadBridge["decideSecretRequest"]
+    >(async () => ({ kind: "not-found" }));
+    const host = new DesktopRunnerHost({
+      bridge: { ...buildFakeBridge(null).bridge, decideSecretRequest },
+      signInUrl: "https://auth.example.invalid/sign-in",
+    });
+
+    await host.decideSecretRequest("bearer-1", null, "req-1", "approve");
+
+    expect(decideSecretRequest).toHaveBeenCalledWith(
+      "bearer-1",
+      null,
+      "req-1",
+      "approve",
     );
   });
 
@@ -1004,6 +1054,7 @@ describe("DesktopRunnerHost.decideSecretRequest", () => {
       kind: "conflict",
       status: "pending",
       code: "secret_required",
+      decidedBy: null,
     }));
     const host = new DesktopRunnerHost({
       bridge: { ...buildFakeBridge(null).bridge, decideSecretRequest },
@@ -1011,11 +1062,12 @@ describe("DesktopRunnerHost.decideSecretRequest", () => {
     });
 
     await expect(
-      host.decideSecretRequest("bearer-1", "req-1", "approve"),
+      host.decideSecretRequest("bearer-1", "env-1", "req-1", "approve"),
     ).resolves.toEqual({
       kind: "conflict",
       status: "pending",
       code: "secret_required",
+      decidedBy: null,
     });
   });
 });
