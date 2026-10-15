@@ -4,6 +4,7 @@ import type {
   ProviderMcpServer,
 } from "@traycer/protocol/host/provider-native-schemas";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -743,6 +744,62 @@ describe("<ProviderMcpTab /> host remedies and confirmations", () => {
     );
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(mcpMocks.mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("does not attach an in-flight remedy failure to a replacement offer", async () => {
+    let rejectWrite: (error: ProviderNativeRpcError) => void = () => {};
+    mcpMocks.mutateAsync.mockImplementation(
+      () =>
+        new Promise((_resolve, reject: (error: ProviderNativeRpcError) => void) => {
+          rejectWrite = reject;
+        }),
+    );
+    mcpMocks.listResult.data = {
+      servers: [connectedServer({ name: "docs", remedy: TRUST_REMEDY })],
+      notices: [],
+    };
+    const view = renderTab(REMEDY_CAPS, "kimi");
+    fireEvent.click(screen.getByRole("button", { name: "Trust this folder docs" }));
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: TRUST_REMEDY.label,
+      }),
+    );
+
+    mcpMocks.listResult.data = {
+      servers: [
+        connectedServer({
+          name: "docs",
+          remedy: { ...TRUST_REMEDY, id: "replacement-offer" },
+        }),
+      ],
+      notices: [],
+    };
+    view.rerender(
+      <ProviderMcpTab
+        providerId="kimi"
+        capabilities={REMEDY_CAPS}
+        providerLabel="kimi"
+        cliBinaryResolved
+      />,
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Trust this folder docs" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    await act(async () => {
+      rejectWrite(
+        new ProviderNativeRpcError({
+          code: "external_drift",
+          detail: "Earlier offer failed",
+          method: "providers.nativeMutate",
+        }),
+      );
+      await Promise.resolve();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Trust this folder docs" }));
+    expect(screen.getByRole("dialog")).toBeDefined();
+    expect(screen.queryByText("Earlier offer failed")).toBeNull();
   });
 
   it("keeps a confirmation when refreshed rows retain the same offer id", () => {

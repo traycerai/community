@@ -2,6 +2,7 @@ import { useLayoutEffect, useState, type ReactNode } from "react";
 import { createRoot } from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { MockHostMessenger } from "@traycer-clients/shared/host-client/mock/mock-host-messenger";
+import type { ResponseOfMethod } from "@traycer-clients/shared/host-transport/host-messenger";
 import { MockRunnerHost } from "@traycer-clients/shared/host-client/mock/mock-runner-host";
 import type { LocalHostSnapshot } from "@traycer-clients/shared/platform/runner-host";
 import { createRendererContextFixture } from "@traycer-clients/shared/test-fixtures/request-context";
@@ -28,6 +29,7 @@ import "@/index.css";
 type Scenario =
   | "blocking"
   | "row"
+  | "two-rows"
   | "empty-confirmation"
   | "missing-offer"
   | "old-empty"
@@ -90,13 +92,14 @@ const enabledNotice: ProviderMcpNotice = {
 };
 
 function server(args: {
+  readonly name?: string;
   readonly enabled: boolean;
   readonly modern: boolean;
   readonly confirmation: ProviderMcpRemedy | null;
   readonly command?: string;
 }): ProviderMcpServer {
   return {
-    name: "local-tool",
+    name: args.name ?? "local-tool",
     enabled: args.enabled,
     transport: {
       type: "stdio",
@@ -150,6 +153,8 @@ const NEW_CAPABILITIES: ProviderMcpCapabilities = {
 let scenario: Scenario = "blocking";
 let rowVariant: "original" | "changed" | "same" = "original";
 const mutations: string[] = [];
+let deferNextRemedy = false;
+let releaseDeferredRemedy: (() => void) | null = null;
 
 function listResult() {
   switch (scenario) {
@@ -164,6 +169,7 @@ function listResult() {
         },
       };
     case "row":
+    case "two-rows":
       return {
         providers: [],
         native: {
@@ -180,6 +186,16 @@ function listResult() {
               command:
                 rowVariant === "changed" ? "fixture-changed" : "fixture-only",
             }),
+            ...(scenario === "two-rows"
+              ? [
+                  server({
+                    name: "other-tool",
+                    enabled: true,
+                    modern: true,
+                    confirmation: null,
+                  }),
+                ]
+              : []),
           ],
           notices: [],
         },
@@ -284,6 +300,21 @@ const messengerFactory: MessengerFactory<HostRpcRegistry> = ({ registry }) =>
           throw new Error("Unexpected fixture mutation");
         mutations.push(mutation.mutation.action);
         if (mutation.mutation.action === "applyRemedy") {
+          if (deferNextRemedy) {
+            deferNextRemedy = false;
+            return new Promise<
+              ResponseOfMethod<HostRpcRegistry, "providers.nativeMutate">
+            >((resolve) => {
+              releaseDeferredRemedy = () =>
+                resolve({
+                  result: {
+                    ok: false,
+                    code: "external_drift",
+                    detail: "Earlier offer failed",
+                  },
+                });
+            });
+          }
           const enabling =
             mutation.mutation.remedyId.startsWith("fixture:enable:");
           scenario = enabling ? "after-enable" : "after-remedy";
@@ -332,6 +363,9 @@ interface ProbeWindow extends Window {
     readonly setScenario: (next: Scenario) => void;
     readonly refreshRow: (variant: "changed" | "same") => Promise<void>;
     readonly mutationActions: () => readonly string[];
+    readonly deferRemedyError: () => void;
+    readonly failDeferredRemedy: () => void;
+    readonly mutationSettled: () => boolean;
   };
 }
 const probeWindow: ProbeWindow = window;
@@ -369,6 +403,14 @@ export function FixtureTab(): ReactNode {
         await queryClient.invalidateQueries();
       },
       mutationActions: () => [...mutations],
+      deferRemedyError: () => {
+        deferNextRemedy = true;
+      },
+      failDeferredRemedy: () => {
+        releaseDeferredRemedy?.();
+        releaseDeferredRemedy = null;
+      },
+      mutationSettled: () => queryClient.isMutating() === 0,
     };
   }, []);
   const oldHost = scenario === "old-empty" || scenario === "old-row";

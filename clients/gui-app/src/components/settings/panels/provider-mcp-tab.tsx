@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -371,6 +372,10 @@ export function ProviderMcpTab(props: {
   const [confirmationError, setConfirmationError] = useState<string | null>(
     null,
   );
+  // A disappearing offer can close its dialog while its write is in flight.
+  // Keep another offer from opening until that write settles, so its failure
+  // cannot be shown as an error for a different target.
+  const confirmationInFlightRef = useRef(false);
   const [pendingServerNames, setPendingServerNames] = useState<
     ReadonlySet<string>
   >(() => new Set());
@@ -591,6 +596,7 @@ export function ProviderMcpTab(props: {
         capabilities.actionScopes.applyRemedy !== undefined
       ) {
         if (
+          confirmationInFlightRef.current ||
           !canApplyRemedy ||
           server.enableConfirmation === null ||
           server.enableConfirmation === undefined
@@ -643,6 +649,7 @@ export function ProviderMcpTab(props: {
   const handleConfirmation = useCallback(() => {
     if (
       activeConfirmationTarget === null ||
+      confirmationInFlightRef.current ||
       confirmationMutate.isPending ||
       !canApplyRemedy ||
       !isCurrentMcpConfirmation({
@@ -653,6 +660,7 @@ export function ProviderMcpTab(props: {
     )
       return;
     const target = activeConfirmationTarget;
+    confirmationInFlightRef.current = true;
     const name =
       target.kind === "notice" ? target.remedy.id : target.serverName;
     markPending(name, true);
@@ -682,6 +690,7 @@ export function ProviderMcpTab(props: {
         }
       })
       .finally(() => {
+        confirmationInFlightRef.current = false;
         markPending(name, false);
       });
   }, [
@@ -950,6 +959,7 @@ export function ProviderMcpTab(props: {
         canApplyRemedy={canApplyRemedy}
         pending={confirmationMutate.isPending}
         onRemedy={(remedy) => {
+          if (confirmationInFlightRef.current) return;
           setConfirmationError(null);
           setConfirmationTarget({
             kind: "notice",
@@ -1004,6 +1014,7 @@ export function ProviderMcpTab(props: {
         onRefresh={handleRefresh}
         onToggleServer={handleToggleServer}
         onRemedy={(serverName, remedy) => {
+          if (confirmationInFlightRef.current) return;
           setConfirmationError(null);
           setConfirmationTarget({
             kind: "row",

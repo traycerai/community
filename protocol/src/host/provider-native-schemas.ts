@@ -792,7 +792,7 @@ export const providerMcpServerSchemaV70Preimage = lazySchema(() =>
 export const providerMcpRemedySchema = lazySchema(() =>
   z.object({
     id: z.string().min(1),
-    label: z.string(),
+    label: z.string().min(1),
     confirmation: z.string(),
   }),
 );

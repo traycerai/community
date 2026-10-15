@@ -110,6 +110,19 @@ describe("MCP row remedy fields", () => {
     ).toBe(false);
   });
 
+  it("rejects an empty remedy label while allowing an empty confirmation", () => {
+    expect(
+      providerMcpServerSchema.safeParse(
+        row({ remedy: { ...REMEDY, label: "" } }),
+      ).success,
+    ).toBe(false);
+    expect(
+      providerMcpServerSchema.safeParse(
+        row({ remedy: { ...REMEDY, confirmation: "" } }),
+      ).success,
+    ).toBe(true);
+  });
+
   it("keeps the released row preimage free of both fields", () => {
     const parsed = providerMcpServerSchemaV70Preimage.parse(
       row({ remedy: REMEDY, enableConfirmation: ENABLE_REMEDY }),

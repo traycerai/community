@@ -7,6 +7,9 @@ interface McpProbeWindow extends Window {
     readonly setScenario: (next: string) => void;
     readonly refreshRow: (variant: "changed" | "same") => Promise<void>;
     readonly mutationActions: () => readonly string[];
+    readonly deferRemedyError: () => void;
+    readonly failDeferredRemedy: () => void;
+    readonly mutationSettled: () => boolean;
   };
 }
 
@@ -129,6 +132,35 @@ test("changed command and offer close confirmation; unchanged offer survives ref
   await expect(
     page.getByText("The server is enabled in this fixture."),
   ).toBeVisible();
+  expect(await mutationActions(page)).toEqual(["applyRemedy"]);
+});
+
+test("a failed pending offer cannot put its error on a replacement confirmation", async ({
+  page,
+}) => {
+  await openFixture(page);
+  await selectScenario(page, "two-rows");
+  await page.evaluate(() =>
+    (window as McpProbeWindow).__kimiMcpProbe?.deferRemedyError(),
+  );
+  await page.getByRole("switch", { name: "Enable local-tool" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Enable" }).click();
+  await page.evaluate(async () => {
+    await (window as McpProbeWindow).__kimiMcpProbe?.refreshRow("changed");
+  });
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await page.getByRole("button", { name: "Repair server other-tool" }).click();
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+
+  await page.evaluate(() =>
+    (window as McpProbeWindow).__kimiMcpProbe?.failDeferredRemedy(),
+  );
+  await page.waitForFunction(
+    () => (window as McpProbeWindow).__kimiMcpProbe?.mutationSettled(),
+  );
+  await page.getByRole("button", { name: "Repair server other-tool" }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await expect(page.getByRole("dialog")).not.toContainText("Earlier offer failed");
   expect(await mutationActions(page)).toEqual(["applyRemedy"]);
 });
 
