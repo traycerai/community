@@ -464,6 +464,13 @@ export const providersLinkResponseSchema = lazySchema(() =>
         userCode: z.string().min(1),
         expiresAt: z.number(),
       }),
+      /**
+       * No prompt: the harness's server-side sign-in is unavailable, so the
+       * host hands this profile's local sign-in to the account (the
+       * link-and-rewrite fallback, ticket E10). The dialog shows "linking"
+       * and polls `providers.linkComplete` until it answers `linked`.
+       */
+      z.object({ kind: z.literal("local_handoff") }),
     ]),
   }),
 );
