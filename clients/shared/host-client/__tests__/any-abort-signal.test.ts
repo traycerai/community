@@ -77,6 +77,36 @@ describe("anyAbortSignal", () => {
       expect(attachSecond).toHaveBeenCalledTimes(1);
     });
 
+    it("is aborted with the first source's reason when only the first was already aborted", () => {
+      removeNativeAny();
+      const first = new AbortController();
+      const second = new AbortController();
+      first.abort("binding-dead");
+
+      const signal = anyAbortSignal(first.signal, second.signal);
+
+      expect(signal.aborted).toBe(true);
+      expect(signal.reason).toBe("binding-dead");
+    });
+
+    it("composes a reused source with a new partner independently", () => {
+      removeNativeAny();
+      const shared = new AbortController();
+      const firstPartner = new AbortController();
+      const secondPartner = new AbortController();
+      const withFirst = anyAbortSignal(shared.signal, firstPartner.signal);
+      const withSecond = anyAbortSignal(shared.signal, secondPartner.signal);
+      expect(withSecond).not.toBe(withFirst);
+
+      secondPartner.abort("second-partner");
+
+      expect(withSecond.aborted).toBe(true);
+      expect(withSecond.reason).toBe("second-partner");
+      expect(withFirst.aborted).toBe(false);
+      shared.abort("shared-gone");
+      expect(withFirst.reason).toBe("shared-gone");
+    });
+
     it("detaches from both sources once either aborts", () => {
       removeNativeAny();
       const first = new AbortController();
