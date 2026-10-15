@@ -292,14 +292,14 @@ describe("SupportEnvironmentBridge follows a team host's policy state while the 
     const whileVisible = host.reads();
     expect(whileVisible).toBeGreaterThanOrEqual(1);
 
-    await act(async () => {
+    act(() => {
       __setBrowserDocumentHiddenForTests(true);
     });
     await advance(120_000);
     expect(host.reads()).toBe(whileVisible);
 
     host.answer({ state: "lapsed", policyVersion: "7" });
-    await act(async () => {
+    act(() => {
       __setBrowserDocumentHiddenForTests(false);
     });
     await settle();
