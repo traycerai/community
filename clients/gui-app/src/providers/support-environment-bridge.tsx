@@ -172,7 +172,10 @@ function sameRead(
   );
 }
 
-/** The account policy's source and read state; its body never leaves here. */
+/**
+ * The account policy's source and read state and a team host's policy state
+ * and version; no body ever leaves here.
+ */
 function SupportPolicyRead(props: {
   readonly onRead: (policy: SupportEnvironmentPolicy | null) => void;
 }): null {
@@ -183,7 +186,12 @@ function SupportPolicyRead(props: {
     onRead(
       data === null
         ? null
-        : { source: data.source, readState: autoPolicyReadStateFor(data) },
+        : {
+            source: data.source,
+            readState: autoPolicyReadStateFor(data),
+            teamState: data.team?.state ?? null,
+            teamPolicyVersion: data.team?.policyVersion ?? null,
+          },
     );
   }, [data, onRead]);
   return null;

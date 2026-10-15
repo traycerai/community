@@ -45,7 +45,12 @@ const ENVIRONMENT_SECTION: SupportEnvironmentSection = {
     },
   ],
   setupAttempts: null,
-  policy: { source: "account", readState: "ready" },
+  policy: {
+    source: "account",
+    readState: "ready",
+    teamState: null,
+    teamPolicyVersion: null,
+  },
   rotations: [
     {
       secretName: "STRIPE_KEY",

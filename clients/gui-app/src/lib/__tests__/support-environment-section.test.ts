@@ -160,7 +160,12 @@ function reads(
     hostId: "host-1",
     status: status({}),
     setupAttempts: [ATTEMPT],
-    policy: { source: "account", readState: "ready" },
+    policy: {
+      source: "account",
+      readState: "ready",
+      teamState: null,
+      teamPolicyVersion: null,
+    },
     rotations: [rotationRead("STRIPE_KEY", [WORKER_PRODUCER, HOST_PRODUCER])],
     ...overrides,
   };
@@ -219,7 +224,12 @@ describe("supportEnvironmentSection", () => {
         result: "failed",
       },
     ]);
-    expect(section.policy).toEqual({ source: "account", readState: "ready" });
+    expect(section.policy).toEqual({
+      source: "account",
+      readState: "ready",
+      teamState: null,
+      teamPolicyVersion: null,
+    });
   });
 
   it("gives the principal as a category only: the team's name is nowhere in the section", () => {
@@ -410,5 +420,99 @@ describe("supportEnvironmentSection", () => {
     expect(section.setupAttempts).toBeNull();
     expect(section.policy).toBeNull();
     expect(section.rotations).toBeNull();
+  });
+
+  it("carries a team host's policy state and version through, and null for a personal host", () => {
+    const team = supportEnvironmentSection(
+      reads({
+        policy: {
+          source: "account",
+          readState: "fresh",
+          teamState: "applied",
+          teamPolicyVersion: "42",
+        },
+      }),
+    );
+    const lapsed = supportEnvironmentSection(
+      reads({
+        policy: {
+          source: "account",
+          readState: "fresh",
+          teamState: "lapsed",
+          teamPolicyVersion: "42",
+        },
+      }),
+    );
+    const none = supportEnvironmentSection(
+      reads({
+        policy: {
+          source: "account",
+          readState: "fresh",
+          teamState: "none",
+          teamPolicyVersion: null,
+        },
+      }),
+    );
+    const personal = supportEnvironmentSection(reads({}));
+
+    expect(team.policy).toEqual({
+      source: "account",
+      readState: "fresh",
+      teamState: "applied",
+      teamPolicyVersion: "42",
+    });
+    expect(lapsed.policy).toMatchObject({
+      teamState: "lapsed",
+      teamPolicyVersion: "42",
+    });
+    expect(none.policy).toMatchObject({
+      teamState: "none",
+      teamPolicyVersion: null,
+    });
+    expect(personal.policy).toMatchObject({
+      teamState: null,
+      teamPolicyVersion: null,
+    });
+  });
+
+  it("holds the policy's keys to the ruled four, so no policy body can ride along", () => {
+    const section = supportEnvironmentSection(
+      reads({
+        policy: {
+          source: "account",
+          readState: "fresh",
+          teamState: "applied",
+          teamPolicyVersion: "7",
+        },
+      }),
+    );
+
+    expect(Object.keys(section.policy ?? {}).sort()).toEqual([
+      "readState",
+      "source",
+      "teamPolicyVersion",
+      "teamState",
+    ]);
+  });
+
+  it("caps the team state and version at the code length, as every closed code is", () => {
+    const long = "x".repeat(SUPPORT_ENVIRONMENT_TEXT_MAX.code + 40);
+    const section = supportEnvironmentSection(
+      reads({
+        policy: {
+          source: "account",
+          readState: "fresh",
+          teamState: long,
+          teamPolicyVersion: long,
+        },
+      }),
+    );
+
+    expect(section.policy?.teamState).toHaveLength(
+      SUPPORT_ENVIRONMENT_TEXT_MAX.code,
+    );
+    expect(section.policy?.teamPolicyVersion).toHaveLength(
+      SUPPORT_ENVIRONMENT_TEXT_MAX.code,
+    );
   });
 });

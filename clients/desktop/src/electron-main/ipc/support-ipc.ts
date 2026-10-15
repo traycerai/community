@@ -621,6 +621,8 @@ const ENVIRONMENT_SETUP_ATTEMPT_KEYS =
 const ENVIRONMENT_POLICY_KEYS = contractKeySet<SupportEnvironmentPolicy>({
   source: true,
   readState: true,
+  teamState: true,
+  teamPolicyVersion: true,
 });
 
 const ENVIRONMENT_ROTATION_KEYS = contractKeySet<SupportEnvironmentRotation>({
@@ -972,6 +974,14 @@ function parseEnvironmentPolicy(
   return {
     source: parseEnvironmentCode(value.source, `${context}.source`),
     readState: parseEnvironmentCode(value.readState, `${context}.readState`),
+    teamState: parseNullableEnvironmentCode(
+      value.teamState,
+      `${context}.teamState`,
+    ),
+    teamPolicyVersion: parseNullableEnvironmentCode(
+      value.teamPolicyVersion,
+      `${context}.teamPolicyVersion`,
+    ),
   };
 }
 

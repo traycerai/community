@@ -317,7 +317,12 @@ const ENVIRONMENT_SECTION: SupportEnvironmentSection = {
       result: null,
     },
   ],
-  policy: { source: "account", readState: "ready" },
+  policy: {
+    source: "account",
+    readState: "ready",
+    teamState: null,
+    teamPolicyVersion: null,
+  },
   rotations: [
     {
       secretName: ENV_SECRET_NAME,
@@ -2632,7 +2637,12 @@ describe("DesktopSupportService.submitReport - the environment context's leaves 
     receiptAgeMs: 1200,
     items: [ITEM],
     setupAttempts: [ATTEMPT],
-    policy: { source: "account", readState: "ready" },
+    policy: {
+      source: "account",
+      readState: "ready",
+      teamState: null,
+      teamPolicyVersion: null,
+    },
     rotations: [
       {
         secretName: "STRIPE_KEY",
@@ -2704,11 +2714,27 @@ describe("DesktopSupportService.submitReport - the environment context's leaves 
     },
     {
       leaf: "policy.source",
-      section: { ...BASE, policy: { source: LEAK, readState: "ready" } },
+      section: {
+        ...BASE,
+        policy: {
+          source: LEAK,
+          readState: "ready",
+          teamState: null,
+          teamPolicyVersion: null,
+        },
+      },
     },
     {
       leaf: "policy.readState",
-      section: { ...BASE, policy: { source: "account", readState: LEAK } },
+      section: {
+        ...BASE,
+        policy: {
+          source: "account",
+          readState: LEAK,
+          teamState: null,
+          teamPolicyVersion: null,
+        },
+      },
     },
     {
       leaf: "rotation.secretName",

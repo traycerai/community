@@ -585,7 +585,12 @@ describe("buildPublicDraftFields", () => {
         },
       ],
       setupAttempts: null,
-      policy: { source: "account", readState: "ready" },
+      policy: {
+        source: "account",
+        readState: "ready",
+        teamState: null,
+        teamPolicyVersion: null,
+      },
       rotations: [
         {
           secretName: SECRET_NAME,

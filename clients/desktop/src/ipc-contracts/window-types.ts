@@ -477,6 +477,9 @@ export interface SupportEnvironmentSetupAttempt {
 export interface SupportEnvironmentPolicy {
   readonly source: string;
   readonly readState: string;
+  /** A team host's policy state; null on a personal or an older host. */
+  readonly teamState: string | null;
+  readonly teamPolicyVersion: string | null;
 }
 
 export interface SupportEnvironmentRotation {

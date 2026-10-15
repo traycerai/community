@@ -998,6 +998,8 @@ import {
   autoJudgeSetV12,
   autoJudgeSetV13,
   autoPolicyGetV10,
+  autoPolicyGetV11,
+  autoPolicyGetUpgradeV10ToV11,
   autoPolicySetV10,
   providersSetAutoJudgeV10,
 } from "@traycer/protocol/host/auto-mode/contracts";
@@ -5712,11 +5714,16 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   "autoPolicy.get": {
     degrade: { kind: "unsupported" },
     1: {
-      latestMinor: 0,
+      latestMinor: 1,
       versions: {
         0: {
           contract: autoPolicyGetV10,
           upgradeFromPreviousVersion: null,
+        },
+        // E12 checkpoint 6: the team policy's state and version.
+        1: {
+          contract: autoPolicyGetV11,
+          upgradeFromPreviousVersion: autoPolicyGetUpgradeV10ToV11,
         },
       },
       downgradePathsFromLatest: {},

@@ -68,6 +68,13 @@ export interface SupportEnvironmentSetupAttempt {
 export interface SupportEnvironmentPolicy {
   readonly source: string;
   readonly readState: string;
+  /**
+   * A team host's policy state (`none`, `applied`, `lapsed`; E12 checkpoint
+   * 6); null on a personal host or a host older than `autoPolicy.get@1.1`.
+   */
+  readonly teamState: string | null;
+  /** The applied team policy's version (its row revision), or null. */
+  readonly teamPolicyVersion: string | null;
 }
 
 /** One secret's current rotation, in the `secret.rotated` payload's shape. */
@@ -230,6 +237,8 @@ export function supportEnvironmentSection(
         : {
             source: code(reads.policy.source),
             readState: code(reads.policy.readState),
+            teamState: nullableCode(reads.policy.teamState),
+            teamPolicyVersion: nullableCode(reads.policy.teamPolicyVersion),
           },
     rotations:
       reads.rotations === null

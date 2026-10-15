@@ -105,7 +105,12 @@ function validSection(): Section {
         result: "failed",
       },
     ],
-    policy: { source: "account", readState: "ready" },
+    policy: {
+      source: "account",
+      readState: "ready",
+      teamState: null,
+      teamPolicyVersion: null,
+    },
     rotations: [
       {
         secretName: "STRIPE_KEY",
@@ -197,6 +202,15 @@ const CODE_SPOTS: readonly Spot[] = [
   {
     name: "the policy's readState",
     put: (s, v) => ((s.policy as Record<string, unknown>).readState = v),
+  },
+  {
+    name: "the policy's teamState",
+    put: (s, v) => ((s.policy as Record<string, unknown>).teamState = v),
+  },
+  {
+    name: "the policy's teamPolicyVersion",
+    put: (s, v) =>
+      ((s.policy as Record<string, unknown>).teamPolicyVersion = v),
   },
   { name: "a rotation's state", put: (s, v) => (firstRotation(s).state = v) },
   { name: "a producer's kind", put: (s, v) => (producer(s, 0).producer = v) },

@@ -200,6 +200,8 @@ const ENV_OPEN_ATTEMPT: SupportEnvironmentSetupAttempt = {
 const ENV_POLICY: SupportEnvironmentPolicy = {
   source: "account",
   readState: "ready",
+  teamState: null,
+  teamPolicyVersion: null,
 };
 
 const ENV_EVIDENCE: SupportEnvironmentRotationEvidence = {
@@ -770,6 +772,65 @@ describe("parseSupportSubmitReportRequest", () => {
       expect(() =>
         submitWithSection(sectionWith({ [key]: "anything" })),
       ).toThrow(`contains a disallowed field: ${key}`);
+    });
+
+    it("accepts a team host's policy state and version and returns them unchanged", () => {
+      const team: SupportEnvironmentSection = {
+        ...FULL_ENVIRONMENT_SECTION,
+        policy: {
+          ...ENV_POLICY,
+          teamState: "applied",
+          teamPolicyVersion: "42",
+        },
+      };
+
+      const result = submitWithSection(team);
+
+      expect(result.privateDiagnostics?.environment).toEqual({
+        status: "known",
+        value: team,
+      });
+    });
+
+    it.each([
+      [
+        "teamState",
+        { source: "account", readState: "ready", teamPolicyVersion: null },
+      ],
+      [
+        "teamPolicyVersion",
+        { source: "account", readState: "ready", teamState: null },
+      ],
+    ])("rejects a policy without %s, naming it", (key, policy) => {
+      expect(() => submitWithSection(sectionWith({ policy }))).toThrow(
+        `is missing required field: ${key}`,
+      );
+    });
+
+    it.each(["teamState", "teamPolicyVersion"])(
+      "rejects a non-string %s",
+      (key) => {
+        expect(() =>
+          submitWithSection(
+            sectionWith({ policy: { ...ENV_POLICY, [key]: 7 } }),
+          ),
+        ).toThrow();
+      },
+    );
+
+    it("still rejects an unknown key beside the two team keys", () => {
+      expect(() =>
+        submitWithSection(
+          sectionWith({
+            policy: {
+              ...ENV_POLICY,
+              teamState: "applied",
+              teamPolicyVersion: "42",
+              teamPolicyBody: "never ship",
+            },
+          }),
+        ),
+      ).toThrow("contains a disallowed field: teamPolicyBody");
     });
 
     it("rejects a body added to the policy", () => {

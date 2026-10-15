@@ -1522,6 +1522,10 @@ function scrubEnvironmentSection(
         : {
             source: scrubSupportText(section.policy.source),
             readState: scrubSupportText(section.policy.readState),
+            teamState: scrubNullableText(section.policy.teamState),
+            teamPolicyVersion: scrubNullableText(
+              section.policy.teamPolicyVersion,
+            ),
           },
     rotations:
       section.rotations === null

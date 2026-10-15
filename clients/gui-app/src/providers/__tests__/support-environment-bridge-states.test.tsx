@@ -369,9 +369,85 @@ describe("SupportEnvironmentBridge's states (E18 stage 4)", () => {
       expect(knownSection().policy).toEqual({
         source: "account",
         readState: "stale",
+        teamState: null,
+        teamPolicyVersion: null,
       });
     });
     expect(JSON.stringify(knownSection())).not.toContain("ZZ_POLICY_BODY");
+  });
+
+  it.each([
+    ["applied", "42", { state: "applied", policyVersion: "42" }],
+    ["lapsed", "42", { state: "lapsed", policyVersion: "42" }],
+    ["none", null, { state: "none", policyVersion: null }],
+  ] as const)(
+    "shows a team host's policy state %s and its version, and still never a body",
+    async (teamState, teamPolicyVersion, team) => {
+      supportAll();
+      harness.methods.add("autoPolicy.get");
+      harness.policy = {
+        data: {
+          body: "ZZ_ACCOUNT_BODY never ship",
+          updatedAt: "2026-10-01T00:00:00.000Z",
+          source: "account",
+          readState: "fresh",
+          team,
+        },
+      };
+      const { client } = buildEnvironmentClient({
+        hostId: "host-env",
+        handlers: {
+          "environment.status": () => environmentStatusFixture({}),
+          "environment.setup.attempts": () => ({ attempts: [] }),
+          "environment.secrets.list": () => ({ secrets: [] }),
+        },
+      });
+
+      mountBridge(client);
+
+      await waitFor(() => {
+        expect(knownSection().policy).toEqual({
+          source: "account",
+          readState: "fresh",
+          teamState,
+          teamPolicyVersion,
+        });
+      });
+      expect(JSON.stringify(knownSection())).not.toContain("ZZ_ACCOUNT_BODY");
+    },
+  );
+
+  it("reads a personal host (team: null) and a host older than 1.1 (no team key) the same: null and null", async () => {
+    supportAll();
+    harness.methods.add("autoPolicy.get");
+    harness.policy = {
+      data: {
+        body: null,
+        updatedAt: null,
+        source: "account",
+        readState: "fresh",
+        team: null,
+      },
+    };
+    const { client } = buildEnvironmentClient({
+      hostId: "host-env",
+      handlers: {
+        "environment.status": () => environmentStatusFixture({}),
+        "environment.setup.attempts": () => ({ attempts: [] }),
+        "environment.secrets.list": () => ({ secrets: [] }),
+      },
+    });
+
+    mountBridge(client);
+
+    await waitFor(() => {
+      expect(knownSection().policy).toEqual({
+        source: "account",
+        readState: "fresh",
+        teamState: null,
+        teamPolicyVersion: null,
+      });
+    });
   });
 
   it("drops a secret from the section when the list no longer has it", async () => {
