@@ -41,6 +41,7 @@ import {
 } from "@traycer/protocol/framework/index";
 import type { AuthenticatedUser } from "@traycer/protocol/auth";
 import { anyAbortSignal } from "../host-client/any-abort-signal";
+import { timeoutSignal } from "../host-client/timeout-signal";
 import type {
   AuthTokenRefreshResult,
   StoredCredentials,
@@ -154,7 +155,7 @@ function resolveServedRecordVersion(
  * Per-attempt ceiling and bounded exponential-backoff retry for the auth
  * boundary's HTTP calls (the identity routes, `/api/v3/auth/refresh`).
  *
- * Every attempt is time-boxed with `AbortSignal.timeout(AUTH_FETCH_TIMEOUT_MS)`
+ * Every attempt is time-boxed with `timeoutSignal(AUTH_FETCH_TIMEOUT_MS)`
  * so a stalled/half-open socket can no longer hang the caller indefinitely -
  * previously an un-timed-out `fetch` here could block `auth.start()` (and, through
  * it, the renderer's "Loading Traycer…" gate) until the OS TCP timeout,
@@ -257,7 +258,7 @@ export async function validateAuthTokenIdentityAccessOnceAbortable(args: {
   readonly token: string;
   readonly signal: AbortSignal | null;
 }): Promise<AuthIdentityValidationResult> {
-  const timeout = AbortSignal.timeout(AUTH_FETCH_TIMEOUT_MS);
+  const timeout = timeoutSignal(AUTH_FETCH_TIMEOUT_MS);
   const signal =
     args.signal === null ? timeout : anyAbortSignal(args.signal, timeout);
   const result = await fetchIdentityOnce(args.authnBaseUrl, args.token, signal);
@@ -387,7 +388,7 @@ async function fetchUserResponse(
       fetchIdentityOnce(
         authnBaseUrl,
         token,
-        AbortSignal.timeout(AUTH_FETCH_TIMEOUT_MS),
+        timeoutSignal(AUTH_FETCH_TIMEOUT_MS),
       ),
     isUserFetchTransient,
   );
@@ -620,7 +621,7 @@ export async function refreshOnceAbortable(args: {
   readonly clientKind: "cli" | "desktop" | null;
   readonly signal: AbortSignal | null;
 }): Promise<AuthTokenRefreshResult> {
-  const timeout = AbortSignal.timeout(AUTH_FETCH_TIMEOUT_MS);
+  const timeout = timeoutSignal(AUTH_FETCH_TIMEOUT_MS);
   const signal =
     args.signal === null ? timeout : anyAbortSignal(args.signal, timeout);
   return refreshAuthTokenOnceViaHttp(
@@ -823,7 +824,7 @@ export async function exchangeCodeForTokens(
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ code, code_verifier: codeVerifier }),
-        signal: AbortSignal.timeout(AUTH_FETCH_TIMEOUT_MS),
+        signal: timeoutSignal(AUTH_FETCH_TIMEOUT_MS),
       },
     );
   } catch {

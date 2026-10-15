@@ -15,6 +15,7 @@ import {
 } from "@traycer/protocol/auth/devices-sessions";
 import type { z } from "zod";
 import { anyAbortSignal } from "../host-client/any-abort-signal";
+import { timeoutSignal } from "../host-client/timeout-signal";
 
 const DEVICES_SESSIONS_FETCH_TIMEOUT_MS = 10_000;
 const STEP_UP_REQUIRED_REASON = "step_up_required";
@@ -98,7 +99,7 @@ function jsonHeaders(bearerToken: string): Record<string, string> {
  * account switch. Callers with no cancellation of their own pass `null`.
  */
 function requestSignal(callerSignal: AbortSignal | null): AbortSignal {
-  const timeout = AbortSignal.timeout(DEVICES_SESSIONS_FETCH_TIMEOUT_MS);
+  const timeout = timeoutSignal(DEVICES_SESSIONS_FETCH_TIMEOUT_MS);
   return callerSignal === null
     ? timeout
     : anyAbortSignal(callerSignal, timeout);
