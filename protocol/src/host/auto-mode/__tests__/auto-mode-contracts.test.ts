@@ -416,9 +416,7 @@ describe("autoPolicy.get 1.1: the team policy state (ticket E12 checkpoint 6)", 
   });
 
   it("keeps the request as it was: 1.1 asks nothing more", () => {
-    expect(autoPolicyGetV11.requestSchema).toBe(
-      autoPolicyGetV10.requestSchema,
-    );
+    expect(autoPolicyGetV11.requestSchema).toBe(autoPolicyGetV10.requestSchema);
   });
 
   it("parses with team null, as a personal host answers", () => {
@@ -436,18 +434,21 @@ describe("autoPolicy.get 1.1: the team policy state (ticket E12 checkpoint 6)", 
     ["applied", "42"],
     ["lapsed", "42"],
     ["applied", "0"],
-  ] as const)("parses team state %s with policyVersion %s", (state, policyVersion) => {
-    const parsed = autoPolicyGetResponseV11Schema.safeParse({
-      ...ACCOUNT,
-      team: { state, policyVersion },
-    });
+  ] as const)(
+    "parses team state %s with policyVersion %s",
+    (state, policyVersion) => {
+      const parsed = autoPolicyGetResponseV11Schema.safeParse({
+        ...ACCOUNT,
+        team: { state, policyVersion },
+      });
 
-    expect(parsed.success).toBe(true);
-    expect(parsed.success && parsed.data.team).toEqual({
-      state,
-      policyVersion,
-    });
-  });
+      expect(parsed.success).toBe(true);
+      expect(parsed.success && parsed.data.team).toEqual({
+        state,
+        policyVersion,
+      });
+    },
+  );
 
   it("closes the state list at none, applied and lapsed", () => {
     for (const state of ["none", "applied", "lapsed"]) {
@@ -517,9 +518,9 @@ describe("autoPolicy.get 1.1: the team policy state (ticket E12 checkpoint 6)", 
       v10,
     );
     expect(viaRegistry).toEqual({ ...v10, team: null });
-    expect(
-      autoPolicyGetResponseV11Schema.safeParse(viaRegistry).success,
-    ).toBe(true);
+    expect(autoPolicyGetResponseV11Schema.safeParse(viaRegistry).success).toBe(
+      true,
+    );
   });
 
   it("upgrades a 1.0 response that omits readState and shippedDefaults without inventing them", () => {
@@ -564,4 +565,3 @@ describe("autoPolicy.get 1.1: the team policy state (ticket E12 checkpoint 6)", 
     expect(JSON.stringify(parsed)).not.toContain("TEAM RULES");
   });
 });
-
