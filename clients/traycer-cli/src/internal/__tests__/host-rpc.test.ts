@@ -17,7 +17,10 @@ import {
 } from "../../../../shared/host-transport/host-messenger";
 import { createCliCredentialsStore } from "../../store/credentials-store";
 import type { CredentialsMutationStore } from "@traycer/protocol/config/credentials-mutation";
-import { CLI_ERROR_CODES } from "../../runner/errors";
+import {
+  CLI_ERROR_CODES,
+  EXPECTED_CLI_ERROR_CODES,
+} from "../../runner/errors";
 import {
   hostRpcRegistry,
   hostStreamRpcRegistry,
@@ -431,6 +434,62 @@ describe("callHostRpc", () => {
       details: null,
     });
   });
+
+  // The host answers these with a typed wire code for a state of the person's
+  // own machine or workspace, and its message names the remedy. Each used to
+  // fall through to UNEXPECTED, which the runner captures as a CLI defect
+  // (TRAYCER-CLI-7). The mapped code must also be one the runner leaves
+  // uncaptured, so each case checks both.
+  it.each([
+    {
+      wire: "WORKTREE_MISSING" as const,
+      cli: CLI_ERROR_CODES.WORKTREE_MISSING,
+      message:
+        "A bound folder is missing on disk: /gone. Restore it, re-bind to another folder, or remove it to continue.",
+    },
+    {
+      wire: "WORKSPACE_BINDING_REQUIRED" as const,
+      cli: CLI_ERROR_CODES.WORKSPACE_BINDING_REQUIRED,
+      message:
+        "Unable to resolve this agent's workspace selection. Choose a workspace before sending a message.",
+    },
+    {
+      wire: "E_HOST_STORAGE_FULL" as const,
+      cli: CLI_ERROR_CODES.HOST_STORAGE_FULL,
+      message:
+        "The host machine is out of disk space. Free some space on it, then try again.",
+    },
+    {
+      // Sent for a reply on a thread that belongs to another pair
+      // (RESPONSE_ID_MISMATCH): the caller's own input.
+      wire: "E_INVALID_ARGUMENT" as const,
+      cli: CLI_ERROR_CODES.INVALID_ARGUMENT,
+      message:
+        "agent.sendMessage: RESPONSE_ID_MISMATCH - 'r1' belongs to a different (sender, receiver) pair.",
+    },
+  ])(
+    "maps the host's $wire refusal to an expected CLI code and keeps its message",
+    async ({ wire, cli, message }) => {
+      const mapped = await toAgentCliError(
+        Promise.reject(
+          new HostRpcError({
+            code: wire,
+            message,
+            requestId: "r1",
+            method: "agent.sendMessage",
+            fatalDetails: null,
+          }),
+        ),
+      ).catch((error: unknown) => error);
+      expect(mapped).toMatchObject({
+        code: cli,
+        message: `traycer: ${message}`,
+        details: null,
+        exitCode: 1,
+      });
+      expect(EXPECTED_CLI_ERROR_CODES.has(cli)).toBe(true);
+    },
+  );
 
   // A `HostTransportFailureError` means the connection itself failed or went
   // quiet - the host never answered. This must map to HOST_UNREACHABLE
