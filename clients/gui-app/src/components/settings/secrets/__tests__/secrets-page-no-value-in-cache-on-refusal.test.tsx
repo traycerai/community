@@ -101,7 +101,11 @@ function renderPage(host: SecretsHost): QueryClient {
   render(
     <QueryClientProvider client={queryClient}>
       <RunnerHostContext.Provider value={dashboardRunnerHost()}>
-        <SecretsPage client={host.client} hostId={HOST_ID} />
+        <SecretsPage
+          client={host.client}
+          hostId={HOST_ID}
+          hostName={() => "dev-box"}
+        />
       </RunnerHostContext.Provider>
     </QueryClientProvider>,
   );
