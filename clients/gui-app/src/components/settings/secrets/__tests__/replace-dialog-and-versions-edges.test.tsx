@@ -1,0 +1,272 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+import { afterEach, describe, expect, it, vi, type Mock } from "vitest";
+import type {
+  EnvironmentSecret,
+  EnvironmentSecretsReplaceValueRequest,
+  EnvironmentSecretsReplaceValueResponse,
+  EnvironmentSecretsUndoResponse,
+  SecretVersion,
+} from "@traycer/protocol/host/environment-schemas";
+import { ReplaceSecretValueDialog } from "@/components/settings/secrets/replace-secret-value-dialog";
+import { SecretVersionsList } from "@/components/settings/secrets/secret-versions-list";
+import { buildEnvironmentClient } from "@/lib/environment/__tests__/environment-test-support";
+import {
+  SECRET_REPLACE_STALE,
+  SECRET_SAVED_OFFLINE,
+} from "@/lib/sandboxes/secrets-page-copy";
+
+// E18 stage 4, checkpoint 4: the edges of Replace value and of the versions
+// list that `secret-row-rotation.test.tsx` reaches only through the whole
+// Secrets page. Each case here is a claim a mutation of the dialog or the
+// list survived: the disabled gate, a queued save leaving the list alone, the
+// note clearing while a retry is in flight, an unknown refusal's fallback and
+// a destroyed version winning over `current`.
+
+const HOST_ID = "host-edges";
+const TYPED = "sk_live_EDGE_VALUE_77aa";
+
+function secretFixture(
+  overrides: Partial<EnvironmentSecret>,
+): EnvironmentSecret {
+  return {
+    secretId: "sec-1",
+    name: "STRIPE_KEY",
+    kind: "api_key",
+    protocol: "https",
+    destinations: ["api.stripe.com"],
+    mode: "brokered",
+    state: "live",
+    currentVersionId: "ver-3",
+    revoked: false,
+    updatedAt: 1,
+    ...overrides,
+  };
+}
+
+function versionFixture(overrides: Partial<SecretVersion>): SecretVersion {
+  return {
+    versionId: "ver-1",
+    ordinal: 1,
+    createdAt: Date.UTC(2026, 9, 1, 12),
+    supersededAt: null,
+    destroyedAt: null,
+    current: false,
+    rotationState: null,
+    ...overrides,
+  };
+}
+
+afterEach(() => {
+  cleanup();
+});
+
+function buttonOf(element: HTMLElement): HTMLButtonElement {
+  if (!(element instanceof HTMLButtonElement)) {
+    throw new Error("the element is not a button");
+  }
+  return element;
+}
+
+interface DialogMount {
+  readonly requests: EnvironmentSecretsReplaceValueRequest[];
+  readonly onReplaced: Mock<() => void>;
+  readonly onStale: Mock<() => void>;
+}
+
+function mountDialog(
+  secret: EnvironmentSecret,
+  answer: () => Promise<EnvironmentSecretsReplaceValueResponse>,
+): DialogMount {
+  const requests: EnvironmentSecretsReplaceValueRequest[] = [];
+  const { client } = buildEnvironmentClient({
+    hostId: HOST_ID,
+    handlers: {
+      "environment.secrets.replaceValue": (request) => {
+        requests.push(request);
+        return answer();
+      },
+    },
+  });
+  const onReplaced = vi.fn<() => void>();
+  const onStale = vi.fn<() => void>();
+  render(
+    <ReplaceSecretValueDialog
+      open
+      secret={secret}
+      client={client}
+      onOpenChange={() => undefined}
+      onReplaced={onReplaced}
+      onStale={onStale}
+    />,
+  );
+  return { requests, onReplaced, onStale };
+}
+
+function typeValue(value: string): void {
+  fireEvent.change(screen.getByTestId("replace-secret-value"), {
+    target: { value },
+  });
+}
+
+function replaceButton(): HTMLButtonElement {
+  return buttonOf(screen.getByTestId("replace-secret-confirm"));
+}
+
+describe("the Replace value dialog's gate", () => {
+  it("is disabled while the field is empty and sends nothing", () => {
+    const mounted = mountDialog(secretFixture({}), () =>
+      Promise.reject(new Error("must not be asked")),
+    );
+
+    expect(replaceButton().disabled).toBe(true);
+    fireEvent.click(replaceButton());
+    expect(mounted.requests).toEqual([]);
+
+    typeValue(TYPED);
+    expect(replaceButton().disabled).toBe(false);
+    typeValue("");
+    expect(replaceButton().disabled).toBe(true);
+  });
+
+  it("is disabled with a typed value when the list showed no current version, and sends nothing", () => {
+    const mounted = mountDialog(secretFixture({ currentVersionId: null }), () =>
+      Promise.reject(new Error("must not be asked")),
+    );
+
+    typeValue(TYPED);
+
+    expect(replaceButton().disabled).toBe(true);
+    fireEvent.click(replaceButton());
+    expect(mounted.requests).toEqual([]);
+  });
+});
+
+describe("the Replace value dialog's answers", () => {
+  it("leaves the list alone and the dialog open when the host only queued the save", async () => {
+    const mounted = mountDialog(secretFixture({}), () =>
+      Promise.resolve({ outcome: "pending", uploadId: "u1" }),
+    );
+
+    typeValue(TYPED);
+    fireEvent.click(replaceButton());
+
+    expect((await screen.findByTestId("replace-secret-note")).textContent).toBe(
+      SECRET_SAVED_OFFLINE,
+    );
+    expect(mounted.onStale).not.toHaveBeenCalled();
+    expect(mounted.onReplaced).not.toHaveBeenCalled();
+    expect(screen.getByTestId("replace-secret-dialog")).toBeTruthy();
+  });
+
+  it("clears the previous note while a retry is in flight", async () => {
+    let release: (
+      answer: EnvironmentSecretsReplaceValueResponse,
+    ) => void = () => undefined;
+    let calls = 0;
+    const mounted = mountDialog(secretFixture({}), () => {
+      calls += 1;
+      if (calls === 1) {
+        return Promise.resolve({
+          outcome: "stale",
+          currentVersionId: "ver-9",
+          changedBy: { kind: "dashboard" },
+        });
+      }
+      return new Promise((resolve) => {
+        release = resolve;
+      });
+    });
+    typeValue(TYPED);
+    fireEvent.click(replaceButton());
+    expect((await screen.findByTestId("replace-secret-note")).textContent).toBe(
+      SECRET_REPLACE_STALE,
+    );
+
+    fireEvent.click(replaceButton());
+
+    await waitFor(() => {
+      expect(mounted.requests).toHaveLength(2);
+    });
+    expect(screen.queryByTestId("replace-secret-note")).toBeNull();
+    release({ outcome: "pending", uploadId: "u2" });
+    expect((await screen.findByTestId("replace-secret-note")).textContent).toBe(
+      SECRET_SAVED_OFFLINE,
+    );
+  });
+});
+
+function mountVersions(
+  secret: EnvironmentSecret,
+  versions: SecretVersion[],
+  undoAnswer: EnvironmentSecretsUndoResponse,
+): void {
+  const { client } = buildEnvironmentClient({
+    hostId: HOST_ID,
+    handlers: {
+      "environment.secrets.versions": () => ({ versions }),
+      "environment.secrets.undo": () => undoAnswer,
+    },
+  });
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  render(
+    <QueryClientProvider client={queryClient}>
+      <SecretVersionsList
+        secret={secret}
+        client={client}
+        hostId={HOST_ID}
+        onChanged={() => undefined}
+      />
+    </QueryClientProvider>,
+  );
+}
+
+describe("a secret's versions, at their edges", () => {
+  it("says only that it didn't go through for an undo refusal code this build has no line for", async () => {
+    mountVersions(
+      secretFixture({}),
+      [
+        versionFixture({ versionId: "ver-3", ordinal: 3, current: true }),
+        versionFixture({ versionId: "ver-2", ordinal: 2 }),
+      ],
+      { outcome: "refused", code: "a_code_newer_than_this_build" },
+    );
+
+    const rows = await screen.findAllByTestId("secret-version");
+    fireEvent.click(within(rows[1]).getByTestId("secret-version-undo"));
+
+    expect((await screen.findByTestId("secret-version-note")).textContent).toBe(
+      "That didn't go through.",
+    );
+  });
+
+  it("reads a destroyed version as destroyed even when the host still marks it current, and offers it nothing", async () => {
+    mountVersions(
+      secretFixture({}),
+      [
+        versionFixture({
+          versionId: "ver-3",
+          ordinal: 3,
+          current: true,
+          destroyedAt: Date.UTC(2026, 9, 4, 12),
+        }),
+      ],
+      { outcome: "refused", code: "version_destroyed" },
+    );
+
+    const rows = await screen.findAllByTestId("secret-version");
+
+    expect(rows[0].getAttribute("data-version-state")).toBe("destroyed");
+    expect(within(rows[0]).queryByTestId("secret-version-undo")).toBeNull();
+    expect(within(rows[0]).queryByTestId("secret-version-destroy")).toBeNull();
+  });
+});
