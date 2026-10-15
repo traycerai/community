@@ -42,3 +42,33 @@ export function secretSaveConfirmationLines(
 
 export const SECRET_REVOKED_LABEL = "Revoked";
 export const SECRET_PENDING_REVIEW_LABEL = "Waiting for you";
+
+/**
+ * Beside Replace value, Undo and Destroy, and under the recovery order: what
+ * one change reaches.
+ */
+export const SECRET_SCOPE_LINE =
+  "This changes the copy stored here. If the same credential is stored anywhere else, that copy needs its own replacement.";
+
+/** After a replacement: what a running tool on an owned host keeps. */
+export const SECRET_RESTART_LINE =
+  "A tool already running on this computer keeps the old value until it restarts.";
+
+export const SECRET_REPLACE_STALE =
+  "Changed somewhere else just now. Look again before you replace it.";
+
+export const SECRET_SAVED_OFFLINE =
+  "Saved. It reaches your account when this computer is connected.";
+
+/** If a secret leaked: the order that closes it fastest. */
+export const SECRET_RECOVERY_TITLE = "If this secret leaked";
+
+export const SECRET_RECOVERY_STEPS: readonly string[] = [
+  "Revoke it first, in the dashboard: every sandbox stops using the old value within seconds, and each computer you own that holds it as a plain value is listed for you to clear.",
+  "Rotate the credential at the service it belongs to.",
+  "Replace the value here.",
+  "Grant it again.",
+];
+
+export const SECRET_RECOVERY_FALLBACK =
+  "If Traycer can't be reached, stopping the sandbox ends its sessions.";

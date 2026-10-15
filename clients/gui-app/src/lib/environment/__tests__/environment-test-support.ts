@@ -71,7 +71,7 @@ export function itemStatusFixture(
     desiredRevision: 1,
     status: "applied",
     code: "ok",
-    args: { exitStatus: null, stage: null, durationMs: null },
+    args: { exitStatus: null, stage: null, durationMs: null, kind: null },
     brokerEnforced: null,
     minimumHostVersion: null,
     appliedAs: null,

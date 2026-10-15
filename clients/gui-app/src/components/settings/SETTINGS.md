@@ -920,6 +920,21 @@ words (`Connect to manage secrets.` with no session on this computer) or the
 page is the team line and "Team secrets are brokered only; a tool that needs
 a plain value needs a personal sandbox.", no list; on a host whose version
 predates the page, the way to the dashboard's Secrets page.
+Each row also has **Replace value** (`environment.secrets.replaceValue`,
+compare-and-set on the version the list showed; a stale answer asks to look
+again), after which the row reads the rotation (`environment.secrets.rotation`,
+polled every 3 s only while it moves): "New value accepted, closing old
+sessions." until every worker class and host has proved the old value out of
+use with an entry of a kind the rotation wire defines, then "New value
+enforced." with each one's proof ("postgres: 3 sessions closed", "3 sessions
+closed on dev-sandbox", "contained by expiry"); a bare zero session count is
+no proof (`lib/sandboxes/secret-rotation-line.ts`, shared with the sandbox
+card's per-grant line). It adds that a tool running on this computer keeps
+the old value until it restarts. **Versions** lists each version with Undo
+(Restore on a revoked secret, sent with `regrant`) and Destroy behind a
+confirmation, refusals read by `secretChangeRefusalLine`, beside the recovery
+order for a leaked secret and the line that a change reaches only the copy
+stored here.
 
 **Personal ▸ Notices and "needs you"** (`personal/personal-page-notices.tsx`,
 ticket E7 checkpoint 5). Under a Personal page's status line, for the item

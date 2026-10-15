@@ -38,7 +38,10 @@ import {
   secretVerifyLine,
   type SecretVerifyLine,
 } from "@/lib/sandboxes/secret-verify-copy";
-import { secretSaveConfirmationLines } from "@/lib/sandboxes/secrets-page-copy";
+import {
+  SECRET_SAVED_OFFLINE,
+  secretSaveConfirmationLines,
+} from "@/lib/sandboxes/secrets-page-copy";
 import { cn } from "@/lib/utils";
 
 /**
@@ -87,7 +90,7 @@ function createOutcomeNote(
     case "pending":
       return {
         tone: "success",
-        text: "Saved. It reaches your account when this computer is connected.",
+        text: SECRET_SAVED_OFFLINE,
       };
     case "refused":
       return {

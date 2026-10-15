@@ -25,9 +25,18 @@ import { useRunnerHostOrNull } from "@/providers/use-runner-host";
  * back; a refusal (no session on this computer among them) shows the host's
  * own words.
  */
+/** The reads a change to a secret moves: the list, its versions, its rotation. */
+const SECRET_READS = [
+  "environment.secrets.list",
+  "environment.secrets.versions",
+  "environment.secrets.rotation",
+] as const;
+
 export function SecretsPage(props: {
   readonly client: HostClient<HostRpcRegistry>;
   readonly hostId: string | null;
+  /** A host's name by its id, for the rotation's per-host lines. */
+  readonly hostName: (hostId: string) => string;
 }): ReactNode {
   const queryClient = useQueryClient();
   const runnerHost = useRunnerHostOrNull();
@@ -42,14 +51,13 @@ export function SecretsPage(props: {
   });
 
   const reread = (): void => {
-    void queryClient
-      .invalidateQueries({
-        queryKey: hostQueryKeys.methodScope(
-          props.hostId,
-          "environment.secrets.list",
-        ),
-      })
-      .catch(ignoreError);
+    for (const method of SECRET_READS) {
+      void queryClient
+        .invalidateQueries({
+          queryKey: hostQueryKeys.methodScope(props.hostId, method),
+        })
+        .catch(ignoreError);
+    }
   };
 
   const openOnTheWeb = (kind: SandboxSecretFormKind): void => {
@@ -96,6 +104,9 @@ export function SecretsPage(props: {
               key={secret.secretId}
               secret={secret}
               client={props.client}
+              hostId={props.hostId}
+              hostName={props.hostName}
+              onChanged={reread}
             />
           ))}
         </ul>

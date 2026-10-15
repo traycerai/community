@@ -72,6 +72,19 @@ const FAILURE_REASONS: Readonly<Partial<Record<string, string>>> = {
   timed_out: "it timed out",
 };
 
+/**
+ * Why an item did not apply, for a code whose `args.kind` names the case: a
+ * whole sentence, since the case carries what to do (ticket E11, checkpoint
+ * 4). Read before the code's own reason.
+ */
+const FAILURE_CASES: Readonly<
+  Partial<Record<string, Partial<Record<string, string>>>>
+> = {
+  unsupported_kind: {
+    headers_in_sandbox: "Use a token for this server in sandboxes.",
+  },
+};
+
 const SINGLETON_LABELS: Readonly<Partial<Record<string, string>>> = {
   shell: "The shell",
   fallback_policy: "Model routing",
@@ -91,6 +104,8 @@ export function itemLabel(item: {
     return separator === -1 ? item.key : item.key.slice(separator + 1);
   }
   if (item.kind === "pack_policy") return item.key;
+  // An MCP server's item is keyed by the server's name.
+  if (item.kind === "mcp_server") return item.key;
   return SINGLETON_LABELS[item.kind] ?? "A setting";
 }
 
@@ -99,6 +114,12 @@ function failedText(item: EnvironmentItemStatus, hostName: string): string {
   // expression with a `.code` read as a keyboard event, and `item.key` would
   // then count as a key read.
   const { code } = item;
+  const caseKind = item.args.kind;
+  const caseText =
+    caseKind === null ? undefined : FAILURE_CASES[code]?.[caseKind];
+  if (caseText !== undefined) {
+    return `${itemLabel(item)} didn't apply on ${hostName}. ${caseText}`;
+  }
   const reason = FAILURE_REASONS[code];
   return reason === undefined
     ? `${itemLabel(item)} didn't apply on ${hostName}.`

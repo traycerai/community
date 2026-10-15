@@ -113,6 +113,71 @@ describe("personalPageStatusLine", () => {
     });
   });
 
+  describe("a failure whose args name the case", () => {
+    const MCP_KINDS: ReadonlySet<string> = new Set(["mcp_server"]);
+
+    function mcpServer(code: string, kind: string | null): PersonalHostState {
+      return ready({
+        items: [
+          itemStatusFixture({
+            kind: "mcp_server",
+            key: "github-mcp",
+            status: "failed",
+            code,
+            args: { exitStatus: null, stage: null, durationMs: null, kind },
+          }),
+        ],
+      });
+    }
+
+    it("tells an MCP server with custom headers to use a token in sandboxes", () => {
+      expect(
+        personalPageStatusLine(
+          mcpServer("unsupported_kind", "headers_in_sandbox"),
+          MCP_KINDS,
+          HOST,
+        ),
+      ).toEqual({
+        tone: "warning",
+        text: "github-mcp didn't apply on dev-box. Use a token for this server in sandboxes.",
+      });
+    });
+
+    it("keeps the code's own wording when the case is null", () => {
+      expect(
+        personalPageStatusLine(
+          mcpServer("unsupported_kind", null),
+          MCP_KINDS,
+          HOST,
+        )?.text,
+      ).toBe("github-mcp didn't apply on dev-box.");
+      expect(
+        personalPageStatusLine(mcpServer("timed_out", null), MCP_KINDS, HOST)
+          ?.text,
+      ).toBe("github-mcp didn't apply on dev-box: it timed out.");
+    });
+
+    it("keeps the code's own wording for a case this build has no word for", () => {
+      expect(
+        personalPageStatusLine(
+          mcpServer("unsupported_kind", "from_a_newer_host"),
+          MCP_KINDS,
+          HOST,
+        )?.text,
+      ).toBe("github-mcp didn't apply on dev-box.");
+    });
+
+    it("reads a case only under the code it belongs to", () => {
+      expect(
+        personalPageStatusLine(
+          mcpServer("timed_out", "headers_in_sandbox"),
+          MCP_KINDS,
+          HOST,
+        )?.text,
+      ).toBe("github-mcp didn't apply on dev-box: it timed out.");
+    });
+  });
+
   it("names the shell by its page label, not a key, when the shell item failed", () => {
     const state = ready({
       items: [
@@ -273,6 +338,7 @@ describe("itemLabel", () => {
     [{ kind: "env_override", key: "claude-code:A:B" }, "A:B"],
     [{ kind: "env_override", key: "NO_SEPARATOR" }, "NO_SEPARATOR"],
     [{ kind: "pack_policy", key: "claude-code" }, "claude-code"],
+    [{ kind: "mcp_server", key: "github-mcp" }, "github-mcp"],
     [{ kind: "shell", key: "default" }, "The shell"],
     [{ kind: "fallback_policy", key: "x" }, "Model routing"],
     [{ kind: "agent_selection_guide", key: "x" }, "Agent selection"],

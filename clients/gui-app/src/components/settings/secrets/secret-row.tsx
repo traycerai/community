@@ -1,6 +1,9 @@
 import { useState, type ReactNode } from "react";
 import type { HostClient } from "@traycer-clients/shared/host-client/host-client";
 import type { EnvironmentSecret } from "@traycer/protocol/host/environment-schemas";
+import { ReplaceSecretValueDialog } from "@/components/settings/secrets/replace-secret-value-dialog";
+import { SecretRotationStatus } from "@/components/settings/secrets/secret-rotation-status";
+import { SecretVersionsList } from "@/components/settings/secrets/secret-versions-list";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -16,6 +19,10 @@ import {
 import {
   SECRET_PENDING_REVIEW_LABEL,
   SECRET_READABLE_WHERE,
+  SECRET_RECOVERY_FALLBACK,
+  SECRET_RECOVERY_STEPS,
+  SECRET_RECOVERY_TITLE,
+  SECRET_RESTART_LINE,
   SECRET_REVOKED_LABEL,
 } from "@/lib/sandboxes/secrets-page-copy";
 import { cn } from "@/lib/utils";
@@ -35,19 +42,61 @@ function secretSummary(secret: EnvironmentSecret): string {
   return parts.join(" · ");
 }
 
+function Spinner(props: { readonly busy: boolean }): ReactNode {
+  return props.busy ? (
+    <AgentSpinningDots
+      className={undefined}
+      testId={undefined}
+      variant={undefined}
+      tone="muted"
+    />
+  ) : null;
+}
+
+/** If the secret leaked: the order that closes it fastest. */
+function RecoveryOrder(): ReactNode {
+  return (
+    <div className="flex flex-col gap-1" data-testid="secret-recovery">
+      <p className="text-ui-xs font-medium text-foreground">
+        {SECRET_RECOVERY_TITLE}
+      </p>
+      <ol className="flex list-decimal flex-col gap-0.5 pl-5 text-ui-xs text-muted-foreground">
+        {SECRET_RECOVERY_STEPS.map((step) => (
+          <li key={step} className="max-w-[72ch]">
+            {step}
+          </li>
+        ))}
+      </ol>
+      <p className="max-w-[72ch] text-ui-xs text-muted-foreground">
+        {SECRET_RECOVERY_FALLBACK}
+      </p>
+    </div>
+  );
+}
+
 /**
  * One secret on Settings ▸ Personal ▸ Secrets: its name, what it is and
- * where it goes, where its value is readable, and Verify. No value is ever
- * here. Verify probes the secret by id, so it works for every kind, those
- * added on the web included.
+ * where it goes, where its value is readable, Verify, Replace value with the
+ * replacement's progress, and its versions with the recovery order. No value
+ * is ever here. Verify and the versions act on the secret by id, so they work
+ * for every kind, those added on the web included.
  */
 export function SecretRow(props: {
   readonly secret: EnvironmentSecret;
   readonly client: HostClient<HostRpcRegistry>;
+  readonly hostId: string | null;
+  readonly hostName: (hostId: string) => string;
+  /** Something about this secret changed: the list re-reads. */
+  readonly onChanged: () => void;
 }): ReactNode {
   const { secret } = props;
   const [verifying, setVerifying] = useState(false);
   const [line, setLine] = useState<SecretVerifyLine | null>(null);
+  const [replacing, setReplacing] = useState(false);
+  // Each accepted replacement remounts the status, so it reads the new
+  // rotation from the start and re-reads it until it settles.
+  const [replacements, setReplacements] = useState(0);
+  const [showVersions, setShowVersions] = useState(false);
 
   const verify = async (): Promise<void> => {
     setVerifying(true);
@@ -91,26 +140,42 @@ export function SecretRow(props: {
             {secretSummary(secret)}
           </span>
         </div>
-        {secret.revoked ? null : (
+        <div className="flex shrink-0 flex-wrap gap-1">
+          {secret.revoked ? null : (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              disabled={verifying}
+              onClick={() => void verify()}
+              data-testid="secret-row-verify"
+            >
+              Verify
+              <Spinner busy={verifying} />
+            </Button>
+          )}
+          {secret.revoked || secret.currentVersionId === null ? null : (
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() => setReplacing(true)}
+              data-testid="secret-row-replace"
+            >
+              Replace value
+            </Button>
+          )}
           <Button
             type="button"
             size="sm"
             variant="ghost"
-            disabled={verifying}
-            onClick={() => void verify()}
-            data-testid="secret-row-verify"
+            aria-expanded={showVersions}
+            onClick={() => setShowVersions((open) => !open)}
+            data-testid="secret-row-versions"
           >
-            Verify
-            {verifying ? (
-              <AgentSpinningDots
-                className={undefined}
-                testId={undefined}
-                variant={undefined}
-                tone="muted"
-              />
-            ) : null}
+            Versions
           </Button>
-        )}
+        </div>
       </div>
       {secret.revoked ? null : (
         <p className="max-w-[72ch] text-ui-xs text-muted-foreground">
@@ -126,6 +191,44 @@ export function SecretRow(props: {
           {line.text}
         </p>
       )}
+      {replacements > 0 || showVersions ? (
+        <SecretRotationStatus
+          key={replacements}
+          client={props.client}
+          secretId={secret.secretId}
+          hostName={props.hostName}
+        />
+      ) : null}
+      {replacements > 0 ? (
+        <p
+          className="max-w-[72ch] text-ui-xs text-muted-foreground"
+          data-testid="secret-restart-line"
+        >
+          {SECRET_RESTART_LINE}
+        </p>
+      ) : null}
+      {showVersions ? (
+        <div className="flex flex-col gap-3 pl-3">
+          <SecretVersionsList
+            secret={secret}
+            client={props.client}
+            hostId={props.hostId}
+            onChanged={props.onChanged}
+          />
+          <RecoveryOrder />
+        </div>
+      ) : null}
+      <ReplaceSecretValueDialog
+        open={replacing}
+        secret={secret}
+        client={props.client}
+        onOpenChange={setReplacing}
+        onReplaced={() => {
+          setReplacements((count) => count + 1);
+          props.onChanged();
+        }}
+        onStale={props.onChanged}
+      />
     </li>
   );
 }

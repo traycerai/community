@@ -614,11 +614,23 @@ describe("reviewText", () => {
     expect(
       reviewText(
         reviewEntry({
+          kind: "shell",
+          key: "shell",
+          reason: "executable_entry",
+        }),
+      ),
+    ).toBe("The shell is waiting for you: runs a command.");
+  });
+
+  it("names an MCP server by its own name", () => {
+    expect(
+      reviewText(
+        reviewEntry({
           kind: "mcp_server",
           key: "linear",
           reason: "executable_entry",
         }),
       ),
-    ).toBe("A setting is waiting for you: runs a command.");
+    ).toBe("linear is waiting for you: runs a command.");
   });
 });

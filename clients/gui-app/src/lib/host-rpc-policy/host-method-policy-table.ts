@@ -2200,7 +2200,13 @@ export const HOST_METHOD_POLL_TABLE = {
   "environment.localOverrides": { ...LATEST_SCHEDULING, poll: null },
   "environment.secrets.list": { ...LATEST_SCHEDULING, poll: null },
   "environment.secrets.versions": { ...LATEST_SCHEDULING, poll: null },
-  "environment.secrets.rotation": { ...LATEST_SCHEDULING, poll: null },
+  // A replaced value's status moves within seconds of the replacement; the
+  // Secrets page re-reads it only while it is still moving (ticket E11,
+  // checkpoint 4).
+  "environment.secrets.rotation": {
+    ...LATEST_SCHEDULING,
+    poll: { kind: "fixed", intervalMs: 3_000 },
+  },
   "environment.agentDefinitions.list": { ...LATEST_SCHEDULING, poll: null },
   "environment.setup.get": { ...LATEST_SCHEDULING, poll: null },
   // Machine setup re-reads it while open: a run started by a save, a retry or
