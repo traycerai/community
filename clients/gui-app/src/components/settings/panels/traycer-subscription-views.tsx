@@ -99,8 +99,9 @@ export function TraycerAccountSelect({
 }
 
 /**
- * The shared subscription body: either the credit breakdown (V3 credit plans,
- * and any plan the server reports plan credits for) or the rate-limit view
+ * The shared subscription body: either the credit breakdown (credit-based
+ * statuses - FREE and the V3 plans - and any plan the server reports plan
+ * credits for) or the rate-limit view
  * (legacy / v2 plans without plan credits) - see `usesCreditView`. The single
  * source both surfaces render through.
  */

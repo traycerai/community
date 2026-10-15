@@ -2883,7 +2883,8 @@ window`, recorded in the type as `coverage.browsersAreMountedOnly` -
     the header popover's account cards instead. Each bar is shown only when that
     bucket's total > 0; amounts
     are `$`-denominated. Credit-based vs rate-limit-based is decided by
-    `usesCreditView`: a V3 status (`isCreditBasedPricing`), or any plan whose
+    `usesCreditView`: a credit-based status (`isCreditBasedPricing` - FREE and
+    the V3 plans), or any plan whose
     server payload carries `totalPlanCredits > 0`, shows the credit breakdown. No
     client clock is involved, so legacy plans switch when the server grants them
     plan credits. **Legacy / v2 (usage-limit) plans without plan credits** instead render a **Usage limit** section with the
