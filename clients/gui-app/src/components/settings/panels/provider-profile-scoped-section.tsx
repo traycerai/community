@@ -26,6 +26,7 @@ import {
   providerSignInUnavailableReason,
 } from "@/components/providers/provider-signin-availability";
 import { cn } from "@/lib/utils";
+import { ProviderOnHostOnlyLine } from "./provider-on-host-only-line";
 import {
   EmbeddedProviderRateLimitForProvider,
   ProviderProfilesRefreshButton,
@@ -378,6 +379,11 @@ export function ProviderProfileScopedSection(
               : null
           }
           admissionByProfileId={null}
+        />
+        <ProviderOnHostOnlyLine
+          hostId={hostId}
+          providerId={state.providerId}
+          profileId={selectedProfile.profileId}
         />
         <div
           data-slot="profile-summary-actions"

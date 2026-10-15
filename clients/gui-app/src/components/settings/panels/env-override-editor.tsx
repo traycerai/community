@@ -161,6 +161,11 @@ export function EnvOverrideEditor(props: {
   readonly credentialRefusal: string | null;
   readonly namePlaceholder: string;
   readonly emptyLabel: string;
+  /**
+   * A short note beside a row's name, by key ("Pending", "Overridden on
+   * dev-box"). An empty map for a list with nothing to say.
+   */
+  readonly rowNotes: ReadonlyMap<string, string>;
   readonly onCommit: (
     oldKey: string,
     newKey: string,
@@ -213,6 +218,7 @@ export function EnvOverrideEditor(props: {
               otherKeys={keys.filter((k) => k !== entry.key)}
               disabled={disabled}
               credentialRefusal={credentialRefusal}
+              note={props.rowNotes.get(entry.key) ?? null}
               onCommit={onCommit}
               onDelete={onDelete}
             />
@@ -254,6 +260,7 @@ function EnvOverrideRow(props: {
   readonly otherKeys: readonly string[];
   readonly disabled: boolean;
   readonly credentialRefusal: string | null;
+  readonly note: string | null;
   readonly onCommit: (
     oldKey: string,
     newKey: string,
@@ -383,6 +390,14 @@ function EnvOverrideRow(props: {
           <Trash2 className="size-4" />
         </button>
       </div>
+      {props.note === null ? null : (
+        <p
+          data-testid="env-row-note"
+          className="text-ui-xs text-muted-foreground"
+        >
+          {props.note}
+        </p>
+      )}
       <EnvRowFooter draft={draft} disabled={disabled} onTrim={trimValue} />
     </li>
   );

@@ -32,6 +32,7 @@ import { NotificationsSettingsPanel } from "@/components/settings/panels/notific
 import { UsageSettingsPanel } from "@/components/settings/panels/usage-settings-panel";
 import { useSystemTabModalActions } from "@/stores/tabs/use-system-tab-modal";
 import { useSettingsAnchorReveal } from "@/components/settings/use-settings-anchor-reveal";
+import { PersonalPageFrame } from "@/components/settings/personal/personal-page-frame";
 import "./settings-search.css";
 
 export interface SettingsModalContentProps {
@@ -125,7 +126,9 @@ export function SettingsPanelForSection(props: {
   const Panel = SETTINGS_PANELS[props.section];
   return (
     <div ref={rootRef} className="contents">
-      <Panel />
+      <PersonalPageFrame section={props.section}>
+        <Panel />
+      </PersonalPageFrame>
       <SettingsSetupGuide section={props.section} rootRef={rootRef} />
     </div>
   );

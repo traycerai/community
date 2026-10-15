@@ -108,6 +108,7 @@ export type {
   SecretRequestDecideFetchResult,
 } from "@traycer-clients/shared/host-client/sandbox-secrets";
 export type { SecretRequestDecision } from "@traycer/protocol/host/sandbox-secrets";
+export type { ExecutableWriteGrantFetchResult } from "@traycer-clients/shared/host-client/executable-write-grant";
 export type {
   SandboxCreateRequest,
   SandboxLifecycleVerb,

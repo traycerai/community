@@ -13,6 +13,12 @@ import type { ITraycerCli } from "@traycer-clients/shared/platform/runner-host";
 import type { HostRpcError } from "@traycer-clients/shared/host-transport/host-messenger";
 import { isWindows } from "@/lib/keybindings/platform";
 import { HoverCard } from "@/components/ui/hover-card";
+import { classifyCredential } from "@traycer/protocol/environment/credential-rule";
+import { CredentialChoiceDialog } from "@/components/settings/personal/credential-choice-dialog";
+import {
+  usePersonalHostState,
+  usePersonalRowNotes,
+} from "@/components/settings/personal/personal-page-context";
 import { SHELL } from "@/components/settings/panels/shell-settings.definitions";
 import { SettingsGroup } from "@/components/settings/settings-group";
 import { SettingsPanelShell } from "@/components/settings/settings-panel-shell";
@@ -437,6 +443,12 @@ function ShellSettingsPanelBody(props: {
     beginShellSave("flags");
     controller.revertShellArgs(config.path, shellSaveCallbacks("flags"));
   };
+  const personalHostState = usePersonalHostState();
+  const [heldCredential, setHeldCredential] = useState<{
+    readonly oldKey: string;
+    readonly newKey: string;
+    readonly value: string;
+  } | null>(null);
   const onEnvCommit = (
     oldKey: string,
     newKey: string,
@@ -450,6 +462,23 @@ function ShellSettingsPanelBody(props: {
     ) {
       return;
     }
+    // Before anything is stored: a value that looks like a credential, on a
+    // host that hands variables to every host the person uses, asks first.
+    if (
+      personalHostState?.kind === "ready" &&
+      value !== null &&
+      classifyCredential({ name: newKey, value }).credentialLike
+    ) {
+      setHeldCredential({ oldKey, newKey, value });
+      return;
+    }
+    storeEnv(oldKey, newKey, value);
+  };
+  const storeEnv = (
+    oldKey: string,
+    newKey: string,
+    value: string | null,
+  ): void => {
     beginEnvSave();
     if (oldKey === newKey) {
       controller.setEnv({ key: newKey, value }, envSaveCallbacks);
@@ -503,6 +532,20 @@ function ShellSettingsPanelBody(props: {
         credentialRefusal={credentialRefusal}
         onCommit={onEnvCommit}
         onDelete={onEnvDelete}
+      />
+      <CredentialChoiceDialog
+        name={heldCredential?.newKey ?? null}
+        onKeepAsVariable={() => {
+          if (heldCredential !== null) {
+            storeEnv(
+              heldCredential.oldKey,
+              heldCredential.newKey,
+              heldCredential.value,
+            );
+          }
+          setHeldCredential(null);
+        }}
+        onDismiss={() => setHeldCredential(null)}
       />
     </div>
   );
@@ -895,6 +938,8 @@ function HostEnvironmentGroup(props: {
   ) => void;
   readonly onDelete: (key: string) => void;
 }) {
+  const rowNotes = usePersonalRowNotes("variable");
+  const personalHostState = usePersonalHostState();
   return (
     <SettingsGroup
       group={SHELL.definitions.hostEnvironment}
@@ -916,9 +961,22 @@ function HostEnvironmentGroup(props: {
             props.compact ? "px-4 py-2.5" : "px-5 py-3",
           )}
         >
-          <p className="text-ui-xs text-muted-foreground">
-            Per-provider environment variables live in Settings → Providers.
-          </p>
+          <div className="flex min-w-0 flex-col gap-0.5">
+            <p className="text-ui-xs text-muted-foreground">
+              Per-provider variables live in Settings → Providers.
+            </p>
+            {/* This page edits this host's own operating system; a value for
+                another one is set where every host is listed. */}
+            {personalHostState?.kind === "ready" ? (
+              <p
+                data-testid="other-os-values-note"
+                className="text-ui-xs text-muted-foreground"
+              >
+                Values and shells for other operating systems are set in the
+                dashboard.
+              </p>
+            ) : null}
+          </div>
           <TransientSaveIndicator
             pending={props.pending ? props.saveActive : false}
             saved={props.justSaved}
@@ -927,6 +985,7 @@ function HostEnvironmentGroup(props: {
         </div>
         <div className={props.compact ? "p-4" : "p-5"}>
           <EnvOverrideEditor
+            rowNotes={rowNotes}
             overrides={props.overrides}
             disabled={props.pending}
             credentialRefusal={props.credentialRefusal}

@@ -352,6 +352,8 @@ function createBaseRunnerHost(): IRunnerHost {
     getSandboxGrants: () => Promise.resolve({ kind: "unauthorized" as const }),
     decideSecretRequest: () =>
       Promise.resolve({ kind: "unauthorized" as const }),
+    mintExecutableWriteGrant: () =>
+      Promise.resolve({ kind: "unauthorized" as const }),
     openExternalLink: () => Promise.resolve(),
     getRegisteredUrlSchemes: () => Promise.resolve([]),
     requestMicrophoneAccess: () => Promise.resolve("granted" as const),

@@ -10,6 +10,8 @@ import { envNamePlaceholder } from "./provider-env-name-placeholder";
 
 type ProviderId = ProviderCliState["providerId"];
 
+const NO_ROW_NOTES: ReadonlyMap<string, string> = new Map();
+
 export function ProviderEnvOverridesSection({
   providerId,
   overrides,
@@ -80,6 +82,7 @@ export function ProviderEnvOverridesSection({
       </div>
       <CredentialRefusalNote refusal={credentialRefusal} />
       <EnvOverrideEditor
+        rowNotes={NO_ROW_NOTES}
         credentialRefusal={credentialRefusal}
         overrides={overrides}
         disabled={disabled}

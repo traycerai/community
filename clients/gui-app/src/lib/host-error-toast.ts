@@ -6,6 +6,7 @@ import {
   type HostRpcError,
 } from "@traycer-clients/shared/host-transport/host-messenger";
 import { toast } from "sonner";
+import { staleWriteMessage } from "@/lib/environment/stale-write";
 import { emitHostErrorNotification } from "@/stores/notifications/app-local-notifications-store";
 import { useAuthStore, type CloudVerdictLoss } from "@/stores/auth/auth-store";
 import { createReportIssueContext } from "@/lib/report-issue-context";
@@ -197,6 +198,10 @@ export function toastFromHostError(
   fallback: string,
 ): void {
   if (shouldSuppressRecoverableUnauthorized(error)) return;
+  if (error.staleWrite !== null) {
+    staleWriteToast(error.staleWrite);
+    return;
+  }
   // Silent, and deliberately BEFORE the transport branch: an aborted request
   // is not a network condition at all - a caller-owned authority was replaced
   // or disposed (tab closed, host rebound). Saying "reconnecting" for what was
@@ -223,6 +228,14 @@ export function toastFromHostError(
 }
 
 /**
+ * A save that lost to a newer change is not a failure to report: the page has
+ * re-read, and the person only needs to know where the change came from.
+ */
+function staleWriteToast(staleWrite: NonNullable<HostRpcError["staleWrite"]>) {
+  toast.info(staleWriteMessage(staleWrite), { id: "environment-write-stale" });
+}
+
+/**
  * Error policy for background best-effort host mutations - calls fired by
  * presence changes or stream frames rather than a user gesture (e.g. marking
  * the viewed entity's notifications read). These self-heal on reconnect, so a
@@ -246,6 +259,10 @@ export function toastFromHostErrorWithDetail(
   fallback: string,
 ): void {
   if (shouldSuppressRecoverableUnauthorized(error)) return;
+  if (error.staleWrite !== null) {
+    staleWriteToast(error.staleWrite);
+    return;
+  }
   if (error instanceof HostRequestAbortedError) return;
   if (isTransportClassFailure(error)) {
     transportNoticeToast(error);

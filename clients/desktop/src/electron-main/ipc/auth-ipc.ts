@@ -29,6 +29,7 @@ import {
   decideSecretRequestViaHttp,
   fetchSandboxGrantsViaHttp,
 } from "@traycer-clients/shared/host-client/sandbox-secrets";
+import { mintExecutableWriteGrantViaHttp } from "@traycer-clients/shared/host-client/executable-write-grant";
 import { config } from "../../config";
 import type {
   DesktopAuthSessionSetResult,
@@ -317,6 +318,19 @@ export function registerAuthIpc(bridge: RunnerIpcBridge): void {
       assertString(bearerToken, "getSandboxGrants.bearerToken");
       assertString(hostId, "getSandboxGrants.hostId");
       return fetchSandboxGrantsViaHttp(
+        bridge.options.authnBaseUrl,
+        bearerToken,
+        hostId,
+      );
+    },
+  );
+
+  bridge.handleInvoke(
+    RunnerHostInvoke.mintExecutableWriteGrant,
+    async (_event, bearerToken: unknown, hostId: unknown) => {
+      assertString(bearerToken, "mintExecutableWriteGrant.bearerToken");
+      assertString(hostId, "mintExecutableWriteGrant.hostId");
+      return mintExecutableWriteGrantViaHttp(
         bridge.options.authnBaseUrl,
         bearerToken,
         hostId,

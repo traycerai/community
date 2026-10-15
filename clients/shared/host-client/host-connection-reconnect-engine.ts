@@ -151,10 +151,20 @@ export const HOST_STREAM_REOPEN_INITIAL_BACKOFF_MS = 5_000;
 export const HOST_STREAM_REOPEN_MAX_BACKOFF_MS = 300_000;
 
 /**
+ * The fatal code a host ends every remote session with when its person turns
+ * remote access off. A plain code string, like `HOST_RESTARTING`; the host's
+ * own `reason` already says what happened, so this names it only to stop the
+ * client from offering or scheduling a retry the host will refuse.
+ */
+export const REMOTE_ACCESS_OFF_FATAL_CODE = "REMOTE_ACCESS_OFF";
+
+/**
  * Closes a reopen cannot fix: `caller` is the owner's own teardown,
  * `CLIENT_CLOSED` means the owning stream client itself is gone (the session
- * provider reopens on the replacement client), and `INCOMPATIBLE` is permanent
- * for this host session. Retrying either would loop forever.
+ * provider reopens on the replacement client), `INCOMPATIBLE` is permanent
+ * for this host session, and `REMOTE_ACCESS_OFF` holds until the person turns
+ * remote access back on at that computer, after which the replacement client
+ * reopens. Retrying any of them would loop forever.
  */
 export function isReopenableHostStreamClose(
   reason: StreamCloseReason | null,
@@ -162,7 +172,8 @@ export function isReopenableHostStreamClose(
   if (reason === null || reason.kind !== "fatalError") return false;
   return (
     reason.details.code !== "CLIENT_CLOSED" &&
-    reason.details.code !== "INCOMPATIBLE"
+    reason.details.code !== "INCOMPATIBLE" &&
+    reason.details.code !== REMOTE_ACCESS_OFF_FATAL_CODE
   );
 }
 

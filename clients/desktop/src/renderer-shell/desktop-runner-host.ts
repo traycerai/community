@@ -152,6 +152,7 @@ import type {
   SecretRequestDecideFetchResult,
 } from "@traycer-clients/shared/host-client/sandbox-secrets";
 import type { SecretRequestDecision } from "@traycer/protocol/host/sandbox-secrets";
+import type { ExecutableWriteGrantFetchResult } from "@traycer-clients/shared/host-client/executable-write-grant";
 import type {
   SandboxCreateRequest,
   SandboxLifecycleVerb,
@@ -253,6 +254,10 @@ export interface DesktopPreloadBridge {
     requestId: string,
     decision: SecretRequestDecision,
   ): Promise<SecretRequestDecideFetchResult>;
+  mintExecutableWriteGrant(
+    bearerToken: string,
+    hostId: string,
+  ): Promise<ExecutableWriteGrantFetchResult>;
   // Credentials-file token store (tech plan §3): an IPC client of the main
   // `FileTokenStore`. Replaces the renderer-local encrypt-storage token slots.
   tokenStore: ITokenStore;
@@ -1208,6 +1213,13 @@ export class DesktopRunnerHost implements IRunnerHost {
     decision: SecretRequestDecision,
   ): Promise<SecretRequestDecideFetchResult> {
     return this.bridge.decideSecretRequest(bearerToken, requestId, decision);
+  }
+
+  mintExecutableWriteGrant(
+    bearerToken: string,
+    hostId: string,
+  ): Promise<ExecutableWriteGrantFetchResult> {
+    return this.bridge.mintExecutableWriteGrant(bearerToken, hostId);
   }
 
   beginAuthAttempt(): void {

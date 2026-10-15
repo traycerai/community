@@ -22,6 +22,10 @@ import {
   type SecretRequestDecideFetchResult,
 } from "../sandbox-secrets";
 import type { SecretRequestDecision } from "@traycer/protocol/host/sandbox-secrets";
+import {
+  mintExecutableWriteGrantViaHttp,
+  type ExecutableWriteGrantFetchResult,
+} from "../executable-write-grant";
 import type {
   SandboxCreateRequest,
   SandboxLifecycleVerb,
@@ -677,6 +681,17 @@ export class MockRunnerHost implements IRunnerHost {
     hostId: string,
   ): Promise<SandboxGrantsFetchResult> {
     return fetchSandboxGrantsViaHttp(this.authnBaseUrl, bearerToken, hostId);
+  }
+
+  mintExecutableWriteGrant(
+    bearerToken: string,
+    hostId: string,
+  ): Promise<ExecutableWriteGrantFetchResult> {
+    return mintExecutableWriteGrantViaHttp(
+      this.authnBaseUrl,
+      bearerToken,
+      hostId,
+    );
   }
 
   decideSecretRequest(
