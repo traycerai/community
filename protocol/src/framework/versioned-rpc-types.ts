@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { WorktreeBusyHolder } from "./worktree-busy-holders";
+import type { EnvironmentStaleWrite } from "./environment-stale-write";
 
 declare const validatedMethodVersionRegistryBrand: unique symbol;
 declare const validatedVersionedRpcRegistryBrand: unique symbol;
@@ -253,6 +254,13 @@ export const RPC_ERROR_CODES = [
   "endpoint_unavailable",
   // The destination answers HTTP/3 only, which the bound class cannot carry.
   "h3_only_destination",
+  // ─── Environment ────────────────────────────────────────────────────────
+  //
+  // A settings write the host forwards to the person's environment lost a
+  // compare-and-set: another surface changed the item first. The envelope's
+  // `staleWrite` says who and the current revision; the page re-reads and
+  // says "changed on <host> just now". Additive, as above.
+  "ENVIRONMENT_WRITE_STALE",
 ] as const;
 
 export type RpcErrorCode = (typeof RPC_ERROR_CODES)[number];
@@ -276,6 +284,11 @@ export type RpcErrorDetails = {
    * `WORKTREE_HOLDERS_CHANGED` from a current host; omitted otherwise.
    */
   holdersRevision?: string;
+  /**
+   * Who changed the item and its current revision, on
+   * `ENVIRONMENT_WRITE_STALE` only. See `environment-stale-write.ts`.
+   */
+  staleWrite?: EnvironmentStaleWrite;
 };
 
 export type RpcContract<

@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  environmentChangedBySchema,
+  type EnvironmentChangedBy,
+} from "@traycer/protocol/framework/environment-stale-write";
 import { lazySchema } from "@traycer/protocol/framework/lazy-schema";
 import { executableWriteGrantSchema } from "@traycer/protocol/host/executable-write-grant";
 import { providerIdSchema } from "@traycer/protocol/host/provider-ids";
@@ -88,17 +92,8 @@ export const ENVIRONMENT_ITEM_APPLY_STATUSES = [
  * Who changed an item the editor last read, for the stale-save copy:
  * "changed in the dashboard just now" or "changed on <host> just now".
  */
-export const environmentChangedBySchema = lazySchema(() =>
-  z.discriminatedUnion("kind", [
-    z.object({ kind: z.literal("dashboard") }),
-    z.object({
-      kind: z.literal("host"),
-      hostId: z.string().min(1),
-      hostLabel: z.string().nullable(),
-    }),
-  ]),
-);
-export type EnvironmentChangedBy = z.infer<typeof environmentChangedBySchema>;
+export { environmentChangedBySchema };
+export type { EnvironmentChangedBy };
 
 /**
  * The answer to an item write (model page, "Convergence, history and Undo").
