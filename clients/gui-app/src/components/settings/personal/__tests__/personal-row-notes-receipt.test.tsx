@@ -122,9 +122,9 @@ describe("an edit made while the host is out of reach", () => {
     await vi.waitFor(() => {
       expect(notes()).toEqual(["EDITED: Pending"]);
     });
-    expect((await screen.findByTestId("personal-page-status")).textContent).toBe(
-      OFFLINE_LINE,
-    );
+    expect(
+      (await screen.findByTestId("personal-page-status")).textContent,
+    ).toBe(OFFLINE_LINE);
 
     await page.hostNowAnswers(
       environmentStatusFixture({

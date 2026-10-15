@@ -105,8 +105,10 @@ function walk(dir: string, out: string[]): void {
 function literalText(node: ts.Node): string | null {
   if (ts.isStringLiteralLike(node)) return node.text;
   if (ts.isTemplateExpression(node)) {
-    return [node.head.text, ...node.templateSpans.map((s) => s.literal.text)]
-      .join(" ");
+    return [
+      node.head.text,
+      ...node.templateSpans.map((s) => s.literal.text),
+    ].join(" ");
   }
   return null;
 }
@@ -159,9 +161,7 @@ export function displayStringsOf(
   fileName: string,
   source: string,
 ): readonly { readonly line: number; readonly text: string }[] {
-  const kind = fileName.endsWith(".tsx")
-    ? ts.ScriptKind.TSX
-    : ts.ScriptKind.TS;
+  const kind = fileName.endsWith(".tsx") ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
   const sf = ts.createSourceFile(
     fileName,
     source,
@@ -242,9 +242,7 @@ describe("the desktop's display strings and the excluded words", () => {
   it("has no allowlist entry that nothing matches any more", () => {
     const stale = ALLOWED.filter(
       (entry) =>
-        !hits.some(
-          (hit) => hit.file === entry.file && hit.text === entry.text,
-        ),
+        !hits.some((hit) => hit.file === entry.file && hit.text === entry.text),
     );
     expect(stale).toEqual([]);
   });
@@ -257,7 +255,7 @@ describe("the desktop's display strings and the excluded words", () => {
         'const b = <input placeholder="a binding" aria-label="env binding" />;',
         'const c = { label: "binding", keywords: ["environment"], id: "environment" };',
         'toast.info("the environment moved");',
-        "client.request(\"environment.status\", {});",
+        'client.request("environment.status", {});',
         'const d = <input placeholder="Search" />;',
         'const e = <p>{shown ? `a shell environment` : "ok"}</p>;',
         'const f = <p>{list.map((x) => "environment")}</p>;',
