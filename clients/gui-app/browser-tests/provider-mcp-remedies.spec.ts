@@ -144,23 +144,35 @@ test("a failed pending offer cannot put its error on a replacement confirmation"
     (window as McpProbeWindow).__kimiMcpProbe?.deferRemedyError(),
   );
   await page.getByRole("switch", { name: "Enable local-tool" }).click();
-  await page.getByRole("dialog").getByRole("button", { name: "Enable" }).click();
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Enable" })
+    .click();
   await page.evaluate(async () => {
     await (window as McpProbeWindow).__kimiMcpProbe?.refreshRow("changed");
   });
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await page.getByRole("button", { name: "Repair server other-tool" }).click();
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Repair server other-tool" }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole("switch", { name: "Disable other-tool" }),
+  ).toBeDisabled();
 
   await page.evaluate(() =>
     (window as McpProbeWindow).__kimiMcpProbe?.failDeferredRemedy(),
   );
-  await page.waitForFunction(
-    () => (window as McpProbeWindow).__kimiMcpProbe?.mutationSettled(),
+  await page.waitForFunction(() =>
+    (window as McpProbeWindow).__kimiMcpProbe?.mutationSettled(),
   );
+  await expect(
+    page.getByRole("button", { name: "Repair server other-tool" }),
+  ).toBeEnabled();
   await page.getByRole("button", { name: "Repair server other-tool" }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
-  await expect(page.getByRole("dialog")).not.toContainText("Earlier offer failed");
+  await expect(page.getByRole("dialog")).not.toContainText(
+    "Earlier offer failed",
+  );
   expect(await mutationActions(page)).toEqual(["applyRemedy"]);
 });
 

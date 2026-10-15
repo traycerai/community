@@ -802,7 +802,7 @@ export const providerMcpNoticeSchema = lazySchema(() =>
   z.object({
     id: z.string().min(1),
     tone: z.enum(["info", "warning"]),
-    text: z.string(),
+    text: z.string().min(1),
     blocking: z.boolean(),
     remedy: providerMcpRemedySchema.nullable(),
   }),

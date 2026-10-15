@@ -147,6 +147,7 @@ describe("MCP notices", () => {
 
   it.each([
     ["an empty id", { ...NOTICE, id: "" }],
+    ["empty notice text", { ...NOTICE, text: "" }],
     ["an unknown tone", { ...NOTICE, tone: "error" }],
     ["a missing blocking flag", { ...NOTICE, blocking: undefined }],
     ["an empty remedy id", { ...NOTICE, remedy: { ...REMEDY, id: "" } }],

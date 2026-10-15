@@ -576,6 +576,60 @@ describe("<ProviderMcpTab /> host remedies and confirmations", () => {
     });
   });
 
+  it("confirms a declared enable offer on an HTTP row", () => {
+    mcpMocks.listResult.data = {
+      servers: [
+        connectedServer({
+          name: "http-tool",
+          enabled: false,
+          enableConfirmation: ENABLE_REMEDY,
+        }),
+      ],
+      notices: [],
+    };
+    renderTab(REMEDY_CAPS, "kimi");
+
+    fireEvent.click(screen.getByRole("switch", { name: "Enable http-tool" }));
+    expect(screen.getByRole("dialog")).toBeDefined();
+    expect(mcpMocks.mutate).not.toHaveBeenCalled();
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Enable",
+      }),
+    );
+    expect(mcpMocks.mutateAsync.mock.calls[0]?.[0]).toMatchObject({
+      mutation: { action: "applyRemedy", remedyId: ENABLE_REMEDY.id },
+    });
+  });
+
+  it("does not treat a notice remedy id as a server pending name", () => {
+    mcpMocks.mutateAsync.mockImplementation(() => new Promise(() => {}));
+    mcpMocks.listResult.data = {
+      servers: [connectedServer({ name: "docs", enabled: true })],
+      notices: [
+        {
+          ...BLOCKING_NOTICE,
+          remedy: { ...TRUST_REMEDY, id: "docs" },
+        },
+      ],
+    };
+    renderTab(REMEDY_CAPS, "kimi");
+
+    fireEvent.click(screen.getByRole("button", { name: TRUST_REMEDY.label }));
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: TRUST_REMEDY.label,
+      }),
+    );
+    // The open modal hides the background from the accessibility tree, but
+    // its row remains mounted and must not enter the server-pending set.
+    const toggle = document.querySelector(
+      '[role="switch"][aria-label="Disable docs"]',
+    );
+    expect(toggle).not.toBeNull();
+    expect(toggle?.hasAttribute("disabled")).toBe(false);
+  });
+
   it("an empty enable confirmation still requires the dialog", () => {
     mcpMocks.listResult.data = {
       servers: [
@@ -750,16 +804,20 @@ describe("<ProviderMcpTab /> host remedies and confirmations", () => {
     let rejectWrite: (error: ProviderNativeRpcError) => void = () => {};
     mcpMocks.mutateAsync.mockImplementation(
       () =>
-        new Promise((_resolve, reject: (error: ProviderNativeRpcError) => void) => {
-          rejectWrite = reject;
-        }),
+        new Promise(
+          (_resolve, reject: (error: ProviderNativeRpcError) => void) => {
+            rejectWrite = reject;
+          },
+        ),
     );
     mcpMocks.listResult.data = {
       servers: [connectedServer({ name: "docs", remedy: TRUST_REMEDY })],
       notices: [],
     };
     const view = renderTab(REMEDY_CAPS, "kimi");
-    fireEvent.click(screen.getByRole("button", { name: "Trust this folder docs" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Trust this folder docs" }),
+    );
     fireEvent.click(
       within(screen.getByRole("dialog")).getByRole("button", {
         name: TRUST_REMEDY.label,
@@ -784,7 +842,9 @@ describe("<ProviderMcpTab /> host remedies and confirmations", () => {
       />,
     );
     expect(screen.queryByRole("dialog")).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Trust this folder docs" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Trust this folder docs" }),
+    );
     expect(screen.queryByRole("dialog")).toBeNull();
 
     await act(async () => {
@@ -797,7 +857,9 @@ describe("<ProviderMcpTab /> host remedies and confirmations", () => {
       );
       await Promise.resolve();
     });
-    fireEvent.click(screen.getByRole("button", { name: "Trust this folder docs" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Trust this folder docs" }),
+    );
     expect(screen.getByRole("dialog")).toBeDefined();
     expect(screen.queryByText("Earlier offer failed")).toBeNull();
   });

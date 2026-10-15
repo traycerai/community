@@ -26488,7 +26488,8 @@ export const FROZEN_CATALOG_LINE_SNAPSHOTS = {
                                         "minLength": 1
                                       },
                                       "label": {
-                                        "type": "string"
+                                        "type": "string",
+                                        "minLength": 1
                                       },
                                       "confirmation": {
                                         "type": "string"
@@ -26517,7 +26518,8 @@ export const FROZEN_CATALOG_LINE_SNAPSHOTS = {
                                         "minLength": 1
                                       },
                                       "label": {
-                                        "type": "string"
+                                        "type": "string",
+                                        "minLength": 1
                                       },
                                       "confirmation": {
                                         "type": "string"
@@ -26570,7 +26572,8 @@ export const FROZEN_CATALOG_LINE_SNAPSHOTS = {
                                 ]
                               },
                               "text": {
-                                "type": "string"
+                                "type": "string",
+                                "minLength": 1
                               },
                               "blocking": {
                                 "type": "boolean"
@@ -26585,7 +26588,8 @@ export const FROZEN_CATALOG_LINE_SNAPSHOTS = {
                                         "minLength": 1
                                       },
                                       "label": {
-                                        "type": "string"
+                                        "type": "string",
+                                        "minLength": 1
                                       },
                                       "confirmation": {
                                         "type": "string"
@@ -27154,7 +27158,8 @@ export const FROZEN_CATALOG_LINE_SNAPSHOTS = {
                                       "minLength": 1
                                     },
                                     "label": {
-                                      "type": "string"
+                                      "type": "string",
+                                      "minLength": 1
                                     },
                                     "confirmation": {
                                       "type": "string"
@@ -27183,7 +27188,8 @@ export const FROZEN_CATALOG_LINE_SNAPSHOTS = {
                                       "minLength": 1
                                     },
                                     "label": {
-                                      "type": "string"
+                                      "type": "string",
+                                      "minLength": 1
                                     },
                                     "confirmation": {
                                       "type": "string"

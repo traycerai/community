@@ -168,6 +168,10 @@ function canToggleMcpServer(args: {
   return (
     canToggleServer &&
     (server.enabled ||
+      server.enableConfirmation === null ||
+      server.enableConfirmation === undefined ||
+      canApplyRemedy) &&
+    (server.enabled ||
       server.transport.type !== "stdio" ||
       capabilities.actionScopes.applyRemedy === undefined ||
       (canApplyRemedy &&
@@ -592,8 +596,10 @@ export function ProviderMcpTab(props: {
     (server: ProviderMcpServer, enabled: boolean) => {
       if (
         enabled &&
-        server.transport.type === "stdio" &&
-        capabilities.actionScopes.applyRemedy !== undefined
+        ((server.enableConfirmation !== null &&
+          server.enableConfirmation !== undefined) ||
+          (server.transport.type === "stdio" &&
+            capabilities.actionScopes.applyRemedy !== undefined))
       ) {
         if (
           confirmationInFlightRef.current ||
@@ -661,11 +667,10 @@ export function ProviderMcpTab(props: {
       return;
     const target = activeConfirmationTarget;
     confirmationInFlightRef.current = true;
-    const name =
-      target.kind === "notice" ? target.remedy.id : target.serverName;
-    markPending(name, true);
+    const serverName = target.kind === "notice" ? null : target.serverName;
+    if (serverName !== null) markPending(serverName, true);
     setConfirmationError(null);
-    if (target.kind !== "notice") clearRowError(name);
+    if (serverName !== null) clearRowError(serverName);
     void confirmationMutate
       .mutateAsync({
         providerId: target.scope.providerId,
@@ -691,7 +696,7 @@ export function ProviderMcpTab(props: {
       })
       .finally(() => {
         confirmationInFlightRef.current = false;
-        markPending(name, false);
+        if (serverName !== null) markPending(serverName, false);
       });
   }, [
     activeConfirmationTarget,
@@ -1004,6 +1009,7 @@ export function ProviderMcpTab(props: {
         capabilities={capabilities}
         shadowedNames={shadowedNames}
         pendingServerNames={pendingServerNames}
+        confirmationPending={confirmationMutate.isPending}
         rowErrors={rowErrors}
         canRemove={canRemove}
         canToggleServer={canToggleServer}
@@ -1273,6 +1279,7 @@ function McpServerList(props: {
   readonly capabilities: ProviderMcpCapabilities;
   readonly shadowedNames: ReadonlySet<string>;
   readonly pendingServerNames: ReadonlySet<string>;
+  readonly confirmationPending: boolean;
   readonly rowErrors: ReadonlyMap<string, string>;
   readonly canRemove: boolean;
   readonly canToggleServer: boolean;
@@ -1389,6 +1396,7 @@ function McpServerList(props: {
                   server.discoveryPending ||
                   server.status === "connecting"
                 }
+                confirmationPending={props.confirmationPending}
                 rowError={props.rowErrors.get(server.name) ?? null}
                 canRemove={props.canRemove}
                 canToggleServer={props.canToggleServer}
@@ -1552,6 +1560,7 @@ function McpServerRow(props: {
   readonly capabilities: ProviderMcpCapabilities;
   readonly shadowed: boolean;
   readonly pending: boolean;
+  readonly confirmationPending: boolean;
   readonly rowError: string | null;
   readonly canRemove: boolean;
   readonly canToggleServer: boolean;
@@ -1574,6 +1583,7 @@ function McpServerRow(props: {
     capabilities,
     shadowed,
     pending,
+    confirmationPending,
     rowError,
     canRemove,
     canToggleServer,
@@ -1636,6 +1646,7 @@ function McpServerRow(props: {
             serverName={server.name}
             serverEnabled={server.enabled}
             pending={pending}
+            confirmationPending={confirmationPending}
             showLogin={showLogin}
             showLogout={showLogout}
             showForceReauth={showForceReauth}
@@ -1731,6 +1742,7 @@ function ServerRowActions(props: {
   readonly serverName: string;
   readonly serverEnabled: boolean;
   readonly pending: boolean;
+  readonly confirmationPending: boolean;
   readonly showLogin: boolean;
   readonly showLogout: boolean;
   readonly showForceReauth: boolean;
@@ -1813,7 +1825,7 @@ function ServerRowActions(props: {
           type="button"
           size="sm"
           variant="outline"
-          disabled={props.pending}
+          disabled={props.pending || props.confirmationPending}
           onClick={props.onRemedy}
           aria-label={`${props.remedy.label} ${props.serverName}`}
         >
@@ -1823,7 +1835,7 @@ function ServerRowActions(props: {
       {props.canToggleServer ? (
         <Switch
           checked={props.serverEnabled}
-          disabled={props.pending}
+          disabled={props.pending || props.confirmationPending}
           onCheckedChange={props.onToggleServer}
           aria-label={
             props.serverEnabled
