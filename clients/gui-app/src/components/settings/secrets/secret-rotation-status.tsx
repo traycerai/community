@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import type { HostClient } from "@traycer-clients/shared/host-client/host-client";
 import { useHostQuery } from "@/hooks/host/use-host-query";
 import type { HostRpcRegistry } from "@/lib/host";
@@ -39,10 +39,11 @@ export function SecretRotationStatus(props: {
     options: { enabled: true, poll: moving },
   });
   const current = rotation.data?.rotation;
-  useEffect(() => {
-    if (current === undefined) return;
-    setMoving(!secretRotationSettled(current));
-  }, [current]);
+  // Derived during render, not in an effect: a settled answer stops the poll
+  // on the same render that shows it.
+  const stillMoving =
+    current === undefined || !secretRotationSettled(current);
+  if (stillMoving !== moving) setMoving(stillMoving);
   if (current === undefined) return null;
   const status = secretRotationStatus(current, props.hostName);
   if (status === null) return null;
