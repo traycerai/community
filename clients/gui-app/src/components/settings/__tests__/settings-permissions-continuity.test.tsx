@@ -71,6 +71,8 @@ vi.mock("@/components/settings/panels/providers-settings-panel", () => ({
   ProvidersSettingsPanel: (): ReactNode => (
     <div data-testid="providers-panel-probe" />
   ),
+  McpServersSettingsPanel: (): ReactNode => null,
+  SkillsSettingsPanel: (): ReactNode => null,
 }));
 // The Providers probe stands in for a Personal page; its status frame reads
 // the host through Query, which this suite does not provide. The frame has
