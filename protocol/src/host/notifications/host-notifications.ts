@@ -49,6 +49,14 @@ export const hostNotificationKindSchema = lazySchema(() =>
     "browser.human.needed",
     "secret.grant.requested",
     "secret.export.minted",
+    "secret.rotated",
+    "team.member.removed",
+    "team.member.joined",
+    "team.policy.unapplied",
+    "team.policy.authority_expired",
+    "team.installing_admin.gone",
+    "team.plan.unlinked",
+    "team.pods.full",
   ]),
 );
 export type HostNotificationKind = z.infer<typeof hostNotificationKindSchema>;
@@ -300,8 +308,93 @@ const secretExportMintedEntryArm = lazySchema(() =>
 );
 
 /**
- * `@2.2`'s arms plus `secret.grant.requested` and `secret.export.minted`; list
- * `@2.3` / feed `@1.4` / cloudFeed `@1.3`.
+ * A secret's value was replaced and its rotation reached a state the owner
+ * (or, for a team, every admin) is told about: stalled with Stop offered,
+ * enforced with what each producer proved, or failed. `failure`/`errored` for
+ * a failed rotation, `done`/`completed` otherwise; the state itself is in the
+ * payload, so a state newer than this build still renders.
+ */
+const secretRotatedEntryArm = lazySchema(() =>
+  z.object({
+    ...hostNotificationEntryBaseFields,
+    kind: z.literal("secret.rotated"),
+    outcome: z.enum(["completed", "errored"]),
+    payload: hostNotificationPayloadSchema,
+  }),
+);
+
+/**
+ * The team kinds, addressed to a team's admins (and `team.member.joined`
+ * also to the newcomer): informational, nothing to resolve. Every fact the
+ * row shows is in the payload.
+ */
+const teamMemberRemovedEntryArm = lazySchema(() =>
+  z.object({
+    ...hostNotificationEntryBaseFields,
+    kind: z.literal("team.member.removed"),
+    outcome: z.literal("completed"),
+    payload: hostNotificationPayloadSchema,
+  }),
+);
+
+const teamMemberJoinedEntryArm = lazySchema(() =>
+  z.object({
+    ...hostNotificationEntryBaseFields,
+    kind: z.literal("team.member.joined"),
+    outcome: z.literal("completed"),
+    payload: hostNotificationPayloadSchema,
+  }),
+);
+
+const teamPolicyUnappliedEntryArm = lazySchema(() =>
+  z.object({
+    ...hostNotificationEntryBaseFields,
+    kind: z.literal("team.policy.unapplied"),
+    outcome: z.literal("completed"),
+    payload: hostNotificationPayloadSchema,
+  }),
+);
+
+const teamPolicyAuthorityExpiredEntryArm = lazySchema(() =>
+  z.object({
+    ...hostNotificationEntryBaseFields,
+    kind: z.literal("team.policy.authority_expired"),
+    outcome: z.literal("completed"),
+    payload: hostNotificationPayloadSchema,
+  }),
+);
+
+const teamInstallingAdminGoneEntryArm = lazySchema(() =>
+  z.object({
+    ...hostNotificationEntryBaseFields,
+    kind: z.literal("team.installing_admin.gone"),
+    outcome: z.literal("completed"),
+    payload: hostNotificationPayloadSchema,
+  }),
+);
+
+const teamPlanUnlinkedEntryArm = lazySchema(() =>
+  z.object({
+    ...hostNotificationEntryBaseFields,
+    kind: z.literal("team.plan.unlinked"),
+    outcome: z.literal("completed"),
+    payload: hostNotificationPayloadSchema,
+  }),
+);
+
+const teamPodsFullEntryArm = lazySchema(() =>
+  z.object({
+    ...hostNotificationEntryBaseFields,
+    kind: z.literal("team.pods.full"),
+    outcome: z.literal("completed"),
+    payload: hostNotificationPayloadSchema,
+  }),
+);
+
+/**
+ * `@2.2`'s arms plus `secret.grant.requested`, `secret.export.minted`,
+ * `secret.rotated` and the seven team kinds; list `@2.3` / feed `@1.4` /
+ * cloudFeed `@1.3`.
  *
  * A NEW minor on all three surfaces, for the reason `@2.2` was one: list
  * `@2.2`, feed `@1.2` and `@1.3`, and cloudFeed `@1.1` and `@1.2` have all
@@ -314,6 +407,14 @@ export const hostNotificationEntrySchemaV23 = lazySchema(() =>
     browserHumanNeededEntryArm,
     secretGrantRequestedEntryArm,
     secretExportMintedEntryArm,
+    secretRotatedEntryArm,
+    teamMemberRemovedEntryArm,
+    teamMemberJoinedEntryArm,
+    teamPolicyUnappliedEntryArm,
+    teamPolicyAuthorityExpiredEntryArm,
+    teamInstallingAdminGoneEntryArm,
+    teamPlanUnlinkedEntryArm,
+    teamPodsFullEntryArm,
   ]),
 );
 export type HostNotificationEntryV23 = z.infer<
@@ -350,6 +451,28 @@ export const HOST_NOTIFICATION_PENDING_PROMPT_KINDS: readonly HostNotificationKi
     "secret.grant.requested",
   ];
 
+/** The kinds addressed to a team's admins (and, joined, to its newcomer). */
+export const TEAM_HOST_NOTIFICATION_KINDS = [
+  "team.member.removed",
+  "team.member.joined",
+  "team.policy.unapplied",
+  "team.policy.authority_expired",
+  "team.installing_admin.gone",
+  "team.plan.unlinked",
+  "team.pods.full",
+] as const satisfies readonly HostNotificationKind[];
+export type TeamHostNotificationKind =
+  (typeof TEAM_HOST_NOTIFICATION_KINDS)[number];
+
+const TEAM_HOST_NOTIFICATION_KIND_SET: ReadonlySet<HostNotificationKind> =
+  new Set(TEAM_HOST_NOTIFICATION_KINDS);
+
+export function isTeamHostNotificationKind(
+  kind: HostNotificationKind,
+): kind is TeamHostNotificationKind {
+  return TEAM_HOST_NOTIFICATION_KIND_SET.has(kind);
+}
+
 /** The kinds every released contract version can carry. FROZEN. */
 export const RELEASED_HOST_NOTIFICATION_KINDS: readonly HostNotificationKind[] =
   [
@@ -380,6 +503,14 @@ export const ALL_HOST_NOTIFICATION_KINDS: readonly HostNotificationKind[] = [
   ...V22_HOST_NOTIFICATION_KINDS,
   "secret.grant.requested",
   "secret.export.minted",
+  "secret.rotated",
+  "team.member.removed",
+  "team.member.joined",
+  "team.policy.unapplied",
+  "team.policy.authority_expired",
+  "team.installing_admin.gone",
+  "team.plan.unlinked",
+  "team.pods.full",
 ];
 
 /**

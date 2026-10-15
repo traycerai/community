@@ -13,6 +13,7 @@ import {
   Trash2,
   UserMinus,
   UserPlus,
+  Users,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -22,6 +23,7 @@ import {
   TERMINAL_FAILURE_TONE,
 } from "@/components/notifications/notification-indicator-tones";
 import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
+import { isTeamHostNotificationKind } from "@traycer/protocol/host/notifications/host-notifications";
 import { SecretExportNoticeLine } from "@/components/notifications/secret-export-notice-line";
 import { SecretGrantRequestCard } from "@/components/notifications/secret-grant-request-card";
 import type { HostDirectoryEntry } from "@traycer-clients/shared/host-client/host-directory";
@@ -590,6 +592,10 @@ function notificationRowGlyph(row: MergedNotificationRow): RowGlyph {
 /** The glyph a host row falls back to once severity and subject have both
  * declined to pick one. */
 function hostKindGlyph(hostKind: MergedNotificationRow["hostKind"]): RowGlyph {
+  // A change in a team the reader administers or just joined.
+  if (hostKind !== null && isTeamHostNotificationKind(hostKind)) {
+    return { icon: Users, colorClassName: NEUTRAL_COLOR };
+  }
   switch (hostKind) {
     case "agent.stopped":
       return { icon: Bell, colorClassName: NEUTRAL_COLOR };
@@ -614,6 +620,7 @@ function hostKindGlyph(hostKind: MergedNotificationRow["hostKind"]): RowGlyph {
     // A secret is the subject of both rows, whatever the request's state.
     case "secret.grant.requested":
     case "secret.export.minted":
+    case "secret.rotated":
       return { icon: KeyRound, colorClassName: NEUTRAL_COLOR };
     case null:
       return { icon: Bell, colorClassName: NEUTRAL_COLOR };

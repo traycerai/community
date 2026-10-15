@@ -474,6 +474,14 @@ describe("negotiated-version visibility projection", () => {
           "browser.human.needed",
           "secret.grant.requested",
           "secret.export.minted",
+          "secret.rotated",
+          "team.member.removed",
+          "team.member.joined",
+          "team.policy.unapplied",
+          "team.policy.authority_expired",
+          "team.installing_admin.gone",
+          "team.plan.unlinked",
+          "team.pods.full",
         ]);
       }
     }

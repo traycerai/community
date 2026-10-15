@@ -532,6 +532,9 @@ export type HostNotificationBrowserHumanNeededPayload = z.infer<
  *
  * `epicId`/`chatId` address the asking agent's chat when it has one, for the
  * deep link; an agent outside a chat leaves them out.
+ *
+ * `environmentId` is the environment the request is decided in: null (or left
+ * out by a host that predates it) resolves Personal.
  */
 export const hostNotificationSecretGrantRequestPayloadSchema = lazySchema(() =>
   z
@@ -546,6 +549,7 @@ export const hostNotificationSecretGrantRequestPayloadSchema = lazySchema(() =>
       reason: z.string(),
       sandboxName: z.string().optional(),
       agentId: z.string().min(1).nullable().optional(),
+      environmentId: idSchema.nullable().optional(),
       epicId: idSchema.optional(),
       chatId: idSchema.optional(),
     })
@@ -591,6 +595,243 @@ export type HostNotificationSecretExportMintedPayload = z.infer<
   typeof hostNotificationSecretExportMintedPayloadSchema
 >;
 
+/** The rotation states a `secret.rotated` row knows how to word. */
+export const HOST_NOTIFICATION_SECRET_ROTATION_STATES = [
+  "accepted",
+  "enforcing",
+  "stalled",
+  "enforced",
+  "failed",
+] as const;
+
+/** The producer statuses a `secret.rotated` row knows how to word. */
+export const HOST_NOTIFICATION_ROTATION_PRODUCER_STATUSES = [
+  "acknowledged",
+  "missing",
+  "contained_by_expiry",
+  "applies_on_resume",
+] as const;
+
+/** The evidence kinds of a `rotation_ack` receipt (the rotation wire). */
+export const HOST_NOTIFICATION_ROTATION_EVIDENCE_KINDS = [
+  "session_closed",
+  "cache_cleared",
+  "probe_refused",
+] as const;
+
+/**
+ * One evidence entry as a notification carries it: `kind` read as a string,
+ * so an evidence kind newer than this build still parses (and is simply not
+ * counted as proof by a client that does not know it); `count` null where the
+ * rotation wire's Evidence row allows it.
+ */
+export const hostNotificationRotationEvidenceSchema = lazySchema(() =>
+  z
+    .object({
+      kind: z.string().min(1),
+      count: z.number().int().nonnegative().nullable(),
+    })
+    .catchall(z.unknown()),
+);
+export type HostNotificationRotationEvidence = z.infer<
+  typeof hostNotificationRotationEvidenceSchema
+>;
+
+/**
+ * One producer that owed a `rotation_ack`: a gateway worker of a class, or a
+ * host. `status` is read as a string with the known values above:
+ * `contained_by_expiry` is an incarnation whose authorization provably ceased
+ * (it supplies no count), `applies_on_resume` a host the rotation was not
+ * delivered to. `evidence` is the receipt's entries, null without a receipt.
+ */
+export const hostNotificationRotationProducerSchema = lazySchema(() =>
+  z
+    .object({
+      producer: z.string().min(1),
+      workerClass: z.string().min(1).nullable(),
+      hostId: z.string().min(1).nullable(),
+      hostName: z.string().nullable(),
+      status: z.string().min(1),
+      evidence: z.array(hostNotificationRotationEvidenceSchema).nullable(),
+    })
+    .catchall(z.unknown()),
+);
+export type HostNotificationRotationProducer = z.infer<
+  typeof hostNotificationRotationProducerSchema
+>;
+
+/**
+ * `secret.rotated` payload: a replaced secret's rotation reached a state its
+ * owner (or a team's admins) is told about. Names and states only: no value,
+ * no account identifier. `state` is read as a string so a state newer than
+ * this build still renders generically.
+ */
+export const hostNotificationSecretRotatedPayloadSchema = lazySchema(() =>
+  z
+    .object({
+      kind: z.literal("secret_rotated"),
+      secretName: z.string().min(1),
+      secretId: z.string().min(1).nullable(),
+      environmentId: idSchema,
+      rotationId: z.string().min(1),
+      state: z.string().min(1),
+      evidence: z.array(hostNotificationRotationProducerSchema),
+    })
+    .catchall(z.unknown()),
+);
+export type HostNotificationSecretRotatedPayload = z.infer<
+  typeof hostNotificationSecretRotatedPayloadSchema
+>;
+
+/** Whether one removal fact has arrived for a host. */
+export const HOST_NOTIFICATION_REMOVAL_FACT_STATES = [
+  "pending",
+  "done",
+] as const;
+
+/**
+ * One host's three removal facts (the flows' "stopped, old credential closed,
+ * replacement delivered"), each pending until its receipt arrives.
+ */
+export const hostNotificationRemovalHostSchema = lazySchema(() =>
+  z
+    .object({
+      hostId: z.string().min(1),
+      hostName: z.string(),
+      stopped: z.string().min(1),
+      credentialClosed: z.string().min(1),
+      replacementDelivered: z.string().min(1),
+    })
+    .catchall(z.unknown()),
+);
+export type HostNotificationRemovalHost = z.infer<
+  typeof hostNotificationRemovalHostSchema
+>;
+
+/** `team.member.removed`: a member left or was removed, with each host's facts. */
+export const hostNotificationTeamMemberRemovedPayloadSchema = lazySchema(() =>
+  z
+    .object({
+      kind: z.literal("team_member_removed"),
+      environmentId: idSchema,
+      teamName: z.string(),
+      memberName: z.string(),
+      hosts: z.array(hostNotificationRemovalHostSchema),
+    })
+    .catchall(z.unknown()),
+);
+export type HostNotificationTeamMemberRemovedPayload = z.infer<
+  typeof hostNotificationTeamMemberRemovedPayloadSchema
+>;
+
+/**
+ * `team.member.joined`: told to the admins, and to the newcomer
+ * (`toNewcomer`), whose row carries the step to start working in the team.
+ */
+export const hostNotificationTeamMemberJoinedPayloadSchema = lazySchema(() =>
+  z
+    .object({
+      kind: z.literal("team_member_joined"),
+      environmentId: idSchema,
+      teamName: z.string(),
+      memberName: z.string(),
+      toNewcomer: z.boolean(),
+    })
+    .catchall(z.unknown()),
+);
+export type HostNotificationTeamMemberJoinedPayload = z.infer<
+  typeof hostNotificationTeamMemberJoinedPayloadSchema
+>;
+
+/** `team.policy.unapplied`: no host has applied this policy version yet. */
+export const hostNotificationTeamPolicyUnappliedPayloadSchema = lazySchema(() =>
+  z
+    .object({
+      kind: z.literal("team_policy_unapplied"),
+      environmentId: idSchema,
+      teamName: z.string(),
+      policyVersion: z.number().int().nonnegative(),
+    })
+    .catchall(z.unknown()),
+);
+export type HostNotificationTeamPolicyUnappliedPayload = z.infer<
+  typeof hostNotificationTeamPolicyUnappliedPayloadSchema
+>;
+
+/** `team.policy.authority_expired`: a host's policy authority has lapsed. */
+export const hostNotificationTeamPolicyAuthorityExpiredPayloadSchema =
+  lazySchema(() =>
+    z
+      .object({
+        kind: z.literal("team_policy_authority_expired"),
+        environmentId: idSchema,
+        teamName: z.string(),
+        hostId: z.string().min(1),
+        hostName: z.string(),
+      })
+      .catchall(z.unknown()),
+  );
+export type HostNotificationTeamPolicyAuthorityExpiredPayload = z.infer<
+  typeof hostNotificationTeamPolicyAuthorityExpiredPayloadSchema
+>;
+
+/** Why the team lost its installing admin. */
+export const HOST_NOTIFICATION_INSTALLING_ADMIN_GONE_REASONS = [
+  "left",
+  "demoted",
+  "unlinked",
+] as const;
+
+/**
+ * `team.installing_admin.gone`: the admin whose GitHub identity installed the
+ * team's GitHub set left, stopped being an admin, or unlinked it. `reason` is
+ * read as a string with the known values above.
+ */
+export const hostNotificationTeamInstallingAdminGonePayloadSchema = lazySchema(
+  () =>
+    z
+      .object({
+        kind: z.literal("team_installing_admin_gone"),
+        environmentId: idSchema,
+        teamName: z.string(),
+        adminName: z.string(),
+        reason: z.string().min(1),
+      })
+      .catchall(z.unknown()),
+);
+export type HostNotificationTeamInstallingAdminGonePayload = z.infer<
+  typeof hostNotificationTeamInstallingAdminGonePayloadSchema
+>;
+
+/** `team.plan.unlinked`: the plan the team runs on was unlinked. */
+export const hostNotificationTeamPlanUnlinkedPayloadSchema = lazySchema(() =>
+  z
+    .object({
+      kind: z.literal("team_plan_unlinked"),
+      environmentId: idSchema,
+      teamName: z.string(),
+    })
+    .catchall(z.unknown()),
+);
+export type HostNotificationTeamPlanUnlinkedPayload = z.infer<
+  typeof hostNotificationTeamPlanUnlinkedPayloadSchema
+>;
+
+/** `team.pods.full`: every team pod is full. */
+export const hostNotificationTeamPodsFullPayloadSchema = lazySchema(() =>
+  z
+    .object({
+      kind: z.literal("team_pods_full"),
+      environmentId: idSchema,
+      teamName: z.string(),
+      podCount: z.number().int().nonnegative(),
+    })
+    .catchall(z.unknown()),
+);
+export type HostNotificationTeamPodsFullPayload = z.infer<
+  typeof hostNotificationTeamPodsFullPayloadSchema
+>;
+
 export const hostNotificationKnownPayloadSchema = lazySchema(() =>
   z.discriminatedUnion("kind", [
     hostNotificationChatStoppedPayloadSchema,
@@ -605,6 +846,14 @@ export const hostNotificationKnownPayloadSchema = lazySchema(() =>
     hostNotificationBrowserHumanNeededPayloadSchema,
     hostNotificationSecretGrantRequestPayloadSchema,
     hostNotificationSecretExportMintedPayloadSchema,
+    hostNotificationSecretRotatedPayloadSchema,
+    hostNotificationTeamMemberRemovedPayloadSchema,
+    hostNotificationTeamMemberJoinedPayloadSchema,
+    hostNotificationTeamPolicyUnappliedPayloadSchema,
+    hostNotificationTeamPolicyAuthorityExpiredPayloadSchema,
+    hostNotificationTeamInstallingAdminGonePayloadSchema,
+    hostNotificationTeamPlanUnlinkedPayloadSchema,
+    hostNotificationTeamPodsFullPayloadSchema,
   ]),
 );
 export type HostNotificationKnownPayload = z.infer<
@@ -677,5 +926,21 @@ function payloadKindMatchesNotificationKind(
       return payloadKind === "secret_grant_request";
     case "secret.export.minted":
       return payloadKind === "secret_export_minted";
+    case "secret.rotated":
+      return payloadKind === "secret_rotated";
+    case "team.member.removed":
+      return payloadKind === "team_member_removed";
+    case "team.member.joined":
+      return payloadKind === "team_member_joined";
+    case "team.policy.unapplied":
+      return payloadKind === "team_policy_unapplied";
+    case "team.policy.authority_expired":
+      return payloadKind === "team_policy_authority_expired";
+    case "team.installing_admin.gone":
+      return payloadKind === "team_installing_admin_gone";
+    case "team.plan.unlinked":
+      return payloadKind === "team_plan_unlinked";
+    case "team.pods.full":
+      return payloadKind === "team_pods_full";
   }
 }

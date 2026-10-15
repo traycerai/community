@@ -1975,9 +1975,40 @@ function agentSurfaceFromHostEntry(
   return null;
 }
 
+/**
+ * Payload kinds whose row is complete on itself: a rotation and the team
+ * rows name secrets, hosts and people, never a chat to open.
+ */
+const ROW_COMPLETE_PAYLOAD_KINDS = [
+  "secret_rotated",
+  "team_member_removed",
+  "team_member_joined",
+  "team_policy_unapplied",
+  "team_policy_authority_expired",
+  "team_installing_admin_gone",
+  "team_plan_unlinked",
+  "team_pods_full",
+] as const satisfies readonly HostNotificationKnownPayload["kind"][];
+
+type RowCompletePayload = Extract<
+  HostNotificationKnownPayload,
+  { readonly kind: (typeof ROW_COMPLETE_PAYLOAD_KINDS)[number] }
+>;
+
+const ROW_COMPLETE_PAYLOAD_KIND_SET: ReadonlySet<
+  HostNotificationKnownPayload["kind"]
+> = new Set(ROW_COMPLETE_PAYLOAD_KINDS);
+
+function isRowCompletePayload(
+  known: HostNotificationKnownPayload,
+): known is RowCompletePayload {
+  return ROW_COMPLETE_PAYLOAD_KIND_SET.has(known.kind);
+}
+
 function navigationPayloadFromKnown(
   known: HostNotificationKnownPayload,
 ): NotificationPayload | null {
+  if (isRowCompletePayload(known)) return null;
   switch (known.kind) {
     case "chat":
       return navigationPayloadForChatStopped(known);

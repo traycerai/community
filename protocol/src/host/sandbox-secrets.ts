@@ -67,7 +67,67 @@ export interface SandboxGrant {
   readonly source: string;
   readonly connectorName: string | null;
   readonly routes: readonly SandboxGrantRoute[];
+  /**
+   * The secret's latest rotation as this sandbox sees it, or `null` when its
+   * value has never been replaced (or the broker does not report it here).
+   */
+  readonly rotation: SandboxGrantRotation | null;
 }
+
+/**
+ * One evidence entry of a class's `rotation_ack` receipt. `kind` is read as a
+ * string (known: `session_closed`, `cache_cleared`, `probe_refused`), so an
+ * evidence kind newer than this build still parses; only a known kind is
+ * proof. `count` is null where the rotation wire allows it.
+ */
+export interface SandboxGrantRotationEvidence {
+  readonly kind: string;
+  readonly count: number | null;
+}
+
+/**
+ * One worker class serving this sandbox's routes for the secret, and what it
+ * proved. `status` is read as a string (known: `acknowledged`, `missing`,
+ * `contained_by_expiry`).
+ */
+export interface SandboxGrantRotationClass {
+  readonly workerClass: string;
+  readonly status: string;
+  readonly evidence: readonly SandboxGrantRotationEvidence[] | null;
+}
+
+/**
+ * A grant's rotation: `state` read as a string (known: `accepted`,
+ * `enforcing`, `enforced`, `failed`) and the classes that owe or wrote an
+ * acknowledgement for this sandbox.
+ */
+export interface SandboxGrantRotation {
+  readonly state: string;
+  readonly classes: readonly SandboxGrantRotationClass[];
+}
+
+export const sandboxGrantRotationSchema: z.ZodType<SandboxGrantRotation> =
+  lazySchema(() =>
+    z.object({
+      state: z.string().min(1),
+      classes: z
+        .array(
+          z.object({
+            workerClass: z.string().min(1),
+            status: z.string().min(1),
+            evidence: z
+              .array(
+                z.object({
+                  kind: z.string().min(1),
+                  count: z.number().int().nonnegative().nullable(),
+                }),
+              )
+              .nullable(),
+          }),
+        )
+        .default([]),
+    }),
+  );
 
 export const sandboxGrantSchema: z.ZodType<SandboxGrant> = lazySchema(() =>
   z.object({
@@ -78,6 +138,7 @@ export const sandboxGrantSchema: z.ZodType<SandboxGrant> = lazySchema(() =>
     source: z.string(),
     connectorName: z.string().nullable().default(null),
     routes: z.array(sandboxGrantRouteSchema).default([]),
+    rotation: sandboxGrantRotationSchema.nullable().default(null),
   }),
 );
 

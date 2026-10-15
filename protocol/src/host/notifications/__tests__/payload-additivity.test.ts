@@ -16,6 +16,14 @@ import {
   hostNotificationManagedCommandDeliveryParkedPayloadSchema,
   hostNotificationSecretExportMintedPayloadSchema,
   hostNotificationSecretGrantRequestPayloadSchema,
+  hostNotificationSecretRotatedPayloadSchema,
+  hostNotificationTeamInstallingAdminGonePayloadSchema,
+  hostNotificationTeamMemberJoinedPayloadSchema,
+  hostNotificationTeamMemberRemovedPayloadSchema,
+  hostNotificationTeamPlanUnlinkedPayloadSchema,
+  hostNotificationTeamPodsFullPayloadSchema,
+  hostNotificationTeamPolicyAuthorityExpiredPayloadSchema,
+  hostNotificationTeamPolicyUnappliedPayloadSchema,
   hostNotificationWorkspaceOperationFailedPayloadSchema,
   hostNotificationWorktreeAutoCleanupPayloadSchema,
   hostNotificationWorktreeDeletionPayloadSchema,
@@ -48,6 +56,16 @@ const LIVE_PAYLOAD_SCHEMAS: Record<
   browser_human_needed: hostNotificationBrowserHumanNeededPayloadSchema,
   secret_grant_request: hostNotificationSecretGrantRequestPayloadSchema,
   secret_export_minted: hostNotificationSecretExportMintedPayloadSchema,
+  secret_rotated: hostNotificationSecretRotatedPayloadSchema,
+  team_member_removed: hostNotificationTeamMemberRemovedPayloadSchema,
+  team_member_joined: hostNotificationTeamMemberJoinedPayloadSchema,
+  team_policy_unapplied: hostNotificationTeamPolicyUnappliedPayloadSchema,
+  team_policy_authority_expired:
+    hostNotificationTeamPolicyAuthorityExpiredPayloadSchema,
+  team_installing_admin_gone:
+    hostNotificationTeamInstallingAdminGonePayloadSchema,
+  team_plan_unlinked: hostNotificationTeamPlanUnlinkedPayloadSchema,
+  team_pods_full: hostNotificationTeamPodsFullPayloadSchema,
 };
 
 const KINDS = [
@@ -63,6 +81,14 @@ const KINDS = [
   "browser_human_needed",
   "secret_grant_request",
   "secret_export_minted",
+  "secret_rotated",
+  "team_member_removed",
+  "team_member_joined",
+  "team_policy_unapplied",
+  "team_policy_authority_expired",
+  "team_installing_admin_gone",
+  "team_plan_unlinked",
+  "team_pods_full",
 ] as const satisfies readonly HostNotificationKnownPayloadKind[];
 
 describe("host notification payload additivity", () => {
