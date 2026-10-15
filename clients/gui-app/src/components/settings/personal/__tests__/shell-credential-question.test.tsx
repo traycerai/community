@@ -165,18 +165,14 @@ async function pageIsReady(): Promise<void> {
 }
 
 async function addVariable(name: string, value: string): Promise<void> {
-  fireEvent.click(
-    await screen.findByRole("button", { name: "Add environment variable" }),
-  );
-  fireEvent.change(screen.getByLabelText("New environment variable name"), {
+  fireEvent.click(await screen.findByRole("button", { name: "Add variable" }));
+  fireEvent.change(screen.getByLabelText("New variable name"), {
     target: { value: name },
   });
-  fireEvent.change(screen.getByLabelText("New environment variable value"), {
+  fireEvent.change(screen.getByLabelText("New variable value"), {
     target: { value },
   });
-  fireEvent.click(
-    screen.getByRole("button", { name: "Apply environment variable" }),
-  );
+  fireEvent.click(screen.getByRole("button", { name: "Apply variable" }));
 }
 
 describe("the credential question in the shell panel (Personal host, ready status)", () => {

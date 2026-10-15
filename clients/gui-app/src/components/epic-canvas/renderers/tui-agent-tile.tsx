@@ -1148,7 +1148,7 @@ function continueUnderProfileDisabledReasonFor(
     return "Update Traycer host to continue this session under another profile.";
   }
   if (forkDisabled) {
-    return "Fork is available after the terminal agent session and workspace binding are ready.";
+    return "Fork is available once the terminal agent session and its workspace are ready.";
   }
   return undefined;
 }
@@ -1314,7 +1314,7 @@ function TerminalAgentPreLaunchToolbar(
             <TooltipWrapper
               label={
                 forkDisabled
-                  ? "Fork is available after the terminal agent session and workspace binding are ready."
+                  ? "Fork is available once the terminal agent session and its workspace are ready."
                   : "Fork terminal agent"
               }
               side="top"

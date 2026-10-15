@@ -130,13 +130,13 @@ export function useRpcShellConfigController(props: {
     method: "config.env.set",
     prepareRequest: grant,
     mutationKey: configMutationKeys.envSet(),
-    errorMessage: "Couldn't save the environment variable",
+    errorMessage: "Couldn't save the variable",
     invalidateMethods: ["config.env.list"],
   });
   const envDeleteMutation = useHostScopedMutationForClient(client, {
     method: "config.env.delete",
     mutationKey: configMutationKeys.envDelete(),
-    errorMessage: "Couldn't remove the environment variable",
+    errorMessage: "Couldn't remove the variable",
     invalidateMethods: ["config.env.list"],
   });
 
@@ -189,7 +189,7 @@ export function useRpcShellConfigController(props: {
       });
     },
     onError: (error) => {
-      toastFromHostError(error, "Couldn't rename the environment variable");
+      toastFromHostError(error, "Couldn't rename the variable");
     },
   });
 

@@ -6,6 +6,7 @@ import {
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
 import { GettingStartedCards } from "@/components/onboarding/getting-started-cards";
+import { SetUpPersonalGroup } from "@/components/onboarding/set-up-personal-group";
 import {
   isPermanentlyUnavailable,
   useGettingStartedChecklist,
@@ -40,7 +41,12 @@ export function HomeGettingStartedSection(): ReactNode {
       {complete} of {guideCount} complete
     </span>
   );
-  const cards = <GettingStartedCards entries={offered} surface="home" />;
+  const cards = (
+    <>
+      <GettingStartedCards entries={offered} surface="home" />
+      <SetUpPersonalGroup surface="home" />
+    </>
+  );
   return (
     <section
       data-testid="home-getting-started"

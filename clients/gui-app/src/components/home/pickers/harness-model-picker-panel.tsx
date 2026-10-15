@@ -8,6 +8,7 @@ import { ProviderRail } from "@/components/home/pickers/harness-model-picker-gro
 import { PickerProviderAuthLine } from "@/components/home/pickers/harness-model-picker-auth-line";
 import { PickerSandboxCredentialLine } from "@/components/home/pickers/harness-sandbox-credential-line";
 import { PickerProfileDropdown } from "@/components/home/pickers/picker-profile-dropdown";
+import { TerminalAccountFirstMention } from "@/components/home/pickers/terminal-account-first-mention";
 import { isProfileUsageSidecarTarget } from "@/components/providers/profile-usage-sidecar-target";
 import { useProviderProfileAddFlowStore } from "@/stores/settings/provider-profile-add-flow-store";
 import { pickerProfileShortcutHintForIndex } from "@/components/home/pickers/harness-model-picker-shortcut-hint";
@@ -362,6 +363,11 @@ export function HarnessModelPickerPanelBody(
                 inputRef={inputRef}
                 runTargetHostId={runTargetHostId}
                 admissionByProfileId={profileAdmission}
+              />
+              <TerminalAccountFirstMention
+                named={activeProviderProfiles.some(
+                  (profile) => profile.kind === "ambient",
+                )}
               />
             </div>
           ) : (

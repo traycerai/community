@@ -769,6 +769,10 @@ export function ProviderMcpTab(props: {
 
       <McpServerList
         markTarget={{ entryKind: "mcp", providerId, scope: effectiveScope }}
+        canAdd={canAdd}
+        onAdd={() => {
+          setAddOpen(true);
+        }}
         projectNeedsWorkspace={projectNeedsWorkspace}
         multiWorkspace={multiWorkspace}
         workspacesLoading={workspacesLoading}
@@ -958,6 +962,9 @@ function McpCapabilityNotices(props: {
 
 function McpServerList(props: {
   readonly markTarget: PersonalMarkTarget;
+  /** Whether the empty state offers to add a server, and how. */
+  readonly canAdd: boolean;
+  readonly onAdd: () => void;
   readonly projectNeedsWorkspace: boolean;
   readonly multiWorkspace: boolean;
   readonly workspacesLoading: boolean;
@@ -1052,14 +1059,7 @@ function McpServerList(props: {
     );
   }
   if (props.unfilteredServerCount === 0 && !props.listError) {
-    return (
-      <EmptyState
-        title="No MCP servers"
-        description={`Add an MCP server so ${props.providerLabel} can use external tools and context.`}
-        actionLabel={null}
-        onAction={null}
-      />
-    );
+    return <NoMcpServersState canAdd={props.canAdd} onAdd={props.onAdd} />;
   }
   return (
     <>
@@ -1176,6 +1176,21 @@ function McpListRefreshError(props: {
         Retry
       </Button>
     </div>
+  );
+}
+
+/** No servers yet: what they are for, and the one action. */
+function NoMcpServersState(props: {
+  readonly canAdd: boolean;
+  readonly onAdd: () => void;
+}): ReactNode {
+  return (
+    <EmptyState
+      title="No MCP servers"
+      description="MCP servers give agents tools."
+      actionLabel={props.canAdd ? "Add a server" : null}
+      onAction={props.canAdd ? props.onAdd : null}
+    />
   );
 }
 

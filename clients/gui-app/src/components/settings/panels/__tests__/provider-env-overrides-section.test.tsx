@@ -126,7 +126,7 @@ describe("ProviderEnvOverridesSection on a host that takes no credentials", () =
     expect(screen.getByTestId("credential-refusal").textContent).toBe(REFUSAL);
     expect(
       screen
-        .getByRole("button", { name: "Add environment variable" })
+        .getByRole("button", { name: "Add variable" })
         .hasAttribute("disabled"),
     ).toBe(true);
     expect(
@@ -141,13 +141,11 @@ describe("ProviderEnvOverridesSection on a host that takes no credentials", () =
     fireEvent.click(
       screen.getByRole("button", { name: "Remove CURSOR_API_KEY" }),
     );
-    fireEvent.click(
-      screen.getByRole("button", { name: "Add environment variable" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Add variable" }));
 
     expect(mocks.setOverrideMutate).not.toHaveBeenCalled();
     expect(mocks.deleteOverrideMutate).not.toHaveBeenCalled();
-    expect(screen.queryByLabelText("New environment variable name")).toBeNull();
+    expect(screen.queryByLabelText("New variable name")).toBeNull();
   });
 
   it("control: on a host that takes overrides the editor is live and shows no refusal", () => {
@@ -156,7 +154,7 @@ describe("ProviderEnvOverridesSection on a host that takes no credentials", () =
     expect(screen.queryByTestId("credential-refusal")).toBeNull();
     expect(
       screen
-        .getByRole("button", { name: "Add environment variable" })
+        .getByRole("button", { name: "Add variable" })
         .hasAttribute("disabled"),
     ).toBe(false);
     expect(

@@ -164,6 +164,27 @@ Each card's label and copy come from `getting-started-settings.definitions.ts`, 
 Only the replay card owns a search ENTRY and an anchor - it inherited the removed General "Product tour" row, keywords included, so "walkthrough" and "first run" still land on it.
 The three guide cards contribute their words to the page instead: each one names a settings page that already has an entry of its own, and a second result under the same label would outrank the page the person typing it wants.
 
+**Set up Personal** (`components/onboarding/set-up-personal-group.tsx`, its
+rules in `set-up-personal.ts`; ticket E7 checkpoint 6, core flows flow 0) sits
+under the guide cards on this page and on Home. It is not a guide and not part
+of the "n of m complete" count: three optional steps, each a sentence about
+what it does for the person and an Open button to its page - link a plan or
+add an API key (Providers), add a secret your agents will need (Secrets),
+choose how agents are picked (Agent selection) - under "Optional. An agent can
+run as soon as one provider is set up." with its own "n of 3 done". Each step
+is checked off by what the person's settings already hold, read through the
+window's own host (`providers.list`: a stored API key or a signed-in linked
+plan, never this computer's own sign-in; `environment.secrets.list`: a
+secret not revoked; `environment.status`: an agent selection item), so a step
+done in the dashboard is checked here too.
+
+The composer's account picker says what the Terminal account is the first
+time it names one ("This computer's own sign-in, which stays on this
+computer. Link a plan to use one everywhere.",
+`terminal-account-first-mention.tsx`), once per desktop
+(`useTerminalAccountMentionStore`, persisted; marked when the picker that
+showed it closes).
+
 On the mobile viewport the first-task guide has a second branch, for an account that already has tasks: the phone's landing page carries no task list, so the guide teaches where they went rather than how to start another one.
 Step 1 points at the header hamburger, step 2 at the first row in the drawer's Recent tasks list, and both are DERIVED from the drawer's open state - opening it by any route advances, closing it without picking returns to step 1, and opening a task ends the guide.
 The count comes from the drawer's own `useHistoryQuery`, so it is a cache read rather than a second fetch; while it is outstanding the guide draws nothing, and an empty list or an error falls through to the folder flow every desktop user sees.
@@ -859,6 +880,18 @@ On a Personal entry the host passes on only Remove and an MCP server's tool
 switches; everything else is changed in the dashboard, so the MCP server switch
 and a skill's edit and update are held off with "Change this in the dashboard."
 (`usePersonalEntryApplied`, `PERSONAL_ENTRY_LOCKED_TEXT`).
+
+**Personal ▸ Empty states and words.** Each page opens empty to what it
+holds and one action: Variables and shells "Variables are plain values every
+host gets. Add a variable."; MCP servers "MCP servers give agents tools." with
+Add a server; Skills "Skills give agents instructions for a kind of task."
+with Add a skill (the Secrets page body is E11's). A desktop server or skill
+added here stays on this host until Add to Personal, so neither empty state
+claims "on every host". Four words carry these pages: Personal, secret,
+variable and host. "Environment", "binding" and "placeholder" appear in no
+desktop string a person reads; a value a shell provides is a "shell
+variable". The one exception is the auto-mode policy file's own
+"Environment" heading, which people type and the host parses.
 
 **Personal ▸ Notices and "needs you"** (`personal/personal-page-notices.tsx`,
 ticket E7 checkpoint 5). Under a Personal page's status line, for the item

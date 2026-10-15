@@ -26,7 +26,7 @@ export function useProvidersSetEnvOverride(): UseMutationResult<
     method: "providers.setEnvOverride",
     prepareRequest: grant,
     mutationKey: providersMutationKeys.setEnvOverride(),
-    errorMessage: "Couldn't save environment variable.",
+    errorMessage: "Couldn't save the variable.",
     invalidateMethods: PROVIDER_INVALIDATIONS,
   });
 }

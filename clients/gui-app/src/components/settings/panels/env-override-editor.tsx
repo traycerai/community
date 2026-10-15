@@ -247,7 +247,7 @@ export function EnvOverrideEditor(props: {
             onClick={() => setAdding(true)}
           >
             <Plus className="size-3.5" />
-            Add environment variable
+            Add variable
           </Button>
         </div>
       )}
@@ -447,7 +447,7 @@ function EnvOverrideAddRow(props: {
           disabled={disabled}
           spellCheck={false}
           placeholder={namePlaceholder}
-          aria-label="New environment variable name"
+          aria-label="New variable name"
           className="h-8"
           onChange={(event) =>
             setDraft((current) => ({ ...current, key: event.target.value }))
@@ -459,7 +459,7 @@ function EnvOverrideAddRow(props: {
           value={draft.value}
           mode={draft.mode}
           disabled={disabled}
-          ariaLabel="New environment variable value"
+          ariaLabel="New variable value"
           className={VALUE_FIELD_PLACEMENT}
           onModeChange={(mode) => setDraft((current) => ({ ...current, mode }))}
           onValueChange={(value) =>
@@ -473,7 +473,7 @@ function EnvOverrideAddRow(props: {
             size="icon-sm"
             variant="ghost"
             disabled={disabled || draft.key.trim().length === 0}
-            aria-label="Apply environment variable"
+            aria-label="Apply variable"
             onClick={add}
           >
             <Check className="size-4 text-[var(--term-ansi-green)]" />
@@ -483,7 +483,7 @@ function EnvOverrideAddRow(props: {
             size="icon-sm"
             variant="ghost"
             disabled={disabled}
-            aria-label="Discard environment variable"
+            aria-label="Discard variable"
             onClick={onCancel}
           >
             <X className="size-4" />

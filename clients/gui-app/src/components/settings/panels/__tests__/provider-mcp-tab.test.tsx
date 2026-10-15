@@ -1544,17 +1544,39 @@ describe("<ProviderMcpTab />", () => {
     renderTab(FULL_CAPS, "codex");
 
     expect(screen.getByText("No MCP servers")).toBeDefined();
-    expect(
-      screen.getByText(
-        "Add an MCP server so codex can use external tools and context.",
-      ),
-    ).toBeDefined();
+    expect(screen.getByText("MCP servers give agents tools.")).toBeDefined();
     // Search is still offered so an empty host does not hide the affordance,
     // but the empty-list copy must not be replaced by a "no match" state.
     expect(
       screen.getByRole("textbox", { name: "Search servers" }),
     ).toBeDefined();
     expect(screen.queryByText(/No servers match/)).toBeNull();
+  });
+
+  it("says what MCP servers are for when the list is empty, and offers the one way to add one", () => {
+    mcpMocks.listResult.data = { servers: [] };
+    renderTab(FULL_CAPS, "codex");
+
+    expect(screen.getByText("No MCP servers")).toBeDefined();
+    expect(screen.getByText("MCP servers give agents tools.")).toBeDefined();
+    expect(screen.queryByTestId("provider-mcp-add-dialog")).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add a server" }));
+
+    expect(screen.getByTestId("provider-mcp-add-dialog")).toBeDefined();
+  });
+
+  it("offers no Add a server when the provider takes no additions in this scope", () => {
+    mcpMocks.listResult.data = { servers: [] };
+    const noAddCaps: ProviderMcpCapabilities = {
+      ...FULL_CAPS,
+      actionScopes: { ...FULL_CAPS.actionScopes, add: [] },
+    };
+    renderTab(noAddCaps, "codex");
+
+    expect(screen.getByText("No MCP servers")).toBeDefined();
+    expect(screen.getByText("MCP servers give agents tools.")).toBeDefined();
+    expect(screen.queryByRole("button", { name: "Add a server" })).toBeNull();
   });
 
   it("distinguishes an unmatched query from a truly empty server list", () => {

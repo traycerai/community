@@ -1201,17 +1201,15 @@ describe("<ShellSettingsPanel /> host environment on a host that takes no creden
     value: string,
   ): Promise<void> {
     fireEvent.click(
-      await screen.findByRole("button", { name: "Add environment variable" }),
+      await screen.findByRole("button", { name: "Add variable" }),
     );
     fireEvent.change(screen.getByPlaceholderText(placeholder), {
       target: { value: name },
     });
-    fireEvent.change(screen.getByLabelText("New environment variable value"), {
+    fireEvent.change(screen.getByLabelText("New variable value"), {
       target: { value },
     });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Apply environment variable" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Apply variable" }));
   }
 
   it("refuses a value that is a URL with a sign-in: the line shows, the value stays, and config.env.set is never sent", async () => {
@@ -1228,7 +1226,7 @@ describe("<ShellSettingsPanel /> host environment on a host that takes no creden
     expect(
       await screen.findByText(`${REFUSAL}: remove the sign-in from this URL.`),
     ).toBeTruthy();
-    const valueField = screen.getByLabelText("New environment variable value");
+    const valueField = screen.getByLabelText("New variable value");
     expect((valueField as HTMLInputElement).value).toBe(SIGN_IN_URL);
     expect(set).not.toHaveBeenCalled();
     expect(cli.envOverrides).toEqual([]);
@@ -1278,7 +1276,7 @@ describe("<ShellSettingsPanel /> host environment on a host that takes no creden
     renderShellPanelOverRpc({ cli: envCli() });
 
     fireEvent.click(
-      await screen.findByRole("button", { name: "Add environment variable" }),
+      await screen.findByRole("button", { name: "Add variable" }),
     );
 
     expect(screen.getByPlaceholderText("NODE_ENV")).toBeTruthy();
@@ -1295,18 +1293,16 @@ describe("<ShellSettingsPanel /> host environment on a host that takes no creden
     });
 
     fireEvent.click(
-      await screen.findByRole("button", { name: "Add environment variable" }),
+      await screen.findByRole("button", { name: "Add variable" }),
     );
     expect(screen.getByPlaceholderText("OPENAI_API_KEY")).toBeTruthy();
     fireEvent.change(screen.getByPlaceholderText("OPENAI_API_KEY"), {
       target: { value: "REPO_URL" },
     });
-    fireEvent.change(screen.getByLabelText("New environment variable value"), {
+    fireEvent.change(screen.getByLabelText("New variable value"), {
       target: { value: SIGN_IN_URL },
     });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Apply environment variable" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Apply variable" }));
 
     await waitFor(() => expect(set).toHaveBeenCalledTimes(1));
     expect(set).toHaveBeenCalledWith({
@@ -1347,17 +1343,15 @@ describe("<ShellSettingsPanel /> host environment names that look like credentia
 
   async function addVariable(name: string, value: string): Promise<void> {
     fireEvent.click(
-      await screen.findByRole("button", { name: "Add environment variable" }),
+      await screen.findByRole("button", { name: "Add variable" }),
     );
-    fireEvent.change(screen.getByLabelText("New environment variable name"), {
+    fireEvent.change(screen.getByLabelText("New variable name"), {
       target: { value: name },
     });
-    fireEvent.change(screen.getByLabelText("New environment variable value"), {
+    fireEvent.change(screen.getByLabelText("New variable value"), {
       target: { value },
     });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Apply environment variable" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Apply variable" }));
   }
 
   it("never sends config.env.set for OPENAI_API_KEY=sk-x on a sandbox scope, and shows the line", async () => {

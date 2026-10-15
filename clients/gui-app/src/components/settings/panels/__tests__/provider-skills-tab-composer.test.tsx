@@ -177,16 +177,44 @@ describe("<ProviderSkillsTab /> entry points", () => {
     expect(screen.getByText(/can.t add them/)).toBeDefined();
   });
 
-  it("teaches the SKILL.md format and offers Add skill in the empty state", () => {
+  it("teaches the SKILL.md format and offers Add a skill in the empty state", () => {
     skillMocks.createScopes = ["global"];
     skillMocks.importScopes = ["global"];
     renderTab();
 
-    expect(screen.getByText("No skills yet")).toBeDefined();
+    expect(
+      screen.getByText("Skills give agents instructions for a kind of task."),
+    ).toBeDefined();
     const example = document.querySelector("pre");
     expect(example).not.toBeNull();
     expect(example?.textContent).toContain("description:");
-    expect(screen.getAllByRole("button", { name: /Add skill/ }).length).toBe(2);
+    // The header keeps "Add skill"; the empty state's own button reads
+    // "Add a skill".
+    expect(
+      screen.getAllByRole("button", { name: /^Add (a )?skill$/ }).length,
+    ).toBe(2);
+    expect(screen.getByRole("button", { name: "Add a skill" })).toBeDefined();
+  });
+
+  it("opens the composer from the empty state's Add a skill button", () => {
+    skillMocks.createScopes = ["global"];
+    skillMocks.importScopes = ["global"];
+    skillMocks.inspectScopes = ["global"];
+    renderTab();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add a skill" }));
+
+    expect(screen.getByRole("dialog").textContent).toContain("Paste a source");
+  });
+
+  it("offers no Add a skill button in the empty state of a provider that cannot add", () => {
+    renderTab();
+
+    expect(
+      screen.getByText("Skills give agents instructions for a kind of task."),
+    ).toBeDefined();
+    expect(screen.queryByRole("button", { name: "Add a skill" })).toBeNull();
+    expect(screen.getByText(/can.t add them/)).toBeDefined();
   });
 
   it("opens the composer import-first from the header Add skill button", () => {

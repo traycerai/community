@@ -32,6 +32,7 @@ import { useSurfaceHostSelectionStore } from "@/stores/host/surface-host-selecti
 import { useLayoutStore } from "@/stores/layout/layout-store";
 import { useWatchHostStore } from "@/stores/host-scope/watch-host-store";
 import { useHostAccessPromptsStore } from "@/stores/hosts/host-access-prompts-store";
+import { useTerminalAccountMentionStore } from "@/stores/onboarding/terminal-account-mention-store";
 
 // Call-site regression guard for the full persist-name chain:
 //   catalog leaf (keys.ts) → STORE_KEYS[camelName] → the store's persist call.
@@ -153,6 +154,11 @@ const STORE_PERSIST_NAME_CASES: ReadonlyArray<
     "useHostAccessPromptsStore",
     useHostAccessPromptsStore,
     "traycer-gui-app:host-access-prompts",
+  ],
+  [
+    "useTerminalAccountMentionStore",
+    useTerminalAccountMentionStore,
+    "traycer-gui-app:terminal-account-mention",
   ],
 
   // ── Scoped singletons (initial `anon` bucket at construction) ─────────────

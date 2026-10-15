@@ -409,7 +409,7 @@ export function ProviderMcpAddDialog(props: {
         return { error: "Header name is required." };
       }
       if (auth === "invalid-env-name") {
-        return { error: "Environment variable name is required." };
+        return { error: "Variable name is required." };
       }
       const remoteType: ProviderMcpTransport =
         computeEffectiveRemoteTransportType(
@@ -439,7 +439,7 @@ export function ProviderMcpAddDialog(props: {
       (r) => r.name.trim().length > 0 || r.value.length > 0,
     );
     if (touchedEnv.some((r) => r.name.trim().length === 0)) {
-      return { error: "Environment variable name is required." };
+      return { error: "Variable name is required." };
     }
     const env =
       touchedEnv.length === 0
@@ -837,12 +837,12 @@ function RemoteAuthFields(props: {
       {props.authType === "env" ? (
         <Field
           id={`${uid}-env-auth`}
-          label="Environment variable name"
+          label="Variable name"
           value={props.envAuthVarName}
           onChange={props.onEnvAuthVarNameChange}
           placeholder="GITHUB_TOKEN"
           type="text"
-          hint="Traycer passes this name to the provider; the value must already be set in your environment."
+          hint="Traycer passes this name to the provider; the value must already be set where the provider runs."
         />
       ) : null}
 
@@ -1091,7 +1091,7 @@ function mcpCredentialRefusalLine(
     case "credential-env-name":
       return `${refusal}: a variable whose name looks like a credential is not stored here.`;
     case "secret-auth":
-      return `${refusal}: header and environment-variable authentication is not stored here.`;
+      return `${refusal}: sign-in by header or variable is not stored here.`;
     case "url-sign-in":
       return `${refusal}: remove the sign-in from its URLs to add this server here.`;
   }

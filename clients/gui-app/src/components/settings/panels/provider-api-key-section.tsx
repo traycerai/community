@@ -74,7 +74,7 @@ const API_KEY_DASHBOARD_URL: Record<ProviderId, string | null> = {
 
 function apiKeyStatusLabel(apiKey: ProviderCliState["apiKey"]): string {
   if (!apiKey.configured) return "Not set";
-  return apiKey.source === "stored" ? "Key set" : "From environment";
+  return apiKey.source === "stored" ? "Key set" : "From a shell variable";
 }
 
 // API-key-authenticated providers (Cursor) render a key field in addition to

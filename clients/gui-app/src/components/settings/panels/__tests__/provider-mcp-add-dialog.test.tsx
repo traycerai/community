@@ -261,12 +261,12 @@ describe("<ProviderMcpAddDialog />", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Env var" }));
     expect(
       within(dialog).getByRole("textbox", {
-        name: "Environment variable name",
+        name: "Variable name",
       }),
     ).toBeDefined();
     fireEvent.change(
       within(dialog).getByRole("textbox", {
-        name: "Environment variable name",
+        name: "Variable name",
       }),
       { target: { value: "GITHUB_TOKEN" } },
     );
@@ -467,7 +467,7 @@ describe("<ProviderMcpAddDialog />", () => {
     });
     const dialog = screen.getByTestId("provider-mcp-add-dialog");
     const nameInput = within(dialog).getByRole<HTMLInputElement>("textbox", {
-      name: "Environment variable name",
+      name: "Variable name",
     });
     expect(nameInput.value).toBe("GITHUB_TOKEN");
   });
@@ -627,7 +627,7 @@ describe("<ProviderMcpAddDialog />", () => {
 describe("<ProviderMcpAddDialog /> on a host that takes no credentials", () => {
   const REFUSAL = "Sandboxes don't take sign-ins";
   const NAME_LINE = `${REFUSAL}: a variable whose name looks like a credential is not stored here.`;
-  const AUTH_LINE = `${REFUSAL}: header and environment-variable authentication is not stored here.`;
+  const AUTH_LINE = `${REFUSAL}: sign-in by header or variable is not stored here.`;
   const URL_LINE = `${REFUSAL}: remove the sign-in from its URLs to add this server here.`;
   const REFUSAL_LINES = /is not stored here|remove the sign-in from its URLs/;
 
@@ -738,7 +738,7 @@ describe("<ProviderMcpAddDialog /> on a host that takes no credentials", () => {
     fireEvent.click(within(dialog).getByRole("button", { name: "Env var" }));
     fireEvent.change(
       within(dialog).getByRole("textbox", {
-        name: "Environment variable name",
+        name: "Variable name",
       }),
       { target: { value: "GITHUB_TOKEN" } },
     );

@@ -727,7 +727,7 @@ function SandboxRepairAction(props: { readonly hostId: string }): ReactNode {
         Repair setup
       </Button>
       <span className="text-ui-xs text-muted-foreground">
-        Re-applies its trust files, host aliases, environment and git setup.
+        Re-applies its trust files, host aliases, variables and git setup.
       </span>
     </div>
   );

@@ -993,7 +993,7 @@ function HostEnvironmentGroup(props: {
             namePlaceholder={
               props.credentialRefusal === null ? "OPENAI_API_KEY" : "NODE_ENV"
             }
-            emptyLabel="No host environment variables. The host starts with the environment your shell produces."
+            emptyLabel="Variables are plain values every host gets. Add a variable."
             onCommit={props.onCommit}
             onDelete={props.onDelete}
           />

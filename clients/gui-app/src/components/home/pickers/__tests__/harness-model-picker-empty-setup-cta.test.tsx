@@ -437,7 +437,7 @@ describe("<ModelRowsState /> provider setup CTA (reasonix)", () => {
     expect(screen.getByText("Set up Reasonix")).toBeDefined();
     expect(
       screen.getByText(
-        "Reasonix keeps provider API keys in its own store, not in your shell environment.",
+        "Reasonix keeps provider API keys in its own store, not in your shell.",
       ),
     ).toBeDefined();
     const code = screen.getByText("reasonix setup", { selector: "code" });
@@ -555,7 +555,7 @@ describe("<ModelRowsState /> provider setup CTA (reasonix)", () => {
     expect(screen.getByText("Set up Reasonix")).toBeDefined();
     expect(
       screen.getByText(
-        "Reasonix keeps provider API keys in its own store, not in your shell environment.",
+        "Reasonix keeps provider API keys in its own store, not in your shell.",
       ),
     ).toBeDefined();
     const code = screen.getByText("reasonix setup", { selector: "code" });

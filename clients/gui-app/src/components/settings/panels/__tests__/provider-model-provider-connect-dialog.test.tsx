@@ -615,7 +615,7 @@ describe("credential precedence", () => {
     // The variable's NAME went with `credentialKey`; the client cannot know it
     // without one, and guessing would be worse than the general statement.
     expect(
-      screen.getByText(/environment variable on this host already provides/),
+      screen.getByText(/shell variable on this host already provides/),
     ).toBeTruthy();
     // A warning, not a block: the sign-in is still offered.
     expect(screen.getByRole("button", { name: "Continue" })).toBeTruthy();

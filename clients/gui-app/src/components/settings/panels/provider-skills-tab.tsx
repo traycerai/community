@@ -927,7 +927,9 @@ function SkillsEmptyState({
     <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed border-border/60 px-4 py-8 text-center">
       <Sparkles className="size-5 text-muted-foreground" />
       <div className="flex max-w-prose flex-col gap-1">
-        <p className="text-ui-sm font-medium text-foreground">No skills yet</p>
+        <p className="text-ui-sm font-medium text-foreground">
+          Skills give agents instructions for a kind of task.
+        </p>
         <p className="text-ui-xs text-muted-foreground">
           A skill is a folder with a <code>SKILL.md</code> in it: a short
           description that tells the agent when to reach for it, then the
@@ -946,7 +948,7 @@ function SkillsEmptyState({
           onClick={onOpenComposer}
         >
           <Plus className="size-3.5" />
-          Add skill
+          Add a skill
         </Button>
       ) : (
         <p className="max-w-prose text-ui-xs text-muted-foreground">

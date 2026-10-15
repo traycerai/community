@@ -46,27 +46,23 @@ describe("EnvOverrideEditor", () => {
       onDelete,
     });
 
-    expect(screen.queryByLabelText("New environment variable name")).toBeNull();
+    expect(screen.queryByLabelText("New variable name")).toBeNull();
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Add environment variable" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Add variable" }));
 
-    fireEvent.change(screen.getByLabelText("New environment variable name"), {
+    fireEvent.change(screen.getByLabelText("New variable name"), {
       target: { value: "OPENAI_API_KEY" },
     });
-    fireEvent.change(screen.getByLabelText("New environment variable value"), {
+    fireEvent.change(screen.getByLabelText("New variable value"), {
       target: { value: "token" },
     });
 
     expect(onCommit).not.toHaveBeenCalled();
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Apply environment variable" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Apply variable" }));
 
     expect(onCommit).toHaveBeenCalledWith("", "OPENAI_API_KEY", "token");
-    expect(screen.queryByLabelText("New environment variable name")).toBeNull();
+    expect(screen.queryByLabelText("New variable name")).toBeNull();
   });
 
   it("discards a staged environment variable without applying it", () => {
@@ -80,18 +76,14 @@ describe("EnvOverrideEditor", () => {
       onDelete,
     });
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Add environment variable" }),
-    );
-    fireEvent.change(screen.getByLabelText("New environment variable name"), {
+    fireEvent.click(screen.getByRole("button", { name: "Add variable" }));
+    fireEvent.change(screen.getByLabelText("New variable name"), {
       target: { value: "ANTHROPIC_API_KEY" },
     });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Discard environment variable" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Discard variable" }));
 
     expect(onCommit).not.toHaveBeenCalled();
-    expect(screen.queryByLabelText("New environment variable name")).toBeNull();
+    expect(screen.queryByLabelText("New variable name")).toBeNull();
   });
 
   it("keeps existing rows removable with the bin icon", () => {
@@ -168,13 +160,11 @@ describe("EnvOverrideEditor", () => {
       onDelete,
     });
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Add environment variable" }),
-    );
-    fireEvent.change(screen.getByLabelText("New environment variable name"), {
+    fireEvent.click(screen.getByRole("button", { name: "Add variable" }));
+    fireEvent.change(screen.getByLabelText("New variable name"), {
       target: { value: "COPILOT_HOME" },
     });
-    const valueField = screen.getByLabelText("New environment variable value");
+    const valueField = screen.getByLabelText("New variable value");
     fireEvent.change(valueField, { target: { value: "  /workspace/copilot" } });
 
     fireEvent.click(screen.getByRole("button", { name: "Trim spaces" }));
@@ -184,9 +174,7 @@ describe("EnvOverrideEditor", () => {
     expect(onCommit).not.toHaveBeenCalled();
     expect((valueField as HTMLInputElement).value).toBe("/workspace/copilot");
 
-    fireEvent.click(
-      screen.getByRole("button", { name: "Apply environment variable" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Apply variable" }));
 
     expect(onCommit).toHaveBeenCalledWith(
       "",
@@ -211,21 +199,14 @@ describe("EnvOverrideEditor", () => {
         onCommit,
         onDelete: vi.fn<EnvDelete>(),
       });
-      fireEvent.click(
-        screen.getByRole("button", { name: "Add environment variable" }),
-      );
-      fireEvent.change(screen.getByLabelText("New environment variable name"), {
+      fireEvent.click(screen.getByRole("button", { name: "Add variable" }));
+      fireEvent.change(screen.getByLabelText("New variable name"), {
         target: { value: "REPO_URL" },
       });
-      fireEvent.change(
-        screen.getByLabelText("New environment variable value"),
-        {
-          target: { value },
-        },
-      );
-      fireEvent.click(
-        screen.getByRole("button", { name: "Apply environment variable" }),
-      );
+      fireEvent.change(screen.getByLabelText("New variable value"), {
+        target: { value },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Apply variable" }));
     }
 
     it("refuses a staged value that is a URL with a sign-in: no commit, the line shown, the value kept", () => {
@@ -235,9 +216,7 @@ describe("EnvOverrideEditor", () => {
 
       expect(onCommit).not.toHaveBeenCalled();
       expect(screen.getByText(REFUSED_LINE)).toBeDefined();
-      const valueField = screen.getByLabelText(
-        "New environment variable value",
-      );
+      const valueField = screen.getByLabelText("New variable value");
       expect((valueField as HTMLInputElement).value).toBe(SIGN_IN_URL);
     });
 
@@ -380,18 +359,14 @@ describe("EnvOverrideEditor credential-shaped names", () => {
   }
 
   function addRow(name: string, value: string): void {
-    fireEvent.click(
-      screen.getByRole("button", { name: "Add environment variable" }),
-    );
-    fireEvent.change(screen.getByLabelText("New environment variable name"), {
+    fireEvent.click(screen.getByRole("button", { name: "Add variable" }));
+    fireEvent.change(screen.getByLabelText("New variable name"), {
       target: { value: name },
     });
-    fireEvent.change(screen.getByLabelText("New environment variable value"), {
+    fireEvent.change(screen.getByLabelText("New variable value"), {
       target: { value },
     });
-    fireEvent.click(
-      screen.getByRole("button", { name: "Apply environment variable" }),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Apply variable" }));
   }
 
   it("refuses an added variable whose name looks like a credential: no commit, the line shown, the typed name kept", () => {
@@ -402,7 +377,7 @@ describe("EnvOverrideEditor credential-shaped names", () => {
 
     expect(onCommit).not.toHaveBeenCalled();
     expect(screen.getByText(NAME_LINE)).toBeDefined();
-    const nameField = screen.getByLabelText("New environment variable name");
+    const nameField = screen.getByLabelText("New variable name");
     expect((nameField as HTMLInputElement).value).toBe("OPENAI_API_KEY");
   });
 

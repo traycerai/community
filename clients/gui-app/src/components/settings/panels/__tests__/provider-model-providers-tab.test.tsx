@@ -408,7 +408,7 @@ describe("ProviderModelProvidersTab source and disconnect", () => {
       capabilities: FULL_CAPS,
     });
     expect(screen.getByText("API key")).toBeTruthy();
-    expect(screen.queryByText("Environment")).toBeNull();
+    expect(screen.queryByText("Shell variable")).toBeNull();
   });
 
   it("shows an env-sourced credential's origin while keeping it configurable", () => {
@@ -428,9 +428,9 @@ describe("ProviderModelProvidersTab source and disconnect", () => {
       },
       capabilities: FULL_CAPS,
     });
-    expect(screen.getByText("Environment")).toBeTruthy();
+    expect(screen.getByText("Shell variable")).toBeTruthy();
     // The badge is the ONLY origin marker now. A trailing "Set by environment"
-    // beside a badge reading "Environment" spent the row's last words saying
+    // beside a badge reading "Shell variable" spent the row's last words saying
     // the same thing twice, in a row that has to stay scannable.
     expect(screen.queryByText("Set by environment")).toBeNull();
     expect(
@@ -532,7 +532,7 @@ describe("ProviderModelProvidersTab source and disconnect", () => {
       },
       capabilities: FULL_CAPS,
     });
-    expect(screen.getByText("Environment")).toBeTruthy();
+    expect(screen.getByText("Shell variable")).toBeTruthy();
     // Still configurable - the warning belongs in the dialog, not in a block.
     // This is also the ONE case a connected row still shows Connect: the host
     // will not disconnect it, so a bare "Disconnect only" would leave the row
@@ -1512,7 +1512,7 @@ describe("ProviderModelProvidersTab source and disconnect", () => {
     ).toBeTruthy();
     expect(screen.queryByRole("button", { name: /^Connect / })).toBeNull();
     // ...and the origin simply goes unlabelled rather than being guessed at.
-    for (const label of ["API key", "Environment", "Config", "Custom"]) {
+    for (const label of ["API key", "Shell variable", "Config", "Custom"]) {
       expect(screen.queryByText(label)).toBeNull();
     }
   });
