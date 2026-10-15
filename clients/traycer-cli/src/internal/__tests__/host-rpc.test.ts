@@ -17,10 +17,7 @@ import {
 } from "../../../../shared/host-transport/host-messenger";
 import { createCliCredentialsStore } from "../../store/credentials-store";
 import type { CredentialsMutationStore } from "@traycer/protocol/config/credentials-mutation";
-import {
-  CLI_ERROR_CODES,
-  EXPECTED_CLI_ERROR_CODES,
-} from "../../runner/errors";
+import { CLI_ERROR_CODES, EXPECTED_CLI_ERROR_CODES } from "../../runner/errors";
 import {
   hostRpcRegistry,
   hostStreamRpcRegistry,
