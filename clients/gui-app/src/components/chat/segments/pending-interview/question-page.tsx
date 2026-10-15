@@ -301,7 +301,9 @@ function OptionRow(props: OptionRowProps) {
             selected={selected}
           />
         )}
-        <span className="pointer-events-none relative z-10 min-w-0 truncate font-medium text-foreground/90">
+        {/* Wraps like the historical row: a one-line ellipsis leaves nothing
+            of the label in a narrow chat pane, and nothing else shows it. */}
+        <span className="pointer-events-none relative z-10 min-w-0 break-words font-medium text-foreground/90">
           {label}
         </span>
         {option === null ? null : (

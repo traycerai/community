@@ -2752,6 +2752,34 @@ describe("PendingInterviewCard keyboard navigation", () => {
   });
 });
 
+describe("PendingInterviewCard long option labels", () => {
+  afterEach(() => {
+    cleanup();
+    useInterviewDraftStore.setState({ draftsByChat: {} });
+    window.localStorage.clear();
+  });
+
+  // jsdom has no layout, so "readable in a narrow pane" is asserted on its
+  // cause: a single-line `truncate` (white-space: nowrap + ellipsis) leaves
+  // two characters in a narrow chat column, and the row has no other place
+  // the full text is visible.
+  it("lets a long option label wrap instead of truncating it to one line", () => {
+    const longLabel =
+      "Inside the agent harness as a thin proxy layer between the model and the tools";
+    renderCard(
+      [singleSelect("q", "Where does it live?", [longLabel, "Short"])],
+      vi.fn(),
+      null,
+    );
+
+    const labelEl = screen.getByText(longLabel);
+    expect(labelEl.textContent).toBe(longLabel);
+    expect(labelEl.classList.contains("truncate")).toBe(false);
+    expect(labelEl.classList.contains("whitespace-nowrap")).toBe(false);
+    expect(labelEl.classList.contains("break-words")).toBe(true);
+  });
+});
+
 describe("PendingInterviewCard choice mode chrome", () => {
   afterEach(() => {
     cleanup();
