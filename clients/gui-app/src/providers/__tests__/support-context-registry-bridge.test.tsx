@@ -98,29 +98,35 @@ describe("SupportContextRegistryBridge tab host", () => {
     });
   });
 
-  it("records a terminal-agent tab's host the same way", () => {
-    mocks.activeRef = recordRef("terminal-agent", "host-agent-bound");
-
-    render(<SupportContextRegistryBridge router={ROUTER} />);
-
-    expect(getSupportContextSnapshot().tabHostId).toEqual({
-      status: "known",
-      value: "host-agent-bound",
-    });
-  });
-
-  it.each(["spec", "ticket"] as const)(
-    "leaves the tab host unavailable for a %s tile, which carries a host but is not bound for life",
+  it.each(["terminal-agent", "spec", "ticket"] as const)(
+    "records a %s tile's bound host the same way",
     (type) => {
-      mocks.activeRef = recordRef(type, "host-doc");
+      mocks.activeRef = recordRef(type, "host-bound");
 
       render(<SupportContextRegistryBridge router={ROUTER} />);
 
       expect(getSupportContextSnapshot().tabHostId).toEqual({
-        status: "unavailable",
+        status: "known",
+        value: "host-bound",
       });
     },
   );
+
+  it("leaves the tab host unavailable for a blank tab, whose host is a placeholder", () => {
+    mocks.activeRef = {
+      id: "blank-1",
+      instanceId: "instance-blank",
+      type: "blank",
+      name: "New tab",
+      hostId: "placeholder-host",
+    };
+
+    render(<SupportContextRegistryBridge router={ROUTER} />);
+
+    expect(getSupportContextSnapshot().tabHostId).toEqual({
+      status: "unavailable",
+    });
+  });
 
   it("leaves the tab host unavailable when there is no active tile", () => {
     mocks.activeRef = null;

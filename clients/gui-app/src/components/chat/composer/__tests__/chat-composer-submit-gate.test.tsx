@@ -472,6 +472,7 @@ describe("chat-composer submit gate (paused send diagnostics)", () => {
           hostId: "host-tab",
           connectionStatus: "reconnecting",
           reason: "stream-not-open",
+          stage: "initial",
         },
       ],
     ]);
@@ -524,6 +525,7 @@ describe("chat-composer submit gate (paused send diagnostics)", () => {
           hostId: "host-tab",
           connectionStatus: "open",
           reason: "send-disabled",
+          stage: "initial",
         },
       ],
     ]);

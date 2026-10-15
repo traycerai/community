@@ -236,23 +236,40 @@ export function useChatComposerSubmit(
   } = args;
   const appendMessage = useChatStore((state) => state.appendMessage);
   const { connectionStatus } = use(QueuedMessageStagesContext);
+  // LIVE, for the same reason `submitBlockedRef` is: the re-checks that run
+  // after an awaited read log from a continuation that holds the closure of the
+  // render that started it, and the stream going away is exactly what it is
+  // there to name.
+  const liveSendBlockRef = useRef({ connectionStatus, sendDisabled });
+  useLayoutEffect(() => {
+    liveSendBlockRef.current = { connectionStatus, sendDisabled };
+  }, [connectionStatus, sendDisabled]);
   // When the last refused-submit line was written, for the window above.
   const lastRefusedSubmitLogAt = useRef<number | null>(null);
-  const noteRefusedSubmit = useCallback((): void => {
-    const now = Date.now();
-    const last = lastRefusedSubmitLogAt.current;
-    if (last !== null && now - last < REFUSED_SUBMIT_LOG_WINDOW_MS) return;
-    lastRefusedSubmitLogAt.current = now;
-    // `sendDisabled` folds viewer role, profile and stream state, so the
-    // message is neutral and `connectionStatus` + `reason` discriminate.
-    // Ids and a status only - never the draft, and no account identifier.
-    appLogger.info("[composer] submit refused: send disabled", {
-      chatId: taskId,
-      hostId: targetHostId,
-      connectionStatus,
-      reason: connectionStatus === "open" ? "send-disabled" : "stream-not-open",
-    });
-  }, [connectionStatus, targetHostId, taskId]);
+  const noteRefusedSubmit = useCallback(
+    (stage: RefusedSubmitStage): void => {
+      const live = liveSendBlockRef.current;
+      if (live.sendDisabled !== true) return;
+      const now = Date.now();
+      const last = lastRefusedSubmitLogAt.current;
+      if (last !== null && now - last < REFUSED_SUBMIT_LOG_WINDOW_MS) return;
+      lastRefusedSubmitLogAt.current = now;
+      // `sendDisabled` folds viewer role, profile and stream state, so the
+      // message is neutral and `connectionStatus` + `reason` discriminate.
+      // Ids and a status only - never the draft, and no account identifier.
+      appLogger.info("[composer] submit refused: send disabled", {
+        chatId: taskId,
+        hostId: targetHostId,
+        connectionStatus: live.connectionStatus,
+        reason:
+          live.connectionStatus === "open"
+            ? "send-disabled"
+            : "stream-not-open",
+        stage,
+      });
+    },
+    [targetHostId, taskId],
+  );
   // The LIVE queue-edit target, for the continuation to re-check. A captured
   // value cannot answer "is this still the submit the user asked for" - that is
   // precisely the question, and the closure froze its answer at preparation
@@ -440,7 +457,7 @@ export function useChatComposerSubmit(
   const submitDraft = useCallback(
     (source: ChatComposerSubmitSource): void => {
       if (submitBlocked()) {
-        if (sendDisabled === true) noteRefusedSubmit();
+        noteRefusedSubmit("initial");
         return;
       }
       const toolbar = toolbarStore.getState();
@@ -478,7 +495,10 @@ export function useChatComposerSubmit(
         // captured predicate would send the prompt and clear the composer
         // against a block that is already in force. Same reason the deferred
         // staged-conflict continuation reads the ref.
-        if (submitBlockedRef.current()) return;
+        if (submitBlockedRef.current()) {
+          noteRefusedSubmit("after-attachments");
+          return;
+        }
         // Re-read the document rather than comparing the `revision` captured
         // before the async annotation-image read. `revision` bumps on every
         // keystroke, so a single character typed during that read dropped the
@@ -952,7 +972,6 @@ export function useChatComposerSubmit(
       queueEditTargetId,
       getDraftBlobBridgeSupported,
       noteRefusedSubmit,
-      sendDisabled,
       submitBlocked,
       targetHostId,
       taskId,
@@ -1110,6 +1129,7 @@ export function useChatComposerSubmit(
           // prompt went out and the composer was cleared against a live block.
           // Neither the staged identity nor `resetEpoch` moves for those.
           if (submitBlockedRef.current()) {
+            noteRefusedSubmit("after-confirmation");
             setPendingConflict(null);
             return;
           }
@@ -1137,6 +1157,7 @@ export function useChatComposerSubmit(
     restartStagedConflict(pendingConflict);
   }, [
     getDraftBlobBridgeSupported,
+    noteRefusedSubmit,
     pendingConflict,
     restartStagedConflict,
     targetHostId,
@@ -1166,6 +1187,12 @@ export function useChatComposerSubmit(
  * would otherwise write one line each.
  */
 const REFUSED_SUBMIT_LOG_WINDOW_MS = 2_000;
+
+/** Which of the submit's block checks refused: the first, or a live re-check. */
+type RefusedSubmitStage =
+  | "initial"
+  | "after-attachments"
+  | "after-confirmation";
 
 /**
  * The synchronous path's empty resolution map. Shared so the "nothing to

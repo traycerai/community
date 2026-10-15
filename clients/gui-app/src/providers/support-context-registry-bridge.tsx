@@ -21,7 +21,11 @@ import {
   useActiveEpicId,
   useActiveTabId,
 } from "@/stores/epics/canvas/store";
-import type { EpicCanvasTileRef } from "@/stores/epics/canvas/types";
+import {
+  isBlankTileRef,
+  isCommGraphTileRef,
+  type EpicCanvasTileRef,
+} from "@/stores/epics/canvas/types";
 import type {
   OpenEpicState,
   OpenEpicStoreHandle,
@@ -190,13 +194,15 @@ export function SupportContextRegistryBridge(
   // The tile's own binding, the value `<TabHostProvider>` hands to
   // `useTabHostId()` inside it. This bridge is mounted above every tab, where
   // that hook has no provider (it throws), so the ref the provider is fed from
-  // is read instead. Only a chat / terminal-agent tile is bound for life;
-  // every other tile reports no tab host.
+  // is read instead. Every tile kind carries one, except the two that hold
+  // only an inert placeholder because they have no host binding (the blank
+  // tab and the communication graph).
   const tabHostId =
-    artifactRef !== null &&
-    (artifactRef.type === "chat" || artifactRef.type === "terminal-agent")
-      ? artifactRef.hostId
-      : null;
+    artifactRef === null ||
+    isBlankTileRef(artifactRef) ||
+    isCommGraphTileRef(artifactRef)
+      ? null
+      : artifactRef.hostId;
 
   useEffect(() => {
     setSupportContextSnapshot({
