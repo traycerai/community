@@ -1922,7 +1922,10 @@ export class RemoteSession<
       type: MuxFrameType.CREDENTIAL_UPDATE,
       streamId: SESSION_CONTROL_STREAM_ID,
       qos: QosClass.INTERACTIVE,
-      json: { bearer, memberCredential: null } satisfies CredentialUpdatePayload,
+      json: {
+        bearer,
+        memberCredential: null,
+      } satisfies CredentialUpdatePayload,
       binary: null,
     });
   }

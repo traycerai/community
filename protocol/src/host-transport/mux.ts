@@ -576,7 +576,8 @@ export const credentialUpdatePayloadSchema: z.ZodType<CredentialUpdatePayload> =
       })
       // A frame must carry something: no bearer means a member credential.
       .refine(
-        (payload) => payload.bearer !== null || payload.memberCredential !== null,
+        (payload) =>
+          payload.bearer !== null || payload.memberCredential !== null,
         "a credential update with no bearer carries a member credential",
       ),
   );

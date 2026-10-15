@@ -631,9 +631,9 @@ describe("agent.list@9.2 archived flag", () => {
     const { archived: _omitted, ...keyless } = V92_ROW;
     const reach = { reach: null, hostConnectivity: { kind: "unknown" } };
 
-    expect(
-      agentSummarySchema.safeParse({ ...keyless, ...reach }).success,
-    ).toBe(false);
+    expect(agentSummarySchema.safeParse({ ...keyless, ...reach }).success).toBe(
+      false,
+    );
     for (const archived of [true, false, null]) {
       expect(
         agentSummarySchema.safeParse({ ...V92_ROW, ...reach, archived })

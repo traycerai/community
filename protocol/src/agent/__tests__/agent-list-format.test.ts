@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { AgentSummary, ListAgentsResponse } from "@traycer/protocol/host";
-import { agentListUpgradeV91ToV92 } from "@traycer/protocol/host/agent/contracts";
+import {
+  agentListUpgradeV100ToV101,
+  agentListUpgradeV91ToV92,
+  agentListUpgradeV92ToV100,
+} from "@traycer/protocol/host/agent/contracts";
 import {
   listAgentsResponseSchema,
   listAgentsResponseSchemaV91,
@@ -282,7 +286,11 @@ describe("formatAgentListResponse categorization", () => {
     // is what hands the listing to the formatter, and it fills `null`.
     expect(Object.hasOwn(parsed.agents[1], "archived")).toBe(false);
     const output = formatAgentListResponse(
-      agentListUpgradeV91ToV92.upgradeResponse(parsed),
+      agentListUpgradeV100ToV101.upgradeResponse(
+        agentListUpgradeV92ToV100.upgradeResponse(
+          agentListUpgradeV91ToV92.upgradeResponse(parsed),
+        ),
+      ),
     );
 
     expect(output).not.toContain("[archived]");
@@ -1693,7 +1701,9 @@ describe("not-reachable marker (agent.list@10.1 reach)", () => {
       parentId: "caller",
       reach: "other_principal",
     });
-    const output = formatAgentListResponse(response([caller, theirs], "caller"));
+    const output = formatAgentListResponse(
+      response([caller, theirs], "caller"),
+    );
 
     expect(markedRow(output, "theirs ")).toContain(
       `theirs${UNREACHABLE_MARKER} gui/claude`,
@@ -1710,7 +1720,9 @@ describe("not-reachable marker (agent.list@10.1 reach)", () => {
       archived: true,
       reach: "other_principal",
     });
-    const output = formatAgentListResponse(response([caller, theirs], "caller"));
+    const output = formatAgentListResponse(
+      response([caller, theirs], "caller"),
+    );
 
     expect(markedRow(output, "theirs ")).toContain(
       `theirs [archived]${UNREACHABLE_MARKER} "Their chat" gui/claude`,
@@ -1725,8 +1737,16 @@ describe("not-reachable marker (agent.list@10.1 reach)", () => {
           caller,
           agent({ id: "mine", parentId: "caller", reach: "same_principal" }),
           agent({ id: "unsaid", parentId: "caller", reach: null }),
-          agent({ id: "theirs-a", parentId: "caller", reach: "other_principal" }),
-          agent({ id: "theirs-b", parentId: "caller", reach: "other_principal" }),
+          agent({
+            id: "theirs-a",
+            parentId: "caller",
+            reach: "other_principal",
+          }),
+          agent({
+            id: "theirs-b",
+            parentId: "caller",
+            reach: "other_principal",
+          }),
         ],
         "caller",
       ),
@@ -1767,7 +1787,10 @@ describe("not-reachable marker (agent.list@10.1 reach)", () => {
       response([caller, agent({ ...base, reach: null })], "caller"),
     );
     const marked = formatAgentListResponse(
-      response([caller, agent({ ...base, reach: "other_principal" })], "caller"),
+      response(
+        [caller, agent({ ...base, reach: "other_principal" })],
+        "caller",
+      ),
     );
 
     expect(markedRow(marked, "theirs ").replace(UNREACHABLE_MARKER, "")).toBe(
@@ -1775,9 +1798,11 @@ describe("not-reachable marker (agent.list@10.1 reach)", () => {
     );
     expect(marked).not.toContain("collab-host-8431");
     // The legend line is the only other addition to the listing.
-    expect(marked.replace(UNREACHABLE_MARKER, "").replace(`\n${UNREACHABLE_LEGEND}`, "")).toBe(
-      unmarked,
-    );
+    expect(
+      marked
+        .replace(UNREACHABLE_MARKER, "")
+        .replace(`\n${UNREACHABLE_LEGEND}`, ""),
+    ).toBe(unmarked);
   });
 
   it("explains the marker only on a page that prints a marked row", () => {

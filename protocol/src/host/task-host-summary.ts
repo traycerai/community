@@ -19,10 +19,14 @@ import { z } from "zod";
  */
 export type TaskHostPrincipal =
   | { readonly kind: "user"; readonly id: string }
-  | { readonly kind: "team"; readonly id: string; readonly name: string | null };
+  | {
+      readonly kind: "team";
+      readonly id: string;
+      readonly name: string | null;
+    };
 
-export const taskHostPrincipalSchema: z.ZodType<TaskHostPrincipal> =
-  lazySchema(() =>
+export const taskHostPrincipalSchema: z.ZodType<TaskHostPrincipal> = lazySchema(
+  () =>
     z.discriminatedUnion("kind", [
       z.object({ kind: z.literal("user"), id: z.string().min(1) }),
       z.object({
@@ -31,7 +35,7 @@ export const taskHostPrincipalSchema: z.ZodType<TaskHostPrincipal> =
         name: z.string().min(1).nullable(),
       }),
     ]),
-  );
+);
 
 /** An agent a task host publishes to the task: its id and title only. */
 export interface TaskHostAgent {
