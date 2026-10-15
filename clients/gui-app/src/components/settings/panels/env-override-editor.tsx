@@ -548,7 +548,7 @@ function EnvValueField(props: {
         disabled={disabled || mode === "unset"}
         spellCheck={false}
         aria-label={ariaLabel}
-        placeholder={mode === "unset" ? "removed from environment" : "value"}
+        placeholder={mode === "unset" ? "not set" : "value"}
         className="h-8 min-w-0 flex-1"
         onChange={(event) => onValueChange(event.target.value)}
         onKeyDown={(event) => {
