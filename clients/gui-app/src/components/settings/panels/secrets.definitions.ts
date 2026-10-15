@@ -6,7 +6,7 @@ export const SECRETS = defineSettingsSection("secrets", {
     availableWhen: alwaysAvailable,
     label: "Secrets",
     description:
-      "Keys and tokens your agents use. They are kept in your account, and agents use them without reading them.",
+      "Keys and logins your agents use.",
     keywords: [
       "secret",
       "api key",

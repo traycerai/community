@@ -885,13 +885,41 @@ and a skill's edit and update are held off with "Change this in the dashboard."
 holds and one action: Variables and shells "Variables are plain values every
 host gets. Add a variable."; MCP servers "MCP servers give agents tools." with
 Add a server; Skills "Skills give agents instructions for a kind of task."
-with Add a skill (the Secrets page body is E11's). A desktop server or skill
+with Add a skill (Secrets: see Personal ▸ Secrets below). A desktop server or skill
 added here stays on this host until Add to Personal, so neither empty state
 claims "on every host". Four words carry these pages: Personal, secret,
 variable and host. "Environment", "binding" and "placeholder" appear in no
 desktop string a person reads; a value a shell provides is a "shell
 variable". The one exception is the auto-mode policy file's own
 "Environment" heading, which people type and the host parses.
+
+**Personal ▸ Secrets** (`panels/secrets-settings-panel.tsx`,
+`secrets/`, ticket E11 checkpoint 3). Read through the window's own host.
+On a host that serves `environment.secrets.list` the page is the list: each
+secret's name, kind, protocol and destinations, "Written as a plain value on
+every host you own; agents there can read it. Brokered on your sandboxes.",
+and **Verify** (`environment.secrets.verify` by id, so every kind, those added
+on the web too), whose refusal names the setting that is the likely cause
+("Nothing answered on that port. Check the port this secret is set to.").
+Empty, it reads "Secrets are keys and logins your agents use. On a sandbox
+they are used without being seen; on a computer you own they are set as
+values." with Add a secret. **Add a secret** is kind first: every form kind
+of the secret intake catalogue (`@traycer/protocol/host/secret-intake-catalogue`,
+the table the broker's intake and the dashboard read), a kind none of whose
+protocols is brokered greyed with the catalogue's own line. API key, model
+provider key and database login are added here (`lib/sandboxes/secret-intake-form.ts`:
+hosts, port, login, database, variables, mode, "Every sandbox gets it", the
+database's plaintext lines and their disclosure version); SSH, the cloud
+kinds and client certificate are "Set up on the web" and open the dashboard's
+Secrets page with `?add=<kind>`. Verify works on the dialog's candidate too,
+and Save first shows where the value becomes readable. The typed value is
+sent by a direct `client.request`, never through a query or mutation, so it
+reaches no cache, and closing the dialog drops it. A refusal shows the host's
+words (`Connect to manage secrets.` with no session on this computer) or the
+`secretChangeRefusalLine` for a create refusal's code. On a team's host the
+page is the team line and "Team secrets are brokered only; a tool that needs
+a plain value needs a personal sandbox.", no list; on a host whose version
+predates the page, the way to the dashboard's Secrets page.
 
 **Personal ▸ Notices and "needs you"** (`personal/personal-page-notices.tsx`,
 ticket E7 checkpoint 5). Under a Personal page's status line, for the item
