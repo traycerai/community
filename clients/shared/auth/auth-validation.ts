@@ -40,6 +40,7 @@ import {
   type SchemaVersion,
 } from "@traycer/protocol/framework/index";
 import type { AuthenticatedUser } from "@traycer/protocol/auth";
+import { anyAbortSignal } from "../host-client/any-abort-signal";
 import type {
   AuthTokenRefreshResult,
   StoredCredentials,
@@ -258,7 +259,7 @@ export async function validateAuthTokenIdentityAccessOnceAbortable(args: {
 }): Promise<AuthIdentityValidationResult> {
   const timeout = AbortSignal.timeout(AUTH_FETCH_TIMEOUT_MS);
   const signal =
-    args.signal === null ? timeout : AbortSignal.any([args.signal, timeout]);
+    args.signal === null ? timeout : anyAbortSignal(args.signal, timeout);
   const result = await fetchIdentityOnce(args.authnBaseUrl, args.token, signal);
   return toIdentityValidationResult(result);
 }
@@ -621,7 +622,7 @@ export async function refreshOnceAbortable(args: {
 }): Promise<AuthTokenRefreshResult> {
   const timeout = AbortSignal.timeout(AUTH_FETCH_TIMEOUT_MS);
   const signal =
-    args.signal === null ? timeout : AbortSignal.any([args.signal, timeout]);
+    args.signal === null ? timeout : anyAbortSignal(args.signal, timeout);
   return refreshAuthTokenOnceViaHttp(
     args.authnBaseUrl,
     args.token,
