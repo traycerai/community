@@ -281,7 +281,7 @@ vi.mock(
             onOutput: (channel, chunk) =>
               options.callbacks.onTargetOutput(path, channel, chunk),
             onComplete: (deleted) => {
-              options.callbacks.onTargetComplete(path, deleted);
+              options.callbacks.onTargetComplete(path, deleted, undefined);
               settleTarget(path, deleted);
             },
             onFailed: (reason, holders, code) => {
@@ -1990,8 +1990,8 @@ describe("WorktreesList delete flow", () => {
     // batch method disappeared after it already received both target frames,
     // but before it receives the aggregate command frame.
     act(() => {
-      command?.onTargetComplete("/wt/clean", true);
-      command?.onTargetComplete("/wt/dirty", true);
+      command?.onTargetComplete("/wt/clean", true, undefined);
+      command?.onTargetComplete("/wt/dirty", true, undefined);
     });
     expect(invalidateSpy).not.toHaveBeenCalled();
 
@@ -2291,6 +2291,54 @@ describe("WorktreesList delete flow", () => {
     });
     expect(screen.getByTestId("worktree-delete-error").textContent).toContain(
       "Couldn't remove the worktree",
+    );
+  });
+
+  it("names why the host declined to delete a worktree it does not manage", () => {
+    renderDefault();
+    confirmDelete("feat-clean");
+    act(() => {
+      streamMock.commandCallbacks?.onTargetStarted("/wt/clean", false);
+      streamMock.commandCallbacks?.onTargetComplete(
+        "/wt/clean",
+        false,
+        "not_managed",
+      );
+    });
+    const message = screen.getByTestId("worktree-delete-error").textContent;
+    expect(message).toContain("isn't a worktree");
+    expect(message).not.toContain("may still be in use");
+  });
+
+  it("names a failed teardown script when the host declined for that reason", () => {
+    renderDefault();
+    confirmDelete("feat-clean");
+    act(() => {
+      streamMock.commandCallbacks?.onTargetStarted("/wt/clean", true);
+      streamMock.commandCallbacks?.onTargetComplete(
+        "/wt/clean",
+        false,
+        "teardown_failed",
+      );
+    });
+    expect(screen.getByTestId("worktree-delete-error").textContent).toContain(
+      "teardown script",
+    );
+  });
+
+  it("names a removal that left files behind when the host declined for that reason", () => {
+    renderDefault();
+    confirmDelete("feat-clean");
+    act(() => {
+      streamMock.commandCallbacks?.onTargetStarted("/wt/clean", false);
+      streamMock.commandCallbacks?.onTargetComplete(
+        "/wt/clean",
+        false,
+        "removal_failed",
+      );
+    });
+    expect(screen.getByTestId("worktree-delete-error").textContent).toContain(
+      "still on disk",
     );
   });
 

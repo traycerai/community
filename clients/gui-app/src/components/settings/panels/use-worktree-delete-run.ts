@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef } from "react";
 import { create } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 import type { WorktreeBusyHolder } from "@traycer/protocol/framework/worktree-busy-holders";
+import type { WorktreeDeleteDeclinedKind } from "@traycer/protocol/host/worktree-delete-batch-stream";
 import type {
   WorktreeDeleteOutputChannel,
   WorktreeDeletePhase,
@@ -34,6 +35,12 @@ export interface WorktreeDeleteRunState {
   readonly activePhase: WorktreeDeletePhase | null;
   readonly log: readonly LogSegment[];
   readonly deleted: boolean;
+  /**
+   * Why the host left the worktree in place, when it said (`deleted: false`
+   * from a host that negotiated `worktree.deleteBatchByPath@1.3`). `null` for
+   * a deletion, a failure, and a host that did not say.
+   */
+  readonly declined: WorktreeDeleteDeclinedKind | null;
   readonly error: string | null;
   /**
    * Typed `WORKTREE_BUSY` inventory from a 1.1 refusal. Non-null means the
@@ -49,6 +56,7 @@ const INITIAL_RUN: WorktreeDeleteRunState = {
   activePhase: null,
   log: [],
   deleted: false,
+  declined: null,
   error: null,
   pendingBusyHolders: null,
 };
@@ -104,7 +112,11 @@ interface WorktreeDeleteRunStore {
     key: string,
     updater: (run: WorktreeDeleteRunState) => WorktreeDeleteRunState,
   ) => void;
-  readonly completeRun: (key: string, deleted: boolean) => void;
+  readonly completeRun: (
+    key: string,
+    deleted: boolean,
+    declined: WorktreeDeleteDeclinedKind | null,
+  ) => void;
   readonly failRun: (key: string, error: string) => void;
   readonly setBackgrounded: (key: string, backgrounded: boolean) => void;
   readonly backgroundForegroundForHost: (hostId: string) => void;
@@ -143,7 +155,7 @@ const useWorktreeDeleteRunStore = create<WorktreeDeleteRunStore>((set) => ({
         record.key === key ? { ...record, run: updater(record.run) } : record,
       ),
     })),
-  completeRun: (key, deleted) => {
+  completeRun: (key, deleted, declined) => {
     // Emission rides the natural non-terminal -> terminal transition (state
     // read before the synchronous update); a replayed/duplicate settle can't
     // double-count and no reporting ledger is needed.
@@ -161,6 +173,7 @@ const useWorktreeDeleteRunStore = create<WorktreeDeleteRunStore>((set) => ({
           ...record.run,
           status: "complete",
           deleted,
+          declined: deleted ? null : declined,
           activePhase: null,
           pendingBusyHolders: null,
         },
@@ -793,9 +806,11 @@ function startBatchDeleteCommand(
                     { id: run.log.length, channel, text: chunk },
                   ],
                 })),
-            onTargetComplete: (worktreePath, deleted) => {
+            onTargetComplete: (worktreePath, deleted, declined) => {
               const key = keyFor(worktreePath);
-              useWorktreeDeleteRunStore.getState().completeRun(key, deleted);
+              useWorktreeDeleteRunStore
+                .getState()
+                .completeRun(key, deleted, declined ?? null);
               unsettled.delete(key);
               releaseTargetKey(key);
             },
@@ -1039,7 +1054,7 @@ function startQueuedDelete(item: QueuedWorktreeDelete): void {
             onComplete: (deleted) => {
               useWorktreeDeleteRunStore
                 .getState()
-                .completeRun(item.key, deleted);
+                .completeRun(item.key, deleted, null);
               closeDeleteClient(item.key);
               settle();
             },

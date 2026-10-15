@@ -485,3 +485,66 @@ describe("WorktreeDeleteBatchStreamClient replay safety", () => {
     batch.close();
   });
 });
+
+describe("WorktreeDeleteBatchStreamClient target.complete decline kind", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function openWithCompleteSpy(): {
+    readonly socket: StubStreamWebSocket;
+    readonly completions: ReadonlyArray<readonly unknown[]>;
+    readonly batch: WorktreeDeleteBatchStreamClient;
+  } {
+    const { factory, sockets } = makeFactory();
+    const client = makeClient(factory);
+    const completions: unknown[][] = [];
+    const batch = new WorktreeDeleteBatchStreamClient({
+      wsStreamClient: client,
+      commandId: COMMAND_ID,
+      source: "settings",
+      targets: [{ worktreePath: "/wt/a", scripts: null, stopOwners: false }],
+      callbacks: {
+        ...NOOP_CALLBACKS,
+        onTargetComplete: (...args) => {
+          completions.push(args);
+        },
+      },
+    });
+    completeHandshake(sockets[0]);
+    return { socket: sockets[0], completions, batch };
+  }
+
+  it("passes the decline kind of a non-deletion through to the callback", () => {
+    const { socket, completions, batch } = openWithCompleteSpy();
+
+    socket.fireText({
+      kind: "target.complete",
+      worktreePath: "/wt/a",
+      deleted: false,
+      declined: "not_managed",
+      hasBinaryPayload: false,
+    });
+
+    expect(completions).toEqual([["/wt/a", false, "not_managed"]]);
+    batch.close();
+  });
+
+  it("reports an absent decline kind as undefined (older host, or a deletion)", () => {
+    const { socket, completions, batch } = openWithCompleteSpy();
+
+    socket.fireText({
+      kind: "target.complete",
+      worktreePath: "/wt/a",
+      deleted: true,
+      hasBinaryPayload: false,
+    });
+
+    expect(completions).toEqual([["/wt/a", true, undefined]]);
+    batch.close();
+  });
+});
