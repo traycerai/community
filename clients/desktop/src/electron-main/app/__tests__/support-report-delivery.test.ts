@@ -211,7 +211,10 @@ import {
 } from "../sentry-delivery-observer";
 import type { HostFsLayout } from "../../host/host-paths";
 import type {
+  SupportEnvironmentItem,
+  SupportEnvironmentRotationProducer,
   SupportEnvironmentSection,
+  SupportEnvironmentSetupAttempt,
   SupportPrivateDiagnostics,
   SupportSubmitReportRequest,
 } from "../../../ipc-contracts/window-types";
@@ -2571,5 +2574,225 @@ describe("DesktopSupportService.saveDiagnosticBundle", () => {
 
     expect(existsSync(orphan)).toBe(false);
     expect(existsSync(saved.path)).toBe(true);
+  });
+});
+
+// E18 stage 4, checkpoint 5 (B.1): the environment context is scrubbed LEAF BY
+// LEAF, so each text leaf is proved on its own. A host answers with whatever
+// it likes inside a field's length bound, so a closed code, an id or a name
+// can carry a path or a token; the context is the only road such a leaf has
+// to the report, and nothing downstream scrubs it again. The table plants one
+// local path in one leaf at a time and asserts it is gone from the whole
+// delivered context.
+describe("DesktopSupportService.submitReport - the environment context's leaves (E18 stage 4)", () => {
+  const LEAK = "/Users/anurag/leak.ts";
+
+  const ITEM: SupportEnvironmentItem = {
+    kind: "env_var",
+    key: "DATABASE_URL",
+    os: "all",
+    status: "applied",
+    code: "ok",
+    args: { exitStatus: 2, stage: "install", durationMs: 10, kind: "script" },
+  };
+  const ATTEMPT: SupportEnvironmentSetupAttempt = {
+    attemptId: "attempt-1",
+    scriptHash: "hash-1",
+    trigger: "manual",
+    startedAt: 1_700_000_000_000,
+    endedAt: 1_700_000_004_100,
+    exitStatus: 2,
+    stageReached: "install",
+    result: "failed",
+  };
+  const WORKER: SupportEnvironmentRotationProducer = {
+    producer: "worker",
+    workerClass: "sandbox",
+    hostId: null,
+    hostName: null,
+    status: "pending",
+    evidence: [{ kind: "sessions", count: 2 }],
+  };
+  const HOST: SupportEnvironmentRotationProducer = {
+    producer: "host",
+    workerClass: null,
+    hostId: "host-2",
+    hostName: null,
+    status: "done",
+    evidence: null,
+  };
+  const BASE: SupportEnvironmentSection = {
+    hostId: "host-env-1",
+    principal: "team",
+    reachability: "reachable",
+    bindingGeneration: 3,
+    desiredRevision: 7,
+    receivedRevision: 7,
+    appliedRevision: 6,
+    receiptAgeMs: 1200,
+    items: [ITEM],
+    setupAttempts: [ATTEMPT],
+    policy: { source: "account", readState: "ready" },
+    rotations: [
+      {
+        secretName: "STRIPE_KEY",
+        state: "rotating",
+        producers: [WORKER, HOST],
+      },
+    ],
+  };
+
+  function rotationWith(
+    producers: readonly SupportEnvironmentRotationProducer[],
+  ): SupportEnvironmentSection["rotations"] {
+    return [{ secretName: "STRIPE_KEY", state: "rotating", producers }];
+  }
+
+  const LEAVES: readonly {
+    readonly leaf: string;
+    readonly section: SupportEnvironmentSection;
+  }[] = [
+    { leaf: "hostId", section: { ...BASE, hostId: LEAK } },
+    { leaf: "reachability", section: { ...BASE, reachability: LEAK } },
+    {
+      leaf: "item.kind",
+      section: { ...BASE, items: [{ ...ITEM, kind: LEAK }] },
+    },
+    { leaf: "item.key", section: { ...BASE, items: [{ ...ITEM, key: LEAK }] } },
+    { leaf: "item.os", section: { ...BASE, items: [{ ...ITEM, os: LEAK }] } },
+    {
+      leaf: "item.status",
+      section: { ...BASE, items: [{ ...ITEM, status: LEAK }] },
+    },
+    {
+      leaf: "item.code",
+      section: { ...BASE, items: [{ ...ITEM, code: LEAK }] },
+    },
+    {
+      leaf: "item.args.stage",
+      section: {
+        ...BASE,
+        items: [{ ...ITEM, args: { ...ITEM.args, stage: LEAK } }],
+      },
+    },
+    {
+      leaf: "item.args.kind",
+      section: {
+        ...BASE,
+        items: [{ ...ITEM, args: { ...ITEM.args, kind: LEAK } }],
+      },
+    },
+    {
+      leaf: "attempt.attemptId",
+      section: { ...BASE, setupAttempts: [{ ...ATTEMPT, attemptId: LEAK }] },
+    },
+    {
+      leaf: "attempt.scriptHash",
+      section: { ...BASE, setupAttempts: [{ ...ATTEMPT, scriptHash: LEAK }] },
+    },
+    {
+      leaf: "attempt.trigger",
+      section: { ...BASE, setupAttempts: [{ ...ATTEMPT, trigger: LEAK }] },
+    },
+    {
+      leaf: "attempt.stageReached",
+      section: { ...BASE, setupAttempts: [{ ...ATTEMPT, stageReached: LEAK }] },
+    },
+    {
+      leaf: "attempt.result",
+      section: { ...BASE, setupAttempts: [{ ...ATTEMPT, result: LEAK }] },
+    },
+    {
+      leaf: "policy.source",
+      section: { ...BASE, policy: { source: LEAK, readState: "ready" } },
+    },
+    {
+      leaf: "policy.readState",
+      section: { ...BASE, policy: { source: "account", readState: LEAK } },
+    },
+    {
+      leaf: "rotation.secretName",
+      section: {
+        ...BASE,
+        rotations: [{ secretName: LEAK, state: "rotating", producers: [] }],
+      },
+    },
+    {
+      leaf: "rotation.state",
+      section: {
+        ...BASE,
+        rotations: [{ secretName: "STRIPE_KEY", state: LEAK, producers: [] }],
+      },
+    },
+    {
+      leaf: "producer.producer",
+      section: {
+        ...BASE,
+        rotations: rotationWith([{ ...WORKER, producer: LEAK }]),
+      },
+    },
+    {
+      leaf: "producer.workerClass",
+      section: {
+        ...BASE,
+        rotations: rotationWith([{ ...WORKER, workerClass: LEAK }]),
+      },
+    },
+    {
+      leaf: "producer.hostId",
+      section: {
+        ...BASE,
+        rotations: rotationWith([{ ...HOST, hostId: LEAK }]),
+      },
+    },
+    {
+      leaf: "producer.status",
+      section: {
+        ...BASE,
+        rotations: rotationWith([{ ...WORKER, status: LEAK }]),
+      },
+    },
+    {
+      leaf: "evidence.kind",
+      section: {
+        ...BASE,
+        rotations: rotationWith([
+          { ...WORKER, evidence: [{ kind: LEAK, count: 1 }] },
+        ]),
+      },
+    },
+  ];
+
+  it("starts from a section carrying no path, so a hit below is the planted leaf", async () => {
+    const service = buildService(null);
+    await service.freezeEvidence(KEY, null);
+    await service.submitReport(
+      formWithEnvironment({ status: "known", value: BASE }, true),
+      KEY,
+    );
+    expect(JSON.stringify(lastEnvironmentContext())).not.toContain("anurag");
+    expect(JSON.stringify(lastEnvironmentContext())).toContain("STRIPE_KEY");
+  });
+
+  it.each(LEAVES)("scrubs a local path out of $leaf", async (row) => {
+    const service = buildService(null);
+    await service.freezeEvidence(KEY, null);
+    await service.submitReport(
+      formWithEnvironment({ status: "known", value: row.section }, true),
+      KEY,
+    );
+    expect(JSON.stringify(lastEnvironmentContext())).not.toContain("anurag");
+  });
+
+  it("labels a stale section stale in the context, with its fields", async () => {
+    const service = buildService(null);
+    await service.freezeEvidence(KEY, null);
+    await service.submitReport(
+      formWithEnvironment({ status: "stale", value: BASE }, true),
+      KEY,
+    );
+    const environment = lastEnvironmentContext();
+    expect(environment.status).toBe("stale");
+    expect(environment.hostId).toBe("host-env-1");
   });
 });
