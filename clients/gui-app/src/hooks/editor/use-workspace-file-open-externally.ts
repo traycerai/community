@@ -1,11 +1,11 @@
 import { useCallback } from "react";
 import type { OpenPathsTarget } from "@traycer/protocol/host/editor/unary-schemas";
+import { useNoEditorInstalledNotice } from "@/hooks/editor/use-no-editor-installed-notice";
 import { useEditorOpenFeedback } from "@/hooks/editor/use-editor-open-feedback";
 import { useEditorOpenForClient } from "@/hooks/editor/use-editor-open-mutation";
 import { useHostPathOpenAvailability } from "@/hooks/editor/use-host-path-open-availability";
 import { useTabHostId } from "@/components/epic-canvas/hooks/use-tab-host-id";
 import { useTabHostClient } from "@/hooks/host/use-tab-host-client";
-import { showNoEditorInstalledNotice } from "@/lib/editor/no-editor-installed-notice";
 import { resolveAbsolutePath } from "@/lib/path/cross-platform-path";
 
 /**
@@ -13,9 +13,10 @@ import { resolveAbsolutePath } from "@/lib/path/cross-platform-path";
  * `editor.openPaths` mutation plus the shared pressed-feedback window, keyed
  * to the caller's target (an editor id, or `"system"` for the OS default
  * app), or `null` when this machine has no editor to send - the action then
- * says which editors Traycer can open and sends nothing. The file lives on the TAB's host - opening it app-wide would ask
- * whichever machine the app is pointed at for a path it may not have. Remote
- * tabs expose no action: this RPC opens on the host, not on the client.
+ * says which editors Traycer can open and sends nothing. The file lives on the
+ * TAB's host - opening it app-wide would ask whichever machine the app is
+ * pointed at for a path it may not have. Remote tabs expose no action: this RPC
+ * opens on the host, not on the client.
  */
 export function useWorkspaceFileOpenExternally(args: {
   readonly workspacePath: string;
@@ -25,7 +26,9 @@ export function useWorkspaceFileOpenExternally(args: {
   readonly opening: boolean;
   readonly onOpenExternally: (() => void) | null;
 } {
-  const canOpenHostPaths = useHostPathOpenAvailability(useTabHostId());
+  const tabHostId = useTabHostId();
+  const canOpenHostPaths = useHostPathOpenAvailability(tabHostId);
+  const showNoEditorInstalledNotice = useNoEditorInstalledNotice(tabHostId);
   const editorOpen = useEditorOpenForClient(useTabHostClient(), "file");
   const { active: feedbackActive, trigger: triggerFeedback } =
     useEditorOpenFeedback();
@@ -47,6 +50,7 @@ export function useWorkspaceFileOpenExternally(args: {
     editorOpen,
     filePath,
     opening,
+    showNoEditorInstalledNotice,
     target,
     triggerFeedback,
     workspacePath,

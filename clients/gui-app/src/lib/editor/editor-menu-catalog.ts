@@ -1,9 +1,5 @@
 import type { ComponentType } from "react";
-import {
-  EDITORS,
-  type EditorEntry,
-  type EditorId,
-} from "@traycer/protocol/host";
+import type { EditorEntry, EditorId } from "@traycer/protocol/host";
 import {
   CursorIcon,
   FinderIcon,
@@ -78,8 +74,9 @@ export function withFinderTarget(
  * behaves on a non-Mac and how an editor default behaves on a host too old for
  * its id.
  *
- * Deliberately NOT intersected with the installed-editor probe; these surfaces
- * open whatever is stored, installed or not.
+ * Not intersected with the installed-editor probe here: `resolveOpenMenuState`
+ * does that, and resolves the stored default against the surviving rows with
+ * this function.
  */
 export function resolveEffectiveDefaultEditor(
   catalog: ReadonlyArray<OpenTargetEntry>,
@@ -101,41 +98,14 @@ function joinWithOr(labels: ReadonlyArray<string>): string {
 
 /**
  * What a surface with no menu says instead of sending an editor nobody has.
- * Built from `EDITORS`, so it names an editor the day one is added.
+ * `editors` is the catalog THIS host can be told about, so a host on an older
+ * minor is not asked to install an editor it would reject at parse.
  */
-export const NO_EDITOR_INSTALLED_MESSAGE = `None of ${joinWithOr(
-  EDITORS.map((editor) => editor.label),
-)} is installed on this machine; install one to open files from Traycer.`;
-
-/**
- * The target a surface with no menu sends, or `null` when it has nothing it may
- * honestly send.
- *
- * Same as {@link resolveEffectiveDefaultEditor} - a stored editor is sent
- * whether or not it is installed - except when `installedEditorIds` says the
- * probe found NO editor at all. Then every editor id would only come back as
- * "<editor> isn't installed", so editors leave the catalog: Finder (which ships
- * with the OS) still resolves where this host is offered it, and otherwise the
- * answer is `null`, which the surface turns into
- * {@link NO_EDITOR_INSTALLED_MESSAGE}. `null` for `installedEditorIds` is a
- * probe still in flight or failed, and changes nothing.
- */
-export function resolveNoMenuOpenTarget(args: {
-  readonly catalog: ReadonlyArray<OpenTargetEntry>;
-  readonly installedEditorIds: ReadonlyArray<EditorId> | null;
-  readonly defaultTarget: DefaultOpenTarget | null;
-}): DefaultOpenTarget | null {
-  if (
-    args.installedEditorIds !== null &&
-    args.installedEditorIds.length === 0
-  ) {
-    const finderOnly = args.catalog.filter(
-      (target) => target.id === FINDER_TARGET,
-    );
-    if (finderOnly.length === 0) return null;
-    return resolveEffectiveDefaultEditor(finderOnly, args.defaultTarget);
-  }
-  return resolveEffectiveDefaultEditor(args.catalog, args.defaultTarget);
+export function noEditorInstalledMessage(
+  editors: ReadonlyArray<EditorEntry>,
+): string {
+  const labels = joinWithOr(editors.map((editor) => editor.label));
+  return `None of ${labels} is installed on this machine; install one to open files from Traycer.`;
 }
 
 export interface OpenMenuState {

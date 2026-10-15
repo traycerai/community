@@ -71,8 +71,8 @@ vi.mock("@/hooks/editor/use-finder-open-availability", () => ({
   useFinderOpenAvailability: () => false,
 }));
 
-vi.mock("sonner", () => ({
-  toast: { info: state.noticeToast },
+vi.mock("@/hooks/editor/use-no-editor-installed-notice", () => ({
+  useNoEditorInstalledNotice: () => state.noticeToast,
 }));
 
 vi.mock("@/hooks/host/use-host-directory-entry", () => ({
@@ -518,7 +518,7 @@ describe("workspace file tile PDF routing", () => {
     // nothing, and the button must say which editors Traycer opens instead of
     // sending the stored default to a host that answers "<editor> isn't
     // installed".
-    it("tells the user which editors Traycer can open and sends nothing", () => {
+    it("says which editors Traycer can open and sends nothing", () => {
       state.installedEditorIds = [];
       state.asset = { ...state.asset, status: "ready", url: "blob:img" };
       renderTile(nodeFor("images/logo.png"));
@@ -527,15 +527,9 @@ describe("workspace file tile PDF routing", () => {
 
       expect(state.openPaths).not.toHaveBeenCalled();
       expect(state.noticeToast).toHaveBeenCalledTimes(1);
-      expect(state.noticeToast).toHaveBeenCalledWith(
-        expect.stringContaining("VS Code"),
-      );
-      expect(state.noticeToast).toHaveBeenCalledWith(
-        expect.stringContaining("Code - OSS"),
-      );
     });
 
-    it("still sends the stored default when some editor was found", () => {
+    it("sends the installed editor instead of the stored default", () => {
       state.installedEditorIds = ["zed"];
       renderTile(nodeFor("images/logo.png"));
 
@@ -543,9 +537,36 @@ describe("workspace file tile PDF routing", () => {
 
       expect(state.noticeToast).not.toHaveBeenCalled();
       expect(state.openPaths).toHaveBeenCalledWith({
-        editorId: "cursor",
+        editorId: "zed",
         paths: ["/work/repo/images/logo.png"],
       });
+    });
+
+    // The document target is "system" where the host supports the format, and
+    // only otherwise falls back to the editor - which is what the probe decides.
+    it("still opens a PDF with the system application on a host that supports it", () => {
+      state.installedEditorIds = [];
+      renderTile(nodeFor("docs/report.pdf"));
+
+      fireEvent.click(screen.getByRole("button", { name: "Open externally" }));
+
+      expect(state.noticeToast).not.toHaveBeenCalled();
+      expect(state.openPaths).toHaveBeenCalledWith({
+        editorId: "system",
+        paths: ["/work/repo/docs/report.pdf"],
+      });
+    });
+
+    it("says which editors Traycer can open for a Word document on an older host", () => {
+      // The mocked handshake is 1.1: `.docx` via "system" needs 1.2, so the
+      // target falls back to the editor, and the probe found none.
+      state.installedEditorIds = [];
+      renderTile(nodeFor("docs/brief.docx"));
+
+      fireEvent.click(screen.getByRole("button", { name: "Open externally" }));
+
+      expect(state.noticeToast).toHaveBeenCalledTimes(1);
+      expect(state.openPaths).not.toHaveBeenCalled();
     });
   });
 

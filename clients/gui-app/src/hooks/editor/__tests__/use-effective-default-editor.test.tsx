@@ -170,11 +170,37 @@ describe("useEffectiveDefaultEditor", () => {
       expect(result.current).toBe("cursor");
     });
 
-    it("keeps the stored default when the probe found some other editor", () => {
-      state.installedEditorIds = ["zed"];
+    it("keeps the stored default when it is among the installed editors", () => {
+      state.installedEditorIds = ["zed", "cursor"];
       useSettingsStore.setState({ defaultEditor: "cursor" });
       const { result } = renderHook(() => useEffectiveDefaultEditor("host-A"));
       expect(result.current).toBe("cursor");
+    });
+
+    it("sends the first installed editor when the stored default is not installed", () => {
+      state.installedEditorIds = ["zed"];
+      useSettingsStore.setState({ defaultEditor: "cursor" });
+      const { result } = renderHook(() => useEffectiveDefaultEditor("host-A"));
+      expect(result.current).toBe("zed");
+    });
+
+    it("sends code-oss, not the vscode default, on a Code - OSS-only machine", () => {
+      // The report: the probe finds exactly ["code-oss"], and the stored
+      // default is the settings store's own "vscode".
+      state.installedEditorIds = ["code-oss"];
+      state.version = { major: 1, minor: 3 };
+      useSettingsStore.setState({ defaultEditor: "vscode" });
+      const { result } = renderHook(() => useEffectiveDefaultEditor("host-A"));
+      expect(result.current).toBe("code-oss");
+    });
+
+    it("is null when the only installed editor is one this host cannot be told about", () => {
+      state.installedEditorIds = ["code-oss"];
+      state.version = { major: 1, minor: 2 };
+      state.isMac = false;
+      useSettingsStore.setState({ defaultEditor: "vscode" });
+      const { result } = renderHook(() => useEffectiveDefaultEditor("host-A"));
+      expect(result.current).toBeNull();
     });
 
     it("is null when the probe found no editor, so nothing is sent to the host", () => {
