@@ -470,10 +470,10 @@ export class DesktopSupportService {
           ...(privateDiagnostics?.cause == null
             ? {}
             : { errorCause: { ...privateDiagnostics.cause } }),
-          // D10: the registry's `hostId` is the tab-bound host, which can
-          // differ from the "local host" this file attaches logs and
-          // version from below - named `registry`, never `host`, so the
-          // two can't be read as one.
+          // D10: the registry's `hostId` is the app-wide effective host and
+          // `tabHostId` the tab's binding; either can differ from the
+          // "local host" this file attaches logs and version from below -
+          // named `registry`, never `host`, so the two can't be read as one.
           ...(privateDiagnostics === undefined
             ? {}
             : { registry: { ...privateDiagnostics.registry } }),

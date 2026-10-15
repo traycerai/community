@@ -1,4 +1,4 @@
-import { createRef, type RefObject } from "react";
+import { createRef, type ReactNode, type RefObject } from "react";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type {
@@ -15,6 +15,12 @@ import { createFakeComposerPromptEditorHandle } from "./composer-prompt-editor-h
 import { createComposerToolbarStore } from "@/stores/composer/composer-toolbar-store";
 import { useComposerDraftStore } from "@/stores/composer/composer-draft-store";
 import type { Attachment } from "@/lib/composer/types";
+import type { StreamConnectionStatus } from "@traycer-clients/shared/host-transport/i-stream-session";
+import { appLogger } from "@/lib/logger";
+import {
+  NO_QUEUED_MESSAGE_STAGES,
+  QueuedMessageStagesContext,
+} from "@/components/chat/queued-message-stages";
 import {
   isAttachmentIngestPending,
   type UseComposerPasteResult,
@@ -397,10 +403,199 @@ describe("chat-composer submit after re-key", () => {
   });
 });
 
+/**
+ * A paused send leaves one line in the log (support triage could not tell a
+ * paused send from a lost one). The line names ids and a status and nothing
+ * the user typed.
+ */
+describe("chat-composer submit gate (paused send diagnostics)", () => {
+  const REFUSED_LINE = "[composer] submit refused: send disabled";
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+
+  function mountPaused(args: {
+    readonly sendDisabled: boolean;
+    readonly connectionStatus: StreamConnectionStatus | null;
+    readonly onSubmitMessage: (input: ChatComposerSubmitInput) => boolean;
+  }) {
+    const editorRef = createRef<ComposerPromptEditorHandle | null>();
+    editorRef.current = editorHandle({ content: DIRTY, ready: true });
+    return mountSubmitHookWith({
+      taskId: "chat-paused",
+      editorRef,
+      onSubmitMessage: args.onSubmitMessage,
+      sendDisabled: args.sendDisabled,
+      targetHostId: "host-tab",
+      wrapper: ({ children }) => (
+        <QueuedMessageStagesContext
+          value={{
+            ...NO_QUEUED_MESSAGE_STAGES,
+            connectionStatus: args.connectionStatus,
+          }}
+        >
+          {children}
+        </QueuedMessageStagesContext>
+      ),
+    });
+  }
+
+  function refusedLines(info: {
+    readonly mock: { readonly calls: unknown[][] };
+  }) {
+    return info.mock.calls.filter(([message]) => message === REFUSED_LINE);
+  }
+
+  it("logs the chat, host and connection status once for a refused submit, and repeats of the same key press add nothing", () => {
+    const info = vi.spyOn(appLogger, "info");
+    const onSubmitMessage = vi.fn(acceptSubmit);
+    const { result } = mountPaused({
+      sendDisabled: true,
+      connectionStatus: "reconnecting",
+      onSubmitMessage,
+    });
+
+    act(() => {
+      result.current.submitDraft("enter");
+      result.current.submitDraft("enter");
+      result.current.submitDraft("enter");
+    });
+
+    expect(onSubmitMessage).not.toHaveBeenCalled();
+    expect(refusedLines(info)).toEqual([
+      [
+        REFUSED_LINE,
+        {
+          chatId: "chat-paused",
+          hostId: "host-tab",
+          connectionStatus: "reconnecting",
+          reason: "stream-not-open",
+          stage: "initial",
+        },
+      ],
+    ]);
+    expect(JSON.stringify(info.mock.calls)).not.toContain("hello");
+  });
+
+  it("writes a second line once the window from the last line has passed", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-15T12:00:00Z"));
+    const info = vi.spyOn(appLogger, "info");
+    const { result } = mountPaused({
+      sendDisabled: true,
+      connectionStatus: "reconnecting",
+      onSubmitMessage: vi.fn(acceptSubmit),
+    });
+
+    act(() => {
+      result.current.submitDraft("enter");
+    });
+    vi.setSystemTime(new Date("2026-10-15T12:00:01.999Z"));
+    act(() => {
+      result.current.submitDraft("enter");
+    });
+    expect(refusedLines(info)).toHaveLength(1);
+
+    vi.setSystemTime(new Date("2026-10-15T12:00:02Z"));
+    act(() => {
+      result.current.submitDraft("enter");
+    });
+    expect(refusedLines(info)).toHaveLength(2);
+  });
+
+  it("names an open stream's refusal as send-disabled (viewer or signed-out profile)", () => {
+    const info = vi.spyOn(appLogger, "info");
+    const { result } = mountPaused({
+      sendDisabled: true,
+      connectionStatus: "open",
+      onSubmitMessage: vi.fn(acceptSubmit),
+    });
+
+    act(() => {
+      result.current.submitDraft("enter");
+    });
+
+    expect(refusedLines(info)).toEqual([
+      [
+        REFUSED_LINE,
+        {
+          chatId: "chat-paused",
+          hostId: "host-tab",
+          connectionStatus: "open",
+          reason: "send-disabled",
+          stage: "initial",
+        },
+      ],
+    ]);
+  });
+
+  it("logs nothing for an empty composer, where no sendable message was refused", () => {
+    const info = vi.spyOn(appLogger, "info");
+    const editorRef = createRef<ComposerPromptEditorHandle | null>();
+    editorRef.current = editorHandle({ content: EMPTY_DOC, ready: true });
+    const { result } = mountSubmitHookWith({
+      taskId: "chat-paused-empty",
+      editorRef,
+      onSubmitMessage: vi.fn(acceptSubmit),
+      sendDisabled: true,
+      targetHostId: "host-tab",
+      wrapper: ({ children }) => (
+        <QueuedMessageStagesContext
+          value={{
+            ...NO_QUEUED_MESSAGE_STAGES,
+            connectionStatus: "reconnecting",
+          }}
+        >
+          {children}
+        </QueuedMessageStagesContext>
+      ),
+    });
+
+    act(() => {
+      result.current.submitDraft("enter");
+    });
+
+    expect(refusedLines(info)).toEqual([]);
+  });
+
+  it("logs nothing when the send is not disabled", () => {
+    const info = vi.spyOn(appLogger, "info");
+    const { result } = mountPaused({
+      sendDisabled: false,
+      connectionStatus: "open",
+      onSubmitMessage: vi.fn(acceptSubmit),
+    });
+
+    act(() => {
+      result.current.submitDraft("enter");
+    });
+
+    expect(refusedLines(info)).toEqual([]);
+  });
+});
+
 function mountSubmitHook(args: {
   readonly taskId: string;
   readonly editorRef: RefObject<ComposerPromptEditorHandle | null>;
   readonly onSubmitMessage: (input: ChatComposerSubmitInput) => boolean;
+}) {
+  return mountSubmitHookWith({
+    ...args,
+    sendDisabled: false,
+    targetHostId: null,
+    wrapper: ({ children }) => children,
+  });
+}
+
+function mountSubmitHookWith(args: {
+  readonly taskId: string;
+  readonly editorRef: RefObject<ComposerPromptEditorHandle | null>;
+  readonly onSubmitMessage: (input: ChatComposerSubmitInput) => boolean;
+  readonly sendDisabled: boolean;
+  readonly targetHostId: string | null;
+  readonly wrapper: (props: { readonly children: ReactNode }) => ReactNode;
 }) {
   const pickerStore = createComposerPickerStore();
   const toolbarStore = createComposerToolbarStore({
@@ -423,30 +618,32 @@ function mountSubmitHook(args: {
     hostId: null,
   });
 
-  return renderHook(() =>
-    useChatComposerSubmit({
-      taskId: args.taskId,
-      editorRef: args.editorRef,
-      pickerStore,
-      toolbarStore,
-      activeTurnStatus: null,
-      steerCapable: false,
-      steerEnabled: true,
-      steerProtocolSupported: true,
-      getActiveTurnForSteer: () => null,
-      hasPendingApprovals: false,
-      sendDisabled: false,
-      workspaceBlocked: false,
-      imagesUnsupported: false,
-      attachmentPreparationPending: false,
-      onSubmitMessage: args.onSubmitMessage,
-      onSideChat: null,
-      targetHostId: null,
-      queueEditTargetId: null,
-      // T5's gate is off in these fixtures: they predate it and assert the
-      // inline behaviour, which is what `false` preserves exactly.
-      getDraftBlobBridgeSupported: () => false,
-    }),
+  return renderHook(
+    () =>
+      useChatComposerSubmit({
+        taskId: args.taskId,
+        editorRef: args.editorRef,
+        pickerStore,
+        toolbarStore,
+        activeTurnStatus: null,
+        steerCapable: false,
+        steerEnabled: true,
+        steerProtocolSupported: true,
+        getActiveTurnForSteer: () => null,
+        hasPendingApprovals: false,
+        sendDisabled: args.sendDisabled,
+        workspaceBlocked: false,
+        imagesUnsupported: false,
+        attachmentPreparationPending: false,
+        onSubmitMessage: args.onSubmitMessage,
+        onSideChat: null,
+        targetHostId: args.targetHostId,
+        queueEditTargetId: null,
+        // T5's gate is off in these fixtures: they predate it and assert the
+        // inline behaviour, which is what `false` preserves exactly.
+        getDraftBlobBridgeSupported: () => false,
+      }),
+    { wrapper: args.wrapper },
   );
 }
 
