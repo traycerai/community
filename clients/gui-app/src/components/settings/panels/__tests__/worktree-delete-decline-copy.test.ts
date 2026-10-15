@@ -23,9 +23,15 @@ describe("worktreeDeleteDeclineMessage", () => {
     }
   });
 
-  it("does not tell the person to retry a folder the host never manages", () => {
+  it("tells the person nothing to delete, since a main worktree is not_managed too", () => {
     expect(worktreeDeleteDeclineMessage("not_managed")).not.toMatch(
-      /try again/i,
+      /delete|try again/i,
+    );
+  });
+
+  it("does not assume an open handle caused a failed removal", () => {
+    expect(worktreeDeleteDeclineMessage("removal_failed")).not.toMatch(
+      /close|in use|using/i,
     );
   });
 });

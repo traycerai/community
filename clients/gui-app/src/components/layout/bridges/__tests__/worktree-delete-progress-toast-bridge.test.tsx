@@ -22,6 +22,7 @@ const mocked = vi.hoisted<{
     failed: 0,
     active: 0,
     scopeKeys: [],
+    declinedMessage: null,
   },
 }));
 
@@ -46,7 +47,7 @@ function progressSummary(input: {
   readonly failed: number;
   readonly active: number;
 }): WorktreeDeleteProgressSummary {
-  return input;
+  return { ...input, declinedMessage: null };
 }
 
 function renderBridge(): RenderResult {

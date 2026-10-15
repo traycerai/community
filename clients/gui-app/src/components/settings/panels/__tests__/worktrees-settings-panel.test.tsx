@@ -1846,6 +1846,50 @@ describe("WorktreesList delete flow", () => {
     screen.getByText("0/4 deleted, 4 failed");
   });
 
+  it("names the decline in the progress strip when every failed target in a batch was declined for one reason", () => {
+    renderDefault();
+    selectRows(["feat-clean", "feat-dirty"]);
+    fireEvent.click(screen.getByTestId("worktrees-list-delete-selected"));
+    fireEvent.click(screen.getByTestId("confirm-action"));
+    act(() => {
+      streamMock.commandCallbacks?.onTargetComplete(
+        "/wt/clean",
+        false,
+        "teardown_failed",
+      );
+      streamMock.commandCallbacks?.onTargetComplete(
+        "/wt/dirty",
+        false,
+        "teardown_failed",
+      );
+    });
+
+    expect(screen.queryByTestId("worktree-delete-progress-modal")).toBeNull();
+    const strip = screen.getByText(/0\/2 deleted, 2 failed/);
+    expect(strip.textContent).toContain("teardown script");
+  });
+
+  it("keeps the counts alone in the strip when a batch's failures have different reasons", () => {
+    renderDefault();
+    selectRows(["feat-clean", "feat-dirty"]);
+    fireEvent.click(screen.getByTestId("worktrees-list-delete-selected"));
+    fireEvent.click(screen.getByTestId("confirm-action"));
+    act(() => {
+      streamMock.commandCallbacks?.onTargetComplete(
+        "/wt/clean",
+        false,
+        "teardown_failed",
+      );
+      streamMock.commandCallbacks?.onTargetComplete(
+        "/wt/dirty",
+        false,
+        "removal_failed",
+      );
+    });
+
+    screen.getByText("0/2 deleted, 2 failed");
+  });
+
   it("falls back to per-target streams when the host has no batch command method", () => {
     const multiRepoWorktrees = [
       ...WORKTREES,
@@ -2307,6 +2351,7 @@ describe("WorktreesList delete flow", () => {
     });
     const message = screen.getByTestId("worktree-delete-error").textContent;
     expect(message).toContain("isn't a worktree");
+    expect(message).not.toMatch(/delete it yourself/i);
     expect(message).not.toContain("may still be in use");
   });
 
@@ -2338,7 +2383,7 @@ describe("WorktreesList delete flow", () => {
       );
     });
     expect(screen.getByTestId("worktree-delete-error").textContent).toContain(
-      "still on disk",
+      "on disk",
     );
   });
 

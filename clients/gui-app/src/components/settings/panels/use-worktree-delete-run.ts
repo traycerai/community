@@ -3,6 +3,7 @@ import { create } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 import type { WorktreeBusyHolder } from "@traycer/protocol/framework/worktree-busy-holders";
 import type { WorktreeDeleteDeclinedKind } from "@traycer/protocol/host/worktree-delete-batch-stream";
+import { worktreeDeleteDeclineMessage } from "@/components/settings/panels/worktree-delete-decline-copy";
 import type {
   WorktreeDeleteOutputChannel,
   WorktreeDeletePhase,
@@ -95,6 +96,12 @@ export interface WorktreeDeleteProgressSummary {
   readonly deleted: number;
   readonly failed: number;
   readonly active: number;
+  /**
+   * The one reason every failed target was declined for, when the host named
+   * one and they all agree; `null` otherwise (no decline kind, a thrown
+   * failure among them, or different reasons that one line cannot carry).
+   */
+  readonly declinedMessage: string | null;
 }
 
 interface WorktreeDeleteRunStore {
@@ -971,14 +978,17 @@ export function clearSettledWorktreeDeleteSuccessesForHostIfQuiescent(
 /**
  * Detail line shared by the in-panel progress strip and the app-wide progress
  * toast so the two surfaces cannot drift (e.g. one pluralizing "failed"). Reads
- * "2/5 deleted" or "2/5 deleted, 1 failed".
+ * "2/5 deleted" or "2/5 deleted, 1 failed", followed by the reason when every
+ * failure was declined for the same one.
  */
 export function worktreeDeleteProgressDetail(
   summary: WorktreeDeleteProgressSummary,
 ): string {
   const base = `${summary.deleted}/${summary.total} deleted`;
   if (summary.failed === 0) return base;
-  return `${base}, ${summary.failed} failed`;
+  const counts = `${base}, ${summary.failed} failed`;
+  if (summary.declinedMessage === null) return counts;
+  return `${counts}. ${summary.declinedMessage}`;
 }
 
 function drainDeleteQueue(): void {
@@ -1150,7 +1160,28 @@ function summarizeProgress(
     deleted,
     failed,
     active: Math.max(0, total - deleted - failed),
+    declinedMessage: sharedDeclinedMessage(scopedRuns, failed),
   };
+}
+
+function sharedDeclinedMessage(
+  runs: readonly WorktreeDeleteRunRecord[],
+  failedCount: number,
+): string | null {
+  if (failedCount === 0) return null;
+  const kinds = new Set<WorktreeDeleteDeclinedKind>();
+  let declinedCount = 0;
+  for (const record of runs) {
+    if (record.run.status !== "complete" || record.run.deleted) continue;
+    if (record.run.declined === null) continue;
+    declinedCount += 1;
+    kinds.add(record.run.declined);
+  }
+  // Every failure must be a named decline, and they must agree: a line that
+  // named one reason for a batch that failed for several would be a guess.
+  if (declinedCount !== failedCount || kinds.size !== 1) return null;
+  const [kind] = kinds;
+  return worktreeDeleteDeclineMessage(kind);
 }
 
 function worktreeRunIsTerminal(run: WorktreeDeleteRunState): boolean {
