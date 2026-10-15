@@ -127,12 +127,20 @@ describe("sandboxEgressEventLine: egress.teardown", () => {
     expect(line.reportedBySandbox).toBe(false);
   });
 
-  it("gives each of the four reasons its own description", () => {
-    const descriptions = (["revoke", "stale", "resume", "drain"] as const).map(
-      (reason) => sandboxEgressEventLine(teardown(reason)).description,
-    );
+  it("gives each of the five reasons its own description", () => {
+    const descriptions = (
+      ["revoke", "stale", "resume", "drain", "secret_rotated"] as const
+    ).map((reason) => sandboxEgressEventLine(teardown(reason)).description);
 
-    expect(new Set(descriptions).size).toBe(4);
+    expect(new Set(descriptions).size).toBe(5);
+  });
+
+  it("tells the person a rotated secret closed the old connections", () => {
+    const line = sandboxEgressEventLine(teardown("secret_rotated"));
+
+    expect(line.description).toBe(
+      "This secret's value was replaced, so connections opened with the old value were closed. Reconnect.",
+    );
   });
 
   it("says a revoke does not undo what the destination already accepted", () => {

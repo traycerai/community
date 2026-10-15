@@ -116,7 +116,7 @@ describe("sandbox egress events", () => {
     ).toBe(false);
   });
 
-  it.each(["revoke", "stale", "resume", "drain"])(
+  it.each(["revoke", "stale", "resume", "drain", "secret_rotated"])(
     "accepts the %s teardown reason",
     (reason) => {
       expect(
