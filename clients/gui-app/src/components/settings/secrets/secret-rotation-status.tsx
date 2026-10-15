@@ -41,8 +41,7 @@ export function SecretRotationStatus(props: {
   const current = rotation.data?.rotation;
   // Derived during render, not in an effect: a settled answer stops the poll
   // on the same render that shows it.
-  const stillMoving =
-    current === undefined || !secretRotationSettled(current);
+  const stillMoving = current === undefined || !secretRotationSettled(current);
   if (stillMoving !== moving) setMoving(stillMoving);
   if (current === undefined) return null;
   const status = secretRotationStatus(current, props.hostName);
