@@ -186,6 +186,60 @@ function createUnacknowledgedViewport(
   return { entry, viewport, presentedIntents };
 }
 
+/** Acknowledges every presentation, refusing a Fit and applying a fixed size. */
+function createFitRefusingViewport(readback: BrowserViewportGeometry): {
+  readonly entry: BrowserViewEntry;
+  readonly viewport: BrowserViewViewport;
+  readonly presentedIntents: unknown[];
+} {
+  const entries = new BrowserViewEntryRegistry<BrowserViewEntry>();
+  const annotations = new BrowserViewAnnotationHost({
+    entries,
+    debugSessions: new BrowserViewDebugSessions({
+      onDetached: () => undefined,
+      isOnScreen: () => false,
+    }),
+    send: () => false,
+  });
+  const presentedIntents: unknown[] = [];
+  let viewport: BrowserViewViewport;
+  viewport = new BrowserViewViewport(
+    entries,
+    annotations,
+    (windowId, channel, payload) => {
+      if (channel !== RunnerHostEvent.browserViewGuestViewportRequested)
+        return true;
+      if (
+        typeof payload !== "object" ||
+        payload === null ||
+        !("requestId" in payload) ||
+        typeof payload.requestId !== "string" ||
+        !("registrationId" in payload) ||
+        typeof payload.registrationId !== "string" ||
+        !("revision" in payload) ||
+        typeof payload.revision !== "number" ||
+        !("intent" in payload) ||
+        typeof payload.intent !== "object" ||
+        payload.intent === null ||
+        !("mode" in payload.intent)
+      )
+        return false;
+      presentedIntents.push(payload.intent);
+      viewport.reportPresentation(windowId, {
+        requestId: payload.requestId,
+        registrationId: payload.registrationId,
+        revision: payload.revision,
+        applied: payload.intent.mode === "fixed",
+      });
+      return true;
+    },
+    () => false,
+  );
+  const entry = createEntry(new ReadbackWebContents(readback));
+  entries.register(entry);
+  return { entry, viewport, presentedIntents };
+}
+
 describe("BrowserViewViewport", () => {
   afterEach(() => {
     vi.useRealTimers();
@@ -344,6 +398,34 @@ describe("BrowserViewViewport", () => {
     await rejection;
 
     expect(presentedIntents).toEqual([{ mode: "fit" }]);
+  });
+
+  it("rolls a Fit back when the guest refuses it rather than failing to draw it", async () => {
+    const fixedReadback: BrowserViewportGeometry = {
+      width: 390,
+      height: 844,
+      dpr: 1,
+    };
+    const { entry, viewport, presentedIntents } =
+      createFitRefusingViewport(fixedReadback);
+
+    await expect(viewport.apply(entry, viewportInput())).resolves.toEqual(
+      fixedReadback,
+    );
+    await expect(
+      viewport.apply(entry, {
+        ...viewportInput(),
+        revision: 2,
+        intent: { mode: "fit" },
+        geometry: fixedReadback,
+      }),
+    ).rejects.toThrow("The browser guest could not apply its viewport.");
+
+    expect(presentedIntents).toEqual([
+      { mode: "fixed", width: 390, height: 844 },
+      { mode: "fit" },
+      { mode: "fixed", width: 390, height: 844 },
+    ]);
   });
 
   it("reports why a fixed resize failed when its rollback cannot be drawn either", async () => {

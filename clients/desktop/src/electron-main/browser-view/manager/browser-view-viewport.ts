@@ -70,18 +70,11 @@ export class BrowserViewViewport {
       this.requireCurrent(entry, state, input);
       await this.annotations.preserveBeforeViewportChange(entry);
       this.requireCurrent(entry, state, input);
-      // Fit is where a failed change falls back to, so a failed Fit is never
-      // rolled back: the guest keeps the Fit request and lays it out on its next
-      // frame, and the host keeps the Fit unconfirmed (an older host rolls the
-      // setting back itself).
-      const before =
-        input.intent.mode === "fit"
-          ? null
-          : (state.confirmed ?? {
-              ...input,
-              intent: { mode: "fit" as const },
-              geometry: await this.readGeometry(entry),
-            });
+      const before = state.confirmed ?? {
+        ...input,
+        intent: { mode: "fit" as const },
+        geometry: await this.readGeometry(entry),
+      };
       try {
         const geometry = await this.land(entry, input);
         this.requireCurrent(entry, state, input);
@@ -89,7 +82,15 @@ export class BrowserViewViewport {
         state.confirmedZoom = entry.webContents.getZoomFactor();
         return geometry;
       } catch (error) {
-        if (before === null) {
+        // A Fit the guest was sent but the window did not draw is not rolled
+        // back: Fit is where a failed change falls back to, the guest lays it
+        // out on its next frame, and the host keeps it unconfirmed (an older
+        // host rolls the setting back itself). After any other failure the
+        // guest may still be at its previous size, so that size is restored.
+        if (
+          input.intent.mode === "fit" &&
+          error instanceof ViewportNotDrawnError
+        ) {
           state.confirmed = null;
           throw error;
         }
