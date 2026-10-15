@@ -35,6 +35,11 @@ const REMEDY = {
   label: "Trust this folder",
   confirmation: "Kimi will run this folder's MCP servers on this machine.",
 };
+const ENABLE_REMEDY = {
+  id: "kimi:enable:stable-target-digest",
+  label: "Enable server",
+  confirmation: "This server runs a program on this machine.",
+};
 
 function row(overrides: Record<string, unknown>): Record<string, unknown> {
   return {
@@ -83,26 +88,31 @@ describe("MCP row remedy fields", () => {
     const parsed = providerMcpServerSchema.parse(
       row({
         remedy: REMEDY,
-        enableConfirmation: "This server runs a program on this machine.",
+        enableConfirmation: ENABLE_REMEDY,
       }),
     );
     expect(parsed.remedy).toEqual(REMEDY);
-    expect(parsed.enableConfirmation).toBe(
-      "This server runs a program on this machine.",
-    );
+    expect(parsed.enableConfirmation).toEqual(ENABLE_REMEDY);
+  });
+
+  it("requires a bound id for a stdio enable offer", () => {
+    expect(
+      providerMcpServerSchema.safeParse(
+        row({ enableConfirmation: { ...ENABLE_REMEDY, id: "" } }),
+      ).success,
+    ).toBe(false);
   });
 
   it("rejects a remedy with an empty id", () => {
     expect(
-      providerMcpServerSchema.safeParse(
-        row({ remedy: { ...REMEDY, id: "" } }),
-      ).success,
+      providerMcpServerSchema.safeParse(row({ remedy: { ...REMEDY, id: "" } }))
+        .success,
     ).toBe(false);
   });
 
   it("keeps the released row preimage free of both fields", () => {
     const parsed = providerMcpServerSchemaV70Preimage.parse(
-      row({ remedy: REMEDY, enableConfirmation: "x" }),
+      row({ remedy: REMEDY, enableConfirmation: ENABLE_REMEDY }),
     );
     expect(parsed).not.toHaveProperty("remedy");
     expect(parsed).not.toHaveProperty("enableConfirmation");
@@ -179,7 +189,7 @@ describe("MCP notices", () => {
     const list = nativeListResultSchemaBeforeMcpRemedies.parse({
       ok: true,
       kind: "mcp",
-      servers: [row({ remedy: REMEDY, enableConfirmation: "x" })],
+      servers: [row({ remedy: REMEDY, enableConfirmation: ENABLE_REMEDY })],
       notices: [NOTICE],
     });
     expect(list).not.toHaveProperty("notices");
@@ -210,9 +220,9 @@ describe("applyRemedy action and capability", () => {
 
   it("the live mutation request spells applyRemedy; the released 1.0 request does not", () => {
     expect(nativeMutationSchema.safeParse(applyRemedy).success).toBe(true);
-    expect(
-      nativeMutationSchemaV10Preimage.safeParse(applyRemedy).success,
-    ).toBe(false);
+    expect(nativeMutationSchemaV10Preimage.safeParse(applyRemedy).success).toBe(
+      false,
+    );
     expect(
       providersNativeMutateRequestSchema.safeParse({
         providerId: "kimi",

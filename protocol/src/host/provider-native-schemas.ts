@@ -195,7 +195,14 @@ export type ProviderMcpAuthAction = z.infer<typeof providerMcpAuthActionSchema>;
  * remove; kimi is patch-only; etc.
  */
 export const providerMcpMutationActionSchema = lazySchema(() =>
-  z.enum(["add", "update", "remove", "toggleServer", "toggleTool", "applyRemedy"]),
+  z.enum([
+    "add",
+    "update",
+    "remove",
+    "toggleServer",
+    "toggleTool",
+    "applyRemedy",
+  ]),
 );
 export type ProviderMcpMutationAction = z.infer<
   typeof providerMcpMutationActionSchema
@@ -526,10 +533,11 @@ export type ProviderNativeCapabilities = z.infer<
 >;
 
 /** Keep list@10.0's MCP descriptor independent of the live remedy capability. */
-export const providerNativeCapabilitiesSchemaBeforeMcpRemedies = lazySchema(() =>
-  providerNativeCapabilitiesSchema.extend({
-    mcp: providerMcpCapabilitiesSchemaV70.nullable(),
-  }),
+export const providerNativeCapabilitiesSchemaBeforeMcpRemedies = lazySchema(
+  () =>
+    providerNativeCapabilitiesSchema.extend({
+      mcp: providerMcpCapabilitiesSchemaV70.nullable(),
+    }),
 );
 
 /**
@@ -804,7 +812,10 @@ export type ProviderMcpNotice = z.infer<typeof providerMcpNoticeSchema>;
 export const providerMcpServerSchema = lazySchema(() =>
   providerMcpServerSchemaV70Preimage.extend({
     remedy: providerMcpRemedySchema.nullable().default(null).optional(),
-    enableConfirmation: z.string().nullable().default(null).optional(),
+    enableConfirmation: providerMcpRemedySchema
+      .nullable()
+      .default(null)
+      .optional(),
   }),
 );
 export type ProviderMcpServer = z.infer<typeof providerMcpServerSchema>;
@@ -1225,10 +1236,26 @@ export const nativeListResultSchemaBeforeMcpRemedies = lazySchema(() =>
         kind: z.literal("mcp"),
         servers: z.array(providerMcpServerSchemaV70Preimage),
       }),
-      z.object({ ok: z.literal(true), kind: z.literal("plugins"), plugins: z.array(providerPluginSchema) }),
-      z.object({ ok: z.literal(true), kind: z.literal("skills"), skills: z.array(providerSkillSchema) }),
-      z.object({ ok: z.literal(true), kind: z.literal("mcpDiscover"), server: providerMcpServerSchemaV70Preimage }),
-      z.object({ ok: z.literal(true), kind: z.literal("pluginIcon"), icon: providerPluginIconSchema }),
+      z.object({
+        ok: z.literal(true),
+        kind: z.literal("plugins"),
+        plugins: z.array(providerPluginSchema),
+      }),
+      z.object({
+        ok: z.literal(true),
+        kind: z.literal("skills"),
+        skills: z.array(providerSkillSchema),
+      }),
+      z.object({
+        ok: z.literal(true),
+        kind: z.literal("mcpDiscover"),
+        server: providerMcpServerSchemaV70Preimage,
+      }),
+      z.object({
+        ok: z.literal(true),
+        kind: z.literal("pluginIcon"),
+        icon: providerPluginIconSchema,
+      }),
     ]),
     providerNativeErrorResultSchema,
   ]),
@@ -1328,26 +1355,68 @@ export type NativeMutation = z.infer<typeof nativeMutationSchema>;
 
 const providersMcpMutateActionSchemaV10Preimage = lazySchema(() =>
   z.discriminatedUnion("action", [
-    z.object({ action: z.literal("add"), name: z.string().min(1), transport: providerMcpServerTransportWriteSchema }),
-    z.object({ action: z.literal("update"), name: z.string().min(1), transport: providerMcpServerTransportWriteSchema }),
+    z.object({
+      action: z.literal("add"),
+      name: z.string().min(1),
+      transport: providerMcpServerTransportWriteSchema,
+    }),
+    z.object({
+      action: z.literal("update"),
+      name: z.string().min(1),
+      transport: providerMcpServerTransportWriteSchema,
+    }),
     z.object({ action: z.literal("remove"), name: z.string().min(1) }),
-    z.object({ action: z.literal("toggleServer"), name: z.string().min(1), enabled: z.boolean() }),
-    z.object({ action: z.literal("toggleTool"), serverName: z.string().min(1), toolName: z.string().min(1), enabled: z.boolean() }),
+    z.object({
+      action: z.literal("toggleServer"),
+      name: z.string().min(1),
+      enabled: z.boolean(),
+    }),
+    z.object({
+      action: z.literal("toggleTool"),
+      serverName: z.string().min(1),
+      toolName: z.string().min(1),
+      enabled: z.boolean(),
+    }),
   ]),
 );
 
 /** Request preimage for the released nativeMutate@1.0 carrier. */
 export const nativeMutationSchemaV10Preimage = lazySchema(() =>
-  z.discriminatedUnion("kind", [
-    z.object({ kind: z.literal("mcp"), scope: providerNativeScopeSchema, workspaceRoot: z.string().nullable(), mutation: providersMcpMutateActionSchemaV10Preimage }),
-    z.object({ kind: z.literal("plugins"), scope: providerNativeScopeSchema, workspaceRoot: z.string().nullable(), mutation: providersPluginsMutateActionSchema }),
-    z.object({ kind: z.literal("skills"), scope: providerNativeScopeSchema, workspaceRoot: z.string().nullable(), mutation: providersSkillsMutateActionSchema }),
-  ]).superRefine((value, ctx) => {
-    refineProviderNativeScope(value, ctx);
-    if (value.kind === "skills" && value.mutation.action === "inspect" && value.mutation.scope !== value.scope) {
-      ctx.addIssue({ code: "custom", path: ["mutation", "scope"], message: "inspect scope must match the mutation scope" });
-    }
-  }),
+  z
+    .discriminatedUnion("kind", [
+      z.object({
+        kind: z.literal("mcp"),
+        scope: providerNativeScopeSchema,
+        workspaceRoot: z.string().nullable(),
+        mutation: providersMcpMutateActionSchemaV10Preimage,
+      }),
+      z.object({
+        kind: z.literal("plugins"),
+        scope: providerNativeScopeSchema,
+        workspaceRoot: z.string().nullable(),
+        mutation: providersPluginsMutateActionSchema,
+      }),
+      z.object({
+        kind: z.literal("skills"),
+        scope: providerNativeScopeSchema,
+        workspaceRoot: z.string().nullable(),
+        mutation: providersSkillsMutateActionSchema,
+      }),
+    ])
+    .superRefine((value, ctx) => {
+      refineProviderNativeScope(value, ctx);
+      if (
+        value.kind === "skills" &&
+        value.mutation.action === "inspect" &&
+        value.mutation.scope !== value.scope
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["mutation", "scope"],
+          message: "inspect scope must match the mutation scope",
+        });
+      }
+    }),
 );
 
 const nativeMutationSuccessResultSchema = lazySchema(() =>
@@ -1385,10 +1454,26 @@ export type NativeMutationResult = z.infer<typeof nativeMutationResultSchema>;
 export const nativeMutationResultSchemaV10Preimage = lazySchema(() =>
   z.union([
     z.discriminatedUnion("kind", [
-      z.object({ ok: z.literal(true), kind: z.literal("mcp"), servers: z.array(providerMcpServerSchemaV70Preimage) }),
-      z.object({ ok: z.literal(true), kind: z.literal("plugins"), plugins: z.array(providerPluginSchema) }),
-      z.object({ ok: z.literal(true), kind: z.literal("skills"), skills: z.array(providerSkillSchema) }),
-      z.object({ ok: z.literal(true), kind: z.literal("skillsInspect"), ...providersSkillsInspectResultSchema.shape }),
+      z.object({
+        ok: z.literal(true),
+        kind: z.literal("mcp"),
+        servers: z.array(providerMcpServerSchemaV70Preimage),
+      }),
+      z.object({
+        ok: z.literal(true),
+        kind: z.literal("plugins"),
+        plugins: z.array(providerPluginSchema),
+      }),
+      z.object({
+        ok: z.literal(true),
+        kind: z.literal("skills"),
+        skills: z.array(providerSkillSchema),
+      }),
+      z.object({
+        ok: z.literal(true),
+        kind: z.literal("skillsInspect"),
+        ...providersSkillsInspectResultSchema.shape,
+      }),
     ]),
     providerNativeErrorResultSchema,
   ]),

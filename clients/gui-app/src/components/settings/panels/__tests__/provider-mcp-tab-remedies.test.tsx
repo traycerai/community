@@ -344,7 +344,6 @@ function renderTab(
   return renderTabWithCliBinary(caps, providerId, true);
 }
 
-
 const REMEDY_CAPS: ProviderMcpCapabilities = {
   ...KIMI_CAPS,
   actionScopes: { ...KIMI_CAPS.actionScopes, applyRemedy: [...GLOBAL_ONLY] },
@@ -364,11 +363,16 @@ const BLOCKING_NOTICE: ProviderMcpNotice = {
   remedy: TRUST_REMEDY,
 };
 
+const ENABLE_REMEDY = {
+  id: "kimi:enable:local-tool",
+  label: "Enable local-tool",
+  confirmation: "This server runs a program on this machine.",
+};
 const STDIO_ROW = connectedServer({
   name: "local-tool",
   enabled: false,
   transport: { type: "stdio", command: "node", env: null },
-  enableConfirmation: "This server runs a program on this machine.",
+  enableConfirmation: ENABLE_REMEDY,
 });
 
 describe("<ProviderMcpTab /> host remedies and confirmations", () => {
@@ -379,6 +383,7 @@ describe("<ProviderMcpTab /> host remedies and confirmations", () => {
     mcpMocks.projectListResult = emptyListQueryMock();
     mcpMocks.mutate.mockReset();
     mcpMocks.mutateAsync.mockReset();
+    mcpMocks.mutateAsync.mockResolvedValue(undefined);
     mcpMocks.discoverMutate.mockReset();
     mcpMocks.authMutate.mockReset();
     mcpMocks.openLink.mockReset();
@@ -430,14 +435,14 @@ describe("<ProviderMcpTab /> host remedies and confirmations", () => {
     fireEvent.click(screen.getByRole("button", { name: TRUST_REMEDY.label }));
 
     expect(screen.getByText(TRUST_REMEDY.confirmation)).toBeDefined();
-    expect(mcpMocks.mutate).not.toHaveBeenCalled();
+    expect(mcpMocks.mutateAsync).not.toHaveBeenCalled();
 
     const dialog = screen.getByRole("dialog");
     fireEvent.click(
       within(dialog).getByRole("button", { name: TRUST_REMEDY.label }),
     );
-    expect(mcpMocks.mutate).toHaveBeenCalledTimes(1);
-    expect(mcpMocks.mutate.mock.calls[0]?.[0]).toMatchObject({
+    expect(mcpMocks.mutateAsync).toHaveBeenCalledTimes(1);
+    expect(mcpMocks.mutateAsync.mock.calls[0]?.[0]).toMatchObject({
       providerId: "kimi",
       scope: "global",
       mutation: { action: "applyRemedy", remedyId: TRUST_REMEDY.id },
@@ -455,6 +460,7 @@ describe("<ProviderMcpTab /> host remedies and confirmations", () => {
       }),
     );
     expect(mcpMocks.mutate).not.toHaveBeenCalled();
+    expect(mcpMocks.mutateAsync).not.toHaveBeenCalled();
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
@@ -518,7 +524,7 @@ describe("<ProviderMcpTab /> host remedies and confirmations", () => {
     fireEvent.click(
       screen.getByRole("button", { name: `${TRUST_REMEDY.label} docs` }),
     );
-    expect(mcpMocks.mutate).not.toHaveBeenCalled();
+    expect(mcpMocks.mutateAsync).not.toHaveBeenCalled();
     expect(screen.getByText(TRUST_REMEDY.confirmation)).toBeDefined();
 
     fireEvent.click(
@@ -526,7 +532,7 @@ describe("<ProviderMcpTab /> host remedies and confirmations", () => {
         name: TRUST_REMEDY.label,
       }),
     );
-    expect(mcpMocks.mutate.mock.calls[0]?.[0]).toMatchObject({
+    expect(mcpMocks.mutateAsync.mock.calls[0]?.[0]).toMatchObject({
       mutation: { action: "applyRemedy", remedyId: TRUST_REMEDY.id },
     });
   });
@@ -542,12 +548,12 @@ describe("<ProviderMcpTab /> host remedies and confirmations", () => {
     ).toBeNull();
   });
 
-  it("enabling a server with an enable confirmation asks first, then toggles", () => {
+  it("enabling a server with an enable offer asks first, then applies its id", () => {
     mcpMocks.listResult.data = { servers: [STDIO_ROW], notices: [] };
-    renderTab(KIMI_CAPS, "kimi");
+    renderTab(REMEDY_CAPS, "kimi");
 
     fireEvent.click(screen.getByRole("switch", { name: "Enable local-tool" }));
-    expect(mcpMocks.mutate).not.toHaveBeenCalled();
+    expect(mcpMocks.mutateAsync).not.toHaveBeenCalled();
     expect(
       screen.getByText("This server runs a program on this machine."),
     ).toBeDefined();
@@ -557,9 +563,53 @@ describe("<ProviderMcpTab /> host remedies and confirmations", () => {
         name: "Enable",
       }),
     );
-    expect(mcpMocks.mutate.mock.calls[0]?.[0]).toMatchObject({
-      mutation: { action: "toggleServer", name: "local-tool", enabled: true },
+    expect(mcpMocks.mutateAsync.mock.calls[0]?.[0]).toMatchObject({
+      mutation: { action: "applyRemedy", remedyId: ENABLE_REMEDY.id },
     });
+  });
+
+  it("an empty enable confirmation still requires the dialog", () => {
+    mcpMocks.listResult.data = {
+      servers: [
+        {
+          ...STDIO_ROW,
+          enableConfirmation: { ...ENABLE_REMEDY, confirmation: "" },
+        },
+      ],
+      notices: [],
+    };
+    renderTab(REMEDY_CAPS, "kimi");
+
+    fireEvent.click(screen.getByRole("switch", { name: "Enable local-tool" }));
+    expect(screen.getByRole("dialog")).toBeDefined();
+    expect(mcpMocks.mutate).not.toHaveBeenCalled();
+    expect(mcpMocks.mutateAsync).not.toHaveBeenCalled();
+
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Enable",
+      }),
+    );
+    expect(mcpMocks.mutateAsync).toHaveBeenCalledTimes(1);
+  });
+
+  it("a separate mutation does not lock the confirmation dialog", () => {
+    mcpMocks.mutateIsPending = true;
+    mcpMocks.listResult.data = {
+      servers: [connectedServer({ name: "docs", remedy: TRUST_REMEDY })],
+      notices: [],
+    };
+    renderTab(REMEDY_CAPS, "kimi");
+
+    fireEvent.click(
+      screen.getByRole("button", { name: `${TRUST_REMEDY.label} docs` }),
+    );
+    const confirm = within(screen.getByRole("dialog")).getByRole("button", {
+      name: TRUST_REMEDY.label,
+    });
+    expect(confirm.hasAttribute("disabled")).toBe(false);
+    fireEvent.click(confirm);
+    expect(mcpMocks.mutateAsync).toHaveBeenCalledTimes(1);
   });
 
   it("disabling a server never asks, even when it carries an enable confirmation", () => {
@@ -567,7 +617,7 @@ describe("<ProviderMcpTab /> host remedies and confirmations", () => {
       servers: [{ ...STDIO_ROW, enabled: true }],
       notices: [],
     };
-    renderTab(KIMI_CAPS, "kimi");
+    renderTab(REMEDY_CAPS, "kimi");
 
     fireEvent.click(screen.getByRole("switch", { name: "Disable local-tool" }));
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -587,6 +637,85 @@ describe("<ProviderMcpTab /> host remedies and confirmations", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
     expect(mcpMocks.mutate.mock.calls[0]?.[0]).toMatchObject({
       mutation: { action: "toggleServer", name: "plain", enabled: true },
+    });
+  });
+
+  it("does not enable a stdio row without an offer on a remedy-capable host", () => {
+    mcpMocks.listResult.data = {
+      servers: [
+        { ...STDIO_ROW, enableConfirmation: null, remedy: TRUST_REMEDY },
+      ],
+      notices: [],
+    };
+    renderTab(REMEDY_CAPS, "kimi");
+
+    expect(
+      screen.queryByRole("switch", { name: "Enable local-tool" }),
+    ).toBeNull();
+    expect(
+      screen.getByRole("button", { name: "Trust this folder local-tool" }),
+    ).toBeDefined();
+    expect(mcpMocks.mutate).not.toHaveBeenCalled();
+  });
+
+  it("closes a confirmation when the row's offer id changes", () => {
+    mcpMocks.listResult.data = { servers: [STDIO_ROW], notices: [] };
+    const view = renderTab(REMEDY_CAPS, "kimi");
+    fireEvent.click(screen.getByRole("switch", { name: "Enable local-tool" }));
+    expect(screen.getByRole("dialog")).toBeDefined();
+
+    mcpMocks.listResult.data = {
+      servers: [
+        {
+          ...STDIO_ROW,
+          enableConfirmation: { ...ENABLE_REMEDY, id: "kimi:enable:changed" },
+        },
+      ],
+      notices: [],
+    };
+    view.rerender(
+      <ProviderMcpTab
+        providerId="kimi"
+        capabilities={REMEDY_CAPS}
+        providerLabel="kimi"
+        cliBinaryResolved
+      />,
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(mcpMocks.mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it("keeps a confirmation when refreshed rows retain the same offer id", () => {
+    mcpMocks.listResult.data = { servers: [STDIO_ROW], notices: [] };
+    const view = renderTab(REMEDY_CAPS, "kimi");
+    fireEvent.click(screen.getByRole("switch", { name: "Enable local-tool" }));
+
+    mcpMocks.listResult.data = {
+      servers: [
+        {
+          ...STDIO_ROW,
+          statusDetail: "refreshed",
+          enableConfirmation: { ...ENABLE_REMEDY },
+        },
+      ],
+      notices: [],
+    };
+    view.rerender(
+      <ProviderMcpTab
+        providerId="kimi"
+        capabilities={REMEDY_CAPS}
+        providerLabel="kimi"
+        cliBinaryResolved
+      />,
+    );
+    expect(screen.getByRole("dialog")).toBeDefined();
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Enable",
+      }),
+    );
+    expect(mcpMocks.mutateAsync.mock.calls[0]?.[0]).toMatchObject({
+      mutation: { action: "applyRemedy", remedyId: ENABLE_REMEDY.id },
     });
   });
 });

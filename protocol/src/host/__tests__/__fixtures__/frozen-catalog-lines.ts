@@ -26510,7 +26510,25 @@ export const FROZEN_CATALOG_LINE_SNAPSHOTS = {
                                 "default": null,
                                 "anyOf": [
                                   {
-                                    "type": "string"
+                                    "type": "object",
+                                    "properties": {
+                                      "id": {
+                                        "type": "string",
+                                        "minLength": 1
+                                      },
+                                      "label": {
+                                        "type": "string"
+                                      },
+                                      "confirmation": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "id",
+                                      "label",
+                                      "confirmation"
+                                    ],
+                                    "additionalProperties": false
                                   },
                                   {
                                     "type": "null"
@@ -27158,7 +27176,25 @@ export const FROZEN_CATALOG_LINE_SNAPSHOTS = {
                               "default": null,
                               "anyOf": [
                                 {
-                                  "type": "string"
+                                  "type": "object",
+                                  "properties": {
+                                    "id": {
+                                      "type": "string",
+                                      "minLength": 1
+                                    },
+                                    "label": {
+                                      "type": "string"
+                                    },
+                                    "confirmation": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "id",
+                                    "label",
+                                    "confirmation"
+                                  ],
+                                  "additionalProperties": false
                                 },
                                 {
                                   "type": "null"
