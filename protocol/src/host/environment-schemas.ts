@@ -472,6 +472,13 @@ export const providersLinkResponseSchema = lazySchema(() =>
         userCode: z.string().min(1),
         expiresAt: z.number(),
       }),
+      /**
+       * No prompt: the harness's server-side sign-in is unavailable, so the
+       * host hands this profile's local sign-in to the account (the
+       * link-and-rewrite fallback, ticket E10). The dialog shows "linking"
+       * and polls `providers.linkComplete` until it answers `linked`.
+       */
+      z.object({ kind: z.literal("local_handoff") }),
     ]),
   }),
 );
@@ -488,11 +495,22 @@ export type ProvidersLinkCompleteRequest = z.infer<
   typeof providersLinkCompleteRequestSchema
 >;
 
-/** Known states: pending, linked, failed, expired. */
+/**
+ * Known states: pending, linked, failed, expired, mismatch (the sign-in
+ * resolved to another account than the profile's; nothing was stored) and
+ * unavailable (Traycer is not reachable, so the link waits).
+ *
+ * `account` is the account the profile is linked as on `linked`, and the
+ * account the person signed in as on `mismatch`; `expectedAccount` is the
+ * profile's own account, non-null only on `mismatch`. Both are account
+ * identifiers: shown in the person's own window, never logged (ticket E10).
+ */
 export const providersLinkCompleteResponseSchema = lazySchema(() =>
   z.object({
     state: z.string().min(1).max(32),
     code: z.string().max(64).nullable(),
+    account: z.string().max(320).nullable(),
+    expectedAccount: z.string().max(320).nullable(),
   }),
 );
 export type ProvidersLinkCompleteResponse = z.infer<
