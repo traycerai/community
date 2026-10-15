@@ -68,7 +68,10 @@ import {
 } from "@/lib/chats/resolve-steer-submit";
 import { splitLeadingSideChatCommand } from "@/lib/chats/side-chat-command";
 import type { ComposerPickerStore } from "@/components/chat/composer/picker/composer-picker-store";
-import type { ComposerToolbarStore } from "@/stores/composer/composer-toolbar-store";
+import type {
+  ComposerToolbarStore,
+  ComposerToolbarStoreState,
+} from "@/stores/composer/composer-toolbar-store";
 import type { Attachment } from "@/lib/composer/types";
 import type { JsonContent } from "@traycer/protocol/common/registry";
 
@@ -246,14 +249,19 @@ export function useChatComposerSubmit(
   }, [connectionStatus, sendDisabled]);
   // When the last refused-submit line was written, for the window above.
   const lastRefusedSubmitLogAt = useRef<number | null>(null);
+  // Whether a refusal now would write a line: send is disabled and the window
+  // from the last line has passed. Asked BEFORE any work done for the log's
+  // sake, so a refused submit that would not log reads nothing.
+  const refusedSubmitLogDue = useCallback((): boolean => {
+    if (liveSendBlockRef.current.sendDisabled !== true) return false;
+    const last = lastRefusedSubmitLogAt.current;
+    return last === null || Date.now() - last >= REFUSED_SUBMIT_LOG_WINDOW_MS;
+  }, []);
   const noteRefusedSubmit = useCallback(
     (stage: RefusedSubmitStage): void => {
+      if (!refusedSubmitLogDue()) return;
+      lastRefusedSubmitLogAt.current = Date.now();
       const live = liveSendBlockRef.current;
-      if (live.sendDisabled !== true) return;
-      const now = Date.now();
-      const last = lastRefusedSubmitLogAt.current;
-      if (last !== null && now - last < REFUSED_SUBMIT_LOG_WINDOW_MS) return;
-      lastRefusedSubmitLogAt.current = now;
       // `sendDisabled` folds viewer role, profile and stream state, so the
       // message is neutral and `connectionStatus` + `reason` discriminate.
       // Ids and a status only - never the draft, and no account identifier.
@@ -268,7 +276,7 @@ export function useChatComposerSubmit(
         stage,
       });
     },
-    [targetHostId, taskId],
+    [refusedSubmitLogDue, targetHostId, taskId],
   );
   // The LIVE queue-edit target, for the continuation to re-check. A captured
   // value cannot answer "is this still the submit the user asked for" - that is
@@ -456,33 +464,50 @@ export function useChatComposerSubmit(
 
   const submitDraft = useCallback(
     (source: ChatComposerSubmitSource): void => {
+      // The checks that decide whether there is a message to send at all. A
+      // blocked submit runs them too, for the log's sake only: a refusal is
+      // worth a line when a sendable message was refused, not when Enter was
+      // pressed on an empty composer.
+      const readSendableDraft = (): {
+        readonly toolbar: ComposerToolbarStoreState;
+        readonly editor: ComposerPromptEditorHandle;
+        readonly annotationRecords: ReadonlyArray<BrowserAnnotationRecord>;
+        readonly editorContent: JsonContent;
+      } | null => {
+        const toolbar = toolbarStore.getState();
+        if (toolbar.selection.modelSlug.length === 0) return null;
+        const editor = editorRef.current;
+        // A handle exists from the owner's first commit, before Tiptap's async
+        // `useEditor` resolves - `getJSON()`/`clear()` silently no-op until
+        // then, so a submit in that window would read the fallback initial JSON
+        // and clear nothing, letting the just-submitted text resurrect once the
+        // editor finishes initializing from that same stale initial content.
+        if (editor === null || !editor.isReady()) return null;
+        if (annotationPrepFlight.current) return null;
+        const { annotationRecords } = readDraftSidecars(taskId);
+        const editorContent = editor.getJSON();
+        const contentText =
+          extractPlainTextFromComposerJSONContent(editorContent);
+        if (
+          isEmptyComposerSubmit({
+            contentText,
+            editorContent,
+            annotationRecords,
+          })
+        ) {
+          return null;
+        }
+        return { toolbar, editor, annotationRecords, editorContent };
+      };
       if (submitBlocked()) {
-        noteRefusedSubmit("initial");
+        if (refusedSubmitLogDue() && readSendableDraft() !== null) {
+          noteRefusedSubmit("initial");
+        }
         return;
       }
-      const toolbar = toolbarStore.getState();
-      if (toolbar.selection.modelSlug.length === 0) return;
-      const editor = editorRef.current;
-      // A handle exists from the owner's first commit, before Tiptap's async
-      // `useEditor` resolves - `getJSON()`/`clear()` silently no-op until
-      // then, so a submit in that window would read the fallback initial JSON
-      // and clear nothing, letting the just-submitted text resurrect once the
-      // editor finishes initializing from that same stale initial content.
-      if (editor === null || !editor.isReady()) return;
-      if (annotationPrepFlight.current) return;
-      const { annotationRecords } = readDraftSidecars(taskId);
-      const editorContent = editor.getJSON();
-      const contentText =
-        extractPlainTextFromComposerJSONContent(editorContent);
-      if (
-        isEmptyComposerSubmit({
-          contentText,
-          editorContent,
-          annotationRecords,
-        })
-      ) {
-        return;
-      }
+      const draft = readSendableDraft();
+      if (draft === null) return;
+      const { toolbar, editor, annotationRecords, editorContent } = draft;
 
       const submitPreparedDraft = (
         annotationImages: ReadonlyArray<AnnotationImageAtom>,
@@ -972,6 +997,7 @@ export function useChatComposerSubmit(
       queueEditTargetId,
       getDraftBlobBridgeSupported,
       noteRefusedSubmit,
+      refusedSubmitLogDue,
       submitBlocked,
       targetHostId,
       taskId,
@@ -1020,6 +1046,7 @@ export function useChatComposerSubmit(
       // dismiss the dialog (the composer text is kept, so the user can retry once it
       // clears) rather than pushing the send through the guards.
       if (submitBlocked()) {
+        noteRefusedSubmit("after-confirmation");
         setPendingConflict(null);
         return;
       }
@@ -1058,7 +1085,7 @@ export function useChatComposerSubmit(
         setPendingConflict(null);
       }
     },
-    [finalizeSend, getActiveTurnForSteer, submitBlocked],
+    [finalizeSend, getActiveTurnForSteer, noteRefusedSubmit, submitBlocked],
   );
 
   const onRestart = useCallback((): void => {

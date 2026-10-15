@@ -20,6 +20,7 @@ import {
   useActiveEpicArtifactRef,
   useActiveEpicId,
   useActiveTabId,
+  useActiveTileRef,
 } from "@/stores/epics/canvas/store";
 import {
   isBlankTileRef,
@@ -173,6 +174,10 @@ export function SupportContextRegistryBridge(
   const epicId = useActiveEpicId();
   const tabId = useActiveTabId();
   const artifactRef = useActiveEpicArtifactRef(tabId ?? undefined);
+  // The active tile as the pane holds it. `artifactRef` above keeps only
+  // record-backed tiles, so a terminal, browser, diff or PR tile is `null`
+  // there while it is still bound to a host.
+  const activeTileRef = useActiveTileRef(tabId ?? undefined);
   const routeTemplate = useRouteTemplate(props.router);
   const providersListQuery = useProvidersList({
     enabled: true,
@@ -198,11 +203,11 @@ export function SupportContextRegistryBridge(
   // only an inert placeholder because they have no host binding (the blank
   // tab and the communication graph).
   const tabHostId =
-    artifactRef === null ||
-    isBlankTileRef(artifactRef) ||
-    isCommGraphTileRef(artifactRef)
+    activeTileRef === null ||
+    isBlankTileRef(activeTileRef) ||
+    isCommGraphTileRef(activeTileRef)
       ? null
-      : artifactRef.hostId;
+      : activeTileRef.hostId;
 
   useEffect(() => {
     setSupportContextSnapshot({

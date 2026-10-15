@@ -5,6 +5,7 @@ import { QueryClient } from "@tanstack/react-query";
 import { routeTree } from "@/routeTree.gen";
 import type { AppRouter } from "@/router";
 import { useAuthStore } from "@/stores/auth/auth-store";
+import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
 import type { EpicCanvasTileRef } from "@/stores/epics/canvas/types";
 import {
   __resetSupportContextRegistryForTests,
@@ -21,7 +22,6 @@ import { SupportContextRegistryBridge } from "../support-context-registry-bridge
 
 const mocks = vi.hoisted(() => ({
   addressableHostId: "host-app-default" as string | null,
-  activeRef: null as EpicCanvasTileRef | null,
 }));
 
 vi.mock("@/hooks/host/use-addressable-host-id", () => ({
@@ -30,23 +30,6 @@ vi.mock("@/hooks/host/use-addressable-host-id", () => ({
 
 vi.mock("@/hooks/providers/use-providers-list-query", () => ({
   useProvidersList: () => ({ data: undefined, isError: false }),
-}));
-
-vi.mock("@/stores/epics/canvas/store", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/stores/epics/canvas/store")>()),
-  useActiveEpicId: () => "epic-1",
-  useActiveTabId: () => "tab-1",
-  useActiveEpicArtifactRef: () => mocks.activeRef,
-}));
-
-vi.mock("@/lib/registries/epic-session-registry", async (importOriginal) => ({
-  ...(await importOriginal<
-    typeof import("@/lib/registries/epic-session-registry")
-  >()),
-  getOpenEpicRegistry: () => ({
-    peek: () => null,
-    subscribe: () => () => undefined,
-  }),
 }));
 
 // A real router, never loaded: the bridge only reads `state`/`subscribe`, and
@@ -74,16 +57,58 @@ function recordRef(
   };
 }
 
+function terminalRef(hostId: string): EpicCanvasTileRef {
+  return {
+    id: "terminal-1",
+    instanceId: "instance-terminal",
+    type: "terminal",
+    name: "Terminal",
+    titleSource: "manual",
+    hostId,
+    cwd: "/work",
+  };
+}
+
+function browserRef(hostId: string): EpicCanvasTileRef {
+  return {
+    id: "browser-1",
+    instanceId: "instance-browser",
+    type: "browser-session",
+    name: "Browser",
+    hostId,
+    viewportPreset: "responsive",
+    sessionId: "session-1",
+    tabId: "browser-tab-1",
+  };
+}
+
+function blankRef(hostId: string): EpicCanvasTileRef {
+  return {
+    id: "blank-1",
+    instanceId: "instance-blank",
+    type: "blank",
+    name: "New tab",
+    hostId,
+  };
+}
+
+/** Opens `ref` as the active tile of a real epic tab in the real canvas store. */
+function openActiveTile(ref: EpicCanvasTileRef): void {
+  const store = useEpicCanvasStore.getState();
+  const viewTabId = store.openEpicTab("epic-1", "Epic");
+  store.openTileInTab(viewTabId, ref);
+}
+
 afterEach(() => {
   cleanup();
   __resetSupportContextRegistryForTests();
   mocks.addressableHostId = "host-app-default";
-  mocks.activeRef = null;
+  useEpicCanvasStore.setState(useEpicCanvasStore.getInitialState(), true);
 });
 
 describe("SupportContextRegistryBridge tab host", () => {
   it("records the chat tab's own host beside the app-wide host", () => {
-    mocks.activeRef = recordRef("chat", "host-tab-bound");
+    openActiveTile(recordRef("chat", "host-tab-bound"));
 
     render(<SupportContextRegistryBridge router={ROUTER} />);
 
@@ -101,7 +126,7 @@ describe("SupportContextRegistryBridge tab host", () => {
   it.each(["terminal-agent", "spec", "ticket"] as const)(
     "records a %s tile's bound host the same way",
     (type) => {
-      mocks.activeRef = recordRef(type, "host-bound");
+      openActiveTile(recordRef(type, "host-bound"));
 
       render(<SupportContextRegistryBridge router={ROUTER} />);
 
@@ -112,14 +137,24 @@ describe("SupportContextRegistryBridge tab host", () => {
     },
   );
 
+  // Renderer-only tiles are not record-backed, so the record-backed selector
+  // never returns them; the bridge has to read the active tile itself.
+  it.each([
+    ["terminal", terminalRef("host-term")],
+    ["browser", browserRef("host-browser")],
+  ] as const)("records a %s tile's bound host", (_kind, ref) => {
+    openActiveTile(ref);
+
+    render(<SupportContextRegistryBridge router={ROUTER} />);
+
+    expect(getSupportContextSnapshot().tabHostId).toEqual({
+      status: "known",
+      value: ref.hostId,
+    });
+  });
+
   it("leaves the tab host unavailable for a blank tab, whose host is a placeholder", () => {
-    mocks.activeRef = {
-      id: "blank-1",
-      instanceId: "instance-blank",
-      type: "blank",
-      name: "New tab",
-      hostId: "placeholder-host",
-    };
+    openActiveTile(blankRef("placeholder-host"));
 
     render(<SupportContextRegistryBridge router={ROUTER} />);
 
@@ -129,8 +164,6 @@ describe("SupportContextRegistryBridge tab host", () => {
   });
 
   it("leaves the tab host unavailable when there is no active tile", () => {
-    mocks.activeRef = null;
-
     render(<SupportContextRegistryBridge router={ROUTER} />);
 
     const snapshot = getSupportContextSnapshot();

@@ -531,6 +531,35 @@ describe("chat-composer submit gate (paused send diagnostics)", () => {
     ]);
   });
 
+  it("logs nothing for an empty composer, where no sendable message was refused", () => {
+    const info = vi.spyOn(appLogger, "info");
+    const editorRef = createRef<ComposerPromptEditorHandle | null>();
+    editorRef.current = editorHandle({ content: EMPTY_DOC, ready: true });
+    const { result } = mountSubmitHookWith({
+      taskId: "chat-paused-empty",
+      editorRef,
+      onSubmitMessage: vi.fn(acceptSubmit),
+      sendDisabled: true,
+      targetHostId: "host-tab",
+      wrapper: ({ children }) => (
+        <QueuedMessageStagesContext
+          value={{
+            ...NO_QUEUED_MESSAGE_STAGES,
+            connectionStatus: "reconnecting",
+          }}
+        >
+          {children}
+        </QueuedMessageStagesContext>
+      ),
+    });
+
+    act(() => {
+      result.current.submitDraft("enter");
+    });
+
+    expect(refusedLines(info)).toEqual([]);
+  });
+
   it("logs nothing when the send is not disabled", () => {
     const info = vi.spyOn(appLogger, "info");
     const { result } = mountPaused({
