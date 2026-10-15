@@ -66,7 +66,7 @@ function EnvCredentialSettingsAction({
   return (
     <div className="mt-1 flex">
       <Button size="sm" variant="secondary" onClick={onClick}>
-        Manage environment variables
+        Manage variables
       </Button>
     </div>
   );

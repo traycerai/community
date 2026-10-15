@@ -426,9 +426,7 @@ describe("<ErrorSegment />", () => {
         />,
       );
 
-      fireEvent.click(
-        screen.getByRole("button", { name: "Manage environment variables" }),
-      );
+      fireEvent.click(screen.getByRole("button", { name: "Manage variables" }));
 
       // Both halves matter: the provider that actually failed, and the tab that
       // holds the unset control. Landing on Providers alone would leave the user
@@ -456,9 +454,7 @@ describe("<ErrorSegment />", () => {
         />,
       );
 
-      fireEvent.click(
-        screen.getByRole("button", { name: "Manage environment variables" }),
-      );
+      fireEvent.click(screen.getByRole("button", { name: "Manage variables" }));
 
       expect(useProvidersFocusStore.getState().focusHarnessId).toBeNull();
       expect(useProvidersFocusStore.getState().focusTab).toBeNull();
@@ -480,7 +476,7 @@ describe("<ErrorSegment />", () => {
       );
 
       expect(
-        screen.queryByRole("button", { name: "Manage environment variables" }),
+        screen.queryByRole("button", { name: "Manage variables" }),
       ).toBeNull();
     });
 
@@ -503,7 +499,7 @@ describe("<ErrorSegment />", () => {
       );
 
       expect(
-        screen.queryByRole("button", { name: "Manage environment variables" }),
+        screen.queryByRole("button", { name: "Manage variables" }),
       ).toBeNull();
     });
   });

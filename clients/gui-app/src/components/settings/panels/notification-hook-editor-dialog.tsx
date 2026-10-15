@@ -123,7 +123,7 @@ export function NotificationHookEditorDialog(props: {
                 />
                 <p className="text-ui-xs text-muted-foreground">
                   One <code>name: value</code> per line. <code>$VAR</code> and{" "}
-                  <code>{"${VAR}"}</code> read the host&apos;s shell environment
+                  <code>{"${VAR}"}</code> read the host&apos;s shell variables
                   at send time — the value is never stored or shown here.
                 </p>
               </div>

@@ -198,7 +198,7 @@ export function ProviderApiKeySection({
       <CredentialRefusalNote refusal={credentialRefusal} />
       <p className="text-ui-xs text-muted-foreground">
         {state.apiKey.source === "env"
-          ? `Using ${envNamePlaceholder(providerId)} from your shell environment. Save a key here to override it.`
+          ? `Using ${envNamePlaceholder(providerId)} from your shell. Save a key here to override it.`
           : `Stored encrypted on this device. Falls back to ${envNamePlaceholder(providerId)} from your shell when unset.`}
       </p>
     </div>
