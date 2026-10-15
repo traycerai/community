@@ -35,10 +35,14 @@ import {
   nativeAuthResultSchema,
   nativeListQuerySchema,
   nativeListResultSchema,
+  nativeListResultSchemaBeforeMcpRemedies,
   nativeListResultSchemaV70Preimage,
   nativeMutationResultSchema,
+  nativeMutationResultSchemaV10Preimage,
   nativeMutationSchema,
+  nativeMutationSchemaV10Preimage,
   providerNativeCapabilitiesSchema,
+  providerNativeCapabilitiesSchemaBeforeMcpRemedies,
   providerNativeCapabilitiesSchemaV70,
   providerNativeCapabilitiesSchemaV70Preimage,
   type ModelProviderAuthAction,
@@ -2146,7 +2150,7 @@ export type ProviderCliStateV91 = z.infer<typeof providerCliStateSchemaV91>;
 export const providersListResponseSchemaV91 = lazySchema(() =>
   z.object({
     providers: z.array(providerCliStateSchemaV91),
-    native: nativeListResultSchema.nullable().default(null),
+    native: nativeListResultSchemaBeforeMcpRemedies.nullable().default(null),
   }),
 );
 export type ProvidersListResponseV91 = z.infer<
@@ -2199,7 +2203,7 @@ export type ProviderCliStateV92 = z.infer<typeof providerCliStateSchemaV92>;
 export const providersListResponseSchemaV92 = lazySchema(() =>
   z.object({
     providers: z.array(providerCliStateSchemaV92),
-    native: nativeListResultSchema.nullable().default(null),
+    native: nativeListResultSchemaBeforeMcpRemedies.nullable().default(null),
   }),
 );
 export type ProvidersListResponseV92 = z.infer<
@@ -2297,6 +2301,21 @@ export const providersListResponseSchema = lazySchema(() =>
 );
 export type ProvidersListResponse = z.infer<typeof providersListResponseSchema>;
 
+/** The list@10.0 response before MCP remedies and notices were introduced. */
+export const providersListResponseSchemaV100Preimage = lazySchema(() =>
+  z.object({
+    providers: z.array(
+      providerCliStateSchema.extend({
+        nativeCapabilities:
+          providerNativeCapabilitiesSchemaBeforeMcpRemedies.catch(
+            DEFAULT_PROVIDER_NATIVE_CAPABILITIES,
+          ),
+      }),
+    ),
+    native: nativeListResultSchemaBeforeMcpRemedies.nullable().default(null),
+  }),
+);
+
 /**
  * Frozen `providers.list@9.0` response - the pre-`autoJudge` provider state.
  *
@@ -2310,7 +2329,7 @@ export type ProvidersListResponse = z.infer<typeof providersListResponseSchema>;
 export const providersListResponseSchemaV90 = lazySchema(() =>
   z.object({
     providers: z.array(providerCliStateSchemaV90),
-    native: nativeListResultSchema.nullable().default(null),
+    native: nativeListResultSchemaBeforeMcpRemedies.nullable().default(null),
   }),
 );
 export type ProvidersListResponseV90 = z.infer<
@@ -2700,7 +2719,7 @@ export type ProviderCliStateV70 = z.infer<typeof providerCliStateSchemaV70>;
 export const providersListResponseSchemaV70 = lazySchema(() =>
   z.object({
     providers: z.array(providerCliStateSchemaV70),
-    native: nativeListResultSchema.nullable().default(null),
+    native: nativeListResultSchemaBeforeMcpRemedies.nullable().default(null),
   }),
 );
 export type ProvidersListResponseV70 = z.infer<
@@ -2820,7 +2839,7 @@ export type ProviderCliStateV80 = z.infer<typeof providerCliStateSchemaV80>;
 export const providersListResponseSchemaV80 = lazySchema(() =>
   z.object({
     providers: z.array(providerCliStateSchemaV80),
-    native: nativeListResultSchema.nullable().default(null),
+    native: nativeListResultSchemaBeforeMcpRemedies.nullable().default(null),
   }),
 );
 export type ProvidersListResponseV80 = z.infer<
@@ -3848,6 +3867,12 @@ export const providersNativeMutateRequestSchema = lazySchema(() =>
     mutation: nativeMutationSchema,
   }),
 );
+export const providersNativeMutateRequestSchemaV10Preimage = lazySchema(() =>
+  z.object({
+    providerId: providerIdSchema,
+    mutation: nativeMutationSchemaV10Preimage,
+  }),
+);
 export type ProvidersNativeMutateRequest = z.infer<
   typeof providersNativeMutateRequestSchema
 >;
@@ -3862,6 +3887,9 @@ export const providersNativeMutateResponseSchema = lazySchema(() =>
   z.object({
     result: nativeMutationResultSchema,
   }),
+);
+export const providersNativeMutateResponseSchemaV10Preimage = lazySchema(() =>
+  z.object({ result: nativeMutationResultSchemaV10Preimage }),
 );
 export type ProvidersNativeMutateResponse = z.infer<
   typeof providersNativeMutateResponseSchema
