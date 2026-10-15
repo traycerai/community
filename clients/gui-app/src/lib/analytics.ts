@@ -310,12 +310,14 @@ export type AnalyticsRole = "editor" | "owner" | "viewer";
 export type AnalyticsSetting =
   | "allowPrereleaseUpdates"
   | "agentBrowserAccess"
+  | "agentPages"
   | "agentOfficeDefaultView"
   | "agentTabSurfacing"
   | "agentWorktreeCreate"
   | "artifactIconColorMode"
   | "artifactIconColors"
   | "catalogProbeTimeout"
+  | "catalogProbeTimeoutSameForAll"
   | "chatAutoArchive"
   | "codeFontFamily"
   | "codeFontSize"
@@ -516,6 +518,9 @@ export enum AnalyticsEvent {
   DraftCopied = "draft_copied",
   DraftDeleted = "draft_deleted",
   DraftDeleteUndone = "draft_delete_undone",
+  PageAction = "page_action",
+  McpAppCall = "mcp_app_call",
+  FilesPanelOpened = "files_panel_opened",
   NotificationCenterOpened = "notification_center_opened",
   NotificationFilterChanged = "notification_filter_changed",
   NotificationActivationCompleted = "notification_activation_completed",
@@ -601,6 +606,7 @@ export function analyticsTargetForCanvasTileType(
     case "terminal-agent":
       return "terminal_agent";
     case "workspace-file":
+    case "epic-file":
       return "file";
     case "git-diff":
     case "snapshot-diff":
@@ -941,6 +947,19 @@ export interface AnalyticsEventProperties {
     readonly surface: AnalyticsDraftSurface;
     readonly draft_kind: AnalyticsDraftKind;
   };
+  /** An agent page's own action; never its title, path or content (D31). */
+  readonly [AnalyticsEvent.PageAction]: {
+    readonly action: "expand" | "download";
+  };
+  /**
+   * How an MCP App's tool call ended: `approved` when the host ran it (with or
+   * without asking), `denied` when the reader declined, `refused` when the
+   * host refused it. Never the server, tool or arguments (D31).
+   */
+  readonly [AnalyticsEvent.McpAppCall]: {
+    readonly outcome: "approved" | "denied" | "refused";
+  };
+  readonly [AnalyticsEvent.FilesPanelOpened]: null;
   readonly [AnalyticsEvent.NotificationCenterOpened]: {
     readonly entry_point: AnalyticsNotificationEntryPoint;
     readonly host_state: AnalyticsNotificationHostState;
@@ -1012,6 +1031,13 @@ export interface AnalyticsEventProperties {
   readonly [AnalyticsEvent.VoiceCaptureFailed]: BlockedProperties;
   readonly [AnalyticsEvent.VoiceTranscriptionSucceeded]: {
     readonly duration_bucket: "under_10s" | "10_to_30s" | "over_30s";
+    // Whether any transcript text reached the composer: the event fires on
+    // the host's `flushed`, which is sent even when the decode produced
+    // nothing, so without this the funnel cannot tell "transcribed" from
+    // "flushed with no text".
+    readonly had_text: boolean;
+    // Mic stop to `flushed`: the wait the person feels.
+    readonly decode_bucket: "under_1s" | "1_to_5s" | "over_5s";
   };
   readonly [AnalyticsEvent.VoiceTranscriptionFailed]: {
     readonly blocker: AnalyticsBlocker;
@@ -1302,6 +1328,7 @@ const ANALYTICS_LAYOUT_REGIONS = new Set<string>(
     railTerminals: true,
     railBrowsers: true,
     railArtifacts: true,
+    railFiles: true,
     railGitDiff: true,
     railPullRequests: true,
     railFileTree: true,
@@ -1384,6 +1411,7 @@ const ANALYTICS_SETTINGS_SECTIONS = new Set<string>(
 const ANALYTICS_SETTINGS = new Set<string>(
   Object.keys({
     agentBrowserAccess: true,
+    agentPages: true,
     agentOfficeDefaultView: true,
     agentTabSurfacing: true,
     agentWorktreeCreate: true,
@@ -1391,6 +1419,7 @@ const ANALYTICS_SETTINGS = new Set<string>(
     artifactIconColorMode: true,
     artifactIconColors: true,
     catalogProbeTimeout: true,
+    catalogProbeTimeoutSameForAll: true,
     chatAutoArchive: true,
     codeFontFamily: true,
     codeFontSize: true,
@@ -1814,6 +1843,8 @@ const EVENT_PROPERTY_KEYS = new Map<AnalyticsEvent, ReadonlyArray<string>>([
     [AnalyticsEvent.DraftDeleteUndone],
     ["surface", "draft_kind"],
   ),
+  ...eventKeyEntries([AnalyticsEvent.PageAction], ["action"]),
+  ...eventKeyEntries([AnalyticsEvent.McpAppCall], ["outcome"]),
   ...eventKeyEntries(
     [AnalyticsEvent.NotificationCenterOpened],
     ["entry_point", "host_state", "attention_bucket", "unread_bucket"],
@@ -1853,11 +1884,12 @@ const EVENT_PROPERTY_KEYS = new Map<AnalyticsEvent, ReadonlyArray<string>>([
   ),
   ...eventKeyEntries([AnalyticsEvent.AgentStopped], ["source", "cascade"]),
   ...eventKeyEntries(
-    [
-      AnalyticsEvent.VoiceDictationStopped,
-      AnalyticsEvent.VoiceTranscriptionSucceeded,
-    ],
+    [AnalyticsEvent.VoiceDictationStopped],
     ["duration_bucket"],
+  ),
+  ...eventKeyEntries(
+    [AnalyticsEvent.VoiceTranscriptionSucceeded],
+    ["duration_bucket", "had_text", "decode_bucket"],
   ),
   ...eventKeyEntries([AnalyticsEvent.VoicePermissionResolved], ["permission"]),
   ...eventKeyEntries([AnalyticsEvent.SettingsOpened], ["source", "section"]),
@@ -1941,6 +1973,7 @@ const EVENT_PROPERTY_KEYS = new Map<AnalyticsEvent, ReadonlyArray<string>>([
 ]);
 
 const EVENTS_WITHOUT_PROPERTIES = new Set<AnalyticsEvent>([
+  AnalyticsEvent.FilesPanelOpened,
   AnalyticsEvent.SignInSucceeded,
   AnalyticsEvent.HostFailover,
   AnalyticsEvent.HostRecovered,
@@ -2012,6 +2045,7 @@ const EXACT_PROPERTY_VALUES: {
     "selection",
     "terminal_args",
   ]),
+  decode_bucket: new Set(["1_to_5s", "over_5s", "under_1s"]),
   duration_bucket: new Set(["10_to_30s", "over_30s", "under_10s"]),
   editor: new Set(["cursor", "vscode", "windsurf", "zed"]),
   entry: new Set(["pointer", "keyboard"]),
@@ -2066,6 +2100,16 @@ function eventValueEntries(
 }
 
 const EVENT_EXACT_PROPERTY_VALUES = new Map<string, ReadonlySet<string>>([
+  ...eventValueEntries(
+    [AnalyticsEvent.PageAction],
+    "action",
+    new Set(["expand", "download"]),
+  ),
+  ...eventValueEntries(
+    [AnalyticsEvent.McpAppCall],
+    "outcome",
+    new Set(["approved", "denied", "refused"]),
+  ),
   ...eventValueEntries(
     [
       AnalyticsEvent.DraftsListOpened,
@@ -2329,6 +2373,7 @@ const BOOLEAN_PROPERTY_KEYS = new Set<string>([
   "customized",
   "discarded",
   "enabled",
+  "had_text",
   "has_mention",
   "include_history",
   "layout_dock_reordered",

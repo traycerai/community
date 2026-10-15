@@ -69,6 +69,8 @@ const {
   describeFatalSignal,
   findCrashReportSince,
   isFatalSignal,
+  isWindowsExternalTerminationExit,
+  isWindowsSessionEndExit,
   prepareCrashReportsDir,
   pruneCrashReports,
 } = await import("../crash-diagnostics");
@@ -303,6 +305,12 @@ describe("StderrLogTee", () => {
 // ---------------------------------------------------------------------------
 
 describe("describeExitCode", () => {
+  it("names the logoff-time spawn failure", () => {
+    expect(describeExitCode(0xc000026b)).toContain(
+      "STATUS_DLL_INIT_FAILED_LOGOFF",
+    );
+  });
+
   it("decodes 3221226505 as 0xC0000409 STATUS_STACK_BUFFER_OVERRUN", () => {
     const meaning = describeExitCode(3221226505);
     expect(meaning).not.toBeNull();
@@ -319,6 +327,25 @@ describe("describeExitCode", () => {
 
   it("returns bare hex for unknown high codes", () => {
     expect(describeExitCode(0xc0de0001)).toBe("0xC0DE0001");
+  });
+});
+
+describe("isWindowsSessionEndExit / isWindowsExternalTerminationExit", () => {
+  it("counts only the logoff-time spawn failure as a session end", () => {
+    expect(isWindowsSessionEndExit(0xc000026b)).toBe(true);
+    expect(isWindowsSessionEndExit(0x40010004)).toBe(false);
+    expect(isWindowsSessionEndExit(0xc0000005)).toBe(false);
+    expect(isWindowsSessionEndExit(0xc0000409)).toBe(false);
+    expect(isWindowsSessionEndExit(0xc0000142)).toBe(false);
+    expect(isWindowsSessionEndExit(1)).toBe(false);
+  });
+
+  it("counts only DBG_TERMINATE_PROCESS as an external termination", () => {
+    expect(isWindowsExternalTerminationExit(0x40010004)).toBe(true);
+    expect(isWindowsExternalTerminationExit(1073807364)).toBe(true);
+    expect(isWindowsExternalTerminationExit(0xc000026b)).toBe(false);
+    expect(isWindowsExternalTerminationExit(0xffffffff)).toBe(false);
+    expect(isWindowsExternalTerminationExit(1)).toBe(false);
   });
 });
 
