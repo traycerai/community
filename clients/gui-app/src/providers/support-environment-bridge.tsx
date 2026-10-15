@@ -3,6 +3,7 @@ import type { HostClient } from "@traycer-clients/shared/host-client/host-client
 import type { EnvironmentSecretsRotationResponse } from "@traycer/protocol/host/environment-schemas";
 import { autoPolicyReadStateFor } from "@/components/settings/panels/auto-policy-document";
 import { useAutoPolicyQuery } from "@/hooks/auto-mode/use-auto-policy-query";
+import { startVisibleInterval } from "@/lib/dom/visible-interval";
 import { useAddressableHostId } from "@/hooks/host/use-addressable-host-id";
 import { useHostClientForHostId } from "@/hooks/host/use-host-client-for-host-id";
 import { useHostQuery } from "@/hooks/host/use-host-query";
@@ -186,18 +187,23 @@ function SupportPolicyRead(props: {
   const policy = useAutoPolicyQuery();
   const data = policy.data ?? null;
   const { refetch, isFetched } = policy;
+  const teamHost = data !== null && data.team !== null;
   // A team host's policy state moves with its 60-second lease, and the
   // policy query never polls on its own (nor does this bridge's status
-  // read): re-ask every half lease while the bridge is mounted. Only once
-  // this viewer's read has run: `refetch` ignores the query's `enabled`,
-  // which is what keeps a read off the empty viewer.
+  // read): on a team host, re-ask every half lease while the window is
+  // visible. Only once this viewer's read has run: `refetch` ignores the
+  // query's `enabled`, which is what keeps a read off the empty viewer. A
+  // personal host's `team` is always null, so it is never re-asked.
   useEffect(() => {
-    if (!isFetched) return;
-    const timer = setInterval(() => {
-      void refetch();
-    }, SUPPORT_POLICY_REFRESH_MS);
-    return () => clearInterval(timer);
-  }, [isFetched, refetch]);
+    if (!isFetched || !teamHost) return;
+    return startVisibleInterval({
+      tick: () => {
+        void refetch();
+      },
+      intervalMs: SUPPORT_POLICY_REFRESH_MS,
+      fireOnShow: true,
+    });
+  }, [isFetched, teamHost, refetch]);
   useEffect(() => {
     onRead(
       data === null

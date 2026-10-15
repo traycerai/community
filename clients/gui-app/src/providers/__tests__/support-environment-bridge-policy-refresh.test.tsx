@@ -58,6 +58,10 @@ vi.mock("@/hooks/chats/use-cloud-chat-queries", async (importOriginal) => ({
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  __resetDocumentVisibilitySubscribersForTests,
+  __setBrowserDocumentHiddenForTests,
+} from "@/lib/dom/document-visibility";
 import type { HostClient } from "@traycer-clients/shared/host-client/host-client";
 import type { AutoPolicyGetResponseV11 } from "@traycer/protocol/host/auto-mode/contracts";
 import {
@@ -74,7 +78,7 @@ import { SupportEnvironmentBridge } from "@/providers/support-environment-bridge
 
 type TeamAnswer = NonNullable<AutoPolicyGetResponseV11["team"]>;
 
-function policyAnswer(team: TeamAnswer): AutoPolicyGetResponseV11 {
+function policyAnswer(team: TeamAnswer | null): AutoPolicyGetResponseV11 {
   return {
     body: "ZZ_POLICY_BODY never ship",
     updatedAt: "2026-10-01T00:00:00.000Z",
@@ -87,13 +91,13 @@ function policyAnswer(team: TeamAnswer): AutoPolicyGetResponseV11 {
 interface PolicyHost {
   readonly client: HostClient<HostRpcRegistry>;
   /** What the host answers from now on. */
-  readonly answer: (team: TeamAnswer) => void;
+  readonly answer: (team: TeamAnswer | null) => void;
   /** How many times `autoPolicy.get` has been asked. */
   readonly reads: () => number;
 }
 
-function policyHost(first: TeamAnswer): PolicyHost {
-  let current = first;
+function policyHost(first: TeamAnswer | null): PolicyHost {
+  let current: TeamAnswer | null = first;
   let reads = 0;
   const { client } = buildEnvironmentClient({
     hostId: "host-env",
@@ -186,6 +190,8 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  __setBrowserDocumentHiddenForTests(false);
+  __resetDocumentVisibilitySubscribersForTests();
   vi.useRealTimers();
   __resetSupportContextRegistryForTests();
 });
@@ -263,6 +269,45 @@ describe("SupportEnvironmentBridge follows a team host's policy state while the 
 
     expect(host.reads()).toBe(0);
     expect(section().policy).toBeNull();
+  });
+
+  it("a personal host (team: null) is asked exactly once over 120 seconds: the refresh buys nothing there", async () => {
+    supportAll();
+    const host = policyHost(null);
+    mount(host.client);
+    await settle();
+    expect(host.reads()).toBe(1);
+
+    await advance(120_000);
+
+    expect(host.reads()).toBe(1);
+    expect(teamOf()).toEqual({ state: null, version: null });
+  });
+
+  it("a team host is not asked while the window is hidden, is asked once when it is shown, then every 30 seconds", async () => {
+    supportAll();
+    const host = policyHost({ state: "applied", policyVersion: "7" });
+    mount(host.client);
+    await settle();
+    const whileVisible = host.reads();
+    expect(whileVisible).toBeGreaterThanOrEqual(1);
+
+    await act(async () => {
+      __setBrowserDocumentHiddenForTests(true);
+    });
+    await advance(120_000);
+    expect(host.reads()).toBe(whileVisible);
+
+    host.answer({ state: "lapsed", policyVersion: "7" });
+    await act(async () => {
+      __setBrowserDocumentHiddenForTests(false);
+    });
+    await settle();
+    expect(host.reads()).toBe(whileVisible + 1);
+    expect(teamOf()).toEqual({ state: "lapsed", version: "7" });
+
+    await advance(30_000);
+    expect(host.reads()).toBe(whileVisible + 2);
   });
 
   it("never asks while this viewer has no identity (an empty viewer id), however long it waits", async () => {
