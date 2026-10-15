@@ -105,7 +105,7 @@ describe("the sandbox queries on a build that cannot reach the control plane", (
 
   it("does not fetch the Automations read while the reason is set", async () => {
     mocks.unavailableReason = "Sandboxes aren't available in staging builds.";
-    const { result } = renderHook(() => useSandboxAutomation(), {
+    const { result } = renderHook(() => useSandboxAutomation(null), {
       wrapper: wrapper(),
     });
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -117,7 +117,7 @@ describe("the sandbox queries on a build that cannot reach the control plane", (
 
   it("does not fetch the Automations read while signed out", async () => {
     useAuthStore.setState({ status: "signed-out" });
-    const { result } = renderHook(() => useSandboxAutomation(), {
+    const { result } = renderHook(() => useSandboxAutomation(null), {
       wrapper: wrapper(),
     });
     await new Promise((resolve) => setTimeout(resolve, 20));
@@ -129,14 +129,18 @@ describe("the sandbox queries on a build that cannot reach the control plane", (
   it("control: signed in with no reason, the Automations read is made and returned", async () => {
     mocks.binding?.auth.getSandboxAutomation.mockResolvedValue({
       kind: "ok",
-      automation: { available: true, sandbox: null },
+      automation: { available: true, sandbox: null, pods: [] },
     });
-    const { result } = renderHook(() => useSandboxAutomation(), {
+    const { result } = renderHook(() => useSandboxAutomation(null), {
       wrapper: wrapper(),
     });
 
     await waitFor(() => {
-      expect(result.current.data).toEqual({ available: true, sandbox: null });
+      expect(result.current.data).toEqual({
+        available: true,
+        sandbox: null,
+        pods: [],
+      });
     });
     expect(mocks.binding?.auth.getSandboxAutomation).toHaveBeenCalledTimes(1);
   });

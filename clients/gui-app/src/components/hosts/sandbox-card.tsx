@@ -28,17 +28,23 @@ import {
   formatSandboxDay,
   SANDBOX_CARD_ACTION_LABEL,
   sandboxCardActions,
+  sandboxCardShowsCostView,
+  sandboxCreatorLine,
   sandboxGuestConfigFailure,
   sandboxIdleLine,
+  sandboxPodRoomLine,
   sandboxSecretsReadiness,
   sandboxStateLine,
   sandboxSuspendKeepsLine,
+  sandboxTeamFrozenLine,
+  sandboxWakePayerLine,
   type SandboxCardAction,
 } from "@/components/hosts/sandbox-card-model";
 import type { HostScopeSandbox } from "@/components/settings/host-scope/host-scope-model";
 import { sandboxStateWord } from "@/components/settings/host-scope/host-option-model";
 import { useAuthUser } from "@/hooks/auth/use-auth-user-query";
 import { useRefreshSandboxCosts } from "@/hooks/sandboxes/use-refresh-sandbox-costs";
+import { useSandboxAutomation } from "@/hooks/sandboxes/use-sandbox-automation-query";
 import { useSandboxCatalogue } from "@/hooks/sandboxes/use-sandbox-catalogue-query";
 import { useSandboxCosts } from "@/hooks/sandboxes/use-sandbox-costs-query";
 import { useSandboxDestroy } from "@/hooks/sandboxes/use-sandbox-destroy-mutation";
@@ -71,6 +77,11 @@ import {
   type SandboxEgressEventLine,
 } from "@/lib/sandboxes/sandbox-egress-event-line";
 import { cn } from "@/lib/utils";
+import { useAuthStore } from "@/stores/auth/auth-store";
+import {
+  confirmTeamWake,
+  teamWakeAsks,
+} from "@/stores/hosts/team-wake-confirm-store";
 
 /**
  * The card a sandbox host shows above its identity card in Settings: its
@@ -82,10 +93,18 @@ import { cn } from "@/lib/utils";
  * A frozen sandbox (out of credits) shows the frozen line with its destroy
  * date and the balance, and offers only destroy, behind a typed
  * confirmation.
+ *
+ * A team sandbox (ticket E17) says who created it and whose bundle the
+ * running wake is on, asks before its Resume or Start bills the person, and
+ * always asks for its name before a destroy. It has no personal cost view:
+ * the cost read lists only the person's own sandboxes. A team pod says how
+ * many more shells it has room for instead.
  */
 export function SandboxCard(props: {
   readonly hostName: string;
   readonly sandbox: HostScopeSandbox;
+  /** A team owns it (the registry row's `owner`), pods included. */
+  readonly teamOwned: boolean;
 }): ReactNode {
   // Taken as resolved. The builder (`sandboxFactsOf`) already prefers the
   // host list's facts and falls back to the sandbox-list summary, so a second
@@ -94,6 +113,9 @@ export function SandboxCard(props: {
   const word = sandboxStateWord(props.sandbox);
   const actions =
     summary === null ? [] : sandboxCardActions(state, frozen, summary.kind);
+  const viewerUserId = useAuthStore(
+    (s) => s.contextMetadata?.userId ?? null,
+  );
   return (
     <Card
       size="sm"
@@ -104,7 +126,9 @@ export function SandboxCard(props: {
       <CardHeader>
         <CardTitle>{summary?.displayName ?? props.hostName}</CardTitle>
         <CardDescription data-testid="sandbox-card-state-line">
-          {sandboxStateLine(state, frozen, summary)}
+          {props.teamOwned && frozen && summary !== null
+            ? sandboxTeamFrozenLine(summary, viewerUserId)
+            : sandboxStateLine(state, frozen, summary)}
         </CardDescription>
         {word === null ? null : (
           <CardAction>
@@ -122,20 +146,39 @@ export function SandboxCard(props: {
           <SandboxDetailsMissing state={state} />
         ) : (
           <>
-            <SandboxFacts summary={summary} />
+            <SandboxFacts
+              summary={summary}
+              teamOwned={props.teamOwned}
+              state={state}
+              frozen={frozen}
+              viewerUserId={viewerUserId}
+            />
+            {props.teamOwned && summary.kind === "automation" ? (
+              <SandboxPodRoom
+                environmentId={summary.environmentId}
+                sandboxId={summary.id}
+              />
+            ) : null}
             <SandboxGuestConfigFailure summary={summary} />
             <SandboxSecretsSection
               summary={summary}
               state={state}
               frozen={frozen}
             />
-            <SandboxCostView sandboxId={summary.id} frozen={frozen} />
+            {sandboxCardShowsCostView(props.teamOwned) ? (
+              <SandboxCostView sandboxId={summary.id} frozen={frozen} />
+            ) : null}
           </>
         )}
       </CardContent>
       {summary !== null && actions.length > 0 ? (
         <CardFooter className="flex flex-wrap gap-2">
-          <SandboxActions summary={summary} actions={actions} frozen={frozen} />
+          <SandboxActions
+            summary={summary}
+            actions={actions}
+            frozen={frozen}
+            teamOwned={props.teamOwned}
+          />
         </CardFooter>
       ) : null}
     </Card>
@@ -218,8 +261,26 @@ function SandboxDetailsMissing(props: {
   );
 }
 
-function SandboxFacts(props: { readonly summary: SandboxSummary }): ReactNode {
+function SandboxFacts(props: {
+  readonly summary: SandboxSummary;
+  readonly teamOwned: boolean;
+  readonly state: HostSandboxState | null;
+  readonly frozen: boolean;
+  readonly viewerUserId: string | null;
+}): ReactNode {
   const { summary } = props;
+  // A team row's creator and wake payer; a personal row is the viewer's own.
+  const creator = props.teamOwned
+    ? sandboxCreatorLine(summary, props.viewerUserId)
+    : null;
+  const payer = props.teamOwned
+    ? sandboxWakePayerLine(
+        props.state,
+        props.frozen,
+        summary,
+        props.viewerUserId,
+      )
+    : null;
   const now = useSampledNow();
   const provider =
     useSandboxCatalogue(true).data?.providers.find(
@@ -263,7 +324,43 @@ function SandboxFacts(props: { readonly summary: SandboxSummary }): ReactNode {
           <dd>An agent, for one task</dd>
         </>
       ) : null}
+      {creator === null || summary.burst ? null : (
+        <>
+          <dt className="text-muted-foreground">Creator</dt>
+          <dd data-testid="sandbox-card-creator">{creator}</dd>
+        </>
+      )}
+      {payer === null ? null : (
+        <>
+          <dt className="text-muted-foreground">Wake</dt>
+          <dd data-testid="sandbox-card-wake-payer">{payer}</dd>
+        </>
+      )}
     </dl>
+  );
+}
+
+/**
+ * A team pod's room for more shells, from its environment's pod list. Every
+ * pod card of a team reads the same `GET /automation?environmentId=` (one
+ * query per environment), so three pods cost one read.
+ */
+function SandboxPodRoom(props: {
+  readonly environmentId: string;
+  readonly sandboxId: string;
+}): ReactNode {
+  const automation = useSandboxAutomation(props.environmentId);
+  const pod =
+    automation.data?.pods.find((p) => p.sandbox.id === props.sandboxId) ??
+    null;
+  if (pod === null) return null;
+  return (
+    <p
+      className="text-ui-xs text-muted-foreground"
+      data-testid="sandbox-card-pod-room"
+    >
+      {sandboxPodRoomLine(pod.headroom, pod.liveShells)}
+    </p>
   );
 }
 
@@ -775,9 +872,11 @@ function SandboxActions(props: {
   readonly summary: SandboxSummary;
   readonly actions: readonly SandboxCardAction[];
   readonly frozen: boolean;
+  readonly teamOwned: boolean;
 }): ReactNode {
   const { summary } = props;
   const verb = useSandboxVerb(summary.id);
+  const wakeAsks = teamWakeAsks(props.teamOwned, summary.kind, props.frozen);
   const pendingVerb = verb.isPending ? verb.variables : null;
   return (
     <>
@@ -790,7 +889,8 @@ function SandboxActions(props: {
             key={action}
             sandboxId={summary.id}
             name={summary.displayName}
-            typedConfirmation={props.frozen}
+            typedConfirmation={props.frozen || props.teamOwned}
+            teamOwned={props.teamOwned}
           />
         ) : (
           <Button
@@ -803,7 +903,8 @@ function SandboxActions(props: {
             disabled={verb.isPending}
             data-testid={`sandbox-card-${action}`}
             onClick={() => {
-              verb.mutate(action, {
+              const run = (): void => {
+                verb.mutate(action, {
                 onSuccess: (outcome) => {
                   if (outcome === "settled") {
                     toast.success(
@@ -816,6 +917,12 @@ function SandboxActions(props: {
                   }
                 },
               });
+              };
+              // Only a wake bills: Suspend and Stop never ask.
+              confirmTeamWake(
+                wakeAsks && (action === "resume" || action === "start"),
+                run,
+              );
             }}
           >
             {pendingVerb === action ? (
@@ -836,8 +943,12 @@ function SandboxActions(props: {
 function SandboxDestroyAction(props: {
   readonly sandboxId: string;
   readonly name: string;
-  /** A frozen sandbox asks for its name to be typed (core flows, flow 5). */
+  /**
+   * A frozen sandbox asks for its name to be typed (core flows, flow 5), and
+   * so does every team sandbox (ticket E17).
+   */
   readonly typedConfirmation: boolean;
+  readonly teamOwned: boolean;
 }): ReactNode {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [typed, setTyped] = useState("");
@@ -893,10 +1004,21 @@ function SandboxDestroyAction(props: {
           });
         }}
       >
+        {props.teamOwned ? (
+          <p
+            className="px-5 pb-2 text-ui-sm text-muted-foreground"
+            data-testid="sandbox-card-destroy-team"
+          >
+            Destroying ends every session on it, including other members&apos;
+            running agents.
+          </p>
+        ) : null}
         {props.typedConfirmation ? (
           <div className="flex flex-col gap-1.5 px-5 pb-4">
             <Label htmlFor={inputId}>
-              This sandbox is frozen. Type its name to confirm.
+              {props.teamOwned
+                ? "Type its name to confirm."
+                : "This sandbox is frozen. Type its name to confirm."}
             </Label>
             <Input
               id={inputId}

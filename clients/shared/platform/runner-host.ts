@@ -42,6 +42,7 @@ import type {
 import type { SecretRequestDecision } from "@traycer/protocol/host/sandbox-secrets";
 import type { ExecutableWriteGrantFetchResult } from "../host-client/executable-write-grant";
 import type {
+  SandboxAutomationOpenTarget,
   SandboxCreateRequest,
   SandboxLifecycleVerb,
 } from "@traycer/protocol/host/sandbox-control";
@@ -396,9 +397,11 @@ export interface IRunnerHost {
   ): Promise<SandboxVerbFetchResult>;
   getSandboxAutomation(
     bearerToken: string,
+    environmentId: string | null,
   ): Promise<SandboxAutomationFetchResult>;
   openSandboxAutomation(
     bearerToken: string,
+    target: SandboxAutomationOpenTarget | null,
   ): Promise<SandboxAutomationOpenFetchResult>;
   /**
    * The secrets broker (authn), with the user's bearer: the grants one

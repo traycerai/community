@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   HostListItem,
   HostListResponse,
+  HostOwnerPrincipal,
   HostStatusDTO,
 } from "@traycer/protocol/host/host-status";
 import {
@@ -86,9 +87,12 @@ describe("fetchRegisteredHostsViaHttp", () => {
       expect(result.response.hosts[0].hostId).toBe("host-1");
     }
     const [url, init] = fetchMock.mock.calls[0];
-    expect(url).toBe(
-      "https://authn.example.test/api/v3/hosts?include=sandboxState",
+    const requested = new URL(String(url));
+    expect(requested.origin + requested.pathname).toBe(
+      "https://authn.example.test/api/v3/hosts",
     );
+    // `sandboxState` for the sandbox rows, `owner` for the team grouping.
+    expect(requested.searchParams.get("include")).toBe("sandboxState,owner");
     expect(init?.method).toBe("GET");
     expect((init?.headers as Record<string, string>).Authorization).toBe(
       "Bearer jwt-abc",
@@ -259,6 +263,53 @@ describe("hostListItemToDirectoryEntry", () => {
       hostListItemToDirectoryEntry(sandboxItem("suspended"), RELAY_BASE_URL)
         .sandbox?.frozen,
     ).toBe(true);
+  });
+});
+
+describe("hostListItemToDirectoryEntry - ownerTeamName (ticket E17)", () => {
+  const sandboxItem = (owner: HostOwnerPrincipal | undefined): HostListItem => {
+    const base: HostListItem = {
+      ...onlineItem(),
+      kind: "sandbox",
+      sandboxState: "awake",
+      sandboxFrozen: false,
+      profile: "agent",
+    };
+    return owner === undefined ? base : { ...base, owner };
+  };
+
+  it("is the team's name for a sandbox a team owns", () => {
+    const entry = hostListItemToDirectoryEntry(
+      sandboxItem({ kind: "team", id: "team-a", name: "Alpha" }),
+      RELAY_BASE_URL,
+    );
+    expect(entry.sandbox?.ownerTeamName).toBe("Alpha");
+  });
+
+  it("is null for a sandbox the user owns", () => {
+    const entry = hostListItemToDirectoryEntry(
+      sandboxItem({ kind: "user", id: "user-1" }),
+      RELAY_BASE_URL,
+    );
+    expect(entry.sandbox).not.toBeNull();
+    expect(entry.sandbox?.ownerTeamName).toBeNull();
+  });
+
+  it("is null for a row the registry sent without an owner", () => {
+    const entry = hostListItemToDirectoryEntry(
+      sandboxItem(undefined),
+      RELAY_BASE_URL,
+    );
+    expect(entry.sandbox).not.toBeNull();
+    expect(entry.sandbox?.ownerTeamName).toBeNull();
+  });
+
+  it("has no sandbox facts to carry it on a personal row, whatever its owner says", () => {
+    const entry = hostListItemToDirectoryEntry(
+      { ...onlineItem(), owner: { kind: "team", id: "team-a", name: "Alpha" } },
+      RELAY_BASE_URL,
+    );
+    expect(entry.sandbox).toBeNull();
   });
 });
 

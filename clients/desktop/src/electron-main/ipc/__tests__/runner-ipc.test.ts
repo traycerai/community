@@ -64,7 +64,7 @@ const runSandboxVerbViaHttpMock = vi.hoisted(() =>
 const getSandboxAutomationViaHttpMock = vi.hoisted(() =>
   vi.fn<typeof getSandboxAutomationViaHttp>(async () => ({
     kind: "ok",
-    automation: { available: true, sandbox: null },
+    automation: { available: true, sandbox: null, pods: [] },
   })),
 );
 const openSandboxAutomationViaHttpMock = vi.hoisted(() =>
@@ -1024,35 +1024,64 @@ describe("RunnerIpcBridge", () => {
       throw new Error("an Automations handler is missing");
     }
 
-    await expect(read(bareEvent(), "bearer-1")).resolves.toEqual({
+    await expect(read(bareEvent(), "bearer-1", null)).resolves.toEqual({
       kind: "ok",
-      automation: { available: true, sandbox: null },
+      automation: { available: true, sandbox: null, pods: [] },
     });
-    expect(getSandboxAutomationViaHttpMock).toHaveBeenCalledWith(
+    expect(getSandboxAutomationViaHttpMock).toHaveBeenLastCalledWith(
       config.serverBaseUrl,
       "bearer-1",
+      null,
     );
     expect(openSandboxAutomationViaHttpMock).not.toHaveBeenCalled();
 
-    await expect(open(bareEvent(), "bearer-2")).resolves.toEqual({
+    await read(bareEvent(), "bearer-1", "env-team");
+    expect(getSandboxAutomationViaHttpMock).toHaveBeenLastCalledWith(
+      config.serverBaseUrl,
+      "bearer-1",
+      "env-team",
+    );
+
+    await expect(open(bareEvent(), "bearer-2", null)).resolves.toEqual({
       kind: "network-error",
       detail: "unscripted",
     });
-    expect(openSandboxAutomationViaHttpMock).toHaveBeenCalledWith(
+    expect(openSandboxAutomationViaHttpMock).toHaveBeenLastCalledWith(
       config.serverBaseUrl,
       "bearer-2",
+      null,
+    );
+
+    await open(bareEvent(), "bearer-2", {
+      environmentId: "env-team",
+      ordinal: 1,
+    });
+    expect(openSandboxAutomationViaHttpMock).toHaveBeenLastCalledWith(
+      config.serverBaseUrl,
+      "bearer-2",
+      { environmentId: "env-team", ordinal: 1 },
     );
 
     for (const bad of [null, undefined, 7, {}]) {
-      await expect(read(bareEvent(), bad)).rejects.toThrow(
+      await expect(read(bareEvent(), bad, null)).rejects.toThrow(
         "getSandboxAutomation.bearerToken",
       );
-      await expect(open(bareEvent(), bad)).rejects.toThrow(
+      await expect(open(bareEvent(), bad, null)).rejects.toThrow(
         "openSandboxAutomation.bearerToken",
       );
     }
-    expect(getSandboxAutomationViaHttpMock).toHaveBeenCalledTimes(1);
-    expect(openSandboxAutomationViaHttpMock).toHaveBeenCalledTimes(1);
+    for (const bad of [undefined, 7, {}]) {
+      await expect(read(bareEvent(), "bearer-1", bad)).rejects.toThrow(
+        "getSandboxAutomation.environmentId",
+      );
+    }
+    for (const bad of [undefined, 7, "env-team", { ordinal: 1 }]) {
+      await expect(open(bareEvent(), "bearer-2", bad)).rejects.toThrow(
+        "openSandboxAutomation.target",
+      );
+    }
+    expect(getSandboxAutomationViaHttpMock).toHaveBeenCalledTimes(2);
+    expect(openSandboxAutomationViaHttpMock).toHaveBeenCalledTimes(2);
     bridge.dispose();
   });
 

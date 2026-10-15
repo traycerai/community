@@ -185,7 +185,12 @@ describe("the transport's refusal gate", () => {
 describe("hostTransportKeyFor - what OPEN presents is identity", () => {
   const personal = remoteEntry({ sandbox: null });
   const sandbox = remoteEntry({
-    sandbox: { state: "suspended", frozen: false, profile: null },
+    sandbox: {
+      state: "suspended",
+      frozen: false,
+      profile: null,
+      ownerTeamName: null,
+    },
   });
 
   it("keys a sandbox row apart from the same host projected as a personal one, so a stale read rebuilds the stream", () => {
@@ -203,7 +208,12 @@ describe("hostTransportKeyFor - what OPEN presents is identity", () => {
     expect(
       hostTransportKeyFor(
         remoteEntry({
-          sandbox: { state: "suspended", frozen: false, profile: null },
+          sandbox: {
+            state: "suspended",
+            frozen: false,
+            profile: null,
+            ownerTeamName: null,
+          },
         }),
         false,
       ),
@@ -213,7 +223,12 @@ describe("hostTransportKeyFor - what OPEN presents is identity", () => {
     expect(
       hostTransportKeyFor(
         remoteEntry({
-          sandbox: { state: "awake", frozen: false, profile: null },
+          sandbox: {
+            state: "awake",
+            frozen: false,
+            profile: null,
+            ownerTeamName: null,
+          },
         }),
         false,
       ),

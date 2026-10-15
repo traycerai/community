@@ -3,6 +3,7 @@ import {
   parseSandboxHeartbeatPhase,
   type SandboxKind,
   type SandboxLifecycleVerb,
+  type SandboxMember,
   type SandboxSummary,
 } from "@traycer/protocol/host/sandbox-control";
 import { frozenDestroyAt } from "@/lib/sandboxes/sandbox-balance";
@@ -129,6 +130,106 @@ export function sandboxFrozenLine(frozenAt: number | null): string {
   return frozenAt === null
     ? base
     : `${base} Destroyed on ${formatSandboxDay(frozenDestroyAt(frozenAt))}.`;
+}
+
+/**
+ * Who made a team sandbox (ticket E17), or `null` when the server does not
+ * say (a personal sandbox, or a server before the field).
+ */
+export function sandboxCreatorLine(
+  summary: SandboxSummary,
+  viewerUserId: string | null,
+): string | null {
+  const creator = summary.createdBy;
+  if (creator === null) return null;
+  return `Created by ${memberWords(creator, viewerUserId, CREATOR_WORDS)}`;
+}
+
+/**
+ * Whose bundle the running wake of a team sandbox is charged to, while it is
+ * awake; `null` asleep, frozen, or when the server names no payer.
+ */
+export function sandboxWakePayerLine(
+  state: HostSandboxState | null,
+  frozen: boolean,
+  summary: SandboxSummary,
+  viewerUserId: string | null,
+): string | null {
+  const payer = summary.wakePayer;
+  if (state !== "awake" || frozen || payer === null) return null;
+  return `This wake is on ${memberWords(payer, viewerUserId, PAYER_WORDS)} bundle`;
+}
+
+/** A frozen team sandbox: the paying member's bundle ran out. */
+export function sandboxTeamFrozenLine(
+  summary: SandboxSummary,
+  viewerUserId: string | null,
+): string {
+  const payer = summary.wakePayer;
+  if (payer === null) return "Frozen: its payer's bundle is out.";
+  if (viewerUserId !== null && payer.userId === viewerUserId) {
+    return "Frozen: your bundle is out.";
+  }
+  return payer.displayName === null
+    ? "Frozen: its payer's bundle is out."
+    : `Frozen: ${payer.displayName}'s bundle is out.`;
+}
+
+/** A team pod's room, from the pod list's `headroom` and `liveShells`. */
+export function sandboxPodRoomLine(
+  headroom: number,
+  liveShells: number,
+): string {
+  const room =
+    headroom === 0
+      ? "No room for another shell"
+      : `Room for ${headroom} more ${headroom === 1 ? "shell" : "shells"}`;
+  const live =
+    liveShells === 0
+      ? "no live shells"
+      : `${liveShells} live ${liveShells === 1 ? "shell" : "shells"}`;
+  return `${room} · ${live}`;
+}
+
+/**
+ * Whether the card mounts the personal cost view. The cost read lists only
+ * the person's own sandboxes, so a team card (pods included) has no entry in
+ * it; its payer line says whose bundle the wake is on instead.
+ */
+export function sandboxCardShowsCostView(teamOwned: boolean): boolean {
+  return !teamOwned;
+}
+
+/** How a line names a member: the viewer, a named member, an unnamed one. */
+interface MemberWords {
+  readonly viewer: string;
+  readonly named: (displayName: string) => string;
+  readonly unnamed: string;
+}
+
+const CREATOR_WORDS: MemberWords = {
+  viewer: "you",
+  named: (displayName) => displayName,
+  unnamed: "a team member",
+};
+
+const PAYER_WORDS: MemberWords = {
+  viewer: "your",
+  named: (displayName) => `${displayName}'s`,
+  unnamed: "a team member's",
+};
+
+function memberWords(
+  member: SandboxMember,
+  viewerUserId: string | null,
+  words: MemberWords,
+): string {
+  if (viewerUserId !== null && member.userId === viewerUserId) {
+    return words.viewer;
+  }
+  return member.displayName === null
+    ? words.unnamed
+    : words.named(member.displayName);
 }
 
 /** The card's one-line description of where the sandbox is. */

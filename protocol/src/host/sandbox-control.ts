@@ -287,13 +287,37 @@ export const sandboxListResponseSchema: z.ZodType<SandboxListResponse> =
   );
 
 /**
- * `GET /api/sandboxes/automation`: the user's Automations host. `available`
- * is false on a deployment with no Automations cluster; `sandbox` is `null`
- * until the row first exists (the first open creates it).
+ * One Automations pod as `GET /api/sandboxes/automation` lists it (E14
+ * checkpoint 5): its row, its slot, the shells its host last reported (0 once
+ * that report is stale) and the shells it can still take.
+ */
+export interface SandboxPod {
+  readonly sandbox: SandboxSummary;
+  readonly ordinal: number;
+  readonly liveShells: number;
+  readonly headroom: number;
+}
+
+export const sandboxPodSchema: z.ZodType<SandboxPod> = lazySchema(() =>
+  z.object({
+    sandbox: sandboxSummarySchema,
+    ordinal: z.number().int().nonnegative(),
+    liveShells: z.number().int().nonnegative(),
+    headroom: z.number().int().nonnegative(),
+  }),
+);
+
+/**
+ * `GET /api/sandboxes/automation`: the environment's Automations host.
+ * `available` is false on a deployment with no Automations cluster;
+ * `sandbox` is `null` until the row first exists (the first open creates
+ * it). `pods` lists every live pod (a team's may hold several); `[]` from a
+ * server before the pod list (ticket E17 reads it).
  */
 export interface SandboxAutomationResponse {
   readonly available: boolean;
   readonly sandbox: SandboxSummary | null;
+  readonly pods: readonly SandboxPod[];
 }
 
 export const sandboxAutomationResponseSchema: z.ZodType<SandboxAutomationResponse> =
@@ -301,8 +325,20 @@ export const sandboxAutomationResponseSchema: z.ZodType<SandboxAutomationRespons
     z.object({
       available: z.boolean(),
       sandbox: sandboxSummarySchema.nullable(),
+      pods: z.array(sandboxPodSchema).default([]),
     }),
   );
+
+/**
+ * `POST /api/sandboxes/automation`'s body for a named environment (E14
+ * checkpoint 5): a team's pods are opened by environment, and `ordinal`
+ * names the pod (the shell picker's choice) or is `null` for the one with
+ * headroom. The personal open sends no body.
+ */
+export interface SandboxAutomationOpenTarget {
+  readonly environmentId: string;
+  readonly ordinal: number | null;
+}
 
 /**
  * `POST /api/sandboxes/automation` (`200` awake, `202` still creating or
@@ -484,6 +520,11 @@ export interface SandboxRefusalBody {
   readonly shortfallMc?: number | null;
   readonly newRateMcPerHour?: number | null;
   readonly currentAwakeBurnMcPerHour?: number | null;
+  /**
+   * A server-composed sentence a refusal carries for the person, rendered
+   * verbatim (`team_pods_full` names the team and its admins).
+   */
+  readonly message?: string | null;
 }
 
 export const sandboxRefusalBodySchema: z.ZodType<SandboxRefusalBody> =
@@ -494,6 +535,7 @@ export const sandboxRefusalBodySchema: z.ZodType<SandboxRefusalBody> =
       shortfallMc: z.number().nullable().optional(),
       newRateMcPerHour: z.number().nullable().optional(),
       currentAwakeBurnMcPerHour: z.number().nullable().optional(),
+      message: z.string().nullable().optional(),
     }),
   );
 
@@ -507,6 +549,8 @@ export const SANDBOX_REFUSAL_CODE_BUSY = "sandbox_busy";
 export const SANDBOX_REFUSAL_CODE_FROZEN = "sandbox_frozen";
 export const SANDBOX_REFUSAL_CODE_NOT_FOUND = "sandbox_not_found";
 export const SANDBOX_REFUSAL_CODE_VERB_NOT_AVAILABLE = "verb_not_available";
+/** Every team pod awake at its cap; the refusal's `message` says so. */
+export const SANDBOX_REFUSAL_CODE_TEAM_PODS_FULL = "team_pods_full";
 
 // -----------------------------------------------------------------------------
 // Lifecycle verbs

@@ -33,15 +33,19 @@ export const sandboxQueryKeys = {
   // Under `registeredHostsAll` like the list: the Automations row is a host
   // list row once it exists, so the same tick and the same invalidation
   // refresh it.
+  // Per environment: a team's pods are one read per team, shared by every
+  // pod card of it; `null` is the person's own Automations host.
   automation: (
     authService: object,
     userId: string | null,
+    environmentId: string | null,
   ): readonly unknown[] => [
     "auth",
     "registered-hosts",
     "sandbox-automation",
     authService,
     userId,
+    environmentId,
   ],
   automationMissing: (): readonly unknown[] => [
     "auth",

@@ -182,6 +182,7 @@ describe("runSandboxVerbViaHttp", () => {
       shortfallMc: null,
       newRateMcPerHour: null,
       currentAwakeBurnMcPerHour: null,
+      message: null,
     });
   });
 
@@ -227,6 +228,7 @@ describe("runSandboxVerbViaHttp", () => {
       shortfallMc: 70,
       newRateMcPerHour: 120,
       currentAwakeBurnMcPerHour: 60,
+      message: null,
     });
   });
 
@@ -588,7 +590,7 @@ describe("getSandboxAutomationViaHttp", () => {
     const fetchMock = stubFetch(async () =>
       jsonResponse(200, { available: true, sandbox: automationRow }),
     );
-    const result = await getSandboxAutomationViaHttp(BASE, BEARER);
+    const result = await getSandboxAutomationViaHttp(BASE, BEARER, null);
     const [url, init] = fetchMock.mock.calls[0];
     expect(String(url)).toBe(`${BASE}/api/sandboxes/automation`);
     expect(init?.method).toBe("GET");
@@ -600,36 +602,87 @@ describe("getSandboxAutomationViaHttp", () => {
     }
   });
 
+  it("sends no environmentId for the caller's own host", async () => {
+    const fetchMock = stubFetch(async () =>
+      jsonResponse(200, { available: true, sandbox: null }),
+    );
+    await getSandboxAutomationViaHttp(BASE, BEARER, null);
+    const url = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(url.pathname).toBe("/api/sandboxes/automation");
+    expect(url.searchParams.has("environmentId")).toBe(false);
+    expect(url.search).toBe("");
+  });
+
+  it("sends the team's environmentId as a query parameter", async () => {
+    const fetchMock = stubFetch(async () =>
+      jsonResponse(200, { available: true, sandbox: null }),
+    );
+    await getSandboxAutomationViaHttp(BASE, BEARER, "env_team 1");
+    const url = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(url.pathname).toBe("/api/sandboxes/automation");
+    expect(url.searchParams.get("environmentId")).toBe("env_team 1");
+    expect(fetchMock.mock.calls[0][1]?.method).toBe("GET");
+  });
+
+  it("reads a body with no pods as an empty pod list", async () => {
+    stubFetch(async () =>
+      jsonResponse(200, { available: true, sandbox: null }),
+    );
+    const result = await getSandboxAutomationViaHttp(BASE, BEARER, null);
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") expect(result.automation.pods).toEqual([]);
+  });
+
+  it("parses a team's pod list", async () => {
+    const pod = { ...SUMMARY, kind: "automation" };
+    stubFetch(async () =>
+      jsonResponse(200, {
+        available: true,
+        sandbox: null,
+        pods: [{ sandbox: pod, ordinal: 2, liveShells: 3, headroom: 5 }],
+      }),
+    );
+    const result = await getSandboxAutomationViaHttp(BASE, BEARER, "env_1");
+    expect(result.kind).toBe("ok");
+    if (result.kind === "ok") {
+      expect(result.automation.pods).toHaveLength(1);
+      expect(result.automation.pods[0].ordinal).toBe(2);
+      expect(result.automation.pods[0].liveShells).toBe(3);
+      expect(result.automation.pods[0].headroom).toBe(5);
+      expect(result.automation.pods[0].sandbox.kind).toBe("automation");
+    }
+  });
+
   it("reads available with no row", async () => {
     stubFetch(async () =>
       jsonResponse(200, { available: true, sandbox: null }),
     );
-    expect(await getSandboxAutomationViaHttp(BASE, BEARER)).toEqual({
+    expect(await getSandboxAutomationViaHttp(BASE, BEARER, null)).toEqual({
       kind: "ok",
-      automation: { available: true, sandbox: null },
+      automation: { available: true, sandbox: null, pods: [] },
     });
   });
 
   it("reads a typed sandbox_not_found 404 as not available, never a failure", async () => {
     stubFetch(async () => jsonResponse(404, { code: "sandbox_not_found" }));
-    expect(await getSandboxAutomationViaHttp(BASE, BEARER)).toEqual({
+    expect(await getSandboxAutomationViaHttp(BASE, BEARER, null)).toEqual({
       kind: "ok",
-      automation: { available: false, sandbox: null },
+      automation: { available: false, sandbox: null, pods: [] },
     });
   });
 
   it("reads a bare 404 as not available", async () => {
     stubFetch(async () => new Response("Not Found", { status: 404 }));
-    expect(await getSandboxAutomationViaHttp(BASE, BEARER)).toEqual({
+    expect(await getSandboxAutomationViaHttp(BASE, BEARER, null)).toEqual({
       kind: "ok",
-      automation: { available: false, sandbox: null },
+      automation: { available: false, sandbox: null, pods: [] },
     });
   });
 
   it("maps 401 and 403 to unauthorized", async () => {
     for (const status of [401, 403]) {
       stubFetch(async () => jsonResponse(status, {}));
-      expect(await getSandboxAutomationViaHttp(BASE, BEARER)).toEqual({
+      expect(await getSandboxAutomationViaHttp(BASE, BEARER, null)).toEqual({
         kind: "unauthorized",
       });
     }
@@ -637,7 +690,7 @@ describe("getSandboxAutomationViaHttp", () => {
 
   it("reads a malformed body as a network error", async () => {
     stubFetch(async () => jsonResponse(200, { available: "yes" }));
-    expect(await getSandboxAutomationViaHttp(BASE, BEARER)).toEqual({
+    expect(await getSandboxAutomationViaHttp(BASE, BEARER, null)).toEqual({
       kind: "network-error",
       detail: "the Automations read did not match the contract",
     });
@@ -651,7 +704,7 @@ describe("openSandboxAutomationViaHttp", () => {
     const fetchMock = stubFetch(async () =>
       jsonResponse(200, { sandbox: row }),
     );
-    const result = await openSandboxAutomationViaHttp(BASE, BEARER);
+    const result = await openSandboxAutomationViaHttp(BASE, BEARER, null);
     const [url, init] = fetchMock.mock.calls[0];
     expect(String(url)).toBe(`${BASE}/api/sandboxes/automation`);
     expect(init?.method).toBe("POST");
@@ -660,9 +713,79 @@ describe("openSandboxAutomationViaHttp", () => {
     if (result.kind === "ok") expect(result.settled).toBe(true);
   });
 
+  it("POSTs the team's environment and the pod's ordinal as the JSON body", async () => {
+    const fetchMock = stubFetch(async () =>
+      jsonResponse(200, { sandbox: row }),
+    );
+    const result = await openSandboxAutomationViaHttp(BASE, BEARER, {
+      environmentId: "env_team",
+      ordinal: 2,
+    });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(String(url)).toBe(`${BASE}/api/sandboxes/automation`);
+    expect(init?.method).toBe("POST");
+    expect(init?.headers).toMatchObject({
+      Authorization: `Bearer ${BEARER}`,
+      "Content-Type": "application/json",
+    });
+    expect(JSON.parse(String(init?.body))).toEqual({
+      environmentId: "env_team",
+      ordinal: 2,
+    });
+    expect(result.kind).toBe("ok");
+  });
+
+  it("sends a null ordinal as null, so the server picks the pod", async () => {
+    const fetchMock = stubFetch(async () =>
+      jsonResponse(200, { sandbox: row }),
+    );
+    await openSandboxAutomationViaHttp(BASE, BEARER, {
+      environmentId: "env_team",
+      ordinal: null,
+    });
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
+      environmentId: "env_team",
+      ordinal: null,
+    });
+  });
+
+  it("carries a 409 team_pods_full refusal's message verbatim", async () => {
+    stubFetch(async () =>
+      jsonResponse(409, {
+        code: "team_pods_full",
+        message: "Every pod of Alpha is full. Ask an admin to add one.",
+      }),
+    );
+    expect(
+      await openSandboxAutomationViaHttp(BASE, BEARER, {
+        environmentId: "env_team",
+        ordinal: null,
+      }),
+    ).toEqual({
+      kind: "refused",
+      status: 409,
+      code: "team_pods_full",
+      reason: null,
+      shortfallMc: null,
+      newRateMcPerHour: null,
+      currentAwakeBurnMcPerHour: null,
+      message: "Every pod of Alpha is full. Ask an admin to add one.",
+    });
+  });
+
+  it("carries a null message for a refusal that sends none", async () => {
+    stubFetch(async () => jsonResponse(409, { code: "team_pods_full" }));
+    expect(
+      await openSandboxAutomationViaHttp(BASE, BEARER, {
+        environmentId: "env_team",
+        ordinal: null,
+      }),
+    ).toMatchObject({ kind: "refused", code: "team_pods_full", message: null });
+  });
+
   it("reads 202 as not yet settled", async () => {
     stubFetch(async () => jsonResponse(202, { sandbox: row }));
-    const result = await openSandboxAutomationViaHttp(BASE, BEARER);
+    const result = await openSandboxAutomationViaHttp(BASE, BEARER, null);
     expect(result.kind).toBe("ok");
     if (result.kind === "ok") expect(result.settled).toBe(false);
   });
@@ -672,7 +795,7 @@ describe("openSandboxAutomationViaHttp", () => {
       stubFetch(async () =>
         jsonResponse(status, { code: "verb_not_available" }),
       );
-      expect(await openSandboxAutomationViaHttp(BASE, BEARER)).toMatchObject({
+      expect(await openSandboxAutomationViaHttp(BASE, BEARER, null)).toMatchObject({
         kind: "refused",
         status,
       });
@@ -844,6 +967,7 @@ describe("ensureSandboxAwake", () => {
           shortfallMc: null,
           newRateMcPerHour: null,
           currentAwakeBurnMcPerHour: null,
+          message: null,
         }),
         reads: [awake],
       }),
@@ -949,6 +1073,7 @@ describe("ensureSandboxAwake", () => {
           shortfallMc: 70,
           newRateMcPerHour: 120,
           currentAwakeBurnMcPerHour: 60,
+          message: null,
         }),
         reads: [awake],
       }),
@@ -969,6 +1094,7 @@ describe("ensureSandboxAwake", () => {
       shortfallMc: null,
       newRateMcPerHour: null,
       currentAwakeBurnMcPerHour: null,
+      message: null,
     });
     expect(
       await ensureSandboxAwake(
@@ -1163,6 +1289,7 @@ describe("ensureSandboxAwake", () => {
         shortfallMc: null,
         newRateMcPerHour: null,
         currentAwakeBurnMcPerHour: null,
+        message: null,
       };
       const cases: readonly {
         readonly name: string;

@@ -43,6 +43,7 @@ import {
   assertString,
   parseDesktopAuthSession,
   parseMintHostCredentialRequest,
+  parseSandboxAutomationOpenTarget,
   parseSandboxCreateRequest,
   parseSandboxLifecycleVerb,
   parseSecretRequestDecision,
@@ -299,17 +300,26 @@ export function registerAuthIpc(bridge: RunnerIpcBridge): void {
 
   bridge.handleInvoke(
     RunnerHostInvoke.getSandboxAutomation,
-    async (_event, bearerToken: unknown) => {
+    async (_event, bearerToken: unknown, environmentId: unknown) => {
       assertString(bearerToken, "getSandboxAutomation.bearerToken");
-      return getSandboxAutomationViaHttp(config.serverBaseUrl, bearerToken);
+      assertNullableString(environmentId, "getSandboxAutomation.environmentId");
+      return getSandboxAutomationViaHttp(
+        config.serverBaseUrl,
+        bearerToken,
+        environmentId,
+      );
     },
   );
 
   bridge.handleInvoke(
     RunnerHostInvoke.openSandboxAutomation,
-    async (_event, bearerToken: unknown) => {
+    async (_event, bearerToken: unknown, target: unknown) => {
       assertString(bearerToken, "openSandboxAutomation.bearerToken");
-      return openSandboxAutomationViaHttp(config.serverBaseUrl, bearerToken);
+      return openSandboxAutomationViaHttp(
+        config.serverBaseUrl,
+        bearerToken,
+        parseSandboxAutomationOpenTarget(target),
+      );
     },
   );
 

@@ -36,6 +36,7 @@ export {
 import { normalizeDesktopAuthSession } from "../auth/desktop-auth-session";
 import type { UpdateHostVersionPolicyInput } from "@traycer-clients/shared/host-client/host-version-policy-fetcher";
 import type {
+  SandboxAutomationOpenTarget,
   SandboxCreateRequest,
   SandboxLifecycleVerb,
 } from "@traycer/protocol/host/sandbox-control";
@@ -568,6 +569,36 @@ export function parseSandboxCreateRequest(
     environmentId: nullOr(obj.environmentId, (v) =>
       requireNonEmptyString(v, "createSandbox.request.environmentId"),
     ),
+  };
+}
+
+/**
+ * Parses the renderer-supplied Automations open target: `null` (the
+ * caller's own host, no body) or a team environment and the pod's slot. A
+ * malformed target throws, like a malformed create: a guessed one would open
+ * another pod than the one picked.
+ */
+export function parseSandboxAutomationOpenTarget(
+  value: unknown,
+): SandboxAutomationOpenTarget | null {
+  if (value === null) return null;
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("openSandboxAutomation.target must be an object or null");
+  }
+  const obj = value as Record<string, unknown>;
+  return {
+    environmentId: requireNonEmptyString(
+      obj.environmentId,
+      "openSandboxAutomation.target.environmentId",
+    ),
+    ordinal: nullOr(obj.ordinal, (v) => {
+      if (typeof v !== "number" || !Number.isInteger(v) || v < 0) {
+        throw new Error(
+          "openSandboxAutomation.target.ordinal must be a non-negative integer",
+        );
+      }
+      return v;
+    }),
   };
 }
 

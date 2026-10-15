@@ -517,8 +517,10 @@ export function HostSwitcher(props: {
 /**
  * The list's host groups: personal hosts under "Host", then the user's
  * sandboxes in a collapsible group below them, then (host list only) the
- * agent-created burst sandboxes in a sub-group that starts collapsed. A search
- * opens every group, so a match is never hidden behind a closed one.
+ * agent-created burst sandboxes in a sub-group that starts collapsed, then
+ * one group per team the person is in, named for the team, each with its own
+ * collapsed agent sub-group. A search opens every group, so a match is never
+ * hidden behind a closed one.
  */
 function HostSwitcherGroups(props: {
   readonly hosts: readonly HostScopeOption[];
@@ -567,6 +569,29 @@ function HostSwitcherGroups(props: {
           {groups.agentSandboxes.map(props.renderRow)}
         </HostSwitcherSandboxGroup>
       )}
+      {groups.teams.map((team) => (
+        <HostSwitcherSandboxGroup
+          key={team.teamId}
+          title={team.teamName}
+          count={team.sandboxes.length + team.agentSandboxes.length}
+          defaultOpen
+          forceOpen={props.searching}
+          testId={`settings-host-switcher-team-${team.teamId}`}
+        >
+          {team.sandboxes.map(props.renderRow)}
+          {team.agentSandboxes.length === 0 ? null : (
+            <HostSwitcherCollapsible
+              title="Agent sandboxes"
+              count={team.agentSandboxes.length}
+              defaultOpen={false}
+              forceOpen={props.searching}
+              testId={`settings-host-switcher-team-${team.teamId}-agent-sandboxes`}
+            >
+              {team.agentSandboxes.map(props.renderRow)}
+            </HostSwitcherCollapsible>
+          )}
+        </HostSwitcherSandboxGroup>
+      ))}
     </>
   );
 }
@@ -579,10 +604,36 @@ function HostSwitcherSandboxGroup(props: {
   readonly testId: string;
   readonly children: ReactNode;
 }): ReactNode {
+  return (
+    <CommandGroup>
+      <HostSwitcherCollapsible
+        title={props.title}
+        count={props.count}
+        defaultOpen={props.defaultOpen}
+        forceOpen={props.forceOpen}
+        testId={props.testId}
+      >
+        {props.children}
+      </HostSwitcherCollapsible>
+    </CommandGroup>
+  );
+}
+
+/**
+ * A collapsible titled run of rows. Not a `CommandGroup` itself, so a team's
+ * agent sub-group can sit inside the team's group.
+ */
+function HostSwitcherCollapsible(props: {
+  readonly title: string;
+  readonly count: number;
+  readonly defaultOpen: boolean;
+  readonly forceOpen: boolean;
+  readonly testId: string;
+  readonly children: ReactNode;
+}): ReactNode {
   const [open, setOpen] = useState(props.defaultOpen);
   const expanded = open || props.forceOpen;
   return (
-    <CommandGroup>
       <Collapsible
         open={expanded}
         onOpenChange={setOpen}
@@ -606,7 +657,6 @@ function HostSwitcherSandboxGroup(props: {
         </CollapsibleTrigger>
         <CollapsibleContent>{props.children}</CollapsibleContent>
       </Collapsible>
-    </CommandGroup>
   );
 }
 

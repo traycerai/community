@@ -10,6 +10,7 @@ import {
   type SandboxWakeBudget,
   type SandboxWakeOutcome,
 } from "@traycer-clients/shared/host-client/sandbox-control";
+import { isRemoteHostDirectoryEntry } from "@traycer-clients/shared/host-client/remote-fetcher";
 import type { AuthService } from "@/lib/auth/auth-service";
 import { isSleepingSandboxPick } from "@/components/settings/host-scope/host-option-model";
 import type { HostScopeOption } from "@/components/settings/host-scope/host-scope-model";
@@ -19,6 +20,10 @@ import { queryClient } from "@/lib/query-client";
 import { authQueryKeys, sandboxMutationKeys } from "@/lib/query-keys";
 import { signedInUserId } from "@/lib/sandboxes/sandbox-account-fence";
 import { formatCreditsRequired } from "@/lib/sandboxes/sandbox-pricing";
+import {
+  confirmTeamWake,
+  teamWakeAsks,
+} from "@/stores/hosts/team-wake-confirm-store";
 
 /** How often the sandbox list is re-read while a wake is under way. */
 const WAKE_POLL_INTERVAL_MS = 2_000;
@@ -267,7 +272,8 @@ interface SandboxWakeBinding {
  * in flight for the host rather than resuming it twice, and reports the
  * outcome once, from the call that started it. On any answer the directory
  * and the host list are refreshed, so a woken host dials the moment it is
- * listed `awake`.
+ * listed `awake`. A team sandbox asks first (`confirmTeamWake`): the wake
+ * runs only on the person's Resume.
  *
  * Imperative (a `MutationObserver` per call) because a picker learns the host
  * at pick time, while a hook's mutation key is fixed when it mounts.
@@ -287,6 +293,24 @@ export function startSandboxWake(
     toast.warning("Couldn't wake this sandbox", { description: unavailable });
     return;
   }
+  // A team sandbox asks before its wake bills the person opening it, unless
+  // a wake for it is already running: joining that one bills nobody new.
+  const entry = directory.findById(hostId);
+  const facts =
+    entry !== null && isRemoteHostDirectoryEntry(entry) ? entry.sandbox : null;
+  const asks =
+    facts !== null &&
+    teamWakeAsks(facts.ownerTeamName !== null, facts.profile, facts.frozen) &&
+    client.isMutating({ mutationKey: sandboxMutationKeys.wake(hostId) }) === 0;
+  confirmTeamWake(asks, () => runSandboxWake(client, auth, directory, hostId));
+}
+
+function runSandboxWake(
+  client: QueryClient,
+  auth: AuthService,
+  directory: HostDirectoryService,
+  hostId: string,
+): void {
   // The account this wake runs for. A wake that ends under another account
   // stops polling (see `readSandboxFacts`), and reports and refreshes nothing:
   // its outcome, a credit shortfall included, is the first account's. The next

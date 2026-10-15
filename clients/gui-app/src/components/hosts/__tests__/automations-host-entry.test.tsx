@@ -62,6 +62,7 @@ function offered(available: boolean, withRow: boolean): void {
     automation: {
       available,
       sandbox: withRow ? sandboxSummaryFixture({ kind: "automation" }) : null,
+      pods: [],
     },
   });
 }
@@ -145,6 +146,11 @@ describe("<AutomationsHostEntry />", () => {
       expect(mocks.toastSuccess).toHaveBeenCalledWith("Automations started");
     });
     expect(mocks.binding?.auth.openSandboxAutomation).toHaveBeenCalledTimes(1);
+    // The person's own host: no team environment, no pod to name.
+    expect(mocks.binding?.auth.openSandboxAutomation).toHaveBeenCalledWith(
+      null,
+    );
+    expect(mocks.binding?.auth.getSandboxAutomation).toHaveBeenCalledWith(null);
     expect(mocks.binding?.auth.runSandboxVerb).not.toHaveBeenCalled();
     expect(mocks.binding?.directory.refresh).toHaveBeenCalledTimes(1);
   });

@@ -215,11 +215,14 @@ describe("useSandboxAutomationOpen", () => {
 
     let outcome: boolean | null = null;
     await act(async () => {
-      outcome = await result.current.mutateAsync();
+      outcome = await result.current.mutateAsync(null);
     });
 
     expect(outcome).toBe(true);
     expect(state.binding?.auth.openSandboxAutomation).toHaveBeenCalledTimes(1);
+    expect(state.binding?.auth.openSandboxAutomation).toHaveBeenCalledWith(
+      null,
+    );
     expect(state.binding?.directory.refresh).toHaveBeenCalledTimes(1);
     expect(invalidatedKeys(invalidate)).toEqual([REGISTERED_HOSTS_KEY]);
     expect(state.toastFromAuthError).not.toHaveBeenCalled();
@@ -237,7 +240,7 @@ describe("useSandboxAutomationOpen", () => {
 
     let outcome: boolean | null = null;
     await act(async () => {
-      outcome = await result.current.mutateAsync();
+      outcome = await result.current.mutateAsync(null);
     });
     expect(outcome).toBe(false);
   });
@@ -252,7 +255,7 @@ describe("useSandboxAutomationOpen", () => {
     });
 
     await act(async () => {
-      await expect(result.current.mutateAsync()).rejects.toThrow();
+      await expect(result.current.mutateAsync(null)).rejects.toThrow();
     });
 
     expect(state.toastFromAuthError).toHaveBeenCalledTimes(1);
@@ -263,6 +266,41 @@ describe("useSandboxAutomationOpen", () => {
     expect(invalidatedKeys(invalidate)).toEqual([REGISTERED_HOSTS_KEY]);
   });
 
+  it("opens a team's pod by its environment and ordinal, and toasts a refusal under the pod title", async () => {
+    const target = { environmentId: "env_team", ordinal: 2 };
+    state.binding?.auth.openSandboxAutomation.mockResolvedValueOnce({
+      ...OPENED,
+      settled: true,
+    });
+    const { wrapper } = setup();
+    const { result } = renderHook(() => useSandboxAutomationOpen(), {
+      wrapper,
+    });
+
+    let outcome: boolean | null = null;
+    await act(async () => {
+      outcome = await result.current.mutateAsync(target);
+    });
+    expect(outcome).toBe(true);
+    expect(state.binding?.auth.openSandboxAutomation).toHaveBeenCalledWith(
+      target,
+    );
+
+    state.binding?.auth.openSandboxAutomation.mockResolvedValueOnce({
+      ...refusal(409, "team_pods_full"),
+      message: "Every pod of Alpha is full. Ask an admin to add one.",
+    });
+    await act(async () => {
+      await expect(result.current.mutateAsync(target)).rejects.toThrow(
+        "Every pod of Alpha is full. Ask an admin to add one.",
+      );
+    });
+    expect(state.toastFromAuthError).toHaveBeenCalledTimes(1);
+    expect(state.toastFromAuthError.mock.calls[0][1]).toBe(
+      "Couldn't open this team pod.",
+    );
+  });
+
   it("fails with a sign-in message, calling nothing, when no one is signed in", async () => {
     state.binding = null;
     const { wrapper } = setup();
@@ -270,7 +308,7 @@ describe("useSandboxAutomationOpen", () => {
       wrapper,
     });
     await act(async () => {
-      await expect(result.current.mutateAsync()).rejects.toThrow(
+      await expect(result.current.mutateAsync(null)).rejects.toThrow(
         "Sign in to start Automations.",
       );
     });

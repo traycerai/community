@@ -27,6 +27,7 @@ import {
   type ExecutableWriteGrantFetchResult,
 } from "../executable-write-grant";
 import type {
+  SandboxAutomationOpenTarget,
   SandboxCreateRequest,
   SandboxLifecycleVerb,
 } from "@traycer/protocol/host/sandbox-control";
@@ -666,14 +667,24 @@ export class MockRunnerHost implements IRunnerHost {
 
   getSandboxAutomation(
     bearerToken: string,
+    environmentId: string | null,
   ): Promise<SandboxAutomationFetchResult> {
-    return getSandboxAutomationViaHttp(this.serverBaseUrl, bearerToken);
+    return getSandboxAutomationViaHttp(
+      this.serverBaseUrl,
+      bearerToken,
+      environmentId,
+    );
   }
 
   openSandboxAutomation(
     bearerToken: string,
+    target: SandboxAutomationOpenTarget | null,
   ): Promise<SandboxAutomationOpenFetchResult> {
-    return openSandboxAutomationViaHttp(this.serverBaseUrl, bearerToken);
+    return openSandboxAutomationViaHttp(
+      this.serverBaseUrl,
+      bearerToken,
+      target,
+    );
   }
 
   getSandboxGrants(

@@ -485,10 +485,44 @@ export function hostOptionCanActivate(host: HostScopeOption): boolean {
   return hostOptionPickerGroup(host, false, false) !== "hidden";
 }
 
+/**
+ * One team's hosts in a list (ticket E17): its sandboxes and pods, and the
+ * burst ones an agent made, under the team's name.
+ */
+export interface HostTeamGroup {
+  readonly teamId: string;
+  readonly teamName: string;
+  readonly sandboxes: readonly HostScopeOption[];
+  readonly agentSandboxes: readonly HostScopeOption[];
+}
+
 export interface HostPickerGroups {
   readonly personal: readonly HostScopeOption[];
   readonly sandboxes: readonly HostScopeOption[];
   readonly agentSandboxes: readonly HostScopeOption[];
+  /** Ordered by team name, then id. */
+  readonly teams: readonly HostTeamGroup[];
+}
+
+/**
+ * The team that owns a sandbox row, from its registry `owner`, or `null`: a
+ * personal host, a sandbox the person owns, and a row whose registry carries
+ * no `owner` (an authn from before it) all stay in the person's own groups.
+ */
+export function hostOptionTeamOwner(
+  host: HostScopeOption,
+): { readonly teamId: string; readonly teamName: string } | null {
+  if (host.sandbox === null) return null;
+  const owner = host.item?.owner ?? null;
+  if (owner === null || owner.kind !== "team") return null;
+  return { teamId: owner.id, teamName: owner.name };
+}
+
+interface MutableTeamGroup {
+  readonly teamId: string;
+  readonly teamName: string;
+  readonly sandboxes: HostScopeOption[];
+  readonly agentSandboxes: HostScopeOption[];
 }
 
 /**
@@ -506,18 +540,44 @@ export function groupHostOptions(
   const personal: HostScopeOption[] = [];
   const sandboxes: HostScopeOption[] = [];
   const agentSandboxes: HostScopeOption[] = [];
+  const teams = new Map<string, MutableTeamGroup>();
   for (const host of hosts) {
     const group = hostOptionPickerGroup(
       host,
       listsAgentSandboxes,
       offersAutomations,
     );
+    const owner = hostOptionTeamOwner(host);
+    let target = { sandboxes, agentSandboxes };
+    if (owner !== null) {
+      const team = teams.get(owner.teamId) ?? {
+        teamId: owner.teamId,
+        teamName: owner.teamName,
+        sandboxes: [],
+        agentSandboxes: [],
+      };
+      teams.set(owner.teamId, team);
+      target = team;
+    }
     if (group === "personal") personal.push(host);
-    else if (group === "sandbox") sandboxes.push(host);
-    else if (group === "agent-sandbox") agentSandboxes.push(host);
-    else if (host.hostId === keepHostId) sandboxes.push(host);
+    else if (group === "sandbox") target.sandboxes.push(host);
+    else if (group === "agent-sandbox") target.agentSandboxes.push(host);
+    else if (host.hostId === keepHostId) target.sandboxes.push(host);
   }
-  return { personal, sandboxes, agentSandboxes };
+  return {
+    personal,
+    sandboxes,
+    agentSandboxes,
+    teams: [...teams.values()]
+      .filter(
+        (team) => team.sandboxes.length > 0 || team.agentSandboxes.length > 0,
+      )
+      .sort(
+        (a, b) =>
+          a.teamName.localeCompare(b.teamName) ||
+          a.teamId.localeCompare(b.teamId),
+      ),
+  };
 }
 
 /**
@@ -563,12 +623,17 @@ export function credentialTargetHostOptions(
 /**
  * {@link groupHostOptions} flattened for a surface that draws one flat list
  * (the account menu, the browser sidebar): personal hosts first, then the
- * pickable sandboxes, never a burst one.
+ * person's own pickable sandboxes, then each team's in team order, never a
+ * burst one.
  */
 export function pickableHostOptions(
   hosts: readonly HostScopeOption[],
   keepHostId: string | null,
 ): readonly HostScopeOption[] {
   const groups = groupHostOptions(hosts, false, false, keepHostId);
-  return [...groups.personal, ...groups.sandboxes];
+  return [
+    ...groups.personal,
+    ...groups.sandboxes,
+    ...groups.teams.flatMap((team) => team.sandboxes),
+  ];
 }

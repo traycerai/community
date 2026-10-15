@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   assertNullableString,
   parseQuitDecision,
+  parseSandboxAutomationOpenTarget,
   parseSandboxCreateRequest,
   parseSandboxLifecycleVerb,
   parseSecretRequestDecision,
@@ -225,6 +226,75 @@ describe("parseSandboxCreateRequest", () => {
       expect(() =>
         parseSandboxCreateRequest({ ...VALID, ...override }),
       ).toThrow(`createSandbox.request.${field}`);
+    }
+  });
+});
+
+// The renderer's `openSandboxAutomation` target crosses IPC as `unknown` and
+// names the pod a team's open wakes (or creates): a guessed target would open
+// another pod than the one picked, so a malformed one throws.
+describe("parseSandboxAutomationOpenTarget", () => {
+  it("keeps null as null: the caller's own Automations host, no body", () => {
+    expect(parseSandboxAutomationOpenTarget(null)).toBeNull();
+  });
+
+  it("returns a valid target unchanged", () => {
+    expect(
+      parseSandboxAutomationOpenTarget({ environmentId: "env_1", ordinal: 2 }),
+    ).toEqual({ environmentId: "env_1", ordinal: 2 });
+  });
+
+  it("accepts ordinal 0, the first pod", () => {
+    expect(
+      parseSandboxAutomationOpenTarget({ environmentId: "env_1", ordinal: 0 }),
+    ).toEqual({ environmentId: "env_1", ordinal: 0 });
+  });
+
+  it("keeps a null ordinal as null: the server picks the pod with headroom", () => {
+    expect(
+      parseSandboxAutomationOpenTarget({
+        environmentId: "env_1",
+        ordinal: null,
+      }),
+    ).toEqual({ environmentId: "env_1", ordinal: null });
+  });
+
+  it("drops a field it does not know rather than forwarding it", () => {
+    const parsed = parseSandboxAutomationOpenTarget({
+      environmentId: "env_1",
+      ordinal: 1,
+      userId: "other",
+    });
+    expect(Object.keys(parsed ?? {}).sort()).toEqual([
+      "environmentId",
+      "ordinal",
+    ]);
+  });
+
+  it("throws on a target that is neither null nor an object", () => {
+    for (const bad of [undefined, "env_1", 3, true, [{ environmentId: "e" }]]) {
+      expect(() => parseSandboxAutomationOpenTarget(bad)).toThrow(
+        "openSandboxAutomation.target must be an object or null",
+      );
+    }
+  });
+
+  it("throws on an empty or non-string environmentId", () => {
+    for (const bad of ["", undefined, null, 7, {}]) {
+      expect(() =>
+        parseSandboxAutomationOpenTarget({ environmentId: bad, ordinal: 1 }),
+      ).toThrow("openSandboxAutomation.target.environmentId");
+    }
+  });
+
+  it("throws on a negative, fractional or non-numeric ordinal", () => {
+    for (const bad of [-1, 1.5, Number.NaN, Infinity, "1", undefined, {}]) {
+      expect(() =>
+        parseSandboxAutomationOpenTarget({
+          environmentId: "env_1",
+          ordinal: bad,
+        }),
+      ).toThrow("openSandboxAutomation.target.ordinal");
     }
   });
 });

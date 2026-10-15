@@ -17,6 +17,7 @@ function refused(
     shortfallMc: detail.shortfallMc,
     newRateMcPerHour: null,
     currentAwakeBurnMcPerHour: null,
+    message: null,
   };
 }
 
@@ -129,6 +130,40 @@ describe("sandboxFailureMessage", () => {
         }),
       ),
     ).toBe("That size is outside what's offered.");
+  });
+
+  it("shows a full team's server sentence verbatim, and a fallback when it sends none", () => {
+    const sentence = "Every pod of Alpha is full. Ask an admin to add one.";
+    expect(
+      sandboxFailureMessage({
+        kind: "refused",
+        status: 409,
+        code: "team_pods_full",
+        reason: null,
+        shortfallMc: null,
+        newRateMcPerHour: null,
+        currentAwakeBurnMcPerHour: null,
+        message: sentence,
+      }),
+    ).toBe(sentence);
+    expect(
+      sandboxFailureMessage(refused("team_pods_full", NO_DETAIL)),
+    ).toBe("Every team pod is full; ask an admin to add one.");
+  });
+
+  it("never shows a message the server sends with any other code", () => {
+    expect(
+      sandboxFailureMessage({
+        kind: "refused",
+        status: 409,
+        code: "sandbox_busy",
+        reason: null,
+        shortfallMc: null,
+        newRateMcPerHour: null,
+        currentAwakeBurnMcPerHour: null,
+        message: "raw server text",
+      }),
+    ).toContain("stays awake");
   });
 
   it("says the server refused for a code this build does not know, never the raw code", () => {

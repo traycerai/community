@@ -110,7 +110,7 @@ export function createFakeRunnerHost(
     getSandboxAutomation: () =>
       Promise.resolve({
         kind: "ok" as const,
-        automation: { available: false, sandbox: null },
+        automation: { available: false, sandbox: null, pods: [] },
       }),
     openSandboxAutomation: () =>
       Promise.resolve({ kind: "network-error" as const, detail: "fake" }),

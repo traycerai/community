@@ -964,7 +964,12 @@ describe("RuntimeHostMessenger availability forwarding", () => {
     // The same host, now carrying its sandbox facts: rebuilt on a grant.
     currentRemoteEntry = {
       ...remoteEntry,
-      sandbox: { state: "suspended", frozen: false, profile: null },
+      sandbox: {
+        state: "suspended",
+        frozen: false,
+        profile: null,
+        ownerTeamName: null,
+      },
     };
     await requestRemote();
     expect(mocks.createRemoteHostTransport).toHaveBeenCalledTimes(2);
@@ -976,7 +981,12 @@ describe("RuntimeHostMessenger availability forwarding", () => {
     // And a same-content re-emit of the corrected entry keeps that one.
     currentRemoteEntry = {
       ...remoteEntry,
-      sandbox: { state: "suspended", frozen: false, profile: null },
+      sandbox: {
+        state: "suspended",
+        frozen: false,
+        profile: null,
+        ownerTeamName: null,
+      },
     };
     await requestRemote();
     expect(mocks.createRemoteHostTransport).toHaveBeenCalledTimes(2);
@@ -1071,7 +1081,7 @@ function sandboxVerdictRig(first: HostDirectoryEntry): SandboxVerdictRig {
 function sandboxRow(frozen: boolean): RemoteHostDirectoryEntry {
   return {
     ...remoteEntry,
-    sandbox: { state: "awake", frozen, profile: null },
+    sandbox: { state: "awake", frozen, profile: null, ownerTeamName: null },
   };
 }
 

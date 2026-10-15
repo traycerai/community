@@ -54,13 +54,19 @@ export type HostListFetchResult =
  * it authn returns no `kind: sandbox` rows at all, and with it every row
  * carries `sandboxState`, `sandboxFrozen` and `profile` (nullable). A released
  * client never sends it, so it keeps the row set and shape it parses.
+ *
+ * And into `owner` (ticket E17): the row's owner principal, a team named, so
+ * the host list groups a team's hosts under it. An authn that does not know
+ * the token ignores it (`parseHostListIncludes` reads only the tokens it
+ * knows) and the rows carry no `owner`, which the list reads as the
+ * person's own.
  */
 function hostsApiUrl(authnBaseUrl: string): string {
   const url = new URL(
     "api/v3/hosts",
     authnBaseUrl.endsWith("/") ? authnBaseUrl : `${authnBaseUrl}/`,
   );
-  url.searchParams.set("include", "sandboxState");
+  url.searchParams.set("include", "sandboxState,owner");
   return url.toString();
 }
 
@@ -191,6 +197,13 @@ export interface RemoteHostSandboxFacts {
    */
   readonly frozen: boolean;
   readonly profile: HostProfile | null;
+  /**
+   * The owning team's name when a team owns this sandbox (ticket E17), from
+   * the row's `owner`; `null` for the caller's own sandbox and for a row the
+   * registry sent without `owner`. A team sandbox that is not a pod asks
+   * before a wake, because the wake is billed to the person who opens it.
+   */
+  readonly ownerTeamName: string | null;
 }
 
 /**
@@ -526,6 +539,8 @@ export function hostListItemToDirectoryEntry(
               item.sandboxFrozen === true,
             ),
             profile: item.profile ?? null,
+            ownerTeamName:
+              item.owner?.kind === "team" ? item.owner.name : null,
           }
         : null,
   };

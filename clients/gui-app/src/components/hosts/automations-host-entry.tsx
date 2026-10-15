@@ -19,7 +19,7 @@ import { useSandboxAutomationOpen } from "@/hooks/sandboxes/use-sandbox-automati
  * without the route (which reads as not available).
  */
 export function AutomationsHostEntry(): ReactNode {
-  const automation = useSandboxAutomation();
+  const automation = useSandboxAutomation(null);
   const open = useSandboxAutomationOpen();
   const data = automation.data ?? null;
   if (data === null || !data.available || data.sandbox !== null) return null;
@@ -39,7 +39,7 @@ export function AutomationsHostEntry(): ReactNode {
         disabled={open.isPending}
         data-testid="settings-automations-entry-start"
         onClick={() => {
-          open.mutate(undefined, {
+          open.mutate(null, {
             onSuccess: (settled) => {
               if (settled) toast.success("Automations started");
               else toast.info("Starting Automations…");

@@ -20,6 +20,7 @@ import type {
   SandboxCatalogueFetchResult,
   SandboxCostsFetchResult,
   SandboxCreateFetchResult,
+  SandboxAutomationOpenTarget,
   SandboxCreateRequest,
   SandboxGrantsFetchResult,
   SandboxLifecycleVerb,
@@ -139,9 +140,11 @@ export interface AuthBridgeSurface {
   ): Promise<SandboxVerbFetchResult>;
   getSandboxAutomation(
     bearerToken: string,
+    environmentId: string | null,
   ): Promise<SandboxAutomationFetchResult>;
   openSandboxAutomation(
     bearerToken: string,
+    target: SandboxAutomationOpenTarget | null,
   ): Promise<SandboxAutomationOpenFetchResult>;
   getSandboxGrants(
     bearerToken: string,
@@ -272,16 +275,18 @@ export function buildAuthBridge(): AuthBridgeSurface {
         timeoutMs,
       ) as Promise<SandboxVerbFetchResult>,
 
-    getSandboxAutomation: (bearerToken) =>
+    getSandboxAutomation: (bearerToken, environmentId) =>
       ipcRenderer.invoke(
         RunnerHostInvoke.getSandboxAutomation,
         bearerToken,
+        environmentId,
       ) as Promise<SandboxAutomationFetchResult>,
 
-    openSandboxAutomation: (bearerToken) =>
+    openSandboxAutomation: (bearerToken, target) =>
       ipcRenderer.invoke(
         RunnerHostInvoke.openSandboxAutomation,
         bearerToken,
+        target,
       ) as Promise<SandboxAutomationOpenFetchResult>,
 
     getSandboxGrants: (bearerToken, environmentId, hostId) =>

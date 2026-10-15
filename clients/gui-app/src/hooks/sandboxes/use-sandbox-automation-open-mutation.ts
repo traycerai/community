@@ -3,6 +3,7 @@ import {
   useQueryClient,
   type UseMutationResult,
 } from "@tanstack/react-query";
+import type { SandboxAutomationOpenTarget } from "@traycer/protocol/host/sandbox-control";
 import { toastFromAuthError } from "@/lib/auth-error-toast";
 import { useHostBinding, type HostDirectoryService } from "@/lib/host";
 import { authQueryKeys, sandboxMutationKeys } from "@/lib/query-keys";
@@ -21,7 +22,8 @@ interface SandboxAutomationOpenContext {
 
 /**
  * `POST /api/sandboxes/automation`: the host list's Start on the Automations
- * entry. Creates the row on first use and wakes a released one; resolves to
+ * entry (`null`), or the new terminal picker's open of a team pod (its
+ * environment and ordinal). Creates the row on first use and wakes a released one; resolves to
  * `true` once it is awake (`200`), `false` while it is still creating or
  * starting (`202`). Settled either way, the row has moved, so the Automations
  * read, the sandbox list and the host list (one prefix covers all three, see
@@ -30,7 +32,7 @@ interface SandboxAutomationOpenContext {
 export function useSandboxAutomationOpen(): UseMutationResult<
   boolean,
   Error,
-  void,
+  SandboxAutomationOpenTarget | null,
   SandboxAutomationOpenContext
 > {
   const binding = useHostBinding();
@@ -42,11 +44,13 @@ export function useSandboxAutomationOpen(): UseMutationResult<
       directory: binding === null ? null : binding.directory,
       userId: signedInUserId(),
     }),
-    mutationFn: async (): Promise<boolean> => {
+    mutationFn: async (
+      target: SandboxAutomationOpenTarget | null,
+    ): Promise<boolean> => {
       if (binding === null) {
         throw new Error("Sign in to start Automations.");
       }
-      const result = await binding.auth.openSandboxAutomation();
+      const result = await binding.auth.openSandboxAutomation(target);
       if (result.kind === "ok") return result.settled;
       throw new Error(sandboxFailureMessage(result));
     },
@@ -57,9 +61,14 @@ export function useSandboxAutomationOpen(): UseMutationResult<
         queryKey: authQueryKeys.registeredHostsAll(),
       });
     },
-    onError: (error, _variables, context) => {
+    onError: (error, target, context) => {
       if (!settledForStartingAccount(context)) return;
-      toastFromAuthError(error, "Couldn't start Automations.");
+      toastFromAuthError(
+        error,
+        target === null
+          ? "Couldn't start Automations."
+          : "Couldn't open this team pod.",
+      );
     },
   });
 }

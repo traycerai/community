@@ -88,6 +88,7 @@ const PLACEHOLDER_SANDBOX_FACTS: RemoteHostSandboxFacts = {
   state: null,
   frozen: false,
   profile: null,
+  ownerTeamName: null,
 };
 
 /** What a remote target's `OPEN` presents; `null` for a local target or none. */

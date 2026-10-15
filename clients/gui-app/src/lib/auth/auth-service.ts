@@ -54,6 +54,7 @@ import type {
 } from "@traycer-clients/shared/host-client/sandbox-secrets";
 import type { SecretRequestDecision } from "@traycer/protocol/host/sandbox-secrets";
 import type {
+  SandboxAutomationOpenTarget,
   SandboxCreateRequest,
   SandboxLifecycleVerb,
 } from "@traycer/protocol/host/sandbox-control";
@@ -3016,26 +3017,36 @@ export class AuthService {
     return this.runnerHost.runSandboxVerb(bearer, sandboxId, verb, timeoutMs);
   }
 
-  /** `GET /api/sandboxes/automation`: the user's Automations host, a read. */
-  async getSandboxAutomation(): Promise<SandboxAutomationFetchResult> {
+  /**
+   * `GET /api/sandboxes/automation`: the user's Automations host, or a team's
+   * pods when `environmentId` names the team's environment. A read.
+   */
+  async getSandboxAutomation(
+    environmentId: string | null,
+  ): Promise<SandboxAutomationFetchResult> {
     const refusal = this.sandboxControlRefusal();
     if (refusal !== null) return refusal;
     const bearer = this.cloudBearer();
     if (bearer === null) {
       return { kind: "unauthorized" };
     }
-    return this.runnerHost.getSandboxAutomation(bearer);
+    return this.runnerHost.getSandboxAutomation(bearer, environmentId);
   }
 
-  /** `POST /api/sandboxes/automation`: creates or wakes it, a write. */
-  async openSandboxAutomation(): Promise<SandboxAutomationOpenFetchResult> {
+  /**
+   * `POST /api/sandboxes/automation`: creates or wakes it, a write; a team's
+   * pod when `target` names it.
+   */
+  async openSandboxAutomation(
+    target: SandboxAutomationOpenTarget | null,
+  ): Promise<SandboxAutomationOpenFetchResult> {
     const refusal = this.sandboxControlRefusal();
     if (refusal !== null) return refusal;
     const bearer = this.cloudBearer();
     if (bearer === null) {
       throw new Error("Sign in to start Automations.");
     }
-    return this.runnerHost.openSandboxAutomation(bearer);
+    return this.runnerHost.openSandboxAutomation(bearer, target);
   }
 
   /**

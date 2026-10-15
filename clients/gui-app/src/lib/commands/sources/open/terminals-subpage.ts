@@ -20,6 +20,12 @@ import { useActiveEpicHostId } from "@/lib/commands/sources/open/use-active-epic
 import { useHostDirectoryList } from "@/hooks/host/use-host-directory-list-query";
 import { useHostOptions } from "@/components/settings/host-scope/use-host-options";
 import { groupHostOptions } from "@/components/settings/host-scope/host-option-model";
+import { useSandboxTeamPods } from "@/hooks/sandboxes/use-sandbox-automation-query";
+import { useSandboxAutomationOpen } from "@/hooks/sandboxes/use-sandbox-automation-open-mutation";
+import {
+  teamPodEnvironmentIds,
+  teamPodOpenRows,
+} from "@/lib/commands/sources/open/team-pod-open";
 import { useRefreshHostDirectoryOnOpen } from "@/hooks/host/use-refresh-host-directory-on-open";
 import { useRemoteSessionsPollReadiness } from "@/hooks/host/use-remote-sessions-poll-readiness";
 import {
@@ -369,15 +375,32 @@ function useNewTerminalWorkspaceItems(
   const directory = useHostDirectoryList();
   // The new terminal picker's own host rule (`hostOptionPickerGroup` with
   // `offersAutomations`): personal hosts, the user's sandboxes and the
-  // Automations host, never an agent's burst sandbox or a sandbox whose
-  // control-plane row has not answered.
+  // Automations host, and each team's sandboxes and pods; never an agent's
+  // burst sandbox or a sandbox whose control-plane row has not answered.
   const hostOptions = useHostOptions().hosts;
-  const offeredHostIds = useMemo(() => {
-    const groups = groupHostOptions(hostOptions, false, true, null);
-    return new Set(
-      [...groups.personal, ...groups.sandboxes].map((host) => host.hostId),
-    );
-  }, [hostOptions]);
+  const groups = useMemo(
+    () => groupHostOptions(hostOptions, false, true, null),
+    [hostOptions],
+  );
+  const offeredHostIds = useMemo(
+    () =>
+      new Set(
+        [
+          ...groups.personal,
+          ...groups.sandboxes,
+          ...groups.teams.flatMap((team) => team.sandboxes),
+        ].map((host) => host.hostId),
+      ),
+    [groups],
+  );
+  // A team pod that cannot be dialed yet is opened by its environment and
+  // ordinal (ticket E17, E): one pod-list read per team, however many pods.
+  const podEnvironmentIds = useMemo(
+    () => teamPodEnvironmentIds(groups),
+    [groups],
+  );
+  const podsByEnvironment = useSandboxTeamPods(podEnvironmentIds);
+  const openPod = useSandboxAutomationOpen().mutate;
   // Dialability depends on the pull-only session cache, so a memo keyed on
   // directory state alone freezes the row list while the palette is open: a
   // session dying under an `offline` host would keep offering a
@@ -432,7 +455,33 @@ function useNewTerminalWorkspaceItems(
           subpage: makeHostWorkspaceSubpage(entry.hostId, label),
         });
       });
-    return [...selectedHostLeaves, ...otherHosts];
+    const dialable = (hostId: string): boolean => {
+      const entry =
+        (directory.data ?? []).find((e) => e.hostId === hostId) ?? null;
+      return (
+        entry !== null &&
+        dialableHostEndpointFor(entry, hasReadySessionFor(hostId)) !== null
+      );
+    };
+    const podOpens = teamPodOpenRows(groups, podsByEnvironment, dialable).map(
+      (row) =>
+        openerActionLeaf({
+          id: `open:terminals:new:pod:${row.hostId}`,
+          label: `Open ${row.label}`,
+          keywords: [row.hostId, row.label, "pod", "team", "host"],
+          run: () => {
+            // A full team's refusal toasts its server message verbatim
+            // (`sandboxFailureMessage`, `team_pods_full`).
+            openPod(row.target, {
+              onSuccess: (settled) => {
+                if (settled) toast.success(`${row.label} is open`);
+                else toast.info(`Opening ${row.label}…`);
+              },
+            });
+          },
+        }),
+    );
+    return [...selectedHostLeaves, ...otherHosts, ...podOpens];
   }, [
     resolvedHostId,
     bindings.data,
@@ -445,6 +494,9 @@ function useNewTerminalWorkspaceItems(
     hasReadySessionFor,
     hostClient,
     offeredHostIds,
+    groups,
+    podsByEnvironment,
+    openPod,
   ]);
 }
 

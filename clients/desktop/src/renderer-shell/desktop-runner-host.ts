@@ -154,6 +154,7 @@ import type {
 import type { SecretRequestDecision } from "@traycer/protocol/host/sandbox-secrets";
 import type { ExecutableWriteGrantFetchResult } from "@traycer-clients/shared/host-client/executable-write-grant";
 import type {
+  SandboxAutomationOpenTarget,
   SandboxCreateRequest,
   SandboxLifecycleVerb,
 } from "@traycer/protocol/host/sandbox-control";
@@ -241,9 +242,11 @@ export interface DesktopPreloadBridge {
   ): Promise<SandboxVerbFetchResult>;
   getSandboxAutomation(
     bearerToken: string,
+    environmentId: string | null,
   ): Promise<SandboxAutomationFetchResult>;
   openSandboxAutomation(
     bearerToken: string,
+    target: SandboxAutomationOpenTarget | null,
   ): Promise<SandboxAutomationOpenFetchResult>;
   getSandboxGrants(
     bearerToken: string,
@@ -1192,14 +1195,16 @@ export class DesktopRunnerHost implements IRunnerHost {
 
   getSandboxAutomation(
     bearerToken: string,
+    environmentId: string | null,
   ): Promise<SandboxAutomationFetchResult> {
-    return this.bridge.getSandboxAutomation(bearerToken);
+    return this.bridge.getSandboxAutomation(bearerToken, environmentId);
   }
 
   openSandboxAutomation(
     bearerToken: string,
+    target: SandboxAutomationOpenTarget | null,
   ): Promise<SandboxAutomationOpenFetchResult> {
-    return this.bridge.openSandboxAutomation(bearerToken);
+    return this.bridge.openSandboxAutomation(bearerToken, target);
   }
 
   getSandboxGrants(

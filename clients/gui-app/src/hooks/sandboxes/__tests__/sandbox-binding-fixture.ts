@@ -1,4 +1,5 @@
 import { vi, type Mock } from "vitest";
+import type { HostDirectoryEntry } from "@traycer-clients/shared/host-client/host-directory";
 import type {
   SandboxAutomationFetchResult,
   SandboxAutomationOpenFetchResult,
@@ -8,6 +9,7 @@ import type {
   SandboxVerbFetchResult,
 } from "@traycer-clients/shared/host-client/sandbox-control";
 import type {
+  SandboxAutomationOpenTarget,
   SandboxCreateRequest,
   SandboxLifecycleVerb,
 } from "@traycer/protocol/host/sandbox-control";
@@ -21,8 +23,12 @@ type RunSandboxVerb = (
   verb: SandboxLifecycleVerb,
   timeoutMs: number,
 ) => Promise<SandboxVerbFetchResult>;
-type GetSandboxAutomation = () => Promise<SandboxAutomationFetchResult>;
-type OpenSandboxAutomation = () => Promise<SandboxAutomationOpenFetchResult>;
+type GetSandboxAutomation = (
+  environmentId: string | null,
+) => Promise<SandboxAutomationFetchResult>;
+type OpenSandboxAutomation = (
+  target: SandboxAutomationOpenTarget | null,
+) => Promise<SandboxAutomationOpenFetchResult>;
 type DestroySandbox = (sandboxId: string) => Promise<SandboxVerbFetchResult>;
 
 /** The AuthService methods the sandbox mutations and the tab-open wake call. */
@@ -39,7 +45,11 @@ export interface FakeSandboxAuth {
 
 export interface FakeSandboxBinding {
   readonly auth: FakeSandboxAuth;
-  readonly directory: { readonly refresh: Mock<() => void> };
+  readonly directory: {
+    readonly refresh: Mock<() => void>;
+    /** A wake reads the host's sandbox facts (a team's asks first); none by default. */
+    readonly findById: Mock<(hostId: string) => HostDirectoryEntry | null>;
+  };
 }
 
 export function createFakeSandboxBinding(): FakeSandboxBinding {
@@ -64,7 +74,7 @@ export function createFakeSandboxBinding(): FakeSandboxBinding {
       getSandboxAutomation: vi.fn<GetSandboxAutomation>(() =>
         Promise.resolve({
           kind: "ok",
-          automation: { available: false, sandbox: null },
+          automation: { available: false, sandbox: null, pods: [] },
         }),
       ),
       openSandboxAutomation: vi.fn<OpenSandboxAutomation>(() =>
@@ -74,7 +84,12 @@ export function createFakeSandboxBinding(): FakeSandboxBinding {
         }),
       ),
     },
-    directory: { refresh: vi.fn<() => void>() },
+    directory: {
+      refresh: vi.fn<() => void>(),
+      findById: vi.fn<(hostId: string) => HostDirectoryEntry | null>(
+        () => null,
+      ),
+    },
   };
 }
 
@@ -91,5 +106,6 @@ export function refusal(
     shortfallMc: null,
     newRateMcPerHour: null,
     currentAwakeBurnMcPerHour: null,
+    message: null,
   };
 }

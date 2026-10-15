@@ -7,6 +7,7 @@ import {
   SANDBOX_REFUSAL_CODE_PROVIDER_FAILED,
   SANDBOX_REFUSAL_CODE_PROVIDER_UNAVAILABLE,
   SANDBOX_REFUSAL_CODE_SHAPE_NOT_OFFERED,
+  SANDBOX_REFUSAL_CODE_TEAM_PODS_FULL,
   SANDBOX_REFUSAL_CODE_TRANSITION_CONFLICT,
   SANDBOX_REFUSAL_CODE_VERB_NOT_AVAILABLE,
 } from "@traycer/protocol/host/sandbox-control";
@@ -39,6 +40,22 @@ function insufficientCreditCopy(
     : `Your credits don't cover an hour of this sandbox. Add ${formatCreditsRequired(failure.shortfallMc)} credits and try again.`;
 }
 
+/** The refusals whose sentence depends on nothing but the code. */
+const REFUSAL_COPY: Readonly<Partial<Record<string, string>>> = {
+  [SANDBOX_REFUSAL_CODE_PROVIDER_UNAVAILABLE]:
+    "Sandboxes aren't available right now. Try again later.",
+  [SANDBOX_REFUSAL_CODE_PROVIDER_FAILED]:
+    "The sandbox failed to start. It's listed as failed; destroy it and try again.",
+  [SANDBOX_REFUSAL_CODE_TRANSITION_CONFLICT]:
+    "This sandbox is changing state. Try again in a moment.",
+  [SANDBOX_REFUSAL_CODE_BUSY]:
+    "It's in use (an agent turn, a running shell or an open tab), so it stays awake.",
+  [SANDBOX_REFUSAL_CODE_FROZEN]:
+    "This sandbox is frozen because your credits ran out. Add credits to wake it.",
+  [SANDBOX_REFUSAL_CODE_NOT_FOUND]: "This sandbox no longer exists.",
+  [SANDBOX_REFUSAL_CODE_VERB_NOT_AVAILABLE]: "This action isn't available yet.",
+};
+
 /**
  * The user-facing sentence for a control-plane failure. Every known code gets
  * this build's copy; an unknown one says the server refused, never the raw
@@ -62,21 +79,10 @@ export function sandboxFailureMessage(failure: SandboxControlFailure): string {
         SHAPE_REASON_COPY[failure.reason ?? ""] ??
         "That size is outside what's offered."
       );
-    case SANDBOX_REFUSAL_CODE_PROVIDER_UNAVAILABLE:
-      return "Sandboxes aren't available right now. Try again later.";
-    case SANDBOX_REFUSAL_CODE_PROVIDER_FAILED:
-      return "The sandbox failed to start. It's listed as failed; destroy it and try again.";
-    case SANDBOX_REFUSAL_CODE_TRANSITION_CONFLICT:
-      return "This sandbox is changing state. Try again in a moment.";
-    case SANDBOX_REFUSAL_CODE_BUSY:
-      return "It's in use (an agent turn, a running shell or an open tab), so it stays awake.";
-    case SANDBOX_REFUSAL_CODE_FROZEN:
-      return "This sandbox is frozen because your credits ran out. Add credits to wake it.";
-    case SANDBOX_REFUSAL_CODE_NOT_FOUND:
-      return "This sandbox no longer exists.";
-    case SANDBOX_REFUSAL_CODE_VERB_NOT_AVAILABLE:
-      return "This action isn't available yet.";
+    // The server names the team and its admins; its sentence is the copy.
+    case SANDBOX_REFUSAL_CODE_TEAM_PODS_FULL:
+      return failure.message ?? "Every team pod is full; ask an admin to add one.";
     default:
-      return "Traycer refused that request.";
+      return REFUSAL_COPY[failure.code] ?? "Traycer refused that request.";
   }
 }

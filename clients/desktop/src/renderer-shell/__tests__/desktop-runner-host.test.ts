@@ -911,7 +911,7 @@ describe("DesktopRunnerHost Automations calls", () => {
       DesktopPreloadBridge["getSandboxAutomation"]
     >(async () => ({
       kind: "ok",
-      automation: { available: true, sandbox: null },
+      automation: { available: true, sandbox: null, pods: [] },
     }));
     const openSandboxAutomation = vi.fn<
       DesktopPreloadBridge["openSandboxAutomation"]
@@ -925,16 +925,22 @@ describe("DesktopRunnerHost Automations calls", () => {
       signInUrl: "https://auth.example.invalid/sign-in",
     });
 
-    await expect(host.getSandboxAutomation("bearer-1")).resolves.toEqual({
+    await expect(host.getSandboxAutomation("bearer-1", "env-1")).resolves.toEqual({
       kind: "ok",
-      automation: { available: true, sandbox: null },
+      automation: { available: true, sandbox: null, pods: [] },
     });
-    await expect(host.openSandboxAutomation("bearer-2")).resolves.toEqual({
+    await expect(host.openSandboxAutomation("bearer-2", {
+        environmentId: "env-1",
+        ordinal: 2,
+      })).resolves.toEqual({
       kind: "unauthorized",
     });
 
-    expect(getSandboxAutomation).toHaveBeenCalledWith("bearer-1");
-    expect(openSandboxAutomation).toHaveBeenCalledWith("bearer-2");
+    expect(getSandboxAutomation).toHaveBeenCalledWith("bearer-1", "env-1");
+    expect(openSandboxAutomation).toHaveBeenCalledWith("bearer-2", {
+      environmentId: "env-1",
+      ordinal: 2,
+    });
     expect(getSandboxAutomation).toHaveBeenCalledTimes(1);
     expect(openSandboxAutomation).toHaveBeenCalledTimes(1);
   });

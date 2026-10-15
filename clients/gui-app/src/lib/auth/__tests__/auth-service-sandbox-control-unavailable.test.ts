@@ -102,8 +102,8 @@ describe("AuthService sandbox control on a build that cannot reach it", () => {
     expect(
       await service.runSandboxVerb("sbx_1", "resume", VERB_TIMEOUT_MS),
     ).toEqual(unavailable);
-    expect(await service.getSandboxAutomation()).toEqual(unavailable);
-    expect(await service.openSandboxAutomation()).toEqual(unavailable);
+    expect(await service.getSandboxAutomation(null)).toEqual(unavailable);
+    expect(await service.openSandboxAutomation(null)).toEqual(unavailable);
 
     expect(spies.listSandboxes).not.toHaveBeenCalled();
     expect(spies.getSandboxCosts).not.toHaveBeenCalled();
@@ -151,10 +151,10 @@ describe("AuthService sandbox control on a build that cannot reach it", () => {
     await expect(service.destroySandbox("sbx_1")).rejects.toThrow(
       "Sign in to destroy this sandbox.",
     );
-    expect(await service.getSandboxAutomation()).toEqual({
+    expect(await service.getSandboxAutomation(null)).toEqual({
       kind: "unauthorized",
     });
-    await expect(service.openSandboxAutomation()).rejects.toThrow(
+    await expect(service.openSandboxAutomation(null)).rejects.toThrow(
       "Sign in to start Automations.",
     );
     // Signed out, the bearer read stops them before the runner host too.

@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   SANDBOX_FROZEN_RETENTION_DAYS,
+  SANDBOX_REFUSAL_CODE_TEAM_PODS_FULL,
+  sandboxAutomationResponseSchema,
   sandboxCatalogueSchema,
   sandboxCreateAcceptedSchema,
   sandboxListResponseSchema,
+  sandboxPodSchema,
   sandboxRefusalBodySchema,
 } from "@traycer/protocol/host/sandbox-control";
 
@@ -217,5 +220,92 @@ describe("sandbox control plane mirror", () => {
     it("keeps the retention the day-30 job destroys a frozen row at", () => {
       expect(SANDBOX_FROZEN_RETENTION_DAYS).toBe(30);
     });
+  });
+});
+
+describe("Automations pods (ticket E17)", () => {
+  const POD = { sandbox: SANDBOX_VIEW, ordinal: 0, liveShells: 2, headroom: 6 };
+
+  it("defaults pods to an empty list when a server from before the pod list sends none", () => {
+    const parsed = sandboxAutomationResponseSchema.parse({
+      available: true,
+      sandbox: null,
+    });
+    expect(parsed.pods).toEqual([]);
+    expect(parsed.available).toBe(true);
+    expect(parsed.sandbox).toBeNull();
+  });
+
+  it("parses a pod with its slot, live shells and headroom", () => {
+    const parsed = sandboxAutomationResponseSchema.parse({
+      available: true,
+      sandbox: null,
+      pods: [POD, { ...POD, ordinal: 1, liveShells: 8, headroom: 0 }],
+    });
+    expect(parsed.pods).toHaveLength(2);
+    expect(parsed.pods[0]?.sandbox.id).toBe("sbx_1");
+    expect(parsed.pods[0]?.ordinal).toBe(0);
+    expect(parsed.pods[0]?.liveShells).toBe(2);
+    expect(parsed.pods[0]?.headroom).toBe(6);
+    expect(parsed.pods[1]?.headroom).toBe(0);
+  });
+
+  it("parses a single pod through its own schema", () => {
+    expect(sandboxPodSchema.parse(POD).ordinal).toBe(0);
+  });
+
+  it("refuses a negative headroom, live-shell count or ordinal, and a fractional ordinal", () => {
+    for (const bad of [
+      { headroom: -1 },
+      { liveShells: -1 },
+      { ordinal: -1 },
+      { ordinal: 1.5 },
+    ]) {
+      expect(sandboxPodSchema.safeParse({ ...POD, ...bad }).success).toBe(
+        false,
+      );
+      expect(
+        sandboxAutomationResponseSchema.safeParse({
+          available: true,
+          sandbox: null,
+          pods: [{ ...POD, ...bad }],
+        }).success,
+      ).toBe(false);
+    }
+  });
+
+  it("refuses a pod with no row", () => {
+    const { sandbox: _omitted, ...withoutRow } = POD;
+    expect(sandboxPodSchema.safeParse(withoutRow).success).toBe(false);
+  });
+});
+
+describe("refusal body message (ticket E17)", () => {
+  it("reads a refusal that carries a server-composed message", () => {
+    const parsed = sandboxRefusalBodySchema.parse({
+      code: SANDBOX_REFUSAL_CODE_TEAM_PODS_FULL,
+      message: "Every pod of Alpha is full. Ask an admin to add one.",
+    });
+    expect(parsed.code).toBe("team_pods_full");
+    expect(parsed.message).toBe(
+      "Every pod of Alpha is full. Ask an admin to add one.",
+    );
+  });
+
+  it("reads a refusal with no message, and one whose message is null", () => {
+    expect(
+      sandboxRefusalBodySchema.parse({ code: "sandbox_busy" }).message,
+    ).toBeUndefined();
+    expect(
+      sandboxRefusalBodySchema.parse({ code: "sandbox_busy", message: null })
+        .message,
+    ).toBeNull();
+  });
+
+  it("refuses a message that is not a string", () => {
+    expect(
+      sandboxRefusalBodySchema.safeParse({ code: "sandbox_busy", message: 3 })
+        .success,
+    ).toBe(false);
   });
 });

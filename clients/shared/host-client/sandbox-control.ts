@@ -10,6 +10,7 @@ import {
   sandboxListResponseSchema,
   sandboxRefusalBodySchema,
   userSandboxCostSchema,
+  type SandboxAutomationOpenTarget,
   type SandboxAutomationResponse,
   type SandboxCatalogue,
   type SandboxCreateAccepted,
@@ -80,6 +81,8 @@ export type SandboxControlFailure =
       readonly shortfallMc: number | null;
       readonly newRateMcPerHour: number | null;
       readonly currentAwakeBurnMcPerHour: number | null;
+      /** A server-composed sentence for the person, shown verbatim. */
+      readonly message: string | null;
     }
   | { readonly kind: "network-error"; readonly detail: string }
   /**
@@ -246,6 +249,7 @@ function failureOf(status: number, body: unknown): SandboxControlFailure {
       shortfallMc: refusal.data.shortfallMc ?? null,
       newRateMcPerHour: refusal.data.newRateMcPerHour ?? null,
       currentAwakeBurnMcPerHour: refusal.data.currentAwakeBurnMcPerHour ?? null,
+      message: refusal.data.message ?? null,
     };
   }
   return {
@@ -331,6 +335,7 @@ export async function fetchSandboxCostsViaHttp(
 const AUTOMATION_NOT_SERVED: SandboxAutomationResponse = {
   available: false,
   sandbox: null,
+  pods: [],
 };
 
 /**
@@ -342,9 +347,15 @@ const AUTOMATION_NOT_SERVED: SandboxAutomationResponse = {
 export async function getSandboxAutomationViaHttp(
   serverBaseUrl: string,
   bearerToken: string,
+  /** A team's environment, for its pods; `null` reads the caller's own. */
+  environmentId: string | null,
 ): Promise<SandboxAutomationFetchResult> {
+  const url = new URL(sandboxesUrl(serverBaseUrl, "/automation"));
+  if (environmentId !== null) {
+    url.searchParams.set("environmentId", environmentId);
+  }
   const raw = await call(
-    sandboxesUrl(serverBaseUrl, "/automation"),
+    url.toString(),
     { method: "GET", body: null, timeoutMs: SANDBOX_CONTROL_FETCH_TIMEOUT_MS },
     bearerToken,
   );
@@ -371,12 +382,23 @@ export async function getSandboxAutomationViaHttp(
 export async function openSandboxAutomationViaHttp(
   serverBaseUrl: string,
   bearerToken: string,
+  /**
+   * A team's pod to open; `null` opens the caller's own Automations host with
+   * no body, as before.
+   */
+  target: SandboxAutomationOpenTarget | null,
 ): Promise<SandboxAutomationOpenFetchResult> {
   const raw = await call(
     sandboxesUrl(serverBaseUrl, "/automation"),
     {
       method: "POST",
-      body: null,
+      body:
+        target === null
+          ? null
+          : JSON.stringify({
+              environmentId: target.environmentId,
+              ordinal: target.ordinal,
+            }),
       timeoutMs: SANDBOX_CREATE_FETCH_TIMEOUT_MS,
     },
     bearerToken,

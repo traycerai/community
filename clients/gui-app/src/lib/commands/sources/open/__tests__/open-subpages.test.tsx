@@ -44,6 +44,11 @@ const spies = vi.hoisted(() => ({
   setBrowserPinSelection: vi.fn(),
   setTerminalPinSelection: vi.fn(),
   retryBrowserHosts: vi.fn(),
+  openTeamPod: vi.fn(),
+}));
+/** No team has a pod list here: the picker's team pods have their own suite. */
+const teamPodsMock = vi.hoisted(() => ({
+  current: new Map<string, readonly never[]>(),
 }));
 vi.mock("sonner", () => ({
   toast: Object.assign(spies.toast, {
@@ -488,6 +493,14 @@ vi.mock("@/lib/host", () => ({
     getRequestContextUserId: () => "user-test",
     onChange: () => () => undefined,
   }),
+}));
+// The new terminal picker reads each team's pod list and opens a pod that
+// cannot be dialed yet; both need a QueryClient this suite does not mount.
+vi.mock("@/hooks/sandboxes/use-sandbox-automation-query", () => ({
+  useSandboxTeamPods: () => teamPodsMock.current,
+}));
+vi.mock("@/hooks/sandboxes/use-sandbox-automation-open-mutation", () => ({
+  useSandboxAutomationOpen: () => ({ mutate: spies.openTeamPod }),
 }));
 vi.mock("@/hooks/worktree/use-latest-conversation-workspace-seed", () => ({
   useLatestConversationWorkspaceSeed: () =>
