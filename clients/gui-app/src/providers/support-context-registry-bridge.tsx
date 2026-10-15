@@ -187,16 +187,27 @@ export function SupportContextRegistryBridge(
       : subscribedHarnessContext;
 
   const artifactId = artifactRef === null ? null : artifactRef.id;
+  // The tile's own binding, the value `<TabHostProvider>` hands to
+  // `useTabHostId()` inside it. This bridge is mounted above every tab, where
+  // that hook has no provider (it throws), so the ref the provider is fed from
+  // is read instead. Only a chat / terminal-agent tile is bound for life;
+  // every other tile reports no tab host.
+  const tabHostId =
+    artifactRef !== null &&
+    (artifactRef.type === "chat" || artifactRef.type === "terminal-agent")
+      ? artifactRef.hostId
+      : null;
 
   useEffect(() => {
     setSupportContextSnapshot({
       routeTemplate: toKnown(routeTemplate),
       hostId: toKnown(hostId),
+      tabHostId: toKnown(tabHostId),
       epicId: toKnown(epicId),
       tabId: toKnown(tabId),
       artifactId: toKnown(artifactId),
     });
-  }, [routeTemplate, hostId, epicId, tabId, artifactId]);
+  }, [routeTemplate, hostId, tabHostId, epicId, tabId, artifactId]);
 
   useEffect(() => {
     if (epicId === null || artifactRef === null) return undefined;

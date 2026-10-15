@@ -1,5 +1,6 @@
 import { sniffImageMimeType } from "@/lib/attachments/image-mime-signature";
 import {
+  use,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -20,6 +21,7 @@ import { readComposerDraftSnapshot } from "@/stores/composer/composer-draft-stor
 import { toast } from "sonner";
 
 import { appLogger } from "@/lib/logger";
+import { QueuedMessageStagesContext } from "@/components/chat/queued-message-stages";
 import { reportableErrorToast } from "@/lib/reportable-error-toast";
 import {
   appendImageAttachmentAtoms,
@@ -233,6 +235,23 @@ export function useChatComposerSubmit(
     getDraftBlobBridgeSupported,
   } = args;
   const appendMessage = useChatStore((state) => state.appendMessage);
+  const { connectionStatus } = use(QueuedMessageStagesContext);
+  // When the last refused-submit line was written. A held Enter repeats the
+  // refusal every few tens of milliseconds, and a press is one event to triage.
+  const lastRefusedSubmitLogAt = useRef<number | null>(null);
+  const noteRefusedSubmit = useCallback((): void => {
+    const now = Date.now();
+    const last = lastRefusedSubmitLogAt.current;
+    if (last !== null && now - last < REFUSED_SUBMIT_LOG_WINDOW_MS) return;
+    lastRefusedSubmitLogAt.current = now;
+    // Ids and a status only - never the draft, and no account identifier.
+    appLogger.info("[composer] submit refused: chat stream not open", {
+      chatId: taskId,
+      hostId: targetHostId,
+      connectionStatus,
+      reason: connectionStatus === "open" ? "send-disabled" : "stream-not-open",
+    });
+  }, [connectionStatus, targetHostId, taskId]);
   // The LIVE queue-edit target, for the continuation to re-check. A captured
   // value cannot answer "is this still the submit the user asked for" - that is
   // precisely the question, and the closure froze its answer at preparation
@@ -419,7 +438,10 @@ export function useChatComposerSubmit(
 
   const submitDraft = useCallback(
     (source: ChatComposerSubmitSource): void => {
-      if (submitBlocked()) return;
+      if (submitBlocked()) {
+        if (sendDisabled === true) noteRefusedSubmit();
+        return;
+      }
       const toolbar = toolbarStore.getState();
       if (toolbar.selection.modelSlug.length === 0) return;
       const editor = editorRef.current;
@@ -928,6 +950,8 @@ export function useChatComposerSubmit(
       getActiveTurnForSteer,
       queueEditTargetId,
       getDraftBlobBridgeSupported,
+      noteRefusedSubmit,
+      sendDisabled,
       submitBlocked,
       targetHostId,
       taskId,
@@ -1140,6 +1164,12 @@ export function useChatComposerSubmit(
  * re-inline" send reads as the deliberate case it is rather than allocating a
  * map per keystroke-free submit.
  */
+/**
+ * Two refusals closer together than this are one key press held down, not two
+ * attempts, and share one log line.
+ */
+const REFUSED_SUBMIT_LOG_WINDOW_MS = 2_000;
+
 const NO_DRAFT_IMAGE_BYTES: ReadonlyMap<string, string> = new Map<
   string,
   string

@@ -13,6 +13,7 @@ import {
 import { UNCONFIRMED_SEND_DISPLAY_DEADLINE_MS } from "@/stores/chats/queue-edit-custody";
 import { IMMEDIATE_STREAM_FLUSH_COORDINATOR } from "@/stores/chats/stream-flush-coordinator";
 import { CHAT_STORE_TEST_ENVIRONMENT } from "@/stores/chats/test-support/chat-store-test-environment";
+import { appLogger } from "@/lib/logger";
 
 /**
  * A send the host has not answered for the display deadline stops CLAIMING it
@@ -210,6 +211,49 @@ afterEach(() => {
   harness?.handle.dispose();
   harness = null;
   vi.useRealTimers();
+});
+
+describe("the deadline of a send that outlived its connection", () => {
+  it("leaves one diagnostic line naming the chat, host and connection status, and nothing else", () => {
+    const info = vi.spyOn(appLogger, "info");
+    harness = openHarness();
+    dispatchSend(harness);
+    harness.callbacks().onConnectionStatus("closed", null, null);
+    harness.callbacks().onConnectionStatus("open", null, null);
+
+    vi.advanceTimersByTime(UNCONFIRMED_SEND_DISPLAY_DEADLINE_MS);
+
+    const lines = info.mock.calls.filter(
+      ([message]) => message === "[chat] send deadline fired after a reconnect",
+    );
+    expect(lines).toEqual([
+      [
+        "[chat] send deadline fired after a reconnect",
+        {
+          chatId: CHAT_ID,
+          hostId: HOST_ID,
+          connectionStatus: "open",
+          reason: "send-from-earlier-connection",
+        },
+      ],
+    ]);
+    info.mockRestore();
+  });
+
+  it("logs nothing for a send that is unconfirmed on its own connection", () => {
+    const info = vi.spyOn(appLogger, "info");
+    harness = openHarness();
+    dispatchSend(harness);
+
+    vi.advanceTimersByTime(UNCONFIRMED_SEND_DISPLAY_DEADLINE_MS);
+
+    expect(
+      info.mock.calls.filter(([message]) =>
+        message.startsWith("[chat] send deadline"),
+      ),
+    ).toEqual([]);
+    info.mockRestore();
+  });
 });
 
 describe("a send unanswered at the display deadline", () => {

@@ -3544,6 +3544,7 @@ function useChatTileSessionViewModel(
         state.snapshotLoaded &&
         state.connectionStatus !== "open" &&
         state.fatalClose === null,
+      connectionStatus: state.connectionStatus,
     }),
     [
       chatActions.checkSendDelivery,
