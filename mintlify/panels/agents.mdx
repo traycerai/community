@@ -308,6 +308,12 @@ An icon at the start of a row shows when the agent is running, has background wo
 - **Asleep**: the session is paused. It resumes on the next message or when you open the agent.
 - **Stopped**: the session has ended.
 
+## Claude Scheduled Jobs
+
+When Claude Code schedules a job in a Chat session, open the chat’s **Background** panel to see its schedule and prompt. **Next run** appears when a future run time is available.
+
+Ask Claude to cancel a scheduled job; it has no individual Stop button in the panel. Jobs run only while their session stays alive and stop ten minutes after the last real activity. A job already running then finishes first.
+
 ## Session State
 
 Each agent keeps its own history and active run state. An agent on the Chat interface is flexible turn by turn. An agent on the Terminal interface is fixed after launch, because it runs through a terminal-style coding-agent session.
