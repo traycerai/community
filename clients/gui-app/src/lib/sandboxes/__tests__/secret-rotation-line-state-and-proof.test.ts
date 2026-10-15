@@ -84,20 +84,19 @@ function producerLines(producers: RotationProducer[]): readonly string[] {
   return (status?.producers ?? []).map((line) => line.text);
 }
 
+type Evidence = RotationProducer["evidence"];
+
+// The Secrets page's wire closes the evidence kinds, so a kind newer than this
+// build cannot arrive here (the grant and notification wires leave it open).
+const NO_PROOF: ReadonlyArray<readonly [string, Evidence]> = [
+  ["an empty receipt", []],
+  ["a receipt with no evidence", null],
+  ["a session_closed that closed none", [{ kind: "session_closed", count: 0 }]],
+  ["a session_closed with no count", [{ kind: "session_closed", count: null }]],
+];
+
 describe("a producer's line names a proof only when the evidence proves something", () => {
-  it.each([
-    ["an empty receipt", []],
-    ["a receipt with no evidence", null],
-    [
-      "a session_closed that closed none",
-      [{ kind: "session_closed", count: 0 }],
-    ],
-    [
-      "a session_closed with no count",
-      [{ kind: "session_closed", count: null }],
-    ],
-    ["a kind newer than this build", [{ kind: "a_newer_kind", count: 4 }]],
-  ])(
+  it.each(NO_PROOF)(
     "reads not confirmed yet for an acknowledged worker with %s",
     (_, evidence) => {
       expect(
@@ -114,14 +113,7 @@ describe("a producer's line names a proof only when the evidence proves somethin
     },
   );
 
-  it.each([
-    ["an empty receipt", []],
-    ["a receipt with no evidence", null],
-    [
-      "a session_closed that closed none",
-      [{ kind: "session_closed", count: 0 }],
-    ],
-  ])(
+  it.each(NO_PROOF)(
     "reads not confirmed yet for an acknowledged host with %s",
     (_, evidence) => {
       expect(
