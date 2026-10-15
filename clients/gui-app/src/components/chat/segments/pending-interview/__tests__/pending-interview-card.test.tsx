@@ -2777,6 +2777,11 @@ describe("PendingInterviewCard long option labels", () => {
     expect(labelEl.classList.contains("truncate")).toBe(false);
     expect(labelEl.classList.contains("whitespace-nowrap")).toBe(false);
     expect(labelEl.classList.contains("break-words")).toBe(true);
+    // `min-w-0` is what lets the label shrink and wrap; overflow-wrap alone
+    // does not lower min-content. A clamp or ellipsis variant would hide text
+    // the same way `truncate` did.
+    expect(labelEl.classList.contains("min-w-0")).toBe(true);
+    expect(labelEl.className).not.toMatch(/text-ellipsis|line-clamp/);
   });
 });
 
