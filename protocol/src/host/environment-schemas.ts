@@ -665,6 +665,37 @@ export type EnvironmentSecretsListResponse = z.infer<
 >;
 
 /**
+ * A binding as the add dialog has it: the fields authn's create and
+ * candidate routes take (E8 checkpoint 6), so a database, SSH or connector
+ * secret can be created and verified from the desktop. The host forwards
+ * them as they are and authn validates them; `kind` and `protocol` are read
+ * as strings and `policy`, `tlsPolicy` and each pinned host key as opaque
+ * records for that reason. `value` is null for SSH, whose credential is the
+ * person's own SSH key.
+ */
+const secretBindingCandidateFields = {
+  kind: lazySchema(() => z.string().min(1).max(32)),
+  protocol: lazySchema(() => z.string().min(1).max(32)),
+  hosts: lazySchema(() => z.array(z.string().min(1).max(253)).min(1).max(16)),
+  /** Null for the protocol's default port. */
+  port: lazySchema(() => z.number().int().min(1).max(65_535).nullable()),
+  /** The login carried in generated connection strings. */
+  identity: lazySchema(() => z.string().min(1).max(256).nullable()),
+  /** The database, schema, keyspace or warehouse; null when there is none. */
+  database: lazySchema(() => z.string().min(1).max(256).nullable()),
+  policy: lazySchema(() => z.record(z.string(), z.unknown()).nullable()),
+  tlsPolicy: lazySchema(() => z.record(z.string(), z.unknown()).nullable()),
+  pinnedHostKeys: lazySchema(() =>
+    z.array(z.record(z.string(), z.unknown())).max(16).nullable(),
+  ),
+  connectorId: lazySchema(() => z.string().min(1).nullable()),
+  confirmedAddresses: lazySchema(() =>
+    z.array(z.string().min(2).max(64)).max(16).nullable(),
+  ),
+  value: lazySchema(() => z.string().min(1).max(65_536).nullable()),
+};
+
+/**
  * `environment.secrets.create@1.0`: intake. The value reaches the host over
  * the connection and the host seals it to authn's intake key before it is
  * written anywhere; the answer never carries it back. `plaintextConsent` is
@@ -674,10 +705,25 @@ export type EnvironmentSecretsListResponse = z.infer<
 export const environmentSecretsCreateRequestSchema = lazySchema(() =>
   z.object({
     name: z.string().min(1),
-    protocol: z.string().min(1).max(32),
-    destinations: z.array(z.string().min(1)),
+    ...secretBindingCandidateFields,
     mode: z.string().min(1).max(32),
-    value: z.string().min(1),
+    /** The person kept a port that is another protocol's default, on purpose. */
+    portOverride: z.boolean(),
+    /** HTTP kinds only; others send `["header"]`. Known: header, query, body. */
+    swapSites: z.array(z.string().min(1).max(16)).min(1).max(3),
+    /** The variables the value is set as, each in its connection dialect. */
+    variables: z
+      .array(
+        z.object({
+          name: z.string().min(1).max(256),
+          dialect: z.string().min(1).max(32),
+        }),
+      )
+      .max(16),
+    /** Known: none, presigned_url, short_lived_credentials. */
+    exportPolicy: z.string().min(1).max(32).nullable(),
+    /** "Sandboxes get it": granted to every live and future sandbox. */
+    sandboxesByDefault: z.boolean(),
     plaintextConsent: z
       .object({ disclosureVersion: z.number().int().nonnegative() })
       .nullable(),
@@ -718,9 +764,7 @@ export const environmentSecretsVerifyRequestSchema = lazySchema(() =>
     z.object({ target: z.literal("secret"), secretId: z.string().min(1) }),
     z.object({
       target: z.literal("candidate"),
-      protocol: z.string().min(1).max(32),
-      destinations: z.array(z.string().min(1)),
-      value: z.string().min(1),
+      ...secretBindingCandidateFields,
     }),
   ]),
 );
@@ -848,6 +892,8 @@ export type EnvironmentSecretsUndoRequest = z.infer<
 export const SECRET_UNDO_REFUSAL_CODES = [
   "version_destroyed",
   "secret_revoked",
+  "version_current",
+  "secret_version_stale",
 ] as const;
 export const environmentSecretsUndoResponseSchema = lazySchema(() =>
   z.discriminatedUnion("outcome", [

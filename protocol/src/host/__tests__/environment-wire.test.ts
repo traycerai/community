@@ -102,6 +102,58 @@ function accepts(schema: z.ZodType, input: unknown): boolean {
   return schema.safeParse(input).success;
 }
 
+const baseBinding = {
+  kind: "http",
+  protocol: "https",
+  hosts: ["api.example.com"],
+  port: null,
+  identity: null,
+  database: null,
+  policy: null,
+  tlsPolicy: null,
+  pinnedHostKeys: null,
+  connectorId: null,
+  confirmedAddresses: null,
+};
+
+const databaseBinding = {
+  ...baseBinding,
+  kind: "database",
+  protocol: "postgres",
+  hosts: ["db.internal.example.com"],
+  port: 5432,
+  identity: "app_user",
+  database: "orders",
+  value: "s3cret-password",
+};
+
+const sshBinding = {
+  ...baseBinding,
+  kind: "ssh",
+  protocol: "ssh",
+  hosts: ["bastion.example.com", "10.0.0.7"],
+  port: 22,
+  identity: "deploy",
+  policy: { allowForwarding: false, maxSessionSeconds: 3600 },
+  pinnedHostKeys: [
+    { algorithm: "ssh-ed25519", fingerprint: "SHA256:abc123" },
+    { algorithm: "ecdsa-sha2-nistp256", fingerprint: "SHA256:def456" },
+  ],
+  confirmedAddresses: ["10.0.0.7"],
+  value: null,
+};
+
+const createOptions = {
+  name: "PROD_DB",
+  mode: "brokered",
+  portOverride: false,
+  swapSites: ["header"],
+  variables: [{ name: "DATABASE_URL", dialect: "postgres_url" }],
+  exportPolicy: null,
+  sandboxesByDefault: false,
+  plaintextConsent: null,
+};
+
 function captureThrown(run: () => unknown): unknown {
   try {
     run();
@@ -1371,21 +1423,55 @@ describe("secret versions, Undo, Destroy, rotation and consent are the plan's sh
         secretId: "s1",
       }),
     ).toEqual({ target: "secret", secretId: "s1" });
+    const httpsCandidate = { ...baseBinding, value: "sk-candidate" };
     expect(
       env.environmentSecretsVerifyRequestSchema.parse({
         target: "candidate",
-        protocol: "https",
-        destinations: ["api.example.com"],
-        value: "sk-candidate",
+        ...httpsCandidate,
       }),
-    ).toHaveProperty("target", "candidate");
+    ).toEqual({ target: "candidate", ...httpsCandidate });
+    // The value is required (null for SSH), never absent.
+    const { value: _omittedValue, ...candidateWithoutValue } = httpsCandidate;
+    expect(
+      accepts(env.environmentSecretsVerifyRequestSchema, {
+        target: "candidate",
+        ...candidateWithoutValue,
+      }),
+    ).toBe(false);
+    // The old candidate shape (`destinations`, no `hosts`) is refused.
     expect(
       accepts(env.environmentSecretsVerifyRequestSchema, {
         target: "candidate",
         protocol: "https",
         destinations: ["api.example.com"],
+        value: "sk-candidate",
       }),
     ).toBe(false);
+    // A full database candidate parses on the candidate arm.
+    expect(
+      env.environmentSecretsVerifyRequestSchema.parse({
+        target: "candidate",
+        ...databaseBinding,
+      }),
+    ).toEqual({ target: "candidate", ...databaseBinding });
+    // An SSH candidate carries no value, plus pinned host keys and a policy.
+    expect(
+      env.environmentSecretsVerifyRequestSchema.parse({
+        target: "candidate",
+        ...sshBinding,
+      }),
+    ).toEqual({ target: "candidate", ...sshBinding });
+    // The shared fields are bounded on this arm too.
+    for (const hosts of [[], Array.from({ length: 17 }, (_, i) => `h${i}`)]) {
+      expect(
+        accepts(env.environmentSecretsVerifyRequestSchema, {
+          target: "candidate",
+          ...httpsCandidate,
+          hosts,
+        }),
+        `${hosts.length} hosts`,
+      ).toBe(false);
+    }
 
     expect(
       env.environmentSecretsVerifyResponseSchema.parse({
@@ -1433,5 +1519,194 @@ describe("secret versions, Undo, Destroy, rotation and consent are the plan's sh
       body: "401 Unauthorized: bad key",
     });
     expect(sortedKeys(stripped)).toEqual(["evidence", "hop"]);
+  });
+
+  // E11: the add dialog creates a database, SSH or connector secret, so the
+  // create request carries the same binding fields as the verify candidate.
+  it("environment.secrets.create: the binding fields, hosts not destinations, authn validates kind and protocol", () => {
+    const schema = env.environmentSecretsCreateRequestSchema;
+    const database = { ...createOptions, ...databaseBinding };
+    const ssh = {
+      ...createOptions,
+      ...sshBinding,
+      name: "BASTION",
+      swapSites: ["header"],
+    };
+
+    // A full database request parses and round-trips unchanged.
+    expect(schema.parse(database)).toEqual(database);
+    // An SSH request carries a null value, pinned host keys and a policy.
+    expect(schema.parse(ssh)).toEqual(ssh);
+
+    // The same database binding parses on both arms.
+    expect(
+      accepts(env.environmentSecretsVerifyRequestSchema, {
+        target: "candidate",
+        ...databaseBinding,
+      }),
+    ).toBe(true);
+    expect(accepts(schema, database)).toBe(true);
+
+    // The old request shape (`destinations`, no `hosts`) is refused.
+    const { hosts: _hosts, ...withoutHosts } = database;
+    expect(
+      accepts(schema, { ...withoutHosts, destinations: ["db.example.com"] }),
+    ).toBe(false);
+    expect(accepts(schema, withoutHosts)).toBe(false);
+    // `destinations` beside `hosts` is not read.
+    expect(
+      sortedKeys(
+        schema.parse({ ...database, destinations: ["x.example.com"] }),
+      ),
+    ).not.toContain("destinations");
+
+    // Hosts: one to sixteen.
+    for (const count of [0, 17]) {
+      expect(
+        accepts(schema, {
+          ...database,
+          hosts: Array.from({ length: count }, (_, i) => `h${i}.example.com`),
+        }),
+        `${count} hosts`,
+      ).toBe(false);
+    }
+    for (const count of [1, 16]) {
+      expect(
+        accepts(schema, {
+          ...database,
+          hosts: Array.from({ length: count }, (_, i) => `h${i}.example.com`),
+        }),
+        `${count} hosts`,
+      ).toBe(true);
+    }
+
+    // Port: null or 1..65535.
+    for (const port of [0, 65_536, 1.5]) {
+      expect(accepts(schema, { ...database, port }), String(port)).toBe(false);
+    }
+    for (const port of [null, 1, 65_535]) {
+      expect(accepts(schema, { ...database, port }), String(port)).toBe(true);
+    }
+
+    // kind and protocol are open strings here: authn validates them.
+    expect(
+      schema.parse({
+        ...database,
+        kind: "not-a-kind-yet",
+        protocol: "not-a-protocol-yet",
+      }),
+    ).toMatchObject({ kind: "not-a-kind-yet", protocol: "not-a-protocol-yet" });
+    expect(accepts(schema, { ...database, kind: "" })).toBe(false);
+    expect(accepts(schema, { ...database, protocol: "" })).toBe(false);
+
+    // policy and tlsPolicy pass through as records, unchanged.
+    const policy = { nested: { allow: ["a", "b"] }, limit: 3, flag: true };
+    const tlsPolicy = { mode: "verify-full", caBundle: null };
+    const passed = schema.parse({ ...database, policy, tlsPolicy });
+    expect(passed.policy).toEqual(policy);
+    expect(passed.tlsPolicy).toEqual(tlsPolicy);
+    expect(accepts(schema, { ...database, policy: "strict" })).toBe(false);
+    expect(accepts(schema, { ...database, tlsPolicy: [1] })).toBe(false);
+
+    // pinnedHostKeys: records, at most sixteen.
+    const keys = Array.from({ length: 16 }, (_, i) => ({
+      fingerprint: `k${i}`,
+    }));
+    expect(accepts(schema, { ...ssh, pinnedHostKeys: keys })).toBe(true);
+    expect(
+      accepts(schema, {
+        ...ssh,
+        pinnedHostKeys: [...keys, { fingerprint: "k16" }],
+      }),
+    ).toBe(false);
+    expect(accepts(schema, { ...ssh, pinnedHostKeys: ["SHA256:abc"] })).toBe(
+      false,
+    );
+
+    // confirmedAddresses: strings of 2..64, at most sixteen.
+    expect(accepts(schema, { ...ssh, confirmedAddresses: ["a"] })).toBe(false);
+    expect(
+      accepts(schema, { ...ssh, confirmedAddresses: ["a".repeat(65)] }),
+    ).toBe(false);
+    expect(
+      accepts(schema, {
+        ...ssh,
+        confirmedAddresses: Array.from({ length: 17 }, () => "10.0.0.1"),
+      }),
+    ).toBe(false);
+
+    // value: null or 1..65536 characters, and never absent.
+    expect(accepts(schema, { ...database, value: "" })).toBe(false);
+    expect(accepts(schema, { ...database, value: "v".repeat(65_536) })).toBe(
+      true,
+    );
+    expect(accepts(schema, { ...database, value: "v".repeat(65_537) })).toBe(
+      false,
+    );
+    const { value: _value, ...withoutValue } = database;
+    expect(accepts(schema, withoutValue)).toBe(false);
+
+    // swapSites: one to three; variables: at most sixteen.
+    expect(accepts(schema, { ...database, swapSites: [] })).toBe(false);
+    expect(
+      accepts(schema, {
+        ...database,
+        swapSites: ["header", "query", "body", "extra"],
+      }),
+    ).toBe(false);
+    expect(
+      accepts(schema, {
+        ...database,
+        swapSites: ["header", "query", "body"],
+      }),
+    ).toBe(true);
+    expect(
+      accepts(schema, {
+        ...database,
+        variables: Array.from({ length: 17 }, (_, i) => ({
+          name: `V${i}`,
+          dialect: "postgres_url",
+        })),
+      }),
+    ).toBe(false);
+    expect(accepts(schema, { ...database, variables: [] })).toBe(true);
+    expect(accepts(schema, { ...database, exportPolicy: "none" })).toBe(true);
+    expect(accepts(schema, { ...database, portOverride: "yes" })).toBe(false);
+    expect(
+      accepts(schema, { ...database, sandboxesByDefault: undefined }),
+    ).toBe(false);
+    expect(
+      accepts(schema, {
+        ...database,
+        plaintextConsent: { disclosureVersion: 2 },
+      }),
+    ).toBe(true);
+  });
+
+  // The two refusal codes added with E11 are accepted on the undo answer.
+  it("environment.secrets.undo: version_current and secret_version_stale are refusal codes", () => {
+    for (const code of ["version_current", "secret_version_stale"]) {
+      expect(env.SECRET_UNDO_REFUSAL_CODES).toContain(code);
+      expect(
+        env.environmentSecretsUndoResponseSchema.parse({
+          outcome: "refused",
+          code,
+        }),
+      ).toEqual({ outcome: "refused", code });
+    }
+    // The code is an open string on the wire: a code a newer host adds still
+    // parses, and the client shows the refusal's own message for it.
+    expect(
+      env.environmentSecretsUndoResponseSchema.parse({
+        outcome: "refused",
+        code: "a_code_added_later",
+      }),
+    ).toEqual({ outcome: "refused", code: "a_code_added_later" });
+    expect(
+      accepts(env.environmentSecretsUndoResponseSchema, {
+        outcome: "refused",
+        code: "",
+      }),
+    ).toBe(false);
   });
 });
