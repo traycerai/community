@@ -216,7 +216,9 @@ describe("a sign-in URL with a pasted code", () => {
       screen.getByText("Sign in on claude.ai, then paste the code it shows."),
     ).toBeTruthy();
 
-    fireEvent.click(screen.getByRole("button", { name: "Sign in on claude.ai" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Sign in on claude.ai" }),
+    );
     expect(openLinkMock).toHaveBeenCalledTimes(1);
     expect(openLinkMock).toHaveBeenCalledWith(SIGN_IN_URL, "auth", null);
 
@@ -314,7 +316,9 @@ describe("a mismatch", () => {
     await reachMismatch(PROFILE_ID);
     linkMock.link.mockResolvedValueOnce(SIGN_IN_RESPONSE);
 
-    fireEvent.click(screen.getByRole("button", { name: "Add as a new profile" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Add as a new profile" }),
+    );
     await screen.findByTestId("provider-link-code");
 
     expect(linkMock.link).toHaveBeenCalledTimes(2);
