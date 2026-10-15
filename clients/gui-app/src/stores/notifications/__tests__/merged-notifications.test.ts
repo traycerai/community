@@ -993,6 +993,7 @@ describe("merged notifications feed", () => {
           hostId: "host-1",
           secretName: "DB_PASSWORD",
           destination: "db.example.com",
+          protocol: "mysql",
           reason: "Run the migration",
           environmentId: "env-team-1",
           teamName: "Acme",

@@ -35,6 +35,10 @@ const GRANT_DETAIL: GrantRequestDetail = {
   protocol: null,
   reason: "Run the migration",
   sandboxName: null,
+  environmentId: null,
+  teamName: null,
+  decision: null,
+  decidedBy: null,
 };
 
 function buildRow(
