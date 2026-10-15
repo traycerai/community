@@ -191,6 +191,9 @@ export class WorktreeDeleteBatchStreamClient {
       if (this.wsStreamClient.subscribeAtVersion === undefined) {
         throw new Error("This stream transport cannot pin a schema version");
       }
+      // `{1,1}` is the FLOOR consent needs (`stopOwners` on the wire), not the
+      // declared version: the transport declares the newest minor both sides
+      // share, so `@1.2`/`@1.3` frame keys still reach this session.
       session = this.wsStreamClient.subscribeAtVersion(
         "worktree.deleteBatchByPath",
         { major: 1, minor: 1 },
