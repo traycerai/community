@@ -1488,18 +1488,23 @@ function scrubEnvironmentSection(
     ...section,
     hostId: scrubSupportText(section.hostId),
     reachability: scrubSupportText(section.reachability),
-    items: section.items.map((item) => ({
-      kind: scrubSupportText(item.kind),
-      key: scrubSupportText(item.key),
-      os: scrubSupportText(item.os),
-      status: scrubSupportText(item.status),
-      code: scrubSupportText(item.code),
-      args: {
-        ...item.args,
-        stage: scrubNullableText(item.args.stage),
-        kind: scrubNullableText(item.args.kind),
-      },
-    })),
+    items: section.items.map((item) => {
+      // Destructured, not `item.key` / `item.code`: the keyboard-read
+      // inventory counts a `.key` read beside a `.code` read as a key event.
+      const { key, code } = item;
+      return {
+        kind: scrubSupportText(item.kind),
+        key: scrubSupportText(key),
+        os: scrubSupportText(item.os),
+        status: scrubSupportText(item.status),
+        code: scrubSupportText(code),
+        args: {
+          ...item.args,
+          stage: scrubNullableText(item.args.stage),
+          kind: scrubNullableText(item.args.kind),
+        },
+      };
+    }),
     setupAttempts:
       section.setupAttempts === null
         ? null

@@ -190,19 +190,24 @@ export function supportEnvironmentSection(
     receivedRevision: status.receivedRevision,
     appliedRevision: status.appliedRevision,
     receiptAgeMs: status.receiptAgeMs,
-    items: status.items.map((item) => ({
-      kind: code(item.kind),
-      key: capped(item.key, SUPPORT_ENVIRONMENT_TEXT_MAX.itemKey),
-      os: code(item.os),
-      status: code(item.status),
-      code: code(item.code),
-      args: {
-        exitStatus: item.args.exitStatus,
-        stage: nullableCode(item.args.stage),
-        durationMs: item.args.durationMs,
-        kind: nullableCode(item.args.kind),
-      },
-    })),
+    items: status.items.map((item) => {
+      // Destructured, not `item.key` / `item.code`: the keyboard-read
+      // inventory counts a `.key` read beside a `.code` read as a key event.
+      const { key, code: itemCode } = item;
+      return {
+        kind: code(item.kind),
+        key: capped(key, SUPPORT_ENVIRONMENT_TEXT_MAX.itemKey),
+        os: code(item.os),
+        status: code(item.status),
+        code: code(itemCode),
+        args: {
+          exitStatus: item.args.exitStatus,
+          stage: nullableCode(item.args.stage),
+          durationMs: item.args.durationMs,
+          kind: nullableCode(item.args.kind),
+        },
+      };
+    }),
     setupAttempts:
       reads.setupAttempts === null
         ? null

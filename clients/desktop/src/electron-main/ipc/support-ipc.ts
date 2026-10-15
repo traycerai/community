@@ -921,16 +921,19 @@ function parseEnvironmentItem(
   context: string,
 ): SupportEnvironmentItem {
   assertClosedRecord(value, ENVIRONMENT_ITEM_KEYS, context);
+  // Destructured, not `value.key` / `value.code`: the keyboard-read
+  // inventory counts a `.key` read beside a `.code` read as a key event.
+  const { key, code } = value;
   return {
     kind: parseEnvironmentCode(value.kind, `${context}.kind`),
     key: parseBoundedString(
-      value.key,
+      key,
       SUPPORT_ENVIRONMENT_TEXT_MAX.itemKey,
       `${context}.key`,
     ),
     os: parseEnvironmentCode(value.os, `${context}.os`),
     status: parseEnvironmentCode(value.status, `${context}.status`),
-    code: parseEnvironmentCode(value.code, `${context}.code`),
+    code: parseEnvironmentCode(code, `${context}.code`),
     args: parseEnvironmentItemArgs(value.args, `${context}.args`),
   };
 }
