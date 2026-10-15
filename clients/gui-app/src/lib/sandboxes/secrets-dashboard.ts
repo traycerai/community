@@ -17,6 +17,19 @@ export function secretsDashboardUrl(signInUrl: string): string {
 }
 
 /**
+ * The dashboard's Personal Secrets page with its add dialog open at `kind`
+ * (ticket E11, checkpoint 3): the kinds whose forms live on the web (SSH, the
+ * cloud and certificate kinds) hand off here. The dashboard reads `add`.
+ */
+export function secretsDashboardAddUrl(
+  signInUrl: string,
+  kind: string,
+): string {
+  const params = new URLSearchParams({ add: kind });
+  return `${secretsDashboardUrl(signInUrl)}?${params.toString()}`;
+}
+
+/**
  * The dashboard's Personal review page, where held values and the changes a
  * host's move to Personal made are reviewed and applied (ticket E6).
  */
