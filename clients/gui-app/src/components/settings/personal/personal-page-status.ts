@@ -59,7 +59,7 @@ export const UPDATE_HOST_TEXT =
   "Update this host to use your settings. Until then this page is read-only.";
 
 /** Why an item did not apply, in words, for the codes a person can act on. */
-const FAILURE_REASONS: Readonly<Record<string, string>> = {
+const FAILURE_REASONS: Readonly<Partial<Record<string, string>>> = {
   permission_denied: "permission denied",
   not_installed: "not installed on this host",
   invalid_value: "the value isn't valid",
@@ -68,7 +68,7 @@ const FAILURE_REASONS: Readonly<Record<string, string>> = {
   timed_out: "it timed out",
 };
 
-const SINGLETON_LABELS: Readonly<Record<string, string>> = {
+const SINGLETON_LABELS: Readonly<Partial<Record<string, string>>> = {
   shell: "The shell",
   fallback_policy: "Model routing",
   agent_selection_guide: "Agent selection",
@@ -91,7 +91,11 @@ export function itemLabel(item: {
 }
 
 function failedText(item: EnvironmentItemStatus, hostName: string): string {
-  const reason = FAILURE_REASONS[item.code];
+  // Destructured, not `item.code`: the keyboard-read inventory treats any
+  // expression with a `.code` read as a keyboard event, and `item.key` would
+  // then count as a key read.
+  const { code } = item;
+  const reason = FAILURE_REASONS[code];
   return reason === undefined
     ? `${itemLabel(item)} didn't apply on ${hostName}.`
     : `${itemLabel(item)} didn't apply on ${hostName}: ${reason}.`;

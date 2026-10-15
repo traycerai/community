@@ -1,4 +1,7 @@
-import type { EnvironmentStaleWrite } from "@traycer/protocol/framework/environment-stale-write";
+import {
+  ENVIRONMENT_WRITE_STALE_CODE,
+  type EnvironmentStaleWrite,
+} from "@traycer/protocol/framework/environment-stale-write";
 import { HostRpcError } from "@traycer-clients/shared/host-transport/host-messenger";
 
 /**
@@ -8,7 +11,17 @@ import { HostRpcError } from "@traycer-clients/shared/host-transport/host-messen
  * came from, so they can make theirs again on top of it.
  */
 export function staleWriteOf(error: unknown): EnvironmentStaleWrite | null {
-  return error instanceof HostRpcError ? error.staleWrite : null;
+  return error instanceof HostRpcError ? staleWriteOfHostError(error) : null;
+}
+
+/**
+ * Keyed on the code, as the envelope gates the detail: an error built
+ * without the field (a test double, an older build) never reads as stale.
+ */
+export function staleWriteOfHostError(
+  error: Pick<HostRpcError, "code" | "staleWrite">,
+): EnvironmentStaleWrite | null {
+  return error.code === ENVIRONMENT_WRITE_STALE_CODE ? error.staleWrite : null;
 }
 
 /**

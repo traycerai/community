@@ -72,6 +72,14 @@ vi.mock("@/components/settings/panels/providers-settings-panel", () => ({
     <div data-testid="providers-panel-probe" />
   ),
 }));
+// The Providers probe stands in for a Personal page; its status frame reads
+// the host through Query, which this suite does not provide. The frame has
+// its own suite (`personal/__tests__/personal-page-frame.test.tsx`).
+vi.mock("@/components/settings/personal/personal-page-frame", () => ({
+  PersonalPageFrame: (props: { readonly children: ReactNode }): ReactNode =>
+    props.children,
+  PersonalPageHeaderStatus: (): ReactNode => null,
+}));
 
 // ---- host boundary, as in rules-tab-host-continuity -----------------------
 

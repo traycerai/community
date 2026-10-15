@@ -668,6 +668,7 @@ describe("RunnerIpcBridge", () => {
           // The secrets broker, on authn.
           RunnerHostInvoke.getSandboxGrants,
           RunnerHostInvoke.decideSecretRequest,
+          RunnerHostInvoke.mintExecutableWriteGrant,
           RunnerHostInvoke.listUserSessions,
           RunnerHostInvoke.revokeUserSession,
           RunnerHostInvoke.revokeAllSessions,

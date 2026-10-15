@@ -6,7 +6,10 @@ import {
   type HostRpcError,
 } from "@traycer-clients/shared/host-transport/host-messenger";
 import { toast } from "sonner";
-import { staleWriteMessage } from "@/lib/environment/stale-write";
+import {
+  staleWriteMessage,
+  staleWriteOfHostError,
+} from "@/lib/environment/stale-write";
 import { emitHostErrorNotification } from "@/stores/notifications/app-local-notifications-store";
 import { useAuthStore, type CloudVerdictLoss } from "@/stores/auth/auth-store";
 import { createReportIssueContext } from "@/lib/report-issue-context";
@@ -198,8 +201,9 @@ export function toastFromHostError(
   fallback: string,
 ): void {
   if (shouldSuppressRecoverableUnauthorized(error)) return;
-  if (error.staleWrite !== null) {
-    staleWriteToast(error.staleWrite);
+  const staleWrite = staleWriteOfHostError(error);
+  if (staleWrite !== null) {
+    staleWriteToast(staleWrite);
     return;
   }
   // Silent, and deliberately BEFORE the transport branch: an aborted request
@@ -259,8 +263,9 @@ export function toastFromHostErrorWithDetail(
   fallback: string,
 ): void {
   if (shouldSuppressRecoverableUnauthorized(error)) return;
-  if (error.staleWrite !== null) {
-    staleWriteToast(error.staleWrite);
+  const staleWrite = staleWriteOfHostError(error);
+  if (staleWrite !== null) {
+    staleWriteToast(staleWrite);
     return;
   }
   if (error instanceof HostRequestAbortedError) return;

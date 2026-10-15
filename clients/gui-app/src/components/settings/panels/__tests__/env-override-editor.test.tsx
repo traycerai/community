@@ -2,6 +2,8 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { EnvOverrideEditor } from "../env-override-editor";
 
+const NO_ROW_NOTES: ReadonlyMap<string, string> = new Map();
+
 type EnvCommit = (oldKey: string, newKey: string, value: string | null) => void;
 type EnvDelete = (key: string) => void;
 
@@ -23,6 +25,7 @@ function renderEditor(input: {
       overrides={input.overrides}
       disabled={false}
       credentialRefusal={input.credentialRefusal}
+      rowNotes={NO_ROW_NOTES}
       namePlaceholder="OPENAI_API_KEY"
       emptyLabel="No environment variables."
       onCommit={input.onCommit}
@@ -262,6 +265,7 @@ describe("EnvOverrideEditor", () => {
           overrides={[{ key: "REPO_URL", value: "https://github.com/o/r" }]}
           disabled={false}
           credentialRefusal={refusal}
+          rowNotes={NO_ROW_NOTES}
           namePlaceholder="NODE_ENV"
           emptyLabel="No environment variables."
           onCommit={onCommit}
@@ -366,6 +370,7 @@ describe("EnvOverrideEditor credential-shaped names", () => {
         overrides={input.overrides}
         disabled={false}
         credentialRefusal={input.refusal}
+        rowNotes={NO_ROW_NOTES}
         namePlaceholder="NODE_ENV"
         emptyLabel="No environment variables."
         onCommit={input.onCommit}

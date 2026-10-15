@@ -79,9 +79,6 @@ export function PersonalPageFrame(props: {
   readonly section: SettingsSectionId;
   readonly children: ReactNode;
 }): ReactNode {
-  // Every settings page, not only the ones that report status: a save on any
-  // of them can lose to a change made elsewhere.
-  useRereadOnStaleWrite(usePersonalHostScope().hostId);
   const kinds = personalPageItemKinds(props.section);
   if (kinds === null) return props.children;
   return (
@@ -96,6 +93,8 @@ function PersonalPageFrameForKinds(props: {
   readonly children: ReactNode;
 }): ReactNode {
   const { state, hostName, localOverrides } = useWindowHostEnvironmentState();
+  // A save on this page that lost to a change made elsewhere re-reads it.
+  useRereadOnStaleWrite(usePersonalHostScope().hostId);
   const line = personalPageStatusLine(state, props.kinds, hostName);
   const readOnly = state.kind === "unsupported";
   return (
