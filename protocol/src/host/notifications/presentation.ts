@@ -280,8 +280,8 @@ function teamNotificationPresentation(
         title: "Every pod is full",
         body:
           known?.kind === "team_pods_full"
-            ? `${known.teamName} • All ${known.podCount} pods are full; add a pod to start more sandboxes`
-            : "Every team pod is full; add a pod to start more sandboxes",
+            ? `${known.teamName} • All ${known.podCount} pods are full; add a pod`
+            : "Every team pod is full; add a pod",
       };
   }
 }

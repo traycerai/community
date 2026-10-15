@@ -491,7 +491,7 @@ describe("team notification presentation", () => {
       ),
     ).toEqual({
       title: "Every pod is full",
-      body: "Acme • All 4 pods are full; add a pod to start more sandboxes",
+      body: "Acme • All 4 pods are full; add a pod",
     });
   });
 
@@ -536,7 +536,7 @@ describe("team notification presentation", () => {
     [
       "team.pods.full",
       "Every pod is full",
-      "Every team pod is full; add a pod to start more sandboxes",
+      "Every team pod is full; add a pod",
     ],
   ] as const)(
     "%s falls back to generic copy for a malformed payload",

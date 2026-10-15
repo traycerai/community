@@ -210,7 +210,11 @@ import {
   type SentryReportRateLimit,
 } from "../sentry-delivery-observer";
 import type { HostFsLayout } from "../../host/host-paths";
-import type { SupportSubmitReportRequest } from "../../../ipc-contracts/window-types";
+import type {
+  SupportEnvironmentSection,
+  SupportPrivateDiagnostics,
+  SupportSubmitReportRequest,
+} from "../../../ipc-contracts/window-types";
 
 // The frozen-evidence key is composed in the IPC layer (sender id + draftId) -
 // the service itself just takes an opaque string, so tests stand in with a
@@ -257,8 +261,114 @@ const DELIVERY_FORM: SupportSubmitReportRequest = {
     fingerprint: "fp:v1:transport",
     stackFamily: null,
     correlationId: "corr-transport",
+    environment: { status: "unavailable" },
   },
 };
+
+// Ticket E11, checkpoint 5: a populated environment section with distinctive
+// item and secret names, so a leak is a plain substring check.
+const ENV_ITEM_KEY = "ZZ_SUPPORT_ENV_KEY";
+const ENV_SECRET_NAME = "ZZ_SUPPORT_SECRET";
+
+const ENVIRONMENT_SECTION: SupportEnvironmentSection = {
+  hostId: "host-env-1",
+  principal: "team",
+  reachability: "reachable",
+  bindingGeneration: 3,
+  desiredRevision: 7,
+  receivedRevision: 7,
+  appliedRevision: 6,
+  receiptAgeMs: 1200,
+  items: [
+    {
+      kind: "env_var",
+      key: ENV_ITEM_KEY,
+      os: "all",
+      status: "applied",
+      code: "ok",
+      args: { exitStatus: null, stage: null, durationMs: null, kind: null },
+    },
+    {
+      kind: "setup_script",
+      key: "setup",
+      os: "linux",
+      status: "failed",
+      code: "setup_failed",
+      args: {
+        exitStatus: 2,
+        stage: "install",
+        durationMs: 4100,
+        kind: "script",
+      },
+    },
+  ],
+  setupAttempts: [
+    {
+      attemptId: "attempt-1",
+      scriptHash: "hash-1",
+      trigger: "manual",
+      startedAt: 1_700_000_000_000,
+      endedAt: null,
+      exitStatus: null,
+      stageReached: "install",
+      result: null,
+    },
+  ],
+  policy: { source: "account", readState: "ready" },
+  rotations: [
+    {
+      secretName: ENV_SECRET_NAME,
+      state: "rotating",
+      producers: [
+        {
+          producer: "worker",
+          workerClass: "sandbox",
+          hostId: null,
+          hostName: null,
+          status: "pending",
+          evidence: [{ kind: "sessions", count: 2 }],
+        },
+      ],
+    },
+  ],
+};
+
+/** `DELIVERY_FORM` carrying `environment`, with the diagnostics toggle as given. */
+function formWithEnvironment(
+  environment: SupportPrivateDiagnostics["environment"],
+  includeDiagnostics: boolean,
+): SupportSubmitReportRequest {
+  const { privateDiagnostics } = DELIVERY_FORM;
+  if (privateDiagnostics === undefined) {
+    throw new Error("DELIVERY_FORM lost its privateDiagnostics");
+  }
+  return {
+    ...DELIVERY_FORM,
+    includeDiagnostics,
+    privateDiagnostics: { ...privateDiagnostics, environment },
+  };
+}
+
+/** The `environment` Sentry context of the last captured report, as a record. */
+function lastEnvironmentContext(): Record<string, unknown> {
+  const environment = lastHint().captureContext.contexts?.environment;
+  if (
+    typeof environment !== "object" ||
+    environment === null ||
+    Array.isArray(environment)
+  ) {
+    throw new Error("the report carries no environment context");
+  }
+  return Object.fromEntries(Object.entries(environment));
+}
+
+function parseContextJson(value: unknown): unknown {
+  if (typeof value !== "string") {
+    throw new Error("expected a JSON string in the environment context");
+  }
+  const parsed: unknown = JSON.parse(value);
+  return parsed;
+}
 
 const LOG_ATTACHMENT_MAX_BYTES = REPORT_LOG_TAIL_MAX_BYTES;
 
@@ -559,6 +669,7 @@ describe("DesktopSupportService.submitReport - delivered", () => {
           fingerprint: "fp:v1:abc",
           stackFamily: null,
           correlationId: "corr-1",
+          environment: { status: "unavailable" },
         },
       },
       KEY,
@@ -892,6 +1003,7 @@ describe("DesktopSupportService.submitReport - includeDiagnostics gate", () => {
       fingerprint: "fp:v1:gate",
       stackFamily: "family-a",
       correlationId: "corr-gate",
+      environment: { status: "unavailable" },
     },
   };
 
@@ -940,6 +1052,91 @@ describe("DesktopSupportService.submitReport - includeDiagnostics gate", () => {
     expect(tags.layer0Status).toBe("absent");
     expect(tags.stackFamily).toBe("family-a");
     expect(contexts?.registry).toBeDefined();
+  });
+
+  // Ticket E11, checkpoint 5: the selected host's environment section rides
+  // as one Sentry context, under the same consent gate as `registry`.
+  it("attaches the environment section as scalar fields plus JSON lists when on", async () => {
+    const service = buildService(null);
+    await service.freezeEvidence(KEY, null);
+    await service.submitReport(
+      formWithEnvironment(
+        { status: "known", value: ENVIRONMENT_SECTION },
+        true,
+      ),
+      KEY,
+    );
+    const environment = lastEnvironmentContext();
+    expect(environment).toMatchObject({
+      status: "known",
+      hostId: "host-env-1",
+      principal: "team",
+      reachability: "reachable",
+      bindingGeneration: 3,
+      desiredRevision: 7,
+      receivedRevision: 7,
+      appliedRevision: 6,
+      receiptAgeMs: 1200,
+    });
+    // Lists and records are JSON text, so none collapses to "[Object]" under
+    // Sentry's depth budget; each parses back to the section's own value.
+    expect(parseContextJson(environment.items)).toEqual(
+      ENVIRONMENT_SECTION.items,
+    );
+    expect(parseContextJson(environment.setupAttempts)).toEqual(
+      ENVIRONMENT_SECTION.setupAttempts,
+    );
+    expect(parseContextJson(environment.policy)).toEqual(
+      ENVIRONMENT_SECTION.policy,
+    );
+  });
+
+  // The scrubber runs over the whole `contexts` record, string leaves
+  // included, and redacts `secretName":"..."` as a secret assignment. This
+  // asserts what the section's contract says (a rotation's secret name
+  // reaches triage inside parseable JSON); it is red while the scrubber
+  // rewrites the JSON text itself.
+  it("keeps the rotations JSON parseable and carrying the secret name", async () => {
+    const service = buildService(null);
+    await service.freezeEvidence(KEY, null);
+    await service.submitReport(
+      formWithEnvironment(
+        { status: "known", value: ENVIRONMENT_SECTION },
+        true,
+      ),
+      KEY,
+    );
+    expect(parseContextJson(lastEnvironmentContext().rotations)).toEqual(
+      ENVIRONMENT_SECTION.rotations,
+    );
+  });
+
+  it("attaches nothing named environment when the toggle is off, section or not", async () => {
+    const service = buildService(null);
+    await service.freezeEvidence(KEY, null);
+    await service.submitReport(
+      formWithEnvironment(
+        { status: "known", value: ENVIRONMENT_SECTION },
+        false,
+      ),
+      KEY,
+    );
+    const hint = lastHint();
+    expect(hint.captureContext.contexts?.environment).toBeUndefined();
+    // Nothing of the person's own names reaches the event by any other road.
+    const serialized = JSON.stringify(hint.captureContext);
+    expect(serialized).not.toContain(ENV_ITEM_KEY);
+    expect(serialized).not.toContain(ENV_SECRET_NAME);
+  });
+
+  it("sends only { status: unavailable } for an unavailable section when on", async () => {
+    const service = buildService(null);
+    await service.freezeEvidence(KEY, null);
+    await service.submitReport(
+      formWithEnvironment({ status: "unavailable" }, true),
+      KEY,
+    );
+    expect(lastEnvironmentContext()).toEqual({ status: "unavailable" });
   });
 });
 
@@ -2135,6 +2332,24 @@ describe("DesktopSupportService.submitReport - image attachments (ticket 08)", (
 });
 
 describe("DesktopSupportService.saveDiagnosticBundle", () => {
+  it("never writes the environment section into the bundle (ticket E11, checkpoint 5)", async () => {
+    const service = buildService(null);
+    await service.freezeEvidence(KEY, null);
+
+    const { path } = await service.saveDiagnosticBundle(
+      formWithEnvironment(
+        { status: "known", value: ENVIRONMENT_SECTION },
+        true,
+      ),
+      KEY,
+    );
+
+    const raw = await readFile(path, "utf8");
+    expect(raw).not.toContain(ENV_ITEM_KEY);
+    expect(raw).not.toContain(ENV_SECRET_NAME);
+    expect(raw).not.toContain("host-env-1");
+  });
+
   it("omits the signed-in email from diagnostic bundles", async () => {
     const service = buildService("anurag@traycer.ai");
     await service.freezeEvidence(KEY, null);

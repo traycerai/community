@@ -18,6 +18,14 @@ import type { RunnerIpcBridge } from "./runner-ipc-bridge";
 import type {
   SupportCapturedField,
   SupportContextRegistrySnapshot,
+  SupportEnvironmentItem,
+  SupportEnvironmentItemArgs,
+  SupportEnvironmentPolicy,
+  SupportEnvironmentRotation,
+  SupportEnvironmentRotationEvidence,
+  SupportEnvironmentRotationProducer,
+  SupportEnvironmentSection,
+  SupportEnvironmentSetupAttempt,
   SupportFreezeEvidenceInput,
   SupportImageAttachmentInput,
   SupportLogTarget,
@@ -523,6 +531,7 @@ function parseSupportPrivateOutcome(
 }
 
 // Exactly ticket 05's five `SerializedReportIssuePrivateDiagnostics` keys,
+// plus ticket E11's `environment` (checkpoint 5),
 // all required whenever `privateDiagnostics` is sent at all - the serializer
 // never omits one (an "empty" cause/registry is `null`/all-`unavailable`,
 // not a missing key), so a missing key here is a real contract violation,
@@ -533,6 +542,7 @@ const PRIVATE_DIAGNOSTICS_KEYS = contractKeySet<SupportPrivateDiagnostics>({
   fingerprint: true,
   stackFamily: true,
   correlationId: true,
+  environment: true,
 });
 
 const PRIVATE_DIAGNOSTICS_CAUSE_KEYS =
@@ -560,6 +570,94 @@ const CONTEXT_REGISTRY_KEYS = contractKeySet<SupportContextRegistrySnapshot>({
   providerSelectionClass: true,
   providerVersion: true,
 });
+
+// The environment section (ticket E11, checkpoint 5): one closed key set per
+// record of the renderer's `SupportEnvironmentSection`, every key required.
+// Anything else, a pending upload, an override, a value, the policy body, a
+// team or owner label, connector detail among them, is refused by name.
+const ENVIRONMENT_SECTION_KEYS = contractKeySet<SupportEnvironmentSection>({
+  hostId: true,
+  principal: true,
+  reachability: true,
+  bindingGeneration: true,
+  desiredRevision: true,
+  receivedRevision: true,
+  appliedRevision: true,
+  receiptAgeMs: true,
+  items: true,
+  setupAttempts: true,
+  policy: true,
+  rotations: true,
+});
+
+const ENVIRONMENT_ITEM_KEYS = contractKeySet<SupportEnvironmentItem>({
+  kind: true,
+  key: true,
+  os: true,
+  status: true,
+  code: true,
+  args: true,
+});
+
+const ENVIRONMENT_ITEM_ARGS_KEYS = contractKeySet<SupportEnvironmentItemArgs>({
+  exitStatus: true,
+  stage: true,
+  durationMs: true,
+  kind: true,
+});
+
+const ENVIRONMENT_SETUP_ATTEMPT_KEYS =
+  contractKeySet<SupportEnvironmentSetupAttempt>({
+    attemptId: true,
+    scriptHash: true,
+    trigger: true,
+    startedAt: true,
+    endedAt: true,
+    exitStatus: true,
+    stageReached: true,
+    result: true,
+  });
+
+const ENVIRONMENT_POLICY_KEYS = contractKeySet<SupportEnvironmentPolicy>({
+  source: true,
+  readState: true,
+});
+
+const ENVIRONMENT_ROTATION_KEYS = contractKeySet<SupportEnvironmentRotation>({
+  secretName: true,
+  state: true,
+  producers: true,
+});
+
+const ENVIRONMENT_ROTATION_PRODUCER_KEYS =
+  contractKeySet<SupportEnvironmentRotationProducer>({
+    producer: true,
+    workerClass: true,
+    hostId: true,
+    hostName: true,
+    status: true,
+    evidence: true,
+  });
+
+const ENVIRONMENT_ROTATION_EVIDENCE_KEYS =
+  contractKeySet<SupportEnvironmentRotationEvidence>({
+    kind: true,
+    count: true,
+  });
+
+/**
+ * The longest each environment text field may be: the renderer's
+ * `SUPPORT_ENVIRONMENT_TEXT_MAX`, the same numbers. The two names are the
+ * person's own (an item key, a secret name), bounded by the account's own
+ * rules; everything else is a closed code, a hash or an opaque id.
+ */
+const SUPPORT_ENVIRONMENT_TEXT_MAX = {
+  itemKey: 3072,
+  secretName: 128,
+  code: 64,
+  hash: 128,
+  id: 256,
+} as const;
 
 const CAPTURED_FIELD_KNOWN_KEYS = new Set(["status", "value"]);
 const CAPTURED_FIELD_UNAVAILABLE_KEYS = new Set(["status"]);
@@ -716,6 +814,274 @@ function parseContextRegistrySnapshot(
   };
 }
 
+/** A record with exactly `keys`, every one present. */
+function assertClosedRecord(
+  value: unknown,
+  keys: ReadonlySet<string>,
+  context: string,
+): asserts value is Record<string, unknown> {
+  assertPlainObject(value, context);
+  assertOnlyAllowedKeys(value, keys, context);
+  for (const key of keys) {
+    assertHasKey(value, key, context);
+  }
+}
+
+function parseBoundedString(
+  value: unknown,
+  max: number,
+  context: string,
+): string {
+  assertString(value, context);
+  if (value.length > max) {
+    throw new Error(`${context} is longer than ${max} characters`);
+  }
+  return value;
+}
+
+function parseNullableBoundedString(
+  value: unknown,
+  max: number,
+  context: string,
+): string | null {
+  if (value === null) return null;
+  return parseBoundedString(value, max, context);
+}
+
+function parseNullableNumber(value: unknown, context: string): number | null {
+  if (value === null) return null;
+  assertNumber(value, context);
+  return value;
+}
+
+function parseArray<T>(
+  value: unknown,
+  context: string,
+  parseEntry: (entry: unknown, context: string) => T,
+): readonly T[] {
+  if (!Array.isArray(value)) throw new Error(`${context} must be an array`);
+  return value.map((entry: unknown, index) =>
+    parseEntry(entry, `${context}[${index}]`),
+  );
+}
+
+function parseNullableArray<T>(
+  value: unknown,
+  context: string,
+  parseEntry: (entry: unknown, context: string) => T,
+): readonly T[] | null {
+  if (value === null) return null;
+  return parseArray(value, context, parseEntry);
+}
+
+function parseEnvironmentCode(value: unknown, context: string): string {
+  return parseBoundedString(value, SUPPORT_ENVIRONMENT_TEXT_MAX.code, context);
+}
+
+function parseNullableEnvironmentCode(
+  value: unknown,
+  context: string,
+): string | null {
+  return parseNullableBoundedString(
+    value,
+    SUPPORT_ENVIRONMENT_TEXT_MAX.code,
+    context,
+  );
+}
+
+function parseEnvironmentId(value: unknown, context: string): string {
+  return parseBoundedString(value, SUPPORT_ENVIRONMENT_TEXT_MAX.id, context);
+}
+
+function parseEnvironmentPrincipal(
+  value: unknown,
+  context: string,
+): "personal" | "team" | null {
+  if (value === null || value === "personal" || value === "team") {
+    return value;
+  }
+  throw new Error(`${context} must be "personal", "team", or null`);
+}
+
+function parseEnvironmentItemArgs(
+  value: unknown,
+  context: string,
+): SupportEnvironmentItemArgs {
+  assertClosedRecord(value, ENVIRONMENT_ITEM_ARGS_KEYS, context);
+  return {
+    exitStatus: parseNullableNumber(value.exitStatus, `${context}.exitStatus`),
+    stage: parseNullableEnvironmentCode(value.stage, `${context}.stage`),
+    durationMs: parseNullableNumber(value.durationMs, `${context}.durationMs`),
+    kind: parseNullableEnvironmentCode(value.kind, `${context}.kind`),
+  };
+}
+
+function parseEnvironmentItem(
+  value: unknown,
+  context: string,
+): SupportEnvironmentItem {
+  assertClosedRecord(value, ENVIRONMENT_ITEM_KEYS, context);
+  return {
+    kind: parseEnvironmentCode(value.kind, `${context}.kind`),
+    key: parseBoundedString(
+      value.key,
+      SUPPORT_ENVIRONMENT_TEXT_MAX.itemKey,
+      `${context}.key`,
+    ),
+    os: parseEnvironmentCode(value.os, `${context}.os`),
+    status: parseEnvironmentCode(value.status, `${context}.status`),
+    code: parseEnvironmentCode(value.code, `${context}.code`),
+    args: parseEnvironmentItemArgs(value.args, `${context}.args`),
+  };
+}
+
+function parseEnvironmentSetupAttempt(
+  value: unknown,
+  context: string,
+): SupportEnvironmentSetupAttempt {
+  assertClosedRecord(value, ENVIRONMENT_SETUP_ATTEMPT_KEYS, context);
+  assertNumber(value.startedAt, `${context}.startedAt`);
+  return {
+    attemptId: parseEnvironmentId(value.attemptId, `${context}.attemptId`),
+    scriptHash: parseBoundedString(
+      value.scriptHash,
+      SUPPORT_ENVIRONMENT_TEXT_MAX.hash,
+      `${context}.scriptHash`,
+    ),
+    trigger: parseEnvironmentCode(value.trigger, `${context}.trigger`),
+    startedAt: value.startedAt,
+    endedAt: parseNullableNumber(value.endedAt, `${context}.endedAt`),
+    exitStatus: parseNullableNumber(value.exitStatus, `${context}.exitStatus`),
+    stageReached: parseNullableEnvironmentCode(
+      value.stageReached,
+      `${context}.stageReached`,
+    ),
+    result: parseNullableEnvironmentCode(value.result, `${context}.result`),
+  };
+}
+
+function parseEnvironmentPolicy(
+  value: unknown,
+  context: string,
+): SupportEnvironmentPolicy | null {
+  if (value === null) return null;
+  assertClosedRecord(value, ENVIRONMENT_POLICY_KEYS, context);
+  return {
+    source: parseEnvironmentCode(value.source, `${context}.source`),
+    readState: parseEnvironmentCode(value.readState, `${context}.readState`),
+  };
+}
+
+function parseEnvironmentRotationEvidence(
+  value: unknown,
+  context: string,
+): SupportEnvironmentRotationEvidence {
+  assertClosedRecord(value, ENVIRONMENT_ROTATION_EVIDENCE_KEYS, context);
+  return {
+    kind: parseEnvironmentCode(value.kind, `${context}.kind`),
+    count: parseNullableNumber(value.count, `${context}.count`),
+  };
+}
+
+function parseEnvironmentRotationProducer(
+  value: unknown,
+  context: string,
+): SupportEnvironmentRotationProducer {
+  assertClosedRecord(value, ENVIRONMENT_ROTATION_PRODUCER_KEYS, context);
+  // A host travels as its opaque id; its name never rides.
+  if (value.hostName !== null) {
+    throw new Error(`${context}.hostName must be null`);
+  }
+  return {
+    producer: parseEnvironmentCode(value.producer, `${context}.producer`),
+    workerClass: parseNullableEnvironmentCode(
+      value.workerClass,
+      `${context}.workerClass`,
+    ),
+    hostId:
+      value.hostId === null
+        ? null
+        : parseEnvironmentId(value.hostId, `${context}.hostId`),
+    hostName: null,
+    status: parseEnvironmentCode(value.status, `${context}.status`),
+    evidence: parseNullableArray(
+      value.evidence,
+      `${context}.evidence`,
+      parseEnvironmentRotationEvidence,
+    ),
+  };
+}
+
+function parseEnvironmentRotation(
+  value: unknown,
+  context: string,
+): SupportEnvironmentRotation {
+  assertClosedRecord(value, ENVIRONMENT_ROTATION_KEYS, context);
+  return {
+    secretName: parseBoundedString(
+      value.secretName,
+      SUPPORT_ENVIRONMENT_TEXT_MAX.secretName,
+      `${context}.secretName`,
+    ),
+    state: parseEnvironmentCode(value.state, `${context}.state`),
+    producers: parseArray(
+      value.producers,
+      `${context}.producers`,
+      parseEnvironmentRotationProducer,
+    ),
+  };
+}
+
+function parseEnvironmentSection(
+  value: unknown,
+  context: string,
+): SupportEnvironmentSection {
+  assertClosedRecord(value, ENVIRONMENT_SECTION_KEYS, context);
+  return {
+    hostId: parseEnvironmentId(value.hostId, `${context}.hostId`),
+    principal: parseEnvironmentPrincipal(
+      value.principal,
+      `${context}.principal`,
+    ),
+    reachability: parseEnvironmentCode(
+      value.reachability,
+      `${context}.reachability`,
+    ),
+    bindingGeneration: parseNullableNumber(
+      value.bindingGeneration,
+      `${context}.bindingGeneration`,
+    ),
+    desiredRevision: parseNullableNumber(
+      value.desiredRevision,
+      `${context}.desiredRevision`,
+    ),
+    receivedRevision: parseNullableNumber(
+      value.receivedRevision,
+      `${context}.receivedRevision`,
+    ),
+    appliedRevision: parseNullableNumber(
+      value.appliedRevision,
+      `${context}.appliedRevision`,
+    ),
+    receiptAgeMs: parseNullableNumber(
+      value.receiptAgeMs,
+      `${context}.receiptAgeMs`,
+    ),
+    items: parseArray(value.items, `${context}.items`, parseEnvironmentItem),
+    setupAttempts: parseNullableArray(
+      value.setupAttempts,
+      `${context}.setupAttempts`,
+      parseEnvironmentSetupAttempt,
+    ),
+    policy: parseEnvironmentPolicy(value.policy, `${context}.policy`),
+    rotations: parseNullableArray(
+      value.rotations,
+      `${context}.rotations`,
+      parseEnvironmentRotation,
+    ),
+  };
+}
+
 function parsePrivateDiagnosticsCause(
   value: unknown,
   context: string,
@@ -769,6 +1135,11 @@ function parsePrivateDiagnostics(
       `${context}.stackFamily`,
     ),
     correlationId: value.correlationId,
+    environment: parseCapturedField(
+      value.environment,
+      `${context}.environment`,
+      parseEnvironmentSection,
+    ),
   };
 }
 

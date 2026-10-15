@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { SupportEnvironmentSection } from "@/lib/support-environment-section";
 
 /**
  * Availability of one captured field. `known` is a fresh, currently-observed
@@ -69,6 +70,15 @@ export const EMPTY_SUPPORT_CONTEXT_SNAPSHOT: SupportContextSnapshot = {
 interface SupportContextRegistryState {
   readonly snapshot: SupportContextSnapshot;
   readonly setSnapshot: (patch: Partial<SupportContextSnapshot>) => void;
+  /**
+   * The selected host's environment section (ticket E11, checkpoint 5),
+   * written by `SupportEnvironmentBridge`. Kept beside the snapshot, not in
+   * it: the snapshot is the registry's own closed key set.
+   */
+  readonly environment: CapturedField<SupportEnvironmentSection>;
+  readonly setEnvironment: (
+    environment: CapturedField<SupportEnvironmentSection>,
+  ) => void;
 }
 
 /**
@@ -87,6 +97,10 @@ export const useSupportContextRegistry = create<SupportContextRegistryState>(
     setSnapshot: (patch) => {
       set((state) => ({ snapshot: { ...state.snapshot, ...patch } }));
     },
+    environment: UNAVAILABLE,
+    setEnvironment: (environment) => {
+      set({ environment });
+    },
   }),
 );
 
@@ -104,9 +118,21 @@ export function setSupportContextSnapshot(
   useSupportContextRegistry.getState().setSnapshot(patch);
 }
 
+/** The last environment section written, read at report-open like the snapshot. */
+export function getSupportEnvironmentSection(): CapturedField<SupportEnvironmentSection> {
+  return useSupportContextRegistry.getState().environment;
+}
+
+export function setSupportEnvironmentSection(
+  environment: CapturedField<SupportEnvironmentSection>,
+): void {
+  useSupportContextRegistry.getState().setEnvironment(environment);
+}
+
 /** Test-only reset back to the all-`unavailable` initial state. */
 export function __resetSupportContextRegistryForTests(): void {
   useSupportContextRegistry.setState({
     snapshot: EMPTY_SUPPORT_CONTEXT_SNAPSHOT,
+    environment: UNAVAILABLE,
   });
 }
