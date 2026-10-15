@@ -306,7 +306,7 @@ function errorMessageFor(run: WorktreeDeleteRunState): string | null {
     return run.error;
   }
   if (run.status === "complete" && !run.deleted) {
-    return worktreeDeleteDeclineMessage(run.declined);
+    return worktreeDeleteDeclineMessage(run.declined, 1);
   }
   return null;
 }

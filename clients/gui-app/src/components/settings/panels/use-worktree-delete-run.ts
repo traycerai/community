@@ -101,7 +101,7 @@ export interface WorktreeDeleteProgressSummary {
    * one and they all agree; `null` otherwise (no decline kind, a thrown
    * failure among them, or different reasons that one line cannot carry).
    */
-  readonly declinedMessage: string | null;
+  readonly declinedKind: WorktreeDeleteDeclinedKind | null;
 }
 
 interface WorktreeDeleteRunStore {
@@ -987,8 +987,8 @@ export function worktreeDeleteProgressDetail(
   const base = `${summary.deleted}/${summary.total} deleted`;
   if (summary.failed === 0) return base;
   const counts = `${base}, ${summary.failed} failed`;
-  if (summary.declinedMessage === null) return counts;
-  return `${counts}. ${summary.declinedMessage}`;
+  if (summary.declinedKind === null) return counts;
+  return `${counts}. ${worktreeDeleteDeclineMessage(summary.declinedKind, summary.failed)}`;
 }
 
 function drainDeleteQueue(): void {
@@ -1160,14 +1160,14 @@ function summarizeProgress(
     deleted,
     failed,
     active: Math.max(0, total - deleted - failed),
-    declinedMessage: sharedDeclinedMessage(scopedRuns, failed),
+    declinedKind: sharedDeclinedKind(scopedRuns, failed),
   };
 }
 
-function sharedDeclinedMessage(
+function sharedDeclinedKind(
   runs: readonly WorktreeDeleteRunRecord[],
   failedCount: number,
-): string | null {
+): WorktreeDeleteDeclinedKind | null {
   if (failedCount === 0) return null;
   const kinds = new Set<WorktreeDeleteDeclinedKind>();
   let declinedCount = 0;
@@ -1181,7 +1181,7 @@ function sharedDeclinedMessage(
   // named one reason for a batch that failed for several would be a guess.
   if (declinedCount !== failedCount || kinds.size !== 1) return null;
   const [kind] = kinds;
-  return worktreeDeleteDeclineMessage(kind);
+  return kind;
 }
 
 function worktreeRunIsTerminal(run: WorktreeDeleteRunState): boolean {

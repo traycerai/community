@@ -1865,8 +1865,10 @@ describe("WorktreesList delete flow", () => {
     });
 
     expect(screen.queryByTestId("worktree-delete-progress-modal")).toBeNull();
-    const strip = screen.getByText(/0\/2 deleted, 2 failed/);
-    expect(strip.textContent).toContain("teardown script");
+    // Two failures, so the sentence speaks of the worktrees, not "the worktree".
+    screen.getByText(
+      "0/2 deleted, 2 failed. The teardown script didn't finish successfully, so the worktrees were left in place - check the script and try again.",
+    );
   });
 
   it("keeps the counts alone in the strip when a batch's failures have different reasons", () => {
@@ -1888,6 +1890,52 @@ describe("WorktreesList delete flow", () => {
     });
 
     screen.getByText("0/2 deleted, 2 failed");
+  });
+
+  it("keeps the counts alone when one failure was a named decline and the other was not", () => {
+    renderDefault();
+    selectRows(["feat-clean", "feat-dirty"]);
+    fireEvent.click(screen.getByTestId("worktrees-list-delete-selected"));
+    fireEvent.click(screen.getByTestId("confirm-action"));
+    act(() => {
+      streamMock.commandCallbacks?.onTargetComplete(
+        "/wt/clean",
+        false,
+        "teardown_failed",
+      );
+      // A host that did not name a reason for this one.
+      streamMock.commandCallbacks?.onTargetComplete(
+        "/wt/dirty",
+        false,
+        undefined,
+      );
+    });
+
+    // Exact match: no sentence may follow the counts.
+    screen.getByText("0/2 deleted, 2 failed");
+  });
+
+  it("names the decline for a single failure even when other targets were deleted", () => {
+    renderDefault();
+    selectRows(["feat-clean", "feat-dirty"]);
+    fireEvent.click(screen.getByTestId("worktrees-list-delete-selected"));
+    fireEvent.click(screen.getByTestId("confirm-action"));
+    act(() => {
+      streamMock.commandCallbacks?.onTargetComplete(
+        "/wt/clean",
+        true,
+        undefined,
+      );
+      streamMock.commandCallbacks?.onTargetComplete(
+        "/wt/dirty",
+        false,
+        "removal_failed",
+      );
+    });
+
+    screen.getByText(
+      "1/2 deleted, 1 failed. The worktree couldn't be fully removed and part of it may still be on disk - refresh the list and try again, or check the folder.",
+    );
   });
 
   it("falls back to per-target streams when the host has no batch command method", () => {
