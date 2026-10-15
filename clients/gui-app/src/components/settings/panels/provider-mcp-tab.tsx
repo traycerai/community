@@ -29,6 +29,11 @@ import {
   PersonalEntryMark,
   type PersonalMarkTarget,
 } from "@/components/settings/personal/personal-entry-mark";
+import {
+  PERSONAL_ENTRY_LOCKED_TEXT,
+  usePersonalEntryApplied,
+} from "@/components/settings/personal/personal-page-context";
+import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
 import { Button } from "@/components/ui/button";
 import {
   Collapsible,
@@ -1293,6 +1298,13 @@ function McpServerRow(props: {
   const statusLabel = statusLabelFor(server);
   const { showLogin, showLogout, showForceReauth, toolsListable } =
     serverRowFlags(server, capabilities, canAuth, canSignIn);
+  // One of the person's settings: the host forwards only Remove and the
+  // tool switches for it, so turning the server on or off is the dashboard's.
+  const personal = usePersonalEntryApplied(
+    "mcp",
+    server.name,
+    props.markTarget.scope,
+  );
 
   return (
     <li className="rounded-lg border border-border/60">
@@ -1339,6 +1351,7 @@ function McpServerRow(props: {
             showForceReauth={showForceReauth}
             canRemove={canRemove}
             canToggleServer={canToggleServer}
+            toggleLockedNote={personal ? PERSONAL_ENTRY_LOCKED_TEXT : null}
             canDiscover={canDiscover}
             onLogin={onLogin}
             onLogout={onLogout}
@@ -1427,6 +1440,8 @@ function ServerRowActions(props: {
   readonly showForceReauth: boolean;
   readonly canRemove: boolean;
   readonly canToggleServer: boolean;
+  /** Why the server switch is held off, or `null` for a live switch. */
+  readonly toggleLockedNote: string | null;
   readonly canDiscover: boolean;
   readonly onLogin: () => void;
   readonly onLogout: () => void;
@@ -1497,7 +1512,25 @@ function ServerRowActions(props: {
           <Trash2 className="size-3.5" />
         </Button>
       ) : null}
-      {props.canToggleServer ? (
+      {props.canToggleServer && props.toggleLockedNote !== null ? (
+        <TooltipWrapper
+          label={props.toggleLockedNote}
+          side="top"
+          sideOffset={4}
+          align="center"
+        >
+          {/* A disabled control takes no pointer events; the span carries the
+              tooltip and the sentence for assistive technology. */}
+          <span data-testid="mcp-server-toggle-locked">
+            <Switch
+              checked={props.serverEnabled}
+              disabled
+              aria-label={`${props.serverName}: ${props.toggleLockedNote}`}
+            />
+          </span>
+        </TooltipWrapper>
+      ) : null}
+      {props.canToggleServer && props.toggleLockedNote === null ? (
         <Switch
           checked={props.serverEnabled}
           disabled={props.pending}

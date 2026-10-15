@@ -4,11 +4,16 @@ import {
   type PersonalMarkTarget,
 } from "@/components/settings/personal/personal-entry-mark";
 import {
+  PERSONAL_ENTRY_LOCKED_TEXT,
+  usePersonalEntryApplied,
+} from "@/components/settings/personal/personal-page-context";
+import {
   PROVIDER_DISPLAY_NAMES,
   type ProviderCliState,
   type ProviderId,
 } from "@traycer/protocol/host/provider-schemas";
 import type {
+  ProviderNativeScope,
   ProviderSkill,
   ProviderSkillsCapabilities,
   ProviderSkillSourceBadge,
@@ -199,12 +204,11 @@ function ProviderSkillsTabBody({
     effectiveScope,
   );
   // Hoisted: eslint rewrites `a && b` in JSX attrs to `a ? b : null`.
-  const openSkillEditable =
-    openSkill !== null && canEditHere && skillIsEditable(openSkill);
-  const openSkillUpdatable =
-    openSkill !== null &&
-    canUpdateHere &&
-    skillOriginDisplay(openSkill) !== null;
+  const {
+    personal: openSkillPersonal,
+    editable: openSkillEditable,
+    updatable: openSkillUpdatable,
+  } = useOpenSkillActions(openSkill, canEditHere, canUpdateHere, effectiveScope);
   const globalOnly = !multiScope && effectiveScope === "global";
   // Hoisted: eslint rewrites `a && b` in JSX attrs to `a ? b : null`, widening
   // boolean props to `boolean | null`.
@@ -427,6 +431,7 @@ function ProviderSkillsTabBody({
             removePending={removePending}
             removeDisabled={isMutating}
             actionError={detailError}
+            lockedNote={openSkillPersonal ? PERSONAL_ENTRY_LOCKED_TEXT : null}
             canEdit={openSkillEditable}
             canUpdate={openSkillUpdatable}
             origin={skillOriginDisplay(openSkill)}
@@ -963,6 +968,37 @@ description: Reviews a   # what the agent matches on
 
 ## When to use this
 ...instructions the agent follows...`;
+
+/**
+ * What the open skill's dialog offers. A skill that is one of the person's
+ * settings is changed in the dashboard: the host forwards only Remove for it,
+ * so edit and update are held off.
+ */
+function useOpenSkillActions(
+  openSkill: ProviderSkill | null,
+  canEditHere: boolean,
+  canUpdateHere: boolean,
+  scope: ProviderNativeScope,
+): {
+  readonly personal: boolean;
+  readonly editable: boolean;
+  readonly updatable: boolean;
+} {
+  const personal = usePersonalEntryApplied(
+    "skills",
+    openSkill?.name ?? null,
+    scope,
+  );
+  if (openSkill === null) {
+    return { personal, editable: false, updatable: false };
+  }
+  return {
+    personal,
+    editable: canEditHere && !personal && skillIsEditable(openSkill),
+    updatable:
+      canUpdateHere && !personal && skillOriginDisplay(openSkill) !== null,
+  };
+}
 
 function skillOpenLabel(skill: ProviderSkill): string {
   const badge = SKILL_SOURCE_LABEL[skill.source];

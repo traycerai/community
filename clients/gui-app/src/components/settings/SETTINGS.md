@@ -853,9 +853,28 @@ person's settings (`PersonalEntryMark`): "Personal" when the host applied one
 of their items as that entry (`environment.status` `appliedAs`), otherwise "On
 <host> only" with "Add to Personal" (`providers.nativeMutate@1.1`
 `promoteToPersonal`, shown only on a host that negotiated 1.1). A project's
-entries stay with the project and carry no mark. Adding or editing an entry in
-the page's own dialog already writes the person's settings, so it needs no
-second step.
+entries stay with the project and carry no mark. A new entry added, created or
+imported here stays on this host ("On <host> only") until "Add to Personal".
+On a Personal entry the host passes on only Remove and an MCP server's tool
+switches; everything else is changed in the dashboard, so the MCP server switch
+and a skill's edit and update are held off with "Change this in the dashboard."
+(`usePersonalEntryApplied`, `PERSONAL_ENTRY_LOCKED_TEXT`).
+
+**Personal ▸ Notices and "needs you"** (`personal/personal-page-notices.tsx`,
+ticket E7 checkpoint 5). Under a Personal page's status line, for the item
+kinds the page edits: each convergence notice from `environment.notices`
+("LOG_LEVEL from dev-box now applies everywhere.", or "from the dashboard")
+with Undo (`environment.undo`, with the grant) while `undoAvailable`, and each
+"needs you" row from `environment.review` ("LOG_LEVEL is waiting for you:
+looks like a secret / runs a command / was changed without your
+confirmation.") with Review in the dashboard. On the host a variable or
+provider-variable notice came from, "Keep dev-box's value on dev-box" writes
+the value that host has now as its own (`config.env.localOverride.set`, the
+value read as the page reads it: `config.env.list` or `providers.list`) and
+then undoes the change everywhere; an undo that is refused leaves the kept
+value, equal to the current one, and the row says why. A team's host shows no
+notices: its Personal pages are read-only (`inert`) under the team line and
+its dashboard link, like a host whose version predates these settings.
 
 **Two sections are both called "Diagnostics"**, one per group, and the group
 heading above each is what distinguishes them - the same way the rail already
@@ -5706,13 +5725,14 @@ set-state-in-effect` forbids the effect form, and an effect would also
   sidebar switcher is the collection, and every lifecycle verb lives on the
   Overview of the host it describes.
 
-  **A pinned host header, a notices strip, and four tabs**
+  **A pinned host header, a notices strip, and five tabs**
   (`host-overview-tabs.tsx`; core flows: the `host-overview-tabs` epic
   artifact). The header is the identity part of `HostIdentityCard` - name and
   rename, the Local/Remote tag, Activate, the `⋯` menu, the health line, the
   working chip - and it never moves, so switching tabs never hides Restart or
   Activate. Under it, the notices strip (below), then in this order:
-  **Installation · Updates · Data · Ports**, a `TabsList variant="line"`.
+  **Installation · Updates · Access and setup · Data · Ports**, a
+  `TabsList variant="line"`.
   There is no Status tab any more: it repeated the header's facts and stated
   one update three times (the update card, the version card's tag, and its
   answer), so its update card, wait and offline notice moved into the strip,
@@ -5772,6 +5792,43 @@ set-state-in-effect` forbids the effect form, and an effect would also
     rule), so a half-typed retention limit survives a look at Updates; an
     unvisited one is never mounted, and visited tabs reset when the page
     closes or the host changes.
+  - **Access and setup** (`host-overview-access-tab.tsx`, tab id `access`;
+    ticket E7 checkpoint 5). The picked host's own access and setup, read
+    through that host (`environment.status`, re-read every 5 s while open). A
+    host without the method shows only "Update this host to use your
+    settings."; an unreachable one says its values need a connection. Top to
+    bottom, each only while it applies:
+    1. **"Your settings moved to Personal. Review what changed."** once setup
+       is done and a notice came from the move (`source: "migration"`), with
+       Review in the dashboard (`personalReviewUrl`) and Dismiss. Dismissed
+       per host on this desktop (`useHostAccessPromptsStore`).
+    2. **Finishing setup** from `environment.status.setup {stage, state}`:
+       Registering this host, Moving this host's settings to Personal,
+       Applying your settings, each marked done, running or waiting, with
+       "Step 2 of 3". Stalled or failed reads "Setup stopped while <step>."
+       (a failed move: "Moving this host's settings to Personal failed.")
+       with Retry (`environment.setup.retry`). Gone once done.
+    3. **Remote access** (`host-scope/remote-access-section.tsx`): On ("Other
+       devices and agents signed in to your account can reach this
+       computer."), Off ("Other devices and agents can't reach this computer.
+       Your settings still reach it."), and Turning off ("Other devices and
+       agents are being disconnected.") with a spinner. `host.remoteAccess.set
+       {enabled: false}` answers `turning_off` until the host has closed its
+       sessions, and the section keeps saying so until the host's status
+       reports `off` (`shownRemoteAccess`), even when a status read still says
+       `on`.
+    4. **Terminal account**, one row per provider with an ambient profile,
+       under "This computer's own sign-in, which stays on this computer. Link
+       a plan to use one everywhere.", with a switch over
+       `providers.setProfileEnabled` (`profileId: "ambient"`). No rename: no
+       wire method renames a profile.
+    5. **This host's own values** (`environment.localOverrides`): each value
+       kept on this host only, with Edit (`config.env.localOverride.set`, with
+       the executable-write grant) and Clear, under "Agents started after a
+       change use the new value; restart the host for the host itself to
+       pick it up."
+    On a team's host every section is read-only (`inert`) under "These
+    settings belong to <team>. Change them in the dashboard." with a link.
   - **The notices strip, top to bottom, drawing only what applies**
     (`host-overview-notices.tsx`, between the header and the tab bar; its
     decisions are in `host-overview-status-model.ts`, and the panel resolves
@@ -5810,6 +5867,15 @@ set-state-in-effect` forbids the effect form, and an effect would also
        says it with Force update…, and while the host can't be reached,
        because it names live work. Its confirm and its refusal when the work
        changes under the open dialog are unchanged.
+    4. **The Remote access question** (`host-scope/remote-access-question.tsx`,
+       its own row under the strip): "Allow other devices and agents on your
+       account to reach this computer?" with On and Not now, while the host's
+       own settings are the person's, its remote access is off, and this
+       desktop has no answer for it. Either answer, or any switch made on
+       Access and setup, is remembered per host id on this desktop
+       (`useHostAccessPromptsStore`, persisted); the host keeps no "asked"
+       mark, so another desktop, or this one after its storage is cleared,
+       asks again.
   - **The destructive rule.** Force update…, Force restart… and Apply now end
     running work, so they are destructive-styled wherever they appear: the
     update card, the drain-gate row, and the busy dialogs

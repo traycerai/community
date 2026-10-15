@@ -3,6 +3,7 @@ import type { ProviderNativeScope } from "@traycer/protocol/host/provider-native
 import type { ProviderId } from "@traycer/protocol/host/provider-schemas";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
 import {
+  usePersonalEntryApplied,
   usePersonalHostName,
   usePersonalHostState,
 } from "@/components/settings/personal/personal-page-context";
@@ -38,13 +39,12 @@ export function PersonalEntryMark(props: {
 }): ReactNode {
   const state = usePersonalHostState();
   const hostName = usePersonalHostName();
-  if (props.target.scope !== "global" || state?.kind !== "ready") return null;
-  const personal = state.status.items.some(
-    (item) =>
-      item.appliedAs !== null &&
-      item.appliedAs.entryKind === props.target.entryKind &&
-      item.appliedAs.name === props.name,
+  const personal = usePersonalEntryApplied(
+    props.target.entryKind,
+    props.name,
+    props.target.scope,
   );
+  if (props.target.scope !== "global" || state?.kind !== "ready") return null;
   if (personal) {
     return (
       <Badge variant="secondary" data-testid="personal-entry-mark">

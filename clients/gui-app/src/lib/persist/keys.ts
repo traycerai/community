@@ -379,6 +379,11 @@ export const PERSIST_STORES = [
     kind: "static",
   },
   {
+    camelName: "hostAccessPrompts",
+    leaf: "host-access-prompts",
+    kind: "static",
+  },
+  {
     camelName: "providerLoginTerminals",
     leaf: "provider-login-terminals",
     kind: "static",

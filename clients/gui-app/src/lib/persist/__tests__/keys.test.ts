@@ -125,6 +125,10 @@ describe("persist key builders — output-preserving against current source", ()
     expect(persistKey("feature-announcements")).toBe(
       "traycer-gui-app:feature-announcements",
     );
+    // Source: src/stores/hosts/host-access-prompts-store.ts
+    expect(persistKey("host-access-prompts")).toBe(
+      "traycer-gui-app:host-access-prompts",
+    );
   });
 
   it("emits the current localStorage key for each scoped persistence family", () => {

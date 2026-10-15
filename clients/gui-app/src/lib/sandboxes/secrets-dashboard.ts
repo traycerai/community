@@ -15,3 +15,16 @@ export const SECRETS_DASHBOARD_LABEL = "Secrets and GitHub";
 export function secretsDashboardUrl(signInUrl: string): string {
   return `${resolvePlatformBaseUrl(signInUrl)}/environments/personal/secrets`;
 }
+
+/**
+ * The dashboard's Personal review page, where held values and the changes a
+ * host's move to Personal made are reviewed and applied (ticket E6).
+ */
+export function personalReviewUrl(signInUrl: string): string {
+  return `${resolvePlatformBaseUrl(signInUrl)}/environments/personal/review`;
+}
+
+/** The dashboard's settings pages, where a team's settings are changed. */
+export function settingsDashboardUrl(signInUrl: string): string {
+  return `${resolvePlatformBaseUrl(signInUrl)}/environments`;
+}

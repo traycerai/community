@@ -30,6 +30,8 @@ import {
   type HostOverviewSelectTab,
 } from "@/components/settings/panels/host-overview-tab-state";
 import { HostOverviewNotices } from "@/components/settings/panels/host-overview-notices";
+import { HostOverviewAccessTab } from "@/components/settings/panels/host-overview-access-tab";
+import { RemoteAccessQuestion } from "@/components/settings/host-scope/remote-access-question";
 import {
   describeHostOfflineNotice,
   inFlightUpdateKind,
@@ -1843,6 +1845,17 @@ export function HostOverviewPanel(props: {
       hosts={scope.hosts}
     />
   );
+  const accessTab = (
+    <HostOverviewAccessTab
+      client={client}
+      hostId={scope.hostId}
+      hostName={displayName}
+      connecting={
+        scope.status === "connecting" || host.health.state === "restarting"
+      }
+      usable={usable}
+    />
+  );
   const dataTab = (
     <HostOverviewDataTab
       client={client}
@@ -1957,6 +1970,13 @@ export function HostOverviewPanel(props: {
         lifecycleLine={host.isLocalMachine ? <HostLifecycleModeLine /> : null}
       >
         {notices}
+        {/* The one-time Remote access question, on every tab like the
+            strip above it; it draws nothing once answered on this desktop. */}
+        <RemoteAccessQuestion
+          client={client}
+          hostId={scope.hostId}
+          enabled={usable}
+        />
         {/* The tab bar and the one body showing, pinned under the header.
             The Ports count and the Installation dot hang on `badges`. */}
         <HostOverviewTabs
@@ -1978,6 +1998,7 @@ export function HostOverviewPanel(props: {
           bodies={{
             installation: installationTab,
             updates: updatesTab,
+            access: accessTab,
             data: dataTab,
             ports: portsTab,
           }}

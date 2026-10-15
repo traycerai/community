@@ -1,69 +1,104 @@
 import { useContext, type ReactNode } from "react";
+import type { HostClient } from "@traycer-clients/shared/host-client/host-client";
+import type {
+  EnvironmentNotice,
+  EnvironmentReviewEntry,
+  LocalOverride,
+} from "@traycer/protocol/host/environment-schemas";
 import {
+  NO_NOTICES,
   NO_OVERRIDES,
+  NO_REVIEW,
   PersonalPageContext,
 } from "@/components/settings/personal/personal-page-context";
+import { PersonalPageNotices } from "@/components/settings/personal/personal-page-notices";
+import { TeamOwnedLine } from "@/components/settings/host-scope/team-owned-line";
 import { usePersonalHostScope } from "@/components/settings/host-scope/use-host-scope";
-import type { LocalOverride } from "@traycer/protocol/host/environment-schemas";
 import {
   personalPageItemKinds,
   personalPageStatusLine,
   type PersonalHostState,
   type PersonalPageStatusLine,
 } from "@/components/settings/personal/personal-page-status";
+import {
+  useEnvironmentLocalOverridesRead,
+  useEnvironmentNoticesRead,
+  useEnvironmentReviewRead,
+  useEnvironmentStatusRead,
+} from "@/hooks/environment/use-environment-reads";
 import { useRereadOnStaleWrite } from "@/hooks/environment/use-reread-on-stale-write";
-import { useHostMethodSupport } from "@/hooks/host/use-host-supports-method";
-import { useHostQuery } from "@/hooks/host/use-host-query";
 import type { HostRpcRegistry } from "@/lib/host";
 import type { SettingsSectionId } from "@/lib/settings-sections";
 import { cn } from "@/lib/utils";
 
-/** Read through the window's own host, like every Personal page. */
-function useWindowHostEnvironmentState(): {
+interface WindowHostEnvironment {
   readonly state: PersonalHostState;
+  readonly hostId: string | null;
+  readonly client: HostClient<HostRpcRegistry> | null;
   readonly hostName: string;
   readonly localOverrides: readonly LocalOverride[];
-} {
+  readonly notices: readonly EnvironmentNotice[];
+  readonly review: readonly EnvironmentReviewEntry[];
+}
+
+/** Read through the window's own host, like every Personal page. */
+function useWindowHostEnvironmentState(
+  kinds: ReadonlySet<string>,
+): WindowHostEnvironment {
   const scope = usePersonalHostScope();
-  const supported = useHostMethodSupport(scope.hostId, "environment.status");
-  const query = useHostQuery<HostRpcRegistry, "environment.status">({
-    cacheKeyIdentity: undefined,
-    client: scope.client,
-    method: "environment.status",
-    params: {},
-    options: {
-      enabled: supported === true,
-      // Re-read while open, at the cadence the method's policy declares.
-      poll: true,
-    },
-  });
-  const overridesSupported = useHostMethodSupport(
+  const status = useEnvironmentStatusRead(scope.client, scope.hostId, true);
+  const overrides = useEnvironmentLocalOverridesRead(
+    scope.client,
     scope.hostId,
-    "environment.localOverrides",
+    true,
   );
-  const overridesQuery = useHostQuery<
-    HostRpcRegistry,
-    "environment.localOverrides"
-  >({
-    cacheKeyIdentity: undefined,
-    client: scope.client,
-    method: "environment.localOverrides",
-    params: {},
-    options: { enabled: overridesSupported === true },
-  });
   let state: PersonalHostState = { kind: "unknown" };
-  if (supported === false) state = { kind: "unsupported" };
-  else if (query.data !== undefined) {
+  if (status.supported === false) state = { kind: "unsupported" };
+  else if (status.data !== null) {
     state =
-      query.data.principal === null
+      status.data.principal === null
         ? { kind: "not-set-up" }
-        : { kind: "ready", status: query.data };
+        : { kind: "ready", status: status.data };
   }
+  // Notices and "needs you" rows are the person's own settings' facts: none
+  // on a host without them, or on a team's host.
+  const personal =
+    state.kind === "ready" && state.status.principal?.kind === "personal";
+  const notices = useEnvironmentNoticesRead(
+    scope.client,
+    scope.hostId,
+    personal,
+  );
+  const review = useEnvironmentReviewRead(scope.client, scope.hostId, personal);
   return {
     state,
+    hostId: scope.hostId,
+    client: scope.client,
     hostName: scope.hostLabel,
-    localOverrides: overridesQuery.data?.overrides ?? NO_OVERRIDES,
+    localOverrides: overrides.data?.overrides ?? NO_OVERRIDES,
+    notices: personal
+      ? ofKinds(notices.data?.notices ?? NO_NOTICES, kinds)
+      : NO_NOTICES,
+    review: personal
+      ? ofKinds(review.data?.entries ?? NO_REVIEW, kinds)
+      : NO_REVIEW,
   };
+}
+
+function ofKinds<Entry extends { readonly kind: string }>(
+  entries: readonly Entry[],
+  kinds: ReadonlySet<string>,
+): readonly Entry[] {
+  return entries.some((entry) => !kinds.has(entry.kind))
+    ? entries.filter((entry) => kinds.has(entry.kind))
+    : entries;
+}
+
+/** The team a host's settings belong to, or `null` for the person's own. */
+function teamNameOf(state: PersonalHostState): string | null {
+  if (state.kind !== "ready") return null;
+  const { principal } = state.status;
+  return principal?.kind === "team" ? principal.teamName : null;
 }
 
 /**
@@ -92,15 +127,16 @@ function PersonalPageFrameForKinds(props: {
   readonly kinds: ReadonlySet<string>;
   readonly children: ReactNode;
 }): ReactNode {
-  const { state, hostName, localOverrides } = useWindowHostEnvironmentState();
+  const environment = useWindowHostEnvironmentState(props.kinds);
+  const { state, hostName } = environment;
   // A save on this page that lost to a change made elsewhere re-reads it.
-  useRereadOnStaleWrite(usePersonalHostScope().hostId);
+  useRereadOnStaleWrite(environment.hostId);
   const line = personalPageStatusLine(state, props.kinds, hostName);
-  const readOnly = state.kind === "unsupported";
+  // Read-only on a host whose version predates these settings, and on a
+  // team's host, whose settings are the team's.
+  const readOnly = state.kind === "unsupported" || teamNameOf(state) !== null;
   return (
-    <PersonalPageContext.Provider
-      value={{ state, line, hostName, localOverrides }}
-    >
+    <PersonalPageContext.Provider value={{ ...environment, line }}>
       {readOnly ? (
         <div className="contents">
           <PersonalPageReadOnlyLine />
@@ -120,13 +156,16 @@ function PersonalPageFrameForKinds(props: {
  * by assistive technology; the shell skips its own line in that state.
  */
 function PersonalPageReadOnlyLine(): ReactNode {
-  const line = useContext(PersonalPageContext)?.line ?? null;
-  if (line === null) return null;
-  return (
-    <div className="mx-auto w-full max-w-5xl px-5 pt-5">
-      <PersonalPageStatusBanner line={line} />
-    </div>
-  );
+  const value = useContext(PersonalPageContext);
+  if (value === null) return null;
+  const teamName = teamNameOf(value.state);
+  let content: ReactNode = null;
+  if (teamName !== null) content = <TeamOwnedLine teamName={teamName} />;
+  else if (value.line !== null) {
+    content = <PersonalPageStatusBanner line={value.line} />;
+  }
+  if (content === null) return null;
+  return <div className="mx-auto w-full max-w-5xl px-5 pt-5">{content}</div>;
 }
 
 const TONE_CLASSES: Readonly<Record<PersonalPageStatusLine["tone"], string>> = {
@@ -159,7 +198,16 @@ function PersonalPageStatusBanner(props: {
  */
 export function PersonalPageHeaderStatus(): ReactNode {
   const value = useContext(PersonalPageContext);
-  if (value === null || value.line === null) return null;
-  if (value.state.kind === "unsupported") return null;
-  return <PersonalPageStatusBanner line={value.line} />;
+  if (value === null) return null;
+  if (value.state.kind === "unsupported" || teamNameOf(value.state) !== null) {
+    return null;
+  }
+  return (
+    <>
+      {value.line === null ? null : (
+        <PersonalPageStatusBanner line={value.line} />
+      )}
+      <PersonalPageNotices />
+    </>
+  );
 }

@@ -103,6 +103,10 @@ function renderLines(options: {
             line: null,
             hostName: options.hostName,
             localOverrides: [],
+            hostId: HOST_ID,
+            client,
+            notices: [],
+            review: [],
           }}
         >
           {lines}

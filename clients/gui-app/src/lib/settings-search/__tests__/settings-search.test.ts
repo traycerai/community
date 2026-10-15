@@ -469,7 +469,7 @@ describe("settings search", () => {
     it("sends selected-host vocabulary to its Overview tab", () => {
       // Every group on a host-scoped page is dropped or concealed for an
       // unresolved, connecting or vanished host, so none of the in-body
-      // groups is a target — but each of the four tabs anchors on its own
+      // groups is a target — but each of the five tabs anchors on its own
       // trigger, which renders in every host state, so these words now land
       // on the TAB that answers them rather than on the bare page.
       for (const context of [DESKTOP, MOBILE]) {
@@ -508,6 +508,10 @@ describe("settings search", () => {
         ["uninstall", "host-overview-tab-installation"],
         ["port forward", "host-overview-tab-ports"],
         ["release candidate", "host-overview-tab-updates"],
+        ["remote access", "host-overview-tab-access"],
+        ["finishing setup", "host-overview-tab-access"],
+        ["terminal account", "host-overview-tab-access"],
+        ["keep value", "host-overview-tab-access"],
         ["import", "host-overview-tab-data"],
         ["version history", "host-overview-tab-data"],
         ["host id", "host-overview-tab-installation"],
