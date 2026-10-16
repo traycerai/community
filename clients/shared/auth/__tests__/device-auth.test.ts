@@ -449,6 +449,28 @@ describe("pollDeviceToken - the cause of a network-error", () => {
       cause: { kind: "bad-body" },
     });
   });
+
+  it("names timeout, not bad-body, for a 200 whose body read times out", async () => {
+    // A real `Response` whose body read rejects after the headers arrived.
+    const response = new Response("{}", { status: 200 });
+    Object.defineProperty(response, "json", {
+      value: async () => {
+        throw new DOMException("The operation timed out.", "TimeoutError");
+      },
+    });
+    globalThis.fetch = (async (): Promise<Response> =>
+      response) as typeof fetch;
+    const result = await pollDeviceToken(
+      AUTHN_BASE_URL,
+      "dev-code",
+      "desktop",
+      REQUEST_OPTIONS,
+    );
+    expect(result).toEqual({
+      kind: "network-error",
+      cause: { kind: "timeout" },
+    });
+  });
 });
 
 describe("transport words for connect and TLS failures", () => {

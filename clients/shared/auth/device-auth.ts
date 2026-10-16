@@ -317,8 +317,13 @@ export async function pollDeviceToken(
     // A 200 whose body fails validation OR whose read aborts/times out is
     // treated as transient: the loop re-polls (and, since the server consumed
     // the code on mint, will then see a terminal `invalid`). This never silently
-    // drops a real success on a momentary parse hiccup.
-    if (tokens.kind !== "ok") {
+    // drops a real success on a momentary parse hiccup. The two are named
+    // apart: an interrupted read is a `timeout`, only a body that arrived and
+    // is not a token pair is `bad-body`.
+    if (tokens.kind === "transient") {
+      return { kind: "network-error", cause: { kind: "timeout" } };
+    }
+    if (tokens.kind === "invalid") {
       return { kind: "network-error", cause: { kind: "bad-body" } };
     }
     return {
