@@ -219,7 +219,16 @@ export function toastFromOwnerHostBatchWriteFailuresWithUnconfirmed(
     (failure) => !isHostTransportFailure(failure),
   );
   if (unconfirmedRows > 0 || failures.some(writeMayHaveApplied)) {
-    const lead = copy.unconfirmed(attempted);
+    // The unconfirmed rows changed nothing, so the reachability line the
+    // counted rows would carry on their own stays true beside them.
+    const unreachable =
+      unconfirmedRows > 0
+        ? unreachableNoticeOfCounted(counted, failures)
+        : null;
+    const lead =
+      unreachable === null
+        ? copy.unconfirmed(attempted)
+        : `${copy.unconfirmed(attempted)} ${unreachable}`;
     if (refusals.length > 0) {
       toastFromHostRefusalsInBatch(refusals, copy.single, lead, toastId);
       return;
@@ -234,9 +243,11 @@ export function toastFromOwnerHostBatchWriteFailuresWithUnconfirmed(
     counted.every((outcome) => outcome.kind === "agent") &&
     failures.every(isOwnerHostUnreachableFailure)
   ) {
-    toastOwnerHostsUnreachableForBatch(
-      counted.map((outcome) => outcome.hostId),
-      toastId,
+    toast.message(
+      ownerHostsUnreachableBatchNotice(
+        counted.map((outcome) => outcome.hostId),
+      ),
+      { id: toastId },
     );
     return;
   }
@@ -254,13 +265,34 @@ export function toastFromOwnerHostBatchWriteFailuresWithUnconfirmed(
  * `isOwnerHostUnreachableFailure`. A batch can span agents on several hosts, so
  * the copy is singular only when one host owns them all.
  */
-function toastOwnerHostsUnreachableForBatch(
+function ownerHostsUnreachableBatchNotice(
   ownerHostIds: readonly (string | null)[],
-  toastId: string,
-): void {
-  const notice =
-    new Set(ownerHostIds).size === 1
-      ? OWNER_HOST_UNREACHABLE_BATCH_ONE_HOST_NOTICE
-      : OWNER_HOST_UNREACHABLE_BATCH_HOSTS_NOTICE;
-  toast.message(notice, { id: toastId });
+): string {
+  return new Set(ownerHostIds).size === 1
+    ? OWNER_HOST_UNREACHABLE_BATCH_ONE_HOST_NOTICE
+    : OWNER_HOST_UNREACHABLE_BATCH_HOSTS_NOTICE;
+}
+
+/**
+ * The reachability line the counted rows give when no unconfirmed row is
+ * beside them, or `null` when they give none: one write that never reached its
+ * host, or a batch of agents in which every write never reached its host.
+ * Only those cases, so "nothing on it was changed" is never said beside a
+ * write that applied.
+ */
+function unreachableNoticeOfCounted(
+  counted: readonly OwnerHostBatchWriteOutcome[],
+  failures: readonly HostRpcError[],
+): string | null {
+  if (!failures.every(isOwnerHostUnreachableFailure)) return null;
+  if (counted.length === 1) return OWNER_HOST_UNREACHABLE_NOTICE;
+  if (
+    failures.length !== counted.length ||
+    !counted.every((outcome) => outcome.kind === "agent")
+  ) {
+    return null;
+  }
+  return ownerHostsUnreachableBatchNotice(
+    counted.map((outcome) => outcome.hostId),
+  );
 }

@@ -167,6 +167,7 @@ import {
 import {
   HostRequestAbortedError,
   HostRpcError,
+  HostTransportFailureError,
   RetryableTransportError,
 } from "@traycer-clients/shared/host-transport/host-messenger";
 import { hostQueryKeys } from "@/lib/query-keys";
@@ -1101,112 +1102,161 @@ describe("useEpicArchiveChats", () => {
     expect(toast.error).toHaveBeenCalledTimes(1);
   });
 
-  // `updated: false` is an already-satisfied no-op, or a chat deleted while
-  // its archive write waited its turn: neither applied nor failed as far as
-  // the batch can tell. It stays in the selection's count, and beside a
-  // failure the notice says the result could not be confirmed.
-  type ArchiveRowOutcome = "updated" | "not-updated" | "forbidden";
+  // traycerai/traycer thread taE7F. `updated: false` is an already-satisfied
+  // no-op, or a chat deleted while its archive write waited its turn: neither
+  // applied nor failed as far as the batch can tell. Every mix of two and
+  // three rows, for archive and unarchive, holds four invariants:
+  //  1. a count names the whole selection;
+  //  2. a not-updated row is never counted as applied or as failed;
+  //  3. every guidance sentence the same mix shows without its not-updated
+  //     rows is still shown with them;
+  //  4. a mix of only updated and not-updated rows says nothing.
+  type ArchiveRow =
+    | "updated"
+    | "not-updated"
+    | "refused"
+    | "unreachable"
+    | "dropped";
 
-  async function archiveBatchNotice(
-    outcomes: readonly ArchiveRowOutcome[],
-    archived: boolean,
-  ): Promise<unknown> {
-    const outcomeByChat = new Map(
-      outcomes.map((outcome, index) => [`chat-${String(index + 1)}`, outcome]),
+  const ARCHIVE_ROWS: readonly ArchiveRow[] = [
+    "updated",
+    "not-updated",
+    "refused",
+    "unreachable",
+    "dropped",
+  ];
+
+  function archiveMixesOf(size: number, from: number): ArchiveRow[][] {
+    if (size === 0) return [[]];
+    return ARCHIVE_ROWS.slice(from).flatMap((row, offset) =>
+      archiveMixesOf(size - 1, from + offset).map((rest) => [row, ...rest]),
     );
+  }
+
+  const ARCHIVE_MIXES = [
+    ...archiveMixesOf(2, 0),
+    ...archiveMixesOf(3, 0),
+  ].flatMap((mix) =>
+    [true, false].map((archived) => ({
+      name: `${archived ? "archive" : "unarchive"} [${mix.join(", ")}]`,
+      mix,
+      archived,
+    })),
+  );
+
+  const GUIDANCE_SENTENCES = [
+    UNREACHABLE_NOTICE,
+    BATCH_ONE_HOST_NOTICE,
+    BATCH_HOSTS_NOTICE,
+    "You don't have permission to do that.",
+  ];
+
+  interface SelectedArchiveRow {
+    readonly row: ArchiveRow;
+    readonly chatId: string;
+    readonly hostId: string;
+  }
+
+  function archiveRowAnswer(row: ArchiveRow): Promise<{ updated: boolean }> {
+    switch (row) {
+      case "updated":
+        return Promise.resolve({ updated: true });
+      case "not-updated":
+        return Promise.resolve({ updated: false });
+      case "refused":
+        return Promise.reject(makeError("FORBIDDEN"));
+      case "unreachable":
+        return Promise.reject(hostUnreachable("epic.setChatArchived"));
+      case "dropped":
+        return Promise.reject(
+          new HostTransportFailureError({
+            code: "RPC_ERROR",
+            message: "socket closed after the request was sent",
+            requestId: "req-dropped",
+            method: "epic.setChatArchived",
+            fatalDetails: null,
+          }),
+        );
+    }
+  }
+
+  function noticeText(call: readonly unknown[]): string {
+    const [message] = call;
+    return typeof message === "string" ? message : JSON.stringify(message);
+  }
+
+  /** Every notice the batch raised, as text. */
+  async function archiveBatchNotices(
+    rows: readonly SelectedArchiveRow[],
+    archived: boolean,
+  ): Promise<string[]> {
+    vi.mocked(toast).mockClear();
+    vi.mocked(toast.error).mockClear();
+    vi.mocked(toast.message).mockClear();
+    const rowByChat = new Map(rows.map((entry) => [entry.chatId, entry.row]));
     archiveChatMutateAsync.mockImplementation(
       (input: ArchiveChatMutationInput) => {
-        const outcome = outcomeByChat.get(input.chatId);
-        return outcome === "forbidden"
-          ? Promise.reject(makeError("FORBIDDEN"))
-          : Promise.resolve({ updated: outcome === "updated" });
+        const row = rowByChat.get(input.chatId);
+        if (row === undefined) throw new Error(`unexpected ${input.chatId}`);
+        return archiveRowAnswer(row);
       },
     );
-    const { result } = renderHook(() => useEpicArchiveChats(), {
+    const { result, unmount } = renderHook(() => useEpicArchiveChats(), {
       wrapper: makeWrapper(),
     });
-
     act(() => {
       result.current.mutate({
         epicId: "epic-1",
-        chats: [...outcomeByChat.keys()].map((chatId) => ({
-          chatId,
-          hostId: "host-test",
-        })),
+        chats: rows.map(({ chatId, hostId }) => ({ chatId, hostId })),
         archived,
       });
     });
-
-    await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledTimes(1);
-    });
-    return vi.mocked(toast.error).mock.calls[0]?.[0];
-  }
-
-  it("keeps an archived, a not-updated and a refused agent at 3 selected, unconfirmed", async () => {
-    const notice = await archiveBatchNotice(
-      ["updated", "not-updated", "forbidden"],
-      true,
-    );
-
-    expect(notice).toBe(
-      "Couldn't confirm all 3 selected agents were archived. Check them and archive any that weren't. You don't have permission to do that.",
-    );
-    expect(notice).not.toContain("Archived");
-    expect(notice).not.toContain("couldn't be archived");
-  });
-
-  it("keeps a not-updated agent and two refused ones at 3 selected, unconfirmed", async () => {
-    const notice = await archiveBatchNotice(
-      ["not-updated", "forbidden", "forbidden"],
-      true,
-    );
-
-    expect(notice).toBe(
-      "Couldn't confirm all 3 selected agents were archived. Check them and archive any that weren't. You don't have permission to do that.",
-    );
-    expect(notice).not.toContain("any of the");
-  });
-
-  it("keeps an unarchived, a not-updated and a refused agent at 3 selected, unconfirmed", async () => {
-    const notice = await archiveBatchNotice(
-      ["updated", "not-updated", "forbidden"],
-      false,
-    );
-
-    expect(notice).toBe(
-      "Couldn't confirm all 3 selected agents were unarchived. Check them and unarchive any that weren't. You don't have permission to do that.",
-    );
-    expect(notice).not.toContain("Unarchived");
-    expect(notice).not.toContain("couldn't be unarchived");
-  });
-
-  it("stays quiet when the only agents not updated are no-ops beside applied ones", async () => {
-    archiveChatMutateAsync.mockImplementation(
-      (input: ArchiveChatMutationInput) =>
-        Promise.resolve({ updated: input.chatId === "chat-1" }),
-    );
-    const { result } = renderHook(() => useEpicArchiveChats(), {
-      wrapper: makeWrapper(),
-    });
-
-    act(() => {
-      result.current.mutate({
-        epicId: "epic-1",
-        chats: [
-          { chatId: "chat-1", hostId: "host-test" },
-          { chatId: "chat-2", hostId: "host-test" },
-        ],
-        archived: true,
-      });
-    });
-
     await waitFor(() => {
       expect(result.current.isSuccess).toBe(true);
     });
-    expect(toast.error).not.toHaveBeenCalled();
-    expect(toast).not.toHaveBeenCalled();
-    expect(toast.message).not.toHaveBeenCalled();
+    unmount();
+    return [
+      ...vi.mocked(toast).mock.calls,
+      ...vi.mocked(toast.error).mock.calls,
+      ...vi.mocked(toast.message).mock.calls,
+    ].map(noticeText);
+  }
+
+  it.each(ARCHIVE_MIXES)("$name", async ({ mix, archived }) => {
+    const rows = mix.map((row, index) => ({
+      row,
+      chatId: `chat-${String(index)}`,
+      hostId: `host-${String(index)}`,
+    }));
+    const notices = await archiveBatchNotices(rows, archived);
+    const said = notices.join(" | ");
+
+    // 4. Only applied and not-updated rows: nothing to report.
+    if (mix.every((row) => row === "updated" || row === "not-updated")) {
+      expect(notices).toEqual([]);
+      return;
+    }
+    // 1. Any count names the whole selection.
+    for (const [, count] of said.matchAll(/(\d+) selected/g)) {
+      expect(count).toBe(String(mix.length));
+    }
+    if (!mix.includes("not-updated")) return;
+    // 2. Never counted as applied, and never as failed.
+    expect(said).not.toMatch(/(?:Archived|Unarchived) \d+ of/);
+    expect(said).not.toContain("any of the");
+    expect(said).not.toMatch(/couldn't be (?:un)?archived/);
+    expect(said).not.toMatch(/Couldn't (?:un)?archive agent\./);
+    // 3. The guidance the mix gives without its not-updated rows survives.
+    const withoutNotUpdated = rows.filter(
+      (entry) => entry.row !== "not-updated",
+    );
+    if (withoutNotUpdated.length === 0) return;
+    const saidWithout = (
+      await archiveBatchNotices(withoutNotUpdated, archived)
+    ).join(" | ");
+    for (const sentence of GUIDANCE_SENTENCES) {
+      if (saidWithout.includes(sentence)) expect(said).toContain(sentence);
+    }
   });
 
   it("reports one plural notice when the unreachable batch spans several hosts", async () => {
