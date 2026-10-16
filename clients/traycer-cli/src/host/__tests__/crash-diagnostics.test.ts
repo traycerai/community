@@ -649,13 +649,16 @@ describe("findCrashReportSince", () => {
       "0x10",
       "+7",
       "99999999999999999999",
-    ])("omits an rss string that is not plain decimal digits in range: %j", async (rss) => {
-      const match = await matchFor({
-        header: { event: "Allocation failed", trigger: "FatalError" },
-        resourceUsage: { rss },
-      });
-      expect(match?.memory.rssBytes).toBeNull();
-    });
+    ])(
+      "omits an rss string that is not plain decimal digits in range: %j",
+      async (rss) => {
+        const match = await matchFor({
+          header: { event: "Allocation failed", trigger: "FatalError" },
+          resourceUsage: { rss },
+        });
+        expect(match?.memory.rssBytes).toBeNull();
+      },
+    );
 
     it("keeps the numbers in the digest when a long stack message is clamped", async () => {
       const match = await matchFor({
