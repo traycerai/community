@@ -52,9 +52,51 @@ export function isOwnerHostOfflineFailure(error: HostRpcError): boolean {
 }
 
 /**
+ * The prefix of each action's result notice id: a batch's, and a single
+ * write's whose outcome is unknown. Every action gets its own id
+ * ({@link nextBatchResultToastId}), so a result finishing in one Task never
+ * replaces the result of an action in another.
+ */
+const OWNER_HOST_BATCH_RESULT_TOAST_ID = "owner-host-batch-result";
+
+let batchResultSequence = 0;
+
+/** A fresh notice id for one action. */
+function nextBatchResultToastId(): string {
+  batchResultSequence += 1;
+  return `${OWNER_HOST_BATCH_RESULT_TOAST_ID}:${String(batchResultSequence)}`;
+}
+
+/**
+ * An abort after the request may have reached its host: the caller stopped
+ * waiting, but the host may still have run the write.
+ */
+function isDispatchedAbort(error: HostRpcError): boolean {
+  return error instanceof HostRequestAbortedError && error.mayHaveDispatched;
+}
+
+/**
+ * Whether a failed write may still have applied: it was sent and its answer
+ * was lost, unkeyed (`isUnknownOutcomeTransportFailure`) or keyed
+ * (`replaySafetyFromKey`), or it was aborted after it was sent.
+ */
+function writeMayHaveApplied(error: HostRpcError): boolean {
+  return (
+    isUnknownOutcomeTransportFailure(error) ||
+    (error instanceof RetryableTransportError && error.replaySafetyFromKey) ||
+    isDispatchedAbort(error)
+  );
+}
+
+/**
  * The error toast for a write that has to run on the host that owns the record
  * (archive or delete an agent, delete a Task): when the request never reached
  * that host, say so and say nothing on it changed.
+ *
+ * A write whose outcome is unknown - its answer was lost, or it was aborted
+ * after it was sent - says so under its own id (row 3 of the spec in
+ * traycerai/traycer#2546). The ordinary toast says nothing for an abort, which
+ * is right only when the request never left.
  *
  * Every other failure keeps the ordinary toast. This changes the wording only;
  * where the write is sent is unchanged.
@@ -63,6 +105,10 @@ export function toastFromOwnerHostWriteError(
   error: HostRpcError,
   fallback: string,
 ): void {
+  if (writeMayHaveApplied(error)) {
+    toastHostUnknownOutcome(nextBatchResultToastId());
+    return;
+  }
   if (isOwnerHostOfflineFailure(error)) {
     toast.message(OWNER_HOST_UNREACHABLE_NOTICE, {
       id: OWNER_HOST_OFFLINE_TOAST_ID,
@@ -102,42 +148,6 @@ export interface OwnerHostBatchWriteCopy {
 }
 
 /**
- * The prefix of each batch action's notice id. Every action gets its own id
- * ({@link nextBatchResultToastId}), so a batch finishing in one Task never
- * replaces the result of a batch in another.
- */
-const OWNER_HOST_BATCH_RESULT_TOAST_ID = "owner-host-batch-result";
-
-let batchResultSequence = 0;
-
-/** A fresh notice id for one batch action. */
-function nextBatchResultToastId(): string {
-  batchResultSequence += 1;
-  return `${OWNER_HOST_BATCH_RESULT_TOAST_ID}:${String(batchResultSequence)}`;
-}
-
-/**
- * An abort after the request may have reached its host: the caller stopped
- * waiting, but the host may still have run the write.
- */
-function isDispatchedAbort(error: HostRpcError): boolean {
-  return error instanceof HostRequestAbortedError && error.mayHaveDispatched;
-}
-
-/**
- * Whether a failed write may still have applied: it was sent and its answer
- * was lost, unkeyed (`isUnknownOutcomeTransportFailure`) or keyed
- * (`replaySafetyFromKey`), or it was aborted after it was sent.
- */
-function writeMayHaveApplied(error: HostRpcError): boolean {
-  return (
-    isUnknownOutcomeTransportFailure(error) ||
-    (error instanceof RetryableTransportError && error.replaySafetyFromKey) ||
-    isDispatchedAbort(error)
-  );
-}
-
-/**
  * Whether a failure is left out of the batch's notice: a write cancelled
  * before it was sent, or one the app is quietly re-authorizing. A cancel
  * after the send is NOT left out - the host may have run it.
@@ -159,8 +169,9 @@ function selectedRowsOf(
  *
  *  - Left out first: a write cancelled before it was sent, or one being
  *    re-authorized, says nothing and counts for nothing.
- *  - One counted write reads like the single write it is; aborted after its
- *    send, it says its answer never came back.
+ *  - One counted write reads like the single write it is; if its outcome is
+ *    unknown (a lost answer, a keyed retry failure, or an abort after its
+ *    send), it says its answer never came back.
  *  - A write that may have applied makes the result unknown: the notice says
  *    so, always, followed by the advice of any refusals.
  *  - "Nothing on it was changed" holds only for a batch of agents in which
@@ -182,7 +193,7 @@ export function toastFromOwnerHostBatchWriteFailures(
   if (failures.length === 0) return;
   const toastId = nextBatchResultToastId();
   if (counted.length === 1) {
-    if (isDispatchedAbort(failures[0])) {
+    if (writeMayHaveApplied(failures[0])) {
       toastHostUnknownOutcome(toastId);
       return;
     }

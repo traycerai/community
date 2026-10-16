@@ -36,6 +36,9 @@ import {
   RetryableTransportError,
 } from "@traycer-clients/shared/host-transport/host-messenger";
 
+const UNKNOWN_OUTCOME_NOTICE =
+  "No reply came back from the Traycer host, so this may or may not have gone through.";
+
 const OFFLINE_NOTICE =
   "Traycer can't reach that host right now, so nothing on it was changed. Try again once it is reachable.";
 
@@ -99,9 +102,10 @@ describe("toastFromOwnerHostWriteError", () => {
     );
   });
 
-  it("does not claim nothing changed for a keyed request that was already sent", () => {
+  it("says no reply came back for a keyed request that was already sent", () => {
     // Retryable because a keyed request can be replayed, not because it never
-    // left: the host may have run it before the answer was lost.
+    // left: the host may have run it before the answer was lost. Row 3 of the
+    // spec in traycerai/traycer#2546.
     const keyedPostSend = new RetryableTransportError({
       replaySafetyFromKey: true,
       code: "RPC_ERROR",
@@ -114,13 +118,16 @@ describe("toastFromOwnerHostWriteError", () => {
     toastFromOwnerHostWriteError(keyedPostSend, "Couldn't delete epics.");
 
     expect(toast.message).not.toHaveBeenCalled();
-    expect(toastFromHostError).toHaveBeenCalledWith(
-      keyedPostSend,
-      "Couldn't delete epics.",
+    expect(toastFromHostError).not.toHaveBeenCalled();
+    expect(vi.mocked(toast).mock.calls.map((call) => call[0])).toEqual([
+      UNKNOWN_OUTCOME_NOTICE,
+    ]);
+    expect(vi.mocked(toast).mock.calls[0][1]?.id).toMatch(
+      /^owner-host-batch-result:/,
     );
   });
 
-  it("leaves a post-send drop to the ambiguous-outcome notice, since the host may have acted", () => {
+  it("says no reply came back for a post-send drop, since the host may have acted", () => {
     const dropped = new HostTransportFailureError({
       code: "RPC_ERROR",
       message: "socket closed",
@@ -132,10 +139,40 @@ describe("toastFromOwnerHostWriteError", () => {
     toastFromOwnerHostWriteError(dropped, "Couldn't delete agent.");
 
     expect(toast.message).not.toHaveBeenCalled();
-    expect(toastFromHostError).toHaveBeenCalledWith(
-      dropped,
+    expect(toastFromHostError).not.toHaveBeenCalled();
+    expect(vi.mocked(toast).mock.calls.map((call) => call[0])).toEqual([
+      UNKNOWN_OUTCOME_NOTICE,
+    ]);
+    expect(vi.mocked(toast).mock.calls[0][1]?.id).toMatch(
+      /^owner-host-batch-result:/,
+    );
+  });
+
+  it("says no reply came back for a write aborted after its send, under a new id each time", () => {
+    const abortedAfterItsSend = (): HostRequestAbortedError =>
+      new HostRequestAbortedError({
+        message: "aborted",
+        requestId: "req-5",
+        method: "epic.deleteChat",
+        mayHaveDispatched: true,
+      });
+
+    toastFromOwnerHostWriteError(
+      abortedAfterItsSend(),
       "Couldn't delete agent.",
     );
+    toastFromOwnerHostWriteError(
+      abortedAfterItsSend(),
+      "Couldn't delete agent.",
+    );
+
+    expect(toastFromHostError).not.toHaveBeenCalled();
+    const calls = vi.mocked(toast).mock.calls;
+    expect(calls.map((call) => call[0])).toEqual([
+      UNKNOWN_OUTCOME_NOTICE,
+      UNKNOWN_OUTCOME_NOTICE,
+    ]);
+    expect(calls[0][1]?.id).not.toBe(calls[1][1]?.id);
   });
 
   it("passes a refusal and an abort through to the ordinary toast", () => {
@@ -480,6 +517,36 @@ function abortedAfterSend(): HostRequestAbortedError {
   });
 }
 
+function targetNotLocal(): HostRpcError {
+  return new HostRpcError({
+    code: "RPC_ERROR",
+    message: "TARGET_NOT_LOCAL: the agent runs on another host",
+    requestId: "req-12",
+    method: "epic.setChatArchived",
+    fatalDetails: null,
+  });
+}
+
+function diskFull(): HostRpcError {
+  return new HostRpcError({
+    code: "E_HOST_STORAGE_FULL",
+    message: "disk full",
+    requestId: "req-13",
+    method: "epic.deleteChat",
+    fatalDetails: null,
+  });
+}
+
+function generic(): HostRpcError {
+  return new HostRpcError({
+    code: "RPC_ERROR",
+    message: "something went wrong",
+    requestId: "req-14",
+    method: "epic.deleteChat",
+    fatalDetails: null,
+  });
+}
+
 const STILL_WORKING_ONE =
   "1 is still working: wait for it to go idle, or stop it, then archive. Stopping ends a turn, not a running subagent or a scheduled wake.";
 const BACKGROUND_ONE =
@@ -706,7 +773,7 @@ describe("batch notice spec (traycerai/traycer#2546, round 10): one test per row
     expect(message).not.toContain("This agent");
   });
 
-  it("row 9 (finding 5): counts selected rows, so a cascaded child is counted with its root", () => {
+  it("row 7 (finding 5): counts selected rows, so a cascaded child is counted with its root", () => {
     // Selected: artifact A, its child B, and a separate artifact C. One
     // delete for A covers A and B; C's delete is refused.
     toastFromOwnerHostBatchWriteFailures(
@@ -724,6 +791,153 @@ describe("batch notice spec (traycerai/traycer#2546, round 10): one test per row
 
     expect(noticesRaised()).toEqual([
       "Deleted 2 of 3 selected artifacts. 1 couldn't be deleted. You don't have permission to do that.",
+    ]);
+  });
+
+  // Row 3 as amended in round 11: one counted write whose outcome is
+  // unknown - a lost answer, a keyed retry failure, or an abort after send.
+  it.each([
+    ["a lost answer", sentAndDropped],
+    ["a keyed retry failure", keyedSentAndDropped],
+    ["an abort after send", abortedAfterSend],
+  ])(
+    "row 3: one counted write with %s says no reply came back, under the action's id",
+    (_label, unknown) => {
+      toastFromOwnerHostBatchWriteFailures(
+        [
+          {
+            kind: "agent",
+            hostId: "host-a",
+            selectedRows: 1,
+            error: aborted(),
+          },
+          {
+            kind: "agent",
+            hostId: "host-b",
+            selectedRows: 1,
+            error: unknown(),
+          },
+        ],
+        DELETE_COPY,
+      );
+
+      expect(noticesRaised()).toEqual([UNKNOWN_OUTCOME_NOTICE]);
+      expect(vi.mocked(toast).mock.calls[0][1]?.id).toMatch(
+        /^owner-host-batch-result:/,
+      );
+      expect(toastFromHostError).not.toHaveBeenCalled();
+    },
+  );
+
+  it("row 3: a lone cascaded artifact delete whose answer was lost is one counted write", () => {
+    toastFromOwnerHostBatchWriteFailures(
+      [
+        {
+          kind: "artifact",
+          hostId: "host-a",
+          selectedRows: 3,
+          error: sentAndDropped(),
+        },
+      ],
+      ARTIFACT_DELETE_COPY,
+    );
+
+    expect(noticesRaised()).toEqual([UNKNOWN_OUTCOME_NOTICE]);
+  });
+
+  it("row 9: no unknown and no refusal, a mix of applied, unreachable and other, says the counts alone", () => {
+    const attested = new RetryableTransportError({
+      replaySafetyFromKey: false,
+      code: "RPC_ERROR",
+      message: "Host timed out awaiting the request frame",
+      requestId: "req-11",
+      method: "epic.deleteChat",
+      fatalDetails: {
+        code: "RPC_REQUEST_TIMEOUT",
+        reason: "Host timed out awaiting the request frame",
+        incompatibleMethods: null,
+        upgradeGuidance: null,
+        retryable: true,
+      },
+    });
+    toastFromOwnerHostBatchWriteFailures(
+      [
+        { kind: "agent", hostId: "host-a", selectedRows: 1, error: null },
+        { kind: "agent", hostId: "host-b", selectedRows: 1, error: notReady() },
+        { kind: "agent", hostId: "host-c", selectedRows: 1, error: attested },
+      ],
+      DELETE_COPY,
+    );
+
+    expect(noticesRaised()).toEqual([
+      "Deleted 1 of 3 selected agents. 2 couldn't be deleted.",
+    ]);
+    expect(toastFromHostError).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [[agentBusy], STILL_WORKING_ONE],
+    [
+      [agentBusy, agentBusy, agentBusy],
+      "3 are still working: wait for them to go idle, or stop them, then archive. Stopping ends a turn, not a running subagent or a scheduled wake.",
+    ],
+    [[agentBusyInBackground], BACKGROUND_ONE],
+    [
+      [agentBusyInBackground, agentBusyInBackground],
+      "2 have background items still running, which archiving won't stop: wait for them to finish, or stop them from their chats.",
+    ],
+    [[targetNotLocal], "1 runs on another host: archive it from that host."],
+    [
+      [targetNotLocal, targetNotLocal],
+      "2 run on other hosts: archive them from those hosts.",
+    ],
+  ])(
+    "row 8: %# - each per-agent advice form is said with its own count",
+    (refusals, advice) => {
+      toastFromOwnerHostBatchWriteFailures(
+        [
+          { kind: "agent", hostId: "host-a", selectedRows: 1, error: null },
+          ...refusals.map((refusal) => ({
+            kind: "agent" as const,
+            hostId: "host-b",
+            selectedRows: 1,
+            error: refusal(),
+          })),
+        ],
+        ARCHIVE_COPY,
+      );
+
+      const failed = refusals.length;
+      expect(noticesRaised()).toEqual([
+        `Archived 1 of ${String(failed + 1)} selected agents. ${String(failed)} couldn't be archived. ${advice}`,
+      ]);
+    },
+  );
+
+  it("row 8: advice that is not about one agent is kept verbatim, once, and the generic fallback adds nothing", () => {
+    toastFromOwnerHostBatchWriteFailures(
+      [
+        {
+          kind: "agent",
+          hostId: "host-a",
+          selectedRows: 1,
+          error: forbidden(),
+        },
+        { kind: "agent", hostId: "host-b", selectedRows: 1, error: diskFull() },
+        {
+          kind: "agent",
+          hostId: "host-c",
+          selectedRows: 1,
+          error: forbidden(),
+        },
+        { kind: "agent", hostId: "host-d", selectedRows: 1, error: diskFull() },
+        { kind: "agent", hostId: "host-e", selectedRows: 1, error: generic() },
+      ],
+      DELETE_COPY,
+    );
+
+    expect(noticesRaised()).toEqual([
+      "Couldn't delete any of the 5 selected agents. You don't have permission to do that. The host machine is out of disk space. Free some space on it, then try again.",
     ]);
   });
 

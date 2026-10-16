@@ -176,6 +176,7 @@ import {
 import {
   toastFromOwnerHostBatchWriteFailures,
   type OwnerHostBatchWriteCopy,
+  type OwnerHostBatchWriteOutcome,
 } from "@/lib/owner-host-write-error-toast";
 import { toHostRpcError } from "@traycer-clients/shared/host-transport/host-messenger";
 import {
@@ -248,6 +249,7 @@ import {
   rootmostSelectedSidebarIds,
   sidebarBulkDeleteIds,
   sidebarBulkDeleteSelectedRows,
+  sidebarBulkDeleteSelectionOrder,
   sidebarIdsWithinRoots,
   SidebarBulkSelectionProvider,
   useSidebarBulkSelection,
@@ -1597,6 +1599,11 @@ function SidebarBulkDeleteController(props: {
       tree,
       isAgentId: (id) => isAgentRecord(recordById.get(id)),
     });
+    const selectionOrder = sidebarBulkDeleteSelectionOrder({
+      ids: pendingDeleteIds,
+      tree,
+      isAgentId: (id) => isAgentRecord(recordById.get(id)),
+    });
     const targets = deleteIds.flatMap((id) => {
       const target = sidebarDeleteTargetForRecord(recordById.get(id));
       return target === null ? [] : [target];
@@ -1637,23 +1644,31 @@ function SidebarBulkDeleteController(props: {
       }),
     )
       .then((results) => {
+        // In selection order, not dispatch order: the notice lists refusal
+        // advice in the order it first appears in the selection.
+        const selectionPosition = (index: number): number =>
+          selectionOrder.get(targets[index].id) ?? index;
         toastFromOwnerHostBatchWriteFailures(
-          targets.map((target, index) => {
-            const result = results[index];
-            const isArtifact = target.kind === "artifact";
-            return {
-              kind: isArtifact ? "artifact" : "agent",
-              hostId: isArtifact ? sessionHostId : agentHostId(target),
-              selectedRows: selectedRows.get(target.id) ?? 1,
-              error:
-                result.status === "rejected"
-                  ? toHostRpcError(
-                      result.reason,
-                      sidebarDeleteMethod(target.kind),
-                    )
-                  : null,
-            };
-          }),
+          targets
+            .map((target, index) => {
+              const result = results[index];
+              const isArtifact = target.kind === "artifact";
+              const outcome: OwnerHostBatchWriteOutcome = {
+                kind: isArtifact ? "artifact" : "agent",
+                hostId: isArtifact ? sessionHostId : agentHostId(target),
+                selectedRows: selectedRows.get(target.id) ?? 1,
+                error:
+                  result.status === "rejected"
+                    ? toHostRpcError(
+                        result.reason,
+                        sidebarDeleteMethod(target.kind),
+                      )
+                    : null,
+              };
+              return { position: selectionPosition(index), outcome };
+            })
+            .sort((left, right) => left.position - right.position)
+            .map(({ outcome }) => outcome),
           sidebarBulkDeleteCopy(targets),
         );
         const successfulIds = targets.flatMap((target, index) =>

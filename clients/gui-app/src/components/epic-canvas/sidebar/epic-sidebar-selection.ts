@@ -831,6 +831,31 @@ export function sidebarBulkDeleteSelectedRows(args: {
   return rows;
 }
 
+/**
+ * Where each dispatched delete of {@link sidebarBulkDeleteIds} first appears
+ * in the selection: its earliest selected row, which for an artifact can be a
+ * selected descendant its cascade removes. Dispatch order puts agents deepest
+ * first and artifacts last, which the deletes need; a batch notice lists
+ * refusal advice in selection order, so it sorts its outcomes by this.
+ */
+export function sidebarBulkDeleteSelectionOrder(args: {
+  readonly ids: readonly string[];
+  readonly tree: EpicTreeIndex;
+  readonly isAgentId: (id: string) => boolean;
+}): ReadonlyMap<string, number> {
+  const selectedArtifacts = new Set(
+    args.ids.filter((id) => !args.isAgentId(id)),
+  );
+  const order = new Map<string, number>();
+  args.ids.forEach((id, index) => {
+    const target = args.isAgentId(id)
+      ? id
+      : (topmostSelectedAncestor(id, selectedArtifacts, args.tree) ?? id);
+    if (!order.has(target)) order.set(target, index);
+  });
+  return order;
+}
+
 /** The highest ancestor of `id` that is in `selectedIds`, or `null`. */
 function topmostSelectedAncestor(
   id: string,
