@@ -18,6 +18,10 @@ import type {
 import type { HostDirectoryEntry } from "@traycer-clients/shared/host-client/host-directory";
 import type { RemoteHostDirectoryEntry } from "@traycer-clients/shared/host-client/remote-fetcher";
 import {
+  ChatTreeSurfaceContext,
+  type ChatTreeSurface,
+} from "@/components/epic-canvas/sidebar/chat-tree-surface";
+import {
   teamSubscription,
   userSubscription,
   userWith,
@@ -41,8 +45,12 @@ const mocks = vi.hoisted(() => ({
   client: { kind: "epic-session-client" },
   taskHosts: null as TaskHostsState | null,
   taskHostsCalls: [] as { client: object | null; taskId: string }[],
-  /** `ownerHostId` of every cloud chat the task lists. */
+  /** Whether this session may spend the cloud capability. */
+  cloudAuthorized: true,
+  /** `ownerHostId` of every live cloud chat the task lists. */
   chatOwnerHostIds: [] as string[],
+  /** `ownerHostId` of every archived cloud chat the task lists. */
+  archivedChatOwnerHostIds: [] as string[],
   cloudChatCalls: [] as {
     client: object | null;
     taskId: string;
@@ -66,7 +74,9 @@ vi.mock("@/hooks/epic/use-task-hosts-query", () => ({
 }));
 vi.mock("@/hooks/chats/use-cloud-chat-queries", () => ({
   // The collaborator read spends the cloud capability; this session has it.
-  useCloudChatHasCloudAuthorization: () => true,
+  useCloudChatHasCloudAuthorization: () => mocks.cloudAuthorized,
+  // A signed-in viewer; the grouping reads the viewer from the auth store.
+  useCloudChatViewerId: () => "viewer-signed-in",
   useCloudChatList: (args: {
     client: object | null;
     taskId: string;
@@ -75,10 +85,16 @@ vi.mock("@/hooks/chats/use-cloud-chat-queries", () => ({
     mocks.cloudChatCalls.push(args);
     return {
       data: {
-        chats: mocks.chatOwnerHostIds.map((ownerHostId) => ({
-          ownerHostId,
-          isArchived: false,
-        })),
+        chats: [
+          ...mocks.chatOwnerHostIds.map((ownerHostId) => ({
+            ownerHostId,
+            isArchived: false,
+          })),
+          ...mocks.archivedChatOwnerHostIds.map((ownerHostId) => ({
+            ownerHostId,
+            isArchived: true,
+          })),
+        ],
       },
       isPending: false,
       isError: false,
@@ -227,9 +243,32 @@ function showHosts(hosts: readonly TaskHostRow[]): void {
   };
 }
 
+/** What the phone sheet provides; the desktop sidebar provides none. */
+const PHONE_SURFACE: ChatTreeSurface = {
+  onRowActivated: () => undefined,
+  revealRowControls: true,
+  searchQuery: null,
+  startNewChat: () => undefined,
+};
+
+function mountSection(
+  canMutate: boolean,
+  surface: ChatTreeSurface | null,
+): HTMLElement {
+  return render(
+    <ChatTreeSurfaceContext.Provider value={surface}>
+      <TaskHostGroupsSection
+        epicId={EPIC_ID}
+        tabId={TAB_ID}
+        canMutate={canMutate}
+      />
+    </ChatTreeSurfaceContext.Provider>,
+  ).container;
+}
+
+/** The desktop sidebar, for a person who may start a chat. */
 function mount(): HTMLElement {
-  return render(<TaskHostGroupsSection epicId={EPIC_ID} tabId={TAB_ID} />)
-    .container;
+  return mountSection(true, null);
 }
 
 function groupFor(key: string): HTMLElement {
@@ -255,7 +294,9 @@ beforeEach(() => {
   });
   mocks.taskHosts = null;
   mocks.taskHostsCalls.length = 0;
+  mocks.cloudAuthorized = true;
   mocks.chatOwnerHostIds = [];
+  mocks.archivedChatOwnerHostIds = [];
   mocks.cloudChatCalls.length = 0;
   mocks.user = userInTeams([]);
   mocks.collaborators = [];
@@ -354,6 +395,53 @@ describe("<TaskHostGroupsSection /> states with no list", () => {
     expect(mocks.refetch).not.toHaveBeenCalled();
     fireEvent.click(retry);
     expect(mocks.refetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("<TaskHostGroupsSection /> cloud authorization and a failed refetch", () => {
+  it("renders no section when cloud authorization is withdrawn while data is cached", () => {
+    mocks.cloudAuthorized = false;
+    mocks.directory = [localEntry(OWN_HOST, "laptop", true)];
+    showHosts([ownRow(OWN_HOST, "laptop")]);
+    const container = mount();
+
+    expect(container.textContent).toBe("");
+    expect(screen.queryByTestId("task-host-groups")).toBeNull();
+    expect(screen.queryByTestId("task-host-row")).toBeNull();
+    expect(screen.queryByTestId("task-host-groups-error")).toBeNull();
+  });
+
+  it("renders no error line either when authorization is withdrawn over a failure", () => {
+    mocks.cloudAuthorized = false;
+    mocks.taskHosts = {
+      isPending: false,
+      isError: true,
+      error: { code: "E_HOST_TIMEOUT" },
+      data: undefined,
+      refetch: mocks.refetch,
+    };
+    const container = mount();
+
+    expect(container.textContent).toBe("");
+    expect(screen.queryByTestId("task-host-groups-error")).toBeNull();
+  });
+
+  it("keeps the rows when a refetch fails over data already shown", () => {
+    mocks.directory = [localEntry(OWN_HOST, "laptop", true)];
+    mocks.taskHosts = {
+      isPending: false,
+      isError: true,
+      error: { code: "E_HOST_TIMEOUT" },
+      data: { hosts: [ownRow(OWN_HOST, "laptop")] },
+      refetch: mocks.refetch,
+    };
+    mount();
+
+    expect(screen.getByTestId("task-host-groups")).toBeDefined();
+    expect(
+      within(rowFor(OWN_HOST)).getByTestId("task-host-row-label").textContent,
+    ).toBe("laptop");
+    expect(screen.queryByTestId("task-host-groups-error")).toBeNull();
   });
 });
 
@@ -478,6 +566,82 @@ describe("<TaskHostGroupsSection /> a collaborator's sandbox (the proof)", () =>
 
     expect(within(own).getByTestId("task-host-row-new-chat")).toBeDefined();
     expect(within(own).queryByTestId("task-host-row-unreachable")).toBeNull();
+  });
+});
+
+describe("<TaskHostGroupsSection /> a collaborator's sandbox that is in the person's directory", () => {
+  beforeEach(() => {
+    mocks.collaborators = [{ userId: "u-ana", displayName: "Ana" }];
+    mocks.directory = [localEntry(ANA_HOST, "directory-name", true)];
+    showHosts([anaSandboxRow()]);
+    mount();
+  });
+
+  it("still shows the server's label and the reach line, never the directory's name", () => {
+    const row = rowFor(ANA_HOST);
+
+    expect(within(row).getByTestId("task-host-row-label").textContent).toBe(
+      "ana-box",
+    );
+    expect(
+      within(row).getByTestId("task-host-row-unreachable").textContent,
+    ).toBe("not reachable from this host");
+    expect(row.textContent).not.toContain("directory-name");
+  });
+
+  it("still shows no state, no New chat and no button", () => {
+    const row = rowFor(ANA_HOST);
+
+    expect(within(row).queryByTestId("task-host-row-state")).toBeNull();
+    expect(within(row).queryByText(/Online/i)).toBeNull();
+    expect(within(row).queryByTestId("task-host-row-new-chat")).toBeNull();
+    expect(within(row).queryAllByRole("button")).toHaveLength(0);
+  });
+});
+
+describe("<TaskHostGroupsSection /> when New chat on this host is offered", () => {
+  beforeEach(() => {
+    mocks.directory = [localEntry(OWN_HOST, "laptop", true)];
+    showHosts([ownRow(OWN_HOST, "laptop")]);
+  });
+
+  it("is offered to an editor on the desktop sidebar", () => {
+    mountSection(true, null);
+
+    expect(
+      within(rowFor(OWN_HOST)).getByTestId("task-host-row-new-chat"),
+    ).toBeDefined();
+  });
+
+  it("is not offered when the person cannot mutate, but the row still shows its state", () => {
+    mountSection(false, null);
+
+    const row = rowFor(OWN_HOST);
+    expect(within(row).queryByTestId("task-host-row-new-chat")).toBeNull();
+    expect(within(row).queryAllByRole("button")).toHaveLength(0);
+    expect(within(row).getByTestId("task-host-row-state").textContent).toBe(
+      "Online",
+    );
+    expect(within(row).getByTestId("task-host-row-label").textContent).toBe(
+      "laptop",
+    );
+  });
+
+  it("is not offered on the phone sheet, which has no New Conversation modal", () => {
+    mountSection(true, PHONE_SURFACE);
+
+    const row = rowFor(OWN_HOST);
+    expect(within(row).queryByTestId("task-host-row-new-chat")).toBeNull();
+    expect(within(row).queryAllByRole("button")).toHaveLength(0);
+    expect(useNewConversationModalOpenStore.getState().request).toBeNull();
+  });
+
+  it("is not offered when the person cannot mutate and the surface is the sheet", () => {
+    mountSection(false, PHONE_SURFACE);
+
+    expect(
+      within(rowFor(OWN_HOST)).queryByTestId("task-host-row-new-chat"),
+    ).toBeNull();
   });
 });
 
@@ -608,6 +772,27 @@ describe("<TaskHostGroupsSection /> agent counts", () => {
       within(rowFor(OWN_HOST_2)).getByTestId("task-host-row-agents")
         .textContent,
     ).toBe("2 agents");
+  });
+
+  it("reads 1 agent from two chats on a host when one of them is archived", () => {
+    mocks.chatOwnerHostIds = [OWN_HOST];
+    mocks.archivedChatOwnerHostIds = [OWN_HOST];
+    showHosts([ownRow(OWN_HOST, "laptop")]);
+    mount();
+
+    expect(
+      within(rowFor(OWN_HOST)).getByTestId("task-host-row-agents").textContent,
+    ).toBe("1 agent");
+  });
+
+  it("shows no agents line for a host with only archived chats", () => {
+    mocks.archivedChatOwnerHostIds = [OWN_HOST, OWN_HOST];
+    showHosts([ownRow(OWN_HOST, "laptop")]);
+    mount();
+
+    expect(
+      within(rowFor(OWN_HOST)).queryByTestId("task-host-row-agents"),
+    ).toBeNull();
   });
 
   it("shows no agents line for a host that owns no chat", () => {

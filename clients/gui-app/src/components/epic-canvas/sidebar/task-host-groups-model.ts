@@ -50,6 +50,8 @@ const PERSONAL_KEY = "personal";
 
 type GroupRank = 0 | 1 | 2;
 
+const COLLABORATOR_RANK: GroupRank = 2;
+
 interface GroupHead {
   readonly key: string;
   readonly title: string;
@@ -81,16 +83,22 @@ function groupHead(row: TaskHostRow, input: TaskHostGroupsInput): GroupHead {
   return {
     key: `user:${principal.id}`,
     title: name === null ? "A collaborator's" : `${name}'s`,
-    rank: 2,
+    rank: COLLABORATOR_RANK,
     id: principal.id,
   };
 }
 
 function groupRow(
   row: TaskHostRow,
+  head: GroupHead,
   input: TaskHostGroupsInput,
 ): TaskHostGroupRow {
-  const fact = input.directory.get(row.hostId) ?? null;
+  // A collaborator's host carries the summary only, whatever the person's
+  // directory says: no state, and nothing to open.
+  const fact =
+    head.rank === COLLABORATOR_RANK
+      ? null
+      : (input.directory.get(row.hostId) ?? null);
   return {
     hostId: row.hostId,
     label: row.label ?? fact?.label ?? TASK_HOST_UNNAMED_LABEL,
@@ -123,7 +131,7 @@ export function taskHostGroups(
   for (const host of input.hosts) {
     const head = groupHead(host, input);
     const group = groups.get(head.key) ?? { head, rows: [] };
-    group.rows.push(groupRow(host, input));
+    group.rows.push(groupRow(host, head, input));
     groups.set(head.key, group);
   }
   return [...groups.values()]

@@ -9,9 +9,10 @@ import {
   useCloudChatHasCloudAuthorization,
   useCloudChatList,
 } from "@/hooks/chats/use-cloud-chat-queries";
+import { useChatTreeSurface } from "@/components/epic-canvas/sidebar/chat-tree-surface";
 import { useEpicSessionHostClient } from "@/hooks/epic/use-epic-session-host-client";
 import { useEpicShareableTeams } from "@/hooks/epic/use-epic-shareable-teams";
-import { useTaskHosts } from "@/hooks/epic/use-task-hosts-query";
+import { useTaskHostsView } from "@/hooks/epic/use-task-hosts-view";
 import { useEpicCollaboratorsQuery } from "@/hooks/epics/use-epic-collaborators-query";
 import { useHostDirectoryList } from "@/hooks/host/use-host-directory-list-query";
 import { useAuthStore } from "@/stores/auth/auth-store";
@@ -37,11 +38,14 @@ function directoryFact(entry: HostDirectoryEntry): TaskHostDirectoryFact {
   return { label: entry.label, state: null };
 }
 
+/** The task's chats per owning host, as the Agents tree lists them. */
 function agentCounts(
   chats: readonly CloudChatSummary[],
 ): ReadonlyMap<string, number> {
   const counts = new Map<string, number>();
   for (const chat of chats) {
+    // The tree hides archived chats by default; so does the count.
+    if (chat.isArchived) continue;
     counts.set(chat.ownerHostId, (counts.get(chat.ownerHostId) ?? 0) + 1);
   }
   return counts;
@@ -57,18 +61,18 @@ function agentCounts(
 export function TaskHostGroupsSection(props: {
   readonly epicId: string;
   readonly tabId: string;
+  /** Whether the person may start a chat here: an editor, connected. */
+  readonly canMutate: boolean;
 }): ReactNode {
-  const client = useEpicSessionHostClient();
-  const hosts = useTaskHosts(client, props.epicId);
+  const view = useTaskHostsView(props.epicId);
   const groups = useTaskHostGroups(
     props.epicId,
-    hosts.data === undefined ? null : hosts.data.hosts,
+    view.kind === "hosts" ? view.hosts : null,
   );
-  if (hosts.isError) {
-    if (hosts.error.code === "E_HOST_UNSUPPORTED") return null;
+  if (view.kind === "error") {
     return (
       <div
-        className="flex flex-col items-start gap-1 px-3 py-2"
+        className="flex shrink-0 flex-col items-start gap-1 px-3 py-2"
         data-testid="task-host-groups-error"
       >
         <p className="text-ui-xs text-muted-foreground">
@@ -79,7 +83,7 @@ export function TaskHostGroupsSection(props: {
           variant="ghost"
           size="sm"
           data-testid="task-host-groups-retry"
-          onClick={() => void hosts.refetch()}
+          onClick={view.retry}
         >
           Try again
         </Button>
@@ -92,6 +96,7 @@ export function TaskHostGroupsSection(props: {
       groups={groups}
       epicId={props.epicId}
       tabId={props.tabId}
+      canMutate={props.canMutate}
     />
   );
 }
@@ -144,12 +149,17 @@ function TaskHostGroupsList(props: {
   readonly groups: readonly TaskHostGroup[];
   readonly epicId: string;
   readonly tabId: string;
+  readonly canMutate: boolean;
 }): ReactNode {
   const [open, setOpen] = useState(true);
+  // The phone sheet has no New Conversation modal (it starts chats through
+  // its own surface, which names no host), so it offers no New chat here.
+  const surface = useChatTreeSurface();
+  const offersNewChat = props.canMutate && surface === null;
   const Chevron = open ? ChevronDown : ChevronRight;
   return (
     <section
-      className="flex flex-col gap-1 px-2 py-2"
+      className="flex shrink-0 flex-col gap-1 px-2 py-2"
       data-testid="task-host-groups"
     >
       <button
@@ -181,6 +191,7 @@ function TaskHostGroupsList(props: {
                   row={row}
                   epicId={props.epicId}
                   tabId={props.tabId}
+                  offersNewChat={offersNewChat}
                 />
               ))}
             </div>
@@ -194,6 +205,7 @@ function TaskHostRowView(props: {
   readonly row: TaskHostGroupRow;
   readonly epicId: string;
   readonly tabId: string;
+  readonly offersNewChat: boolean;
 }): ReactNode {
   const openNewConversation = useNewConversationModalOpenStore((s) => s.open);
   const { row } = props;
@@ -235,7 +247,7 @@ function TaskHostRowView(props: {
           {TASK_HOST_UNREACHABLE_LINE}
         </span>
       ) : null}
-      {row.openable ? (
+      {row.openable && props.offersNewChat ? (
         <Button
           type="button"
           variant="ghost"

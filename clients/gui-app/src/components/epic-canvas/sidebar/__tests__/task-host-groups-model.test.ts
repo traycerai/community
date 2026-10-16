@@ -369,9 +369,9 @@ describe("taskHostGroups unreachable", () => {
   });
 
   it("does not follow directory state: an unreachable online host is unreachable", () => {
-    const groups = groupsOf([otherUserRow("h-a", "theirs", "u-ana")], {
+    const groups = groupsOf([teamRow("h-t", "theirs", "team-1")], {
       directory: new Map<string, TaskHostDirectoryFact>([
-        ["h-a", { label: "theirs", state: "online" }],
+        ["h-t", { label: "theirs", state: "online" }],
       ]),
     });
 
@@ -465,5 +465,88 @@ describe("taskHostGroups openable", () => {
     expect(onlyRow(groups[0]).label).toBe("ana-box");
     expect(onlyRow(groups[0]).openable).toBe(false);
     expect(onlyRow(groups[0]).state).toBeNull();
+  });
+});
+
+describe("taskHostGroups a collaborator's host that is in the person's directory", () => {
+  const COLLABORATOR_IN_DIRECTORY = new Map<string, TaskHostDirectoryFact>([
+    ["h-a", { label: "directory-label", state: "online" }],
+  ]);
+
+  it("gets no state, whatever the directory says", () => {
+    const groups = groupsOf([otherUserRow("h-a", "ana-box", "u-ana")], {
+      directory: COLLABORATOR_IN_DIRECTORY,
+    });
+
+    expect(groups[0].key).toBe("user:u-ana");
+    expect(onlyRow(groups[0]).state).toBeNull();
+  });
+
+  it("is not openable, whatever the directory says", () => {
+    const groups = groupsOf([otherUserRow("h-a", "ana-box", "u-ana")], {
+      directory: COLLABORATOR_IN_DIRECTORY,
+    });
+
+    expect(onlyRow(groups[0]).openable).toBe(false);
+  });
+
+  it("keeps its offline directory entry out of the row too", () => {
+    const groups = groupsOf([otherUserRow("h-a", "ana-box", "u-ana")], {
+      directory: new Map<string, TaskHostDirectoryFact>([
+        ["h-a", { label: "directory-label", state: "offline" }],
+      ]),
+    });
+
+    expect(onlyRow(groups[0]).state).toBeNull();
+    expect(onlyRow(groups[0]).openable).toBe(false);
+  });
+
+  it("shows the server's label, and never the directory's", () => {
+    const groups = groupsOf([otherUserRow("h-a", "ana-box", "u-ana")], {
+      directory: COLLABORATOR_IN_DIRECTORY,
+    });
+
+    expect(onlyRow(groups[0]).label).toBe("ana-box");
+  });
+
+  it("is Unnamed host without a server label, not the directory's label", () => {
+    const groups = groupsOf([otherUserRow("h-a", null, "u-ana")], {
+      directory: COLLABORATOR_IN_DIRECTORY,
+    });
+
+    expect(onlyRow(groups[0]).label).toBe("Unnamed host");
+  });
+
+  it("is still marked unreachable, from the server's reach", () => {
+    const groups = groupsOf([otherUserRow("h-a", "ana-box", "u-ana")], {
+      directory: COLLABORATOR_IN_DIRECTORY,
+    });
+
+    expect(onlyRow(groups[0]).unreachable).toBe(true);
+  });
+
+  it("does not change the viewer's own host or a team's host in the same directory", () => {
+    const groups = groupsOf(
+      [ownRow("h-1", null), teamRow("h-t", null, "team-1")],
+      {
+        directory: new Map<string, TaskHostDirectoryFact>([
+          ["h-1", { label: "laptop", state: "online" }],
+          ["h-t", { label: "team-box", state: "offline" }],
+        ]),
+      },
+    );
+    const own = groups.find((group) => group.key === "personal");
+    const team = groups.find((group) => group.key === "team:team-1");
+
+    expect(own === undefined ? null : onlyRow(own)).toMatchObject({
+      label: "laptop",
+      state: "online",
+      openable: true,
+    });
+    expect(team === undefined ? null : onlyRow(team)).toMatchObject({
+      label: "team-box",
+      state: "offline",
+      openable: true,
+    });
   });
 });
