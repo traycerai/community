@@ -591,6 +591,20 @@ function asByteCount(value: unknown): number | null {
     : null;
 }
 
+/**
+ * `resourceUsage.rss` and `maxRss` as a byte count. Node's documentation shows
+ * them as quoted decimal strings (`"rss": "35766272"`) while the Node the host
+ * runs writes numbers, so both are read. A string must be plain decimal
+ * digits that fit a safe integer: no sign, space, fraction or exponent.
+ */
+function asResidentBytes(value: unknown): number | null {
+  if (typeof value === "string") {
+    if (!/^[0-9]+$/.test(value)) return null;
+    return asByteCount(Number(value));
+  }
+  return asByteCount(value);
+}
+
 interface ReportReading {
   readonly summary: string | null;
   readonly memory: CrashReportMemory;
@@ -611,7 +625,8 @@ async function summarizeReport(path: string): Promise<ReportReading> {
       heapUsedBytes: asByteCount(heap?.["usedMemory"]),
       // `rss` is the figure at the report; `maxRss` is the peak, the answer
       // only when the report has no current reading.
-      rssBytes: asByteCount(usage?.["rss"]) ?? asByteCount(usage?.["maxRss"]),
+      rssBytes:
+        asResidentBytes(usage?.["rss"]) ?? asResidentBytes(usage?.["maxRss"]),
     };
     const parts: string[] = [];
     if (event !== null) parts.push(`event=${event}`);
