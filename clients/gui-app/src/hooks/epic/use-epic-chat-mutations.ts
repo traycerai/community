@@ -755,6 +755,8 @@ const ARCHIVE_BATCH_COPY: OwnerHostBatchWriteCopy = {
     `Archived ${applied} of ${applied + failed} selected agents. ${failed} couldn't be archived.`,
   none: (attempted) =>
     `Couldn't archive any of the ${attempted} selected agents.`,
+  unconfirmed: (attempted) =>
+    `Couldn't confirm all ${attempted} selected agents were archived. Check them and archive any that weren't.`,
 };
 
 const UNARCHIVE_BATCH_COPY: OwnerHostBatchWriteCopy = {
@@ -763,6 +765,8 @@ const UNARCHIVE_BATCH_COPY: OwnerHostBatchWriteCopy = {
     `Unarchived ${applied} of ${applied + failed} selected agents. ${failed} couldn't be unarchived.`,
   none: (attempted) =>
     `Couldn't unarchive any of the ${attempted} selected agents.`,
+  unconfirmed: (attempted) =>
+    `Couldn't confirm all ${attempted} selected agents were unarchived. Check them and unarchive any that weren't.`,
 };
 
 export type ArchiveChatsMutationResult =
@@ -801,6 +805,7 @@ export function useEpicArchiveChats(): UseMutationResult<
     onSuccess: (results, variables) => {
       toastFromOwnerHostBatchWriteFailures(
         results.map((result, index) => ({
+          kind: "agent",
           hostId: variables.chats[index]?.hostId ?? null,
           error:
             result.status === "rejected"

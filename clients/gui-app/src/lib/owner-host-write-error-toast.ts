@@ -3,7 +3,11 @@ import {
   type HostRpcError,
 } from "@traycer-clients/shared/host-transport/host-messenger";
 import { toast } from "sonner";
-import { isSilentHostError, toastFromHostError } from "@/lib/host-error-toast";
+import {
+  isSilentHostError,
+  isUnknownOutcomeTransportFailure,
+  toastFromHostError,
+} from "@/lib/host-error-toast";
 
 /**
  * One id for every attempt, so a person who retries a few times against a host
@@ -64,8 +68,13 @@ export function toastFromOwnerHostWriteError(
   toastFromHostError(error, fallback);
 }
 
-/** One write of a batch: the host it was sent to, and its failure if any. */
+/**
+ * One write of a batch: what it wrote (an agent on its owning host, or an
+ * artifact on the Task's host), the host it was sent to, and its failure if
+ * any.
+ */
 export interface OwnerHostBatchWriteOutcome {
+  readonly kind: "agent" | "artifact";
   readonly hostId: string | null;
   readonly error: HostRpcError | null;
 }
@@ -74,25 +83,39 @@ export interface OwnerHostBatchWriteOutcome {
 export interface OwnerHostBatchWriteCopy {
   /** The failure of a batch with one write in it, e.g. "Couldn't archive agent." */
   readonly single: string;
-  /** Some writes applied and some did not. */
+  /** Some writes applied and the rest did not. */
   readonly partial: (applied: number, failed: number) => string;
   /** No write applied, for more than one reason. */
   readonly none: (attempted: number) => string;
+  /** At least one write may or may not have applied. */
+  readonly unconfirmed: (attempted: number) => string;
 }
 
 /** One id for every batch's result, so a retried batch replaces its line. */
 const OWNER_HOST_BATCH_RESULT_TOAST_ID = "owner-host-batch-result";
 
 /**
- * The one error toast for a batch of owner-host writes (archive or delete
- * several agents), whose members raise none of their own.
+ * Whether a failed write may still have applied: it was sent and its answer
+ * was lost, keyed or not (`isUnknownOutcomeTransportFailure`).
+ */
+function writeMayHaveApplied(error: HostRpcError): boolean {
+  return isUnknownOutcomeTransportFailure(error);
+}
+
+/**
+ * The one notice for a batch of writes (archive or delete several agents, or
+ * delete a selection of agents and artifacts), whose members raise none of
+ * their own.
  *
  * A write the person cancelled, or one the app is quietly re-authorizing, is
  * left out of the count the way a single write would say nothing about it, so
- * it can never hide the rest. Of what remains: "nothing on it was changed"
- * holds only when every write never reached its host; any other mix says how
- * many applied and how many did not. A batch of one reads like the single
- * write it is.
+ * it can never hide the rest. Of what remains:
+ *  - a write that may have applied makes the batch's result unknown, and the
+ *    notice says so rather than counting it as applied or as failed;
+ *  - "nothing on it was changed" holds only for a batch of agents in which
+ *    every write never reached its host;
+ *  - any other mix says how many applied and how many did not.
+ * A batch of one reads like the single write it is.
  */
 export function toastFromOwnerHostBatchWriteFailures(
   outcomes: readonly OwnerHostBatchWriteOutcome[],
@@ -109,8 +132,18 @@ export function toastFromOwnerHostBatchWriteFailures(
     toastFromOwnerHostWriteError(failures[0], copy.single);
     return;
   }
+  if (failures.some(writeMayHaveApplied)) {
+    toast.error(copy.unconfirmed(counted.length), {
+      id: OWNER_HOST_BATCH_RESULT_TOAST_ID,
+    });
+    return;
+  }
   const applied = counted.length - failures.length;
-  if (applied === 0 && failures.every(isOwnerHostUnreachableFailure)) {
+  if (
+    applied === 0 &&
+    counted.every((outcome) => outcome.kind === "agent") &&
+    failures.every(isOwnerHostUnreachableFailure)
+  ) {
     toastOwnerHostsUnreachableForBatch(
       counted.map((outcome) => outcome.hostId),
     );

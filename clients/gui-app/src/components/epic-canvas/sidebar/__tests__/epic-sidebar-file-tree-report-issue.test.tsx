@@ -215,6 +215,11 @@ vi.mock("@/hooks/epic/use-epic-node-mutations", () => ({
     mutateAsync: vi.fn(),
     isPending: false,
   }),
+  useEpicDeleteArtifactInBatch: () => ({
+    mutate: vi.fn(),
+    mutateAsync: vi.fn(),
+    isPending: false,
+  }),
   useEpicRenameArtifact: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 

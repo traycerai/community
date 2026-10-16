@@ -152,7 +152,30 @@ const DELETE_COPY: OwnerHostBatchWriteCopy = {
     `Deleted ${applied} of ${applied + failed} selected agents. ${failed} couldn't be deleted.`,
   none: (attempted) =>
     `Couldn't delete any of the ${attempted} selected agents.`,
+  unconfirmed: (attempted) =>
+    `Couldn't confirm all ${attempted} selected agents were deleted. Check them and delete any that weren't.`,
 };
+
+function sentAndDropped(): HostTransportFailureError {
+  return new HostTransportFailureError({
+    code: "RPC_ERROR",
+    message: "connection dropped after send",
+    requestId: "req-6",
+    method: "epic.deleteChat",
+    fatalDetails: null,
+  });
+}
+
+function keyedSentAndDropped(): RetryableTransportError {
+  return new RetryableTransportError({
+    replaySafetyFromKey: true,
+    code: "RPC_ERROR",
+    message: "connection dropped after send",
+    requestId: "req-7",
+    method: "epic.deleteChat",
+    fatalDetails: null,
+  });
+}
 
 function forbidden(): HostRpcError {
   return new HostRpcError({
@@ -180,9 +203,9 @@ describe("toastFromOwnerHostBatchWriteFailures", () => {
   it("says how many applied when one write applied, one never reached its host and one was refused", () => {
     toastFromOwnerHostBatchWriteFailures(
       [
-        { hostId: "host-a", error: null },
-        { hostId: "host-b", error: notReady() },
-        { hostId: "host-c", error: forbidden() },
+        { kind: "agent", hostId: "host-a", error: null },
+        { kind: "agent", hostId: "host-b", error: notReady() },
+        { kind: "agent", hostId: "host-c", error: forbidden() },
       ],
       DELETE_COPY,
     );
@@ -198,9 +221,9 @@ describe("toastFromOwnerHostBatchWriteFailures", () => {
   it("is not silenced by a cancelled first write when the rest failed", () => {
     toastFromOwnerHostBatchWriteFailures(
       [
-        { hostId: "host-a", error: aborted() },
-        { hostId: "host-b", error: notReady() },
-        { hostId: "host-c", error: forbidden() },
+        { kind: "agent", hostId: "host-a", error: aborted() },
+        { kind: "agent", hostId: "host-b", error: notReady() },
+        { kind: "agent", hostId: "host-c", error: forbidden() },
       ],
       DELETE_COPY,
     );
@@ -214,9 +237,9 @@ describe("toastFromOwnerHostBatchWriteFailures", () => {
   it("names the unreachable hosts when every counted write never reached its host", () => {
     toastFromOwnerHostBatchWriteFailures(
       [
-        { hostId: "host-a", error: aborted() },
-        { hostId: "host-b", error: notReady() },
-        { hostId: "host-c", error: notReady() },
+        { kind: "agent", hostId: "host-a", error: aborted() },
+        { kind: "agent", hostId: "host-b", error: notReady() },
+        { kind: "agent", hostId: "host-c", error: notReady() },
       ],
       DELETE_COPY,
     );
@@ -228,11 +251,90 @@ describe("toastFromOwnerHostBatchWriteFailures", () => {
     expect(toast.error).not.toHaveBeenCalled();
   });
 
+  it("does not count a write whose answer was lost as failed when another applied", () => {
+    toastFromOwnerHostBatchWriteFailures(
+      [
+        { kind: "agent", hostId: "host-a", error: null },
+        { kind: "agent", hostId: "host-b", error: sentAndDropped() },
+      ],
+      DELETE_COPY,
+    );
+
+    expect(toast.error).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(toast.error).mock.calls[0][0]).toBe(
+      "Couldn't confirm all 2 selected agents were deleted. Check them and delete any that weren't.",
+    );
+  });
+
+  it("does not say none applied when every answer was lost", () => {
+    toastFromOwnerHostBatchWriteFailures(
+      [
+        { kind: "agent", hostId: "host-a", error: keyedSentAndDropped() },
+        { kind: "agent", hostId: "host-b", error: sentAndDropped() },
+        { kind: "agent", hostId: "host-c", error: notReady() },
+      ],
+      DELETE_COPY,
+    );
+
+    expect(toast.error).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(toast.error).mock.calls[0][0]).toBe(
+      "Couldn't confirm all 3 selected agents were deleted. Check them and delete any that weren't.",
+    );
+    expect(toast.message).not.toHaveBeenCalled();
+  });
+
+  it("does not say nothing changed on a host when an artifact applied there", () => {
+    toastFromOwnerHostBatchWriteFailures(
+      [
+        { kind: "artifact", hostId: "host-a", error: null },
+        { kind: "agent", hostId: "host-a", error: notReady() },
+      ],
+      DELETE_COPY,
+    );
+
+    expect(vi.mocked(toast.error).mock.calls[0][0]).toBe(
+      "Deleted 1 of 2 selected agents. 1 couldn't be deleted.",
+    );
+    expect(toast.message).not.toHaveBeenCalled();
+  });
+
+  it("does not say nothing changed when an artifact and an agent both failed", () => {
+    toastFromOwnerHostBatchWriteFailures(
+      [
+        { kind: "artifact", hostId: "host-a", error: forbidden() },
+        { kind: "agent", hostId: "host-a", error: notReady() },
+      ],
+      DELETE_COPY,
+    );
+
+    expect(toast.error).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(toast.error).mock.calls[0][0]).toBe(
+      "Couldn't delete any of the 2 selected agents.",
+    );
+    expect(toast.message).not.toHaveBeenCalled();
+  });
+
+  it("reads one counted write among cancelled ones as that single write", () => {
+    toastFromOwnerHostBatchWriteFailures(
+      [
+        { kind: "agent", hostId: "host-a", error: aborted() },
+        { kind: "agent", hostId: "host-b", error: forbidden() },
+      ],
+      DELETE_COPY,
+    );
+
+    expect(toastFromHostError).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(toastFromHostError).mock.calls[0][1]).toBe(
+      "Couldn't delete agent.",
+    );
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
   it("says nothing when every failure is a cancelled write", () => {
     toastFromOwnerHostBatchWriteFailures(
       [
-        { hostId: "host-a", error: null },
-        { hostId: "host-b", error: aborted() },
+        { kind: "agent", hostId: "host-a", error: null },
+        { kind: "agent", hostId: "host-b", error: aborted() },
       ],
       DELETE_COPY,
     );
