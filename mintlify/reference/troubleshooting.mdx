@@ -225,15 +225,15 @@ For Cursor, add the Cursor API key in [Settings › Providers](/settings/provide
 
 If a provider is missing from the picker, it may not be installed or configured on that host.
 
-## Models Or Downloads Fail Behind Antivirus Or A Proxy
+## Models Or Model Downloads Fail Behind Antivirus Or A Proxy
 
-If a provider's model list never loads or a model download fails, and `curl` or your browser reaches the same service fine, your antivirus or company proxy may be inspecting secure (HTTPS) connections with its own certificate. Traycer doesn't recognize that certificate, so it refuses the connection. The host log shows a certificate error such as `SELF_SIGNED_CERT_IN_CHAIN` or `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`.
+If a provider's model list never loads or a model download fails, and a browser or `curl` reaches the same address fine, your antivirus or company proxy may be inspecting secure (HTTPS) connections with its own certificate. Traycer doesn't recognize that certificate, so it refuses the connection. The [host log](#logs) reports the model list or the download failing, and on a host version that logs the cause it names a certificate error such as `SELF_SIGNED_CERT_IN_CHAIN`.
 
 To fix it:
 
 1. Export the security software's root certificate as a PEM file (`.pem` or `.crt`). Your antivirus or IT team can tell you where it is.
-2. Set the `NODE_EXTRA_CA_CERTS` environment variable to the full path of that file.
-3. Quit Traycer completely and start it again, so it starts with the variable set.
+2. In [Settings › Shell](/settings/shell#host-environment), under **Host environment**, click **Add environment variable**, enter `NODE_EXTRA_CA_CERTS` as the **Name**, choose **Set**, and enter the full path of the file.
+3. Restart the host: **Help › Restart Host**, the tray menu's **Restart Host**, or **⋯ › Restart** in [Settings › Host](/settings/host). If the host is busy, a dialog names the running work and lets you defer the restart.
 
 Traycer keeps trusting its normal certificates and also trusts the one you added.
 
