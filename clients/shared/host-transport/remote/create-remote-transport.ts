@@ -28,6 +28,8 @@ import {
   acquireRemoteSession,
   type RemoteSessionIdentity,
 } from "./active-remote-sessions";
+import { TEAM_MEMBER_REMOVED_FATAL_CODE } from "../../host-client/host-connection-reconnect-engine";
+import { reportTeamMemberRemovedClose } from "../team-member-removed-close";
 
 /**
  * Assembles the client remote transport for one host: one `RemoteSession`,
@@ -288,7 +290,7 @@ export function createRemoteHostTransport<
               getBearerToken,
             })
           : sandboxGrants.provider;
-      return new RemoteSession<RpcRegistry, StreamRegistry>({
+      const created = new RemoteSession<RpcRegistry, StreamRegistry>({
         hostId: options.hostId,
         attachBaseUrl: options.relayAttachUrl,
         hostStaticPublicKey,
@@ -315,6 +317,16 @@ export function createRemoteHostTransport<
         // host-to-host dialer) passes `null` at its own constructor.
         livenessProbe: HOST_STATUS_LIVENESS_PROBE,
       });
+      // A team host ends a removed member's session with this fatal; the app
+      // turns the first report for a team into its one toast and one close of
+      // the team's tiles (ticket E17 checkpoint 7). Once per session: the
+      // session is shared by every consumer of this host, and closes once.
+      created.onClosed(() => {
+        if (created.terminalFatal()?.code === TEAM_MEMBER_REMOVED_FATAL_CODE) {
+          reportTeamMemberRemovedClose(options.hostId);
+        }
+      });
+      return created;
     },
   );
 

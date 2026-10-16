@@ -81,8 +81,6 @@ import type { IntervalHandle, TimerHandle } from "./timer-handle";
 import type { ReconnectAllOptions } from "./host-stream-client";
 import type { AvailabilityRecoveryKind } from "./availability-recovery-kind";
 import { backoffFor } from "./backoff";
-import { TEAM_MEMBER_REMOVED_FATAL_CODE } from "../host-client/host-connection-reconnect-engine";
-import { reportTeamMemberRemovedClose } from "./team-member-removed-close";
 
 /**
  * Options for constructing the shared `/stream` transport.
@@ -2781,16 +2779,6 @@ class StreamSession<
     // provider may already point somewhere else, and a tombstone filed
     // against the wrong host would hold the wrong lease.
     this.reportRestartIntentIfPresent(details);
-    // A team host ends a removed member's every session with this code; the
-    // app turns the first report for a team into its one toast and one close
-    // of the team's tiles (ticket E17 checkpoint 7). `openFrameHostId` for the
-    // same reason as the tombstone above: the host this connection dialed.
-    if (
-      details.code === TEAM_MEMBER_REMOVED_FATAL_CODE &&
-      this.openFrameHostId !== null
-    ) {
-      reportTeamMemberRemovedClose(this.openFrameHostId);
-    }
     // `retryable` marks a transient host-side rejection. The stable subscribe-
     // timeout code is checked too because hosts through 1.1.9 emitted it without
     // the additive flag; a new client must still recover when paired with one of
