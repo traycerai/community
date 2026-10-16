@@ -47,6 +47,9 @@ import { useHostBinding } from "@/lib/host";
 import type { FleetUpdateView } from "@/lib/host/fleet-update/fleet-update-view";
 import { cn } from "@/lib/utils";
 import { wakeSandboxOnPick } from "@/lib/sandboxes/sandbox-wake";
+import { useSandboxControlUnavailableReason } from "@/hooks/sandboxes/use-sandbox-control-unavailable-reason";
+import { useAuthStore } from "@/stores/auth/auth-store";
+import { useSandboxCreateDialogStore } from "@/stores/settings/sandbox-create-dialog-store";
 
 /**
  * Search stops being decoration and starts being necessary somewhere around a
@@ -298,6 +301,9 @@ export function HostSwitcher(props: {
   const { contentRef, onOpenAutoFocus: coarseOpenAutoFocus } =
     useCoarsePointerOpenAutoFocus();
   const binding = useHostBinding();
+  const onNewTeamSandbox = useNewTeamSandbox(props.action, () =>
+    setOpen(false),
+  );
   useRefreshHostDirectoryOnOpen(open, binding?.directory ?? null);
   const { hosts, selected } = props;
   // Resolved once, as one value, so the two render sites below narrow on a
@@ -419,6 +425,7 @@ export function HostSwitcher(props: {
             <HostSwitcherGroups
               hosts={hosts}
               action={props.action}
+              onNewTeamSandbox={onNewTeamSandbox}
               offersAutomations={props.offersAutomations}
               searching={search.length > 0}
               renderRow={(host) => (
@@ -525,6 +532,8 @@ export function HostSwitcher(props: {
 function HostSwitcherGroups(props: {
   readonly hosts: readonly HostScopeOption[];
   readonly action: HostSwitcherAction | null;
+  /** The team groups' own New sandbox, or `null` where none is offered. */
+  readonly onNewTeamSandbox: ((teamId: string) => void) | null;
   readonly offersAutomations: boolean;
   readonly searching: boolean;
   readonly selected: HostScopeOption | null;
@@ -590,9 +599,55 @@ function HostSwitcherGroups(props: {
               {team.agentSandboxes.map(props.renderRow)}
             </HostSwitcherCollapsible>
           )}
+          {props.onNewTeamSandbox === null ? null : (
+            <HostSwitcherNewTeamSandbox
+              teamId={team.teamId}
+              teamName={team.teamName}
+              onSelect={props.onNewTeamSandbox}
+            />
+          )}
         </HostSwitcherSandboxGroup>
       ))}
     </>
+  );
+}
+
+/**
+ * The host list's own (Settings: the list that owns Add host) team groups
+ * each end in New sandbox, preselecting the team (ticket E17 checkpoint 3).
+ * Pickers, a signed-out window and a build without sandboxes offer none.
+ */
+function useNewTeamSandbox(
+  action: HostSwitcherAction | null,
+  close: () => void,
+): ((teamId: string) => void) | null {
+  const openCreateSandbox = useSandboxCreateDialogStore((s) => s.openDialog);
+  const signedIn = useAuthStore((s) => s.status === "signed-in");
+  const unavailable = useSandboxControlUnavailableReason();
+  if (action === null || action.kind !== "add-host") return null;
+  if (!signedIn || unavailable !== null) return null;
+  return (teamId) => {
+    close();
+    openCreateSandbox({ kind: "team", teamId }, null);
+  };
+}
+
+/** A team group's New sandbox: the create form with the team preselected. */
+function HostSwitcherNewTeamSandbox(props: {
+  readonly teamId: string;
+  readonly teamName: string;
+  readonly onSelect: (teamId: string) => void;
+}): ReactNode {
+  return (
+    <CommandItem
+      value={`new-sandbox-${props.teamId}`}
+      keywords={["new sandbox", props.teamName]}
+      onSelect={() => props.onSelect(props.teamId)}
+      data-testid={`settings-host-switcher-team-${props.teamId}-new-sandbox`}
+    >
+      <Plus className="size-4 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 flex-1 truncate text-ui-sm">New sandbox…</span>
+    </CommandItem>
   );
 }
 

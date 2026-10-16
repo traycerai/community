@@ -1,6 +1,8 @@
 import type { SandboxControlFailure } from "@traycer-clients/shared/host-client/sandbox-control";
 import {
   SANDBOX_REFUSAL_CODE_BUSY,
+  SANDBOX_REFUSAL_CODE_ENVIRONMENT_NOT_FOUND,
+  SANDBOX_REFUSAL_CODE_ENVIRONMENT_UNAVAILABLE,
   SANDBOX_REFUSAL_CODE_FROZEN,
   SANDBOX_REFUSAL_CODE_INSUFFICIENT_CREDIT,
   SANDBOX_REFUSAL_CODE_NOT_FOUND,
@@ -12,6 +14,10 @@ import {
   SANDBOX_REFUSAL_CODE_VERB_NOT_AVAILABLE,
 } from "@traycer/protocol/host/sandbox-control";
 import { formatCreditsRequired } from "@/lib/sandboxes/sandbox-pricing";
+import {
+  SANDBOX_CREATE_ENVIRONMENT_UNAVAILABLE_LINE,
+  sandboxNotAMemberLine,
+} from "@/components/hosts/sandbox-create-model";
 
 /** `shape_not_offered`'s `reason`, in words. */
 const SHAPE_REASON_COPY: Record<string, string> = {
@@ -97,4 +103,28 @@ export function sandboxFailureMessage(failure: SandboxControlFailure): string {
     default:
       return REFUSAL_COPY.get(failure.code) ?? "Traycer refused that request.";
   }
+}
+
+/**
+ * A create's failure in words (ticket E17 checkpoint 3). A team create the
+ * server refuses as `environment_not_found` names the team the person picked
+ * (`teamName`), since the server names none; `environment_unavailable` says
+ * where the check failed. Everything else is {@link sandboxFailureMessage}.
+ */
+export function sandboxCreateFailureMessage(
+  failure: SandboxControlFailure,
+  teamName: string | null,
+): string {
+  if (failure.kind === "refused") {
+    if (
+      failure.code === SANDBOX_REFUSAL_CODE_ENVIRONMENT_NOT_FOUND &&
+      teamName !== null
+    ) {
+      return sandboxNotAMemberLine(teamName);
+    }
+    if (failure.code === SANDBOX_REFUSAL_CODE_ENVIRONMENT_UNAVAILABLE) {
+      return SANDBOX_CREATE_ENVIRONMENT_UNAVAILABLE_LINE;
+    }
+  }
+  return sandboxFailureMessage(failure);
 }

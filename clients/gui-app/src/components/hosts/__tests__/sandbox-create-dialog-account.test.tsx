@@ -37,6 +37,11 @@ vi.mock("@/lib/host", async (importOriginal) => ({
 vi.mock("@/hooks/sandboxes/use-sandbox-catalogue-query", () => ({
   useSandboxCatalogue: () => mocks.catalogue,
 }));
+// The form reads the person's teams for Belongs to; this suite is a person
+// in none, and `belongs-to` covers the rest.
+vi.mock("@/hooks/auth/use-auth-user-query", () => ({
+  useAuthUser: () => ({ data: null }),
+}));
 
 import { SandboxCreateDialog } from "@/components/hosts/sandbox-create-dialog";
 import { useAuthStore } from "@/stores/auth/auth-store";
@@ -86,7 +91,7 @@ function signInAs(userId: string): void {
 
 function openDialog(): void {
   act(() => {
-    useSandboxCreateDialogStore.getState().openDialog();
+    useSandboxCreateDialogStore.getState().openDialog(null, null);
   });
 }
 

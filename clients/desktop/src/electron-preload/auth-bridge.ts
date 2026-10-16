@@ -22,7 +22,9 @@ import type {
   SandboxCreateFetchResult,
   SandboxAutomationOpenTarget,
   SandboxCreateRequest,
+  EnvironmentProvidersFetchResult,
   SandboxGrantsFetchResult,
+  TeamEnvironmentFetchResult,
   SandboxLifecycleVerb,
   SandboxListFetchResult,
   SandboxVerbFetchResult,
@@ -151,6 +153,19 @@ export interface AuthBridgeSurface {
     environmentId: string | null,
     hostId: string,
   ): Promise<SandboxGrantsFetchResult>;
+  /**
+   * A team's environment id and an environment's provider counts (ticket E17
+   * checkpoint 3), both from authn with the user's bearer. See
+   * `host-client/sandbox-secrets.ts`.
+   */
+  getTeamEnvironment(
+    bearerToken: string,
+    teamId: string,
+  ): Promise<TeamEnvironmentFetchResult>;
+  getEnvironmentProviders(
+    bearerToken: string,
+    environmentId: string,
+  ): Promise<EnvironmentProvidersFetchResult>;
   decideSecretRequest(
     bearerToken: string,
     environmentId: string | null,
@@ -296,6 +311,20 @@ export function buildAuthBridge(): AuthBridgeSurface {
         environmentId,
         hostId,
       ) as Promise<SandboxGrantsFetchResult>,
+
+    getTeamEnvironment: (bearerToken, teamId) =>
+      ipcRenderer.invoke(
+        RunnerHostInvoke.getTeamEnvironment,
+        bearerToken,
+        teamId,
+      ) as Promise<TeamEnvironmentFetchResult>,
+
+    getEnvironmentProviders: (bearerToken, environmentId) =>
+      ipcRenderer.invoke(
+        RunnerHostInvoke.getEnvironmentProviders,
+        bearerToken,
+        environmentId,
+      ) as Promise<EnvironmentProvidersFetchResult>,
 
     mintExecutableWriteGrant: (bearerToken, hostId) =>
       ipcRenderer.invoke(

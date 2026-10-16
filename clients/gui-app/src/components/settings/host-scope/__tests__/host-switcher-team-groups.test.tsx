@@ -12,10 +12,24 @@ import { NO_HOST_OPTION_REFUSALS } from "@/components/settings/host-scope/host-o
 import { hostScopeOptionFixture } from "@/components/settings/host-scope/host-scope-fixture";
 import type { HostScopeOption } from "@/components/settings/host-scope/host-scope-model";
 import { sandboxSummaryFixture } from "@/hooks/sandboxes/__tests__/sandbox-fixtures";
+import { useAuthStore } from "@/stores/auth/auth-store";
+import { useSandboxCreateDialogStore } from "@/stores/settings/sandbox-create-dialog-store";
 
 vi.mock("@/lib/host", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/host")>()),
   useHostBinding: () => null,
+}));
+// Why this build cannot reach the sandbox control plane, or null. Only the
+// one reader of it is replaced: the rest of the module stays real.
+const control = vi.hoisted(() => ({
+  unavailableReason: null as string | null,
+}));
+vi.mock("@/providers/use-runner-host", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/providers/use-runner-host")>()),
+  useRunnerHostOrNull: () =>
+    control.unavailableReason === null
+      ? null
+      : { sandboxControlUnavailableReason: control.unavailableReason },
 }));
 vi.mock("@/lib/sandboxes/sandbox-wake", () => ({
   wakeSandboxOnPick: vi.fn(),
@@ -44,6 +58,13 @@ const onSelect = vi.fn<(hostId: string) => void>();
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  control.unavailableReason = null;
+  useAuthStore.setState({ status: "signed-out" });
+  useSandboxCreateDialogStore.setState({
+    open: false,
+    preselect: null,
+    workingHostTeamId: null,
+  });
 });
 
 function registryItem(
@@ -330,5 +351,85 @@ describe("<HostSwitcher /> a team's Agent sandboxes", () => {
       screen.queryByTestId("settings-host-switcher-option-alpha-burst"),
     ).toBeNull();
     expect(teamGroup("team-a").contains(row("alpha-1"))).toBe(true);
+  });
+});
+
+describe("<HostSwitcher /> a team group's New sandbox", () => {
+  const hosts = [
+    PERSONAL,
+    sandboxRow("alpha-1", TEAM_A, {}),
+    sandboxRow("bravo-1", TEAM_B, {}),
+  ];
+
+  function newSandbox(teamId: string): HTMLElement {
+    return screen.getByTestId(
+      `settings-host-switcher-team-${teamId}-new-sandbox`,
+    );
+  }
+
+  it("ends each team group in a New sandbox", () => {
+    useAuthStore.setState({ status: "signed-in" });
+    renderSwitcher({ hosts, action: HOST_LIST_ACTION, intent: "view" });
+
+    expect(teamGroup("team-a").contains(newSandbox("team-a"))).toBe(true);
+    expect(teamGroup("team-b").contains(newSandbox("team-b"))).toBe(true);
+    expect(newSandbox("team-a").textContent).toBe("New sandbox…");
+  });
+
+  it("opens the create form with that team preselected and no working host team, and closes the list", () => {
+    useAuthStore.setState({ status: "signed-in" });
+    renderSwitcher({ hosts, action: HOST_LIST_ACTION, intent: "view" });
+    expect(useSandboxCreateDialogStore.getState().open).toBe(false);
+
+    fireEvent.click(newSandbox("team-b"));
+
+    const store = useSandboxCreateDialogStore.getState();
+    expect(store.open).toBe(true);
+    expect(store.preselect).toEqual({ kind: "team", teamId: "team-b" });
+    expect(store.workingHostTeamId).toBeNull();
+    expect(
+      screen.queryByTestId("settings-host-switcher-team-team-b-new-sandbox"),
+    ).toBeNull();
+    expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it("is absent in a picker", () => {
+    useAuthStore.setState({ status: "signed-in" });
+    renderSwitcher({ hosts, action: PICKER_ACTION, intent: "bind" });
+
+    expect(teamGroup("team-a")).toBeDefined();
+    expect(
+      screen.queryByTestId("settings-host-switcher-team-team-a-new-sandbox"),
+    ).toBeNull();
+    expect(
+      screen.queryByTestId("settings-host-switcher-team-team-b-new-sandbox"),
+    ).toBeNull();
+  });
+
+  it("is absent on a build that cannot reach the sandbox control plane", () => {
+    control.unavailableReason = "Sandboxes aren't available in staging builds.";
+    useAuthStore.setState({ status: "signed-in" });
+    renderSwitcher({ hosts, action: HOST_LIST_ACTION, intent: "view" });
+
+    expect(teamGroup("team-a")).toBeDefined();
+    expect(
+      screen.queryByTestId("settings-host-switcher-team-team-a-new-sandbox"),
+    ).toBeNull();
+    expect(
+      screen.queryByTestId("settings-host-switcher-team-team-b-new-sandbox"),
+    ).toBeNull();
+  });
+
+  it("is absent when signed out", () => {
+    useAuthStore.setState({ status: "signed-out" });
+    renderSwitcher({ hosts, action: HOST_LIST_ACTION, intent: "view" });
+
+    expect(teamGroup("team-a")).toBeDefined();
+    expect(
+      screen.queryByTestId("settings-host-switcher-team-team-a-new-sandbox"),
+    ).toBeNull();
+    expect(
+      screen.queryByTestId("settings-host-switcher-team-team-b-new-sandbox"),
+    ).toBeNull();
   });
 });

@@ -162,6 +162,14 @@ function buildFakeBridge(
       kind: "network-error" as const,
       detail: "test",
     }),
+    getTeamEnvironment: async () => ({
+      kind: "network-error" as const,
+      detail: "test",
+    }),
+    getEnvironmentProviders: async () => ({
+      kind: "network-error" as const,
+      detail: "test",
+    }),
     decideSecretRequest: async () => ({
       kind: "network-error" as const,
       detail: "test",
@@ -1004,6 +1012,48 @@ describe("DesktopRunnerHost.getSandboxGrants", () => {
     ).resolves.toEqual({
       kind: "not-found",
     });
+  });
+});
+
+describe("DesktopRunnerHost.getTeamEnvironment", () => {
+  it("hands the preload bridge the bearer and the team, and returns its answer", async () => {
+    const getTeamEnvironment = vi.fn<
+      DesktopPreloadBridge["getTeamEnvironment"]
+    >(async () => ({ kind: "ok", environmentId: "env-acme" }));
+    const host = new DesktopRunnerHost({
+      bridge: { ...buildFakeBridge(null).bridge, getTeamEnvironment },
+      signInUrl: "https://auth.example.invalid/sign-in",
+    });
+
+    await expect(
+      host.getTeamEnvironment("bearer-1", "team-acme"),
+    ).resolves.toEqual({ kind: "ok", environmentId: "env-acme" });
+
+    expect(getTeamEnvironment).toHaveBeenCalledTimes(1);
+    expect(getTeamEnvironment).toHaveBeenCalledWith("bearer-1", "team-acme");
+  });
+});
+
+describe("DesktopRunnerHost.getEnvironmentProviders", () => {
+  it("hands the preload bridge the bearer and the environment, and returns its answer", async () => {
+    const counts = { providerSecretCount: 2, connectedPlanCount: 1 };
+    const getEnvironmentProviders = vi.fn<
+      DesktopPreloadBridge["getEnvironmentProviders"]
+    >(async () => ({ kind: "ok", counts }));
+    const host = new DesktopRunnerHost({
+      bridge: { ...buildFakeBridge(null).bridge, getEnvironmentProviders },
+      signInUrl: "https://auth.example.invalid/sign-in",
+    });
+
+    await expect(
+      host.getEnvironmentProviders("bearer-1", "env-acme"),
+    ).resolves.toEqual({ kind: "ok", counts });
+
+    expect(getEnvironmentProviders).toHaveBeenCalledTimes(1);
+    expect(getEnvironmentProviders).toHaveBeenCalledWith(
+      "bearer-1",
+      "env-acme",
+    );
   });
 });
 

@@ -49,7 +49,9 @@ import type {
   SandboxVerbFetchResult,
 } from "@traycer-clients/shared/host-client/sandbox-control";
 import type {
+  EnvironmentProvidersFetchResult,
   SandboxGrantsFetchResult,
+  TeamEnvironmentFetchResult,
   SecretRequestDecideFetchResult,
 } from "@traycer-clients/shared/host-client/sandbox-secrets";
 import type { SecretRequestDecision } from "@traycer/protocol/host/sandbox-secrets";
@@ -3063,6 +3065,33 @@ export class AuthService {
       return { kind: "unauthorized" };
     }
     return this.runnerHost.getSandboxGrants(bearer, environmentId, hostId);
+  }
+
+  /**
+   * A team's environment id (ticket E17 checkpoint 3), read for a team the
+   * person picked in the create form. The route creates the environment and
+   * syncs the member's items on its first call, so it is never read for
+   * every team.
+   */
+  async getTeamEnvironment(
+    teamId: string,
+  ): Promise<TeamEnvironmentFetchResult> {
+    const bearer = this.cloudBearer();
+    if (bearer === null) {
+      return { kind: "unauthorized" };
+    }
+    return this.runnerHost.getTeamEnvironment(bearer, teamId);
+  }
+
+  /** An environment's provider counts: its API keys and linked plans. */
+  async getEnvironmentProviders(
+    environmentId: string,
+  ): Promise<EnvironmentProvidersFetchResult> {
+    const bearer = this.cloudBearer();
+    if (bearer === null) {
+      return { kind: "unauthorized" };
+    }
+    return this.runnerHost.getEnvironmentProviders(bearer, environmentId);
   }
 
   /** The user's answer to an agent's grant request. */

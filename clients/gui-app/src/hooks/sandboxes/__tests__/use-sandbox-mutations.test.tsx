@@ -49,7 +49,10 @@ vi.mock("@/lib/auth-error-toast", () => ({
   toastFromAuthError: state.toastFromAuthError,
 }));
 
-import { useSandboxCreate } from "@/hooks/sandboxes/use-sandbox-create-mutation";
+import {
+  SandboxCreateError,
+  useSandboxCreate,
+} from "@/hooks/sandboxes/use-sandbox-create-mutation";
 import { useAuthStore } from "@/stores/auth/auth-store";
 import { useSandboxAutomationOpen } from "@/hooks/sandboxes/use-sandbox-automation-open-mutation";
 import { useSandboxDestroy } from "@/hooks/sandboxes/use-sandbox-destroy-mutation";
@@ -614,7 +617,7 @@ describe("settling under another account", () => {
       );
       const view = renderHook(() => useSandboxCreate(), { wrapper });
       act(() => {
-        view.result.current.mutate(CREATE_REQUEST);
+        view.result.current.mutate({ request: CREATE_REQUEST, teamName: null });
       });
       return { queryClient, invalidate, pending };
     }
@@ -696,6 +699,93 @@ describe("settling under another account", () => {
       expect(state.toastSuccess).not.toHaveBeenCalled();
       expect(state.binding?.directory.refresh).toHaveBeenCalledTimes(1);
       expect(invalidatedKeys(invalidate)).toEqual([REGISTERED_HOSTS_KEY]);
+    });
+  });
+
+  describe("useSandboxCreate refusals", () => {
+    const TEAM_REQUEST: SandboxCreateRequest = {
+      ...CREATE_REQUEST,
+      environmentId: "env-acme",
+    };
+
+    async function createRefusedAs(
+      failure: SandboxCreateFetchResult,
+      teamName: string | null,
+    ): Promise<unknown> {
+      signInAs("user-a");
+      state.binding?.auth.createSandbox.mockResolvedValue(failure);
+      const { wrapper } = setup();
+      const { result } = renderHook(() => useSandboxCreate(), { wrapper });
+      let rejection: unknown = null;
+      await act(async () => {
+        try {
+          await result.current.mutateAsync({
+            request: TEAM_REQUEST,
+            teamName,
+          });
+        } catch (error: unknown) {
+          rejection = error;
+        }
+      });
+      return rejection;
+    }
+
+    it("rejects a refused create with a SandboxCreateError carrying the refusal code", async () => {
+      const rejection = await createRefusedAs(
+        refusal(402, "insufficient_credit"),
+        "acme",
+      );
+
+      expect(rejection).toBeInstanceOf(SandboxCreateError);
+      if (!(rejection instanceof SandboxCreateError)) return;
+      expect(rejection.code).toBe("insufficient_credit");
+    });
+
+    it("rejects a failure with no refusal code as a SandboxCreateError whose code is null", async () => {
+      const rejection = await createRefusedAs(CREATE_FAILED, "acme");
+
+      expect(rejection).toBeInstanceOf(SandboxCreateError);
+      if (!(rejection instanceof SandboxCreateError)) return;
+      expect(rejection.code).toBeNull();
+      expect(rejection.message).toBe(
+        "Couldn't reach Traycer. Try again in a moment.",
+      );
+    });
+
+    it("names the team in the error and the toast when the team's environment is refused as not found", async () => {
+      const rejection = await createRefusedAs(
+        refusal(404, "environment_not_found"),
+        "acme",
+      );
+
+      expect(rejection).toBeInstanceOf(SandboxCreateError);
+      if (!(rejection instanceof SandboxCreateError)) return;
+      expect(rejection.code).toBe("environment_not_found");
+      expect(rejection.message).toBe("You are not a member of acme.");
+      expect(state.toastFromAuthError).toHaveBeenCalledTimes(1);
+      const [toasted, title] = state.toastFromAuthError.mock.calls[0];
+      expect(toasted.message).toBe("You are not a member of acme.");
+      expect(title).toBe("Couldn't create the sandbox.");
+    });
+
+    it("names no team when none was picked", async () => {
+      const rejection = await createRefusedAs(
+        refusal(404, "environment_not_found"),
+        null,
+      );
+
+      expect(rejection).toBeInstanceOf(SandboxCreateError);
+      if (!(rejection instanceof SandboxCreateError)) return;
+      expect(rejection.message).not.toContain("acme");
+      expect(rejection.message).not.toContain("not a member");
+    });
+
+    it("sends the request unchanged, without the team name", async () => {
+      await createRefusedAs(refusal(404, "environment_not_found"), "acme");
+
+      expect(state.binding?.auth.createSandbox).toHaveBeenCalledWith(
+        TEAM_REQUEST,
+      );
     });
   });
 

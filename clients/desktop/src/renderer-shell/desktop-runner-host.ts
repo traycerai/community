@@ -148,7 +148,9 @@ import {
   type SandboxVerbFetchResult,
 } from "@traycer-clients/shared/host-client/sandbox-control";
 import type {
+  EnvironmentProvidersFetchResult,
   SandboxGrantsFetchResult,
+  TeamEnvironmentFetchResult,
   SecretRequestDecideFetchResult,
 } from "@traycer-clients/shared/host-client/sandbox-secrets";
 import type { SecretRequestDecision } from "@traycer/protocol/host/sandbox-secrets";
@@ -253,6 +255,19 @@ export interface DesktopPreloadBridge {
     environmentId: string | null,
     hostId: string,
   ): Promise<SandboxGrantsFetchResult>;
+  /**
+   * A team's environment id and an environment's provider counts (ticket E17
+   * checkpoint 3), both from authn with the user's bearer. See
+   * `host-client/sandbox-secrets.ts`.
+   */
+  getTeamEnvironment(
+    bearerToken: string,
+    teamId: string,
+  ): Promise<TeamEnvironmentFetchResult>;
+  getEnvironmentProviders(
+    bearerToken: string,
+    environmentId: string,
+  ): Promise<EnvironmentProvidersFetchResult>;
   decideSecretRequest(
     bearerToken: string,
     environmentId: string | null,
@@ -1213,6 +1228,20 @@ export class DesktopRunnerHost implements IRunnerHost {
     hostId: string,
   ): Promise<SandboxGrantsFetchResult> {
     return this.bridge.getSandboxGrants(bearerToken, environmentId, hostId);
+  }
+
+  getTeamEnvironment(
+    bearerToken: string,
+    teamId: string,
+  ): Promise<TeamEnvironmentFetchResult> {
+    return this.bridge.getTeamEnvironment(bearerToken, teamId);
+  }
+
+  getEnvironmentProviders(
+    bearerToken: string,
+    environmentId: string,
+  ): Promise<EnvironmentProvidersFetchResult> {
+    return this.bridge.getEnvironmentProviders(bearerToken, environmentId);
   }
 
   decideSecretRequest(

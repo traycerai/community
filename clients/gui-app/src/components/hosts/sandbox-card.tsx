@@ -78,6 +78,8 @@ import {
 } from "@/lib/sandboxes/sandbox-egress-event-line";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/stores/auth/auth-store";
+import { useSandboxCreateDialogStore } from "@/stores/settings/sandbox-create-dialog-store";
+import type { SandboxCreateBelongsTo } from "@/components/hosts/sandbox-create-model";
 import {
   confirmTeamWake,
   teamWakeAsks,
@@ -103,6 +105,12 @@ import {
 export function SandboxCard(props: {
   readonly hostName: string;
   readonly sandbox: HostScopeSandbox;
+  /**
+   * What "New sandbox like this" preselects: this sandbox's owner, or `null`
+   * when it is a team's whose id has not been read yet (the form's default
+   * rule then decides).
+   */
+  readonly likeThis: SandboxCreateBelongsTo | null;
 }): ReactNode {
   // Taken as resolved. The builder (`sandboxFactsOf`) already prefers the
   // host list's facts and falls back to the sandbox-list summary, so a second
@@ -160,16 +168,15 @@ export function SandboxCard(props: {
           </>
         )}
       </CardContent>
-      {summary !== null && actions.length > 0 ? (
-        <CardFooter className="flex flex-wrap gap-2">
-          <SandboxActions
-            summary={summary}
-            actions={actions}
-            frozen={frozen}
-            teamOwned={teamOwned}
-          />
-        </CardFooter>
-      ) : null}
+      {summary === null ? null : (
+        <SandboxCardFooter
+          summary={summary}
+          actions={actions}
+          frozen={frozen}
+          teamOwned={teamOwned}
+          likeThis={props.likeThis}
+        />
+      )}
     </Card>
   );
 }
@@ -886,6 +893,47 @@ const VERB_MOVING_TOAST: Record<SandboxLifecycleVerb, string> = {
   stop: "Stopping",
   start: "Starting",
 };
+
+/**
+ * The card's actions, then "New sandbox like this" (ticket E17 checkpoint 3),
+ * which opens the create form with this sandbox's owner preselected (its
+ * environment only, not its shape). A pod offers no "like this": a pod is
+ * the team's Automations host, not a sandbox a person creates.
+ */
+function SandboxCardFooter(props: {
+  readonly summary: SandboxSummary;
+  readonly actions: readonly SandboxCardAction[];
+  readonly frozen: boolean;
+  readonly teamOwned: boolean;
+  readonly likeThis: SandboxCreateBelongsTo | null;
+}): ReactNode {
+  const openCreateSandbox = useSandboxCreateDialogStore((s) => s.openDialog);
+  const offersLikeThis = props.summary.kind !== "automation";
+  if (props.actions.length === 0 && !offersLikeThis) return null;
+  return (
+    <CardFooter className="flex flex-wrap gap-2">
+      {props.actions.length === 0 ? null : (
+        <SandboxActions
+          summary={props.summary}
+          actions={props.actions}
+          frozen={props.frozen}
+          teamOwned={props.teamOwned}
+        />
+      )}
+      {offersLikeThis ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          data-testid="sandbox-card-new-like-this"
+          onClick={() => openCreateSandbox(props.likeThis, null)}
+        >
+          New sandbox like this
+        </Button>
+      ) : null}
+    </CardFooter>
+  );
+}
 
 function SandboxActions(props: {
   readonly summary: SandboxSummary;

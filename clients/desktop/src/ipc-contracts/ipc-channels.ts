@@ -78,6 +78,8 @@ export const RunnerHostInvoke = {
   openSandboxAutomation: "runnerHost:sandboxes:automation:open",
   // The secrets broker (authn), from Electron main for the same reason.
   getSandboxGrants: "runnerHost:sandboxSecrets:grants",
+  getTeamEnvironment: "runnerHost:environments:team",
+  getEnvironmentProviders: "runnerHost:environments:providers",
   decideSecretRequest: "runnerHost:sandboxSecrets:decide",
   // The executable-write grant (authn), from Electron main for the same reason.
   mintExecutableWriteGrant: "runnerHost:environment:mintExecutableWriteGrant",

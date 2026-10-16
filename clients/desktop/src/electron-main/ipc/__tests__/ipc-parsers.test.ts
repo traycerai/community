@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   assertNullableString,
   parseQuitDecision,
+  parseRequiredId,
   parseSandboxAutomationEnvironmentId,
   parseSandboxAutomationOpenTarget,
   parseSandboxCreateRequest,
@@ -121,6 +122,24 @@ describe("parseSecretRequestDecision", () => {
     ]) {
       expect(() => parseSecretRequestDecision(bad)).toThrow(
         'decideSecretRequest.decision must be "approve", "approve_default" or "decline"',
+      );
+    }
+  });
+});
+
+// A team id or environment id crosses IPC as `unknown` and goes into a URL
+// path: an empty or non-string one is refused before any request is built.
+describe("parseRequiredId", () => {
+  it("returns a non-empty string unchanged", () => {
+    expect(parseRequiredId("team-acme", "getTeamEnvironment.teamId")).toBe(
+      "team-acme",
+    );
+  });
+
+  it("throws on an empty string, undefined, null or a non-string, naming the field", () => {
+    for (const bad of ["", undefined, null, 7, true, {}, ["team-acme"]]) {
+      expect(() => parseRequiredId(bad, "getTeamEnvironment.teamId")).toThrow(
+        "getTeamEnvironment.teamId",
       );
     }
   });

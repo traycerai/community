@@ -551,6 +551,16 @@ export const SANDBOX_REFUSAL_CODE_NOT_FOUND = "sandbox_not_found";
 export const SANDBOX_REFUSAL_CODE_VERB_NOT_AVAILABLE = "verb_not_available";
 /** Every team pod awake at its cap; the refusal's `message` says so. */
 export const SANDBOX_REFUSAL_CODE_TEAM_PODS_FULL = "team_pods_full";
+/**
+ * The create's environment is not the caller's to create into: a team they
+ * are not an accepted member of, or no such environment. The server names no
+ * team; the form names the one the person picked.
+ */
+export const SANDBOX_REFUSAL_CODE_ENVIRONMENT_NOT_FOUND =
+  "environment_not_found";
+/** The create could not check the environment (authn unreachable). */
+export const SANDBOX_REFUSAL_CODE_ENVIRONMENT_UNAVAILABLE =
+  "environment_unavailable";
 
 // -----------------------------------------------------------------------------
 // Lifecycle verbs

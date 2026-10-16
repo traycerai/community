@@ -350,6 +350,10 @@ function createBaseRunnerHost(): IRunnerHost {
     openSandboxAutomation: () =>
       Promise.resolve({ kind: "unauthorized" as const }),
     getSandboxGrants: () => Promise.resolve({ kind: "unauthorized" as const }),
+    getTeamEnvironment: () =>
+      Promise.resolve({ kind: "unauthorized" as const }),
+    getEnvironmentProviders: () =>
+      Promise.resolve({ kind: "unauthorized" as const }),
     decideSecretRequest: () =>
       Promise.resolve({ kind: "unauthorized" as const }),
     mintExecutableWriteGrant: () =>

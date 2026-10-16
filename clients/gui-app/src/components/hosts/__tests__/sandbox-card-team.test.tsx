@@ -25,6 +25,7 @@ import {
 } from "@/components/hosts/sandbox-card-model";
 import { frozenDestroyAt } from "@/lib/sandboxes/sandbox-balance";
 import { useAuthStore } from "@/stores/auth/auth-store";
+import { useSandboxCreateDialogStore } from "@/stores/settings/sandbox-create-dialog-store";
 import { useTeamWakeConfirmStore } from "@/stores/hosts/team-wake-confirm-store";
 import { SANDBOX_VERB_FETCH_TIMEOUT_MS } from "@traycer-clients/shared/host-client/sandbox-control";
 
@@ -93,6 +94,7 @@ vi.mock("@/hooks/auth/use-auth-user-query", () => ({
 }));
 
 import { SandboxCard } from "@/components/hosts/sandbox-card";
+import type { SandboxCreateBelongsTo } from "@/components/hosts/sandbox-create-model";
 import { TeamWakeConfirmDialogHost } from "@/components/hosts/team-wake-confirm-dialog";
 import type { HostScopeSandbox } from "@/components/settings/host-scope/host-scope-model";
 
@@ -121,13 +123,31 @@ const COST: SandboxCost = {
   segments: [],
 };
 
+const TEAM_ID = "team-acme";
+
 function renderCard(sandbox: HostScopeSandbox, teamOwned: boolean): void {
+  renderCardLikeThis(
+    sandbox,
+    teamOwned,
+    teamOwned ? { kind: "team", teamId: TEAM_ID } : { kind: "personal" },
+  );
+}
+
+function renderCardLikeThis(
+  sandbox: HostScopeSandbox,
+  teamOwned: boolean,
+  likeThis: SandboxCreateBelongsTo | null,
+): void {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
   render(
     <QueryClientProvider client={queryClient}>
-      <SandboxCard hostName="Host name" sandbox={{ ...sandbox, teamOwned }} />
+      <SandboxCard
+        hostName="Host name"
+        sandbox={{ ...sandbox, teamOwned }}
+        likeThis={likeThis}
+      />
       <TeamWakeConfirmDialogHost />
     </QueryClientProvider>,
   );
@@ -177,6 +197,11 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  useSandboxCreateDialogStore.setState({
+    open: false,
+    preselect: null,
+    workingHostTeamId: null,
+  });
   useTeamWakeConfirmStore.setState({ pending: null });
   useAuthStore.setState({ status: "signed-out", contextMetadata: null });
 });
@@ -617,5 +642,66 @@ describe("<SandboxCard /> team wake confirm", () => {
       );
     });
     expect(screen.queryByTestId("team-wake-confirm")).toBeNull();
+  });
+});
+
+describe("<SandboxCard /> New sandbox like this", () => {
+  function press(): void {
+    fireEvent.click(screen.getByTestId("sandbox-card-new-like-this"));
+  }
+
+  it("opens the create form with the team on a team card", () => {
+    renderCard(sandboxOf("awake", false, { environmentId: ENV }), true);
+    expect(useSandboxCreateDialogStore.getState().open).toBe(false);
+
+    press();
+
+    const store = useSandboxCreateDialogStore.getState();
+    expect(store.open).toBe(true);
+    expect(store.preselect).toEqual({ kind: "team", teamId: TEAM_ID });
+    expect(store.workingHostTeamId).toBeNull();
+  });
+
+  it("opens the create form on Personal for a personal card", () => {
+    renderCard(sandboxOf("awake", false, {}), false);
+
+    press();
+
+    const store = useSandboxCreateDialogStore.getState();
+    expect(store.open).toBe(true);
+    expect(store.preselect).toEqual({ kind: "personal" });
+    expect(store.workingHostTeamId).toBeNull();
+  });
+
+  it("opens the create form with no preselection when the card cannot name its team yet", () => {
+    useSandboxCreateDialogStore.setState({
+      preselect: { kind: "team", teamId: "stale-team" },
+    });
+    renderCardLikeThis(
+      sandboxOf("awake", false, { environmentId: ENV }),
+      true,
+      null,
+    );
+
+    press();
+
+    const store = useSandboxCreateDialogStore.getState();
+    expect(store.open).toBe(true);
+    expect(store.preselect).toBeNull();
+  });
+
+  it("is offered on a card with no lifecycle actions", () => {
+    renderCard(sandboxOf("creating", false, {}), false);
+
+    expect(screen.getByTestId("sandbox-card-new-like-this")).toBeDefined();
+  });
+
+  it("is absent on a pod, which is the team's Automations host and not a sandbox a person creates", () => {
+    renderCard(
+      sandboxOf("awake", false, { kind: "automation", environmentId: ENV }),
+      true,
+    );
+
+    expect(screen.queryByTestId("sandbox-card-new-like-this")).toBeNull();
   });
 });

@@ -16,6 +16,7 @@ import { useTabsStore } from "@/stores/tabs/store";
 import { useSettingsSearchStore } from "@/stores/settings/settings-search-store";
 import { useOnboardingStore } from "@/stores/onboarding/onboarding-store";
 import { useAuthStore } from "@/stores/auth/auth-store";
+import { useSandboxCreateDialogStore } from "@/stores/settings/sandbox-create-dialog-store";
 import {
   createMemoryHistory,
   createRootRoute,
@@ -556,6 +557,12 @@ describe("<SettingsSidebar /> new sandbox entry", () => {
     useAuthStore.setState({ status: "signed-out" });
     sandboxControl.reason = null;
     runnerHostStub.current = null;
+    scopeOverrides.current = { client: null };
+    useSandboxCreateDialogStore.setState({
+      open: false,
+      preselect: null,
+      workingHostTeamId: null,
+    });
     openLinkMock.open.mockClear();
   });
 
@@ -573,6 +580,67 @@ describe("<SettingsSidebar /> new sandbox entry", () => {
     renderSidebar();
 
     expect(await screen.findByTestId("settings-new-sandbox")).toBeDefined();
+  });
+
+  it("opens the create form with no preselection and the active host's team as the working host's", async () => {
+    const { hostScopeOptionFixture } =
+      await import("@/components/settings/host-scope/host-scope-fixture");
+    const { sandboxSummaryFixture } =
+      await import("@/hooks/sandboxes/__tests__/sandbox-fixtures");
+    scopeOverrides.current = {
+      client: null,
+      host: hostScopeOptionFixture({
+        hostId: "alpha-1",
+        name: "alpha-1",
+        kind: "sandbox",
+        isLocalMachine: false,
+        item: {
+          hostId: "alpha-1",
+          displayName: "alpha-1",
+          platform: "linux-x64",
+          kind: "sandbox",
+          publicKey: "pk",
+          createdAt: new Date(0).toISOString(),
+          updatePolicy: "manual",
+          status: {
+            connectivity: "connectable",
+            viewerReachability: "unknown",
+            clientCloud: "ok",
+            updateState: "current",
+            appVersion: "1.4.2",
+            lastSeenAt: new Date(0).toISOString(),
+          },
+          owner: { kind: "team", id: "team-a", name: "Alpha" },
+        },
+        sandbox: {
+          state: "awake",
+          frozen: false,
+          summary: sandboxSummaryFixture({ id: "sbx-alpha-1" }),
+          teamOwned: true,
+        },
+      }),
+    };
+    useAuthStore.setState({ status: "signed-in" });
+    renderSidebar();
+
+    fireEvent.click(await screen.findByTestId("settings-new-sandbox"));
+
+    const store = useSandboxCreateDialogStore.getState();
+    expect(store.open).toBe(true);
+    expect(store.preselect).toBeNull();
+    expect(store.workingHostTeamId).toBe("team-a");
+  });
+
+  it("opens the create form with no working host team when the active host is the person's own", async () => {
+    useAuthStore.setState({ status: "signed-in" });
+    renderSidebar();
+
+    fireEvent.click(await screen.findByTestId("settings-new-sandbox"));
+
+    const store = useSandboxCreateDialogStore.getState();
+    expect(store.open).toBe(true);
+    expect(store.preselect).toBeNull();
+    expect(store.workingHostTeamId).toBeNull();
   });
 
   it("says why instead of offering New sandbox… on a build that cannot reach the control plane", async () => {

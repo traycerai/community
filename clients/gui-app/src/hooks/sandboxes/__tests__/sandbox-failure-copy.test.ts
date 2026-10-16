@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import type { SandboxControlFailure } from "@traycer-clients/shared/host-client/sandbox-control";
-import { sandboxFailureMessage } from "@/hooks/sandboxes/sandbox-failure-copy";
+import {
+  sandboxCreateFailureMessage,
+  sandboxFailureMessage,
+} from "@/hooks/sandboxes/sandbox-failure-copy";
+import { refusal } from "./sandbox-binding-fixture";
 
 function refused(
   code: string,
@@ -200,5 +204,68 @@ describe("sandboxFailureMessage", () => {
     );
     expect(message).toBe("Traycer refused that request.");
     expect(message).not.toContain("something_from_the_future");
+  });
+});
+
+describe("sandboxCreateFailureMessage", () => {
+  it("names the picked team when the environment is not the caller's", () => {
+    expect(
+      sandboxCreateFailureMessage(
+        refusal(404, "environment_not_found"),
+        "acme",
+      ),
+    ).toBe("You are not a member of acme.");
+  });
+
+  it("falls back to the plain refusal copy for that code when no team was picked", () => {
+    const failure = refusal(404, "environment_not_found");
+    const message = sandboxCreateFailureMessage(failure, null);
+    expect(message).toBe(sandboxFailureMessage(failure));
+    expect(message).not.toContain("acme");
+  });
+
+  it("says Traycer could not check where the sandbox belongs when the environment check was unavailable", () => {
+    expect(
+      sandboxCreateFailureMessage(
+        refusal(503, "environment_unavailable"),
+        "acme",
+      ),
+    ).toBe(
+      "Traycer couldn't check where this sandbox belongs. Try again in a moment.",
+    );
+    expect(
+      sandboxCreateFailureMessage(
+        refusal(503, "environment_unavailable"),
+        null,
+      ),
+    ).toBe(
+      "Traycer couldn't check where this sandbox belongs. Try again in a moment.",
+    );
+  });
+
+  it("passes any other code through to the shared copy, team or not", () => {
+    for (const code of [
+      "insufficient_credit",
+      "provider_unavailable",
+      "something_from_the_future",
+    ]) {
+      const failure = refusal(402, code);
+      expect(sandboxCreateFailureMessage(failure, "acme")).toBe(
+        sandboxFailureMessage(failure),
+      );
+      expect(sandboxCreateFailureMessage(failure, null)).toBe(
+        sandboxFailureMessage(failure),
+      );
+    }
+  });
+
+  it("passes a failure that is not a refusal through to the shared copy", () => {
+    const failure: SandboxControlFailure = {
+      kind: "network-error",
+      detail: "the request never completed (TypeError)",
+    };
+    expect(sandboxCreateFailureMessage(failure, "acme")).toBe(
+      "Couldn't reach Traycer. Try again in a moment.",
+    );
   });
 });

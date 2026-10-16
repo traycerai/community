@@ -140,7 +140,11 @@ function renderCard(sandbox: HostScopeSandbox): void {
   });
   render(
     <QueryClientProvider client={queryClient}>
-      <SandboxCard hostName="Host name" sandbox={sandbox} />
+      <SandboxCard
+        hostName="Host name"
+        sandbox={sandbox}
+        likeThis={{ kind: "personal" }}
+      />
     </QueryClientProvider>,
   );
 }

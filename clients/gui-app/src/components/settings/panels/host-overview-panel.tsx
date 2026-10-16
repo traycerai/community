@@ -12,7 +12,11 @@ import {
 } from "@/components/host/host-restart-copy";
 import { DoctorSheet } from "@/components/settings/panels/host-settings-doctor-sheet";
 import { HostIdentityCard } from "@/components/settings/host-scope/host-identity-card";
-import { hostOptionCanActivate } from "@/components/settings/host-scope/host-option-model";
+import {
+  hostOptionCanActivate,
+  hostOptionTeamOwner,
+} from "@/components/settings/host-scope/host-option-model";
+import type { SandboxCreateBelongsTo } from "@/components/hosts/sandbox-create-model";
 import { HostLifecycleModeLine } from "@/components/settings/host-scope/host-lifecycle-mode-line";
 import { HostUpdateRequiredAction } from "@/components/settings/host-scope/host-update-required-action";
 import { useHostLease } from "@/hooks/host/use-host-lease";
@@ -127,7 +131,10 @@ import type { HostRestartRequestResult } from "@traycer-clients/shared/platform/
 import { useIsMobileViewport } from "@/hooks/ui/use-mobile-viewport";
 import { isHostScopeUsable } from "@/components/settings/host-scope/host-scope-status";
 import type { HostScope } from "@/components/settings/host-scope/use-host-scope";
-import type { HostScopeOption } from "@/components/settings/host-scope/host-scope-model";
+import type {
+  HostScopeOption,
+  HostScopeSandbox,
+} from "@/components/settings/host-scope/host-scope-model";
 import type { HostIdentity } from "@traycer/protocol/host/identity/index";
 import type { HostRestartBusyVerdict } from "@traycer/protocol/host/restart/index";
 import type { ResponseOfMethod } from "@traycer-clients/shared/host-transport/host-messenger";
@@ -1902,7 +1909,11 @@ export function HostOverviewPanel(props: {
   return (
     <>
       {host.sandbox === null ? null : (
-        <SandboxCard hostName={displayName} sandbox={host.sandbox} />
+        <SandboxCard
+          hostName={displayName}
+          sandbox={host.sandbox}
+          likeThis={sandboxLikeThis(host, host.sandbox)}
+        />
       )}
       <HostIdentityCard
         host={host}
@@ -2979,4 +2990,18 @@ function overviewBusySnapshot(
       reportedBreakdown: status?.busyBreakdown ?? null,
     }),
   };
+}
+
+/**
+ * What a sandbox's "New sandbox like this" preselects: its team, Personal
+ * for the person's own, or `null` for a team's whose id the registry has not
+ * answered yet, leaving the form's default rule to decide.
+ */
+function sandboxLikeThis(
+  host: HostScopeOption,
+  sandbox: HostScopeSandbox,
+): SandboxCreateBelongsTo | null {
+  const owner = hostOptionTeamOwner(host);
+  if (owner !== null) return { kind: "team", teamId: owner.teamId };
+  return sandbox.teamOwned ? null : { kind: "personal" };
 }

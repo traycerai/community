@@ -37,7 +37,11 @@ import { useSandboxCreateDialogStore } from "@/stores/settings/sandbox-create-di
 import { useAuthStore } from "@/stores/auth/auth-store";
 import { Button } from "@/components/ui/button";
 import { useRegisteredHostsPollLiveness } from "@/hooks/auth/use-registered-hosts-query";
-import { NO_HOST_OPTION_REFUSALS } from "@/components/settings/host-scope/host-option-model";
+import {
+  hostOptionTeamOwner,
+  NO_HOST_OPTION_REFUSALS,
+} from "@/components/settings/host-scope/host-option-model";
+import type { HostScopeOption } from "@/components/settings/host-scope/host-scope-model";
 import { useFleetUpdateViews } from "@/hooks/host/use-fleet-update-views";
 import { SettingsSearch } from "@/components/settings/settings-search-box";
 import { isSettingsSearchActive } from "@/lib/settings-search/settings-search";
@@ -232,7 +236,14 @@ function SettingsSidebarHostPicker(props: {
           size="sm"
           className="justify-start"
           data-testid="settings-new-sandbox"
-          onClick={openCreateSandbox}
+          onClick={() =>
+            openCreateSandbox(
+              null,
+              // The host the person is working from: its team, if a team
+              // owns it, is where Belongs to starts.
+              workingHostTeamId(scope.hosts, scope.activeHostId),
+            )
+          }
         >
           <Plus className="size-3.5 shrink-0" aria-hidden />
           New sandbox…
@@ -486,4 +497,13 @@ function GettingStartedProgress() {
       />
     </svg>
   );
+}
+
+/** The team owning the active host, or `null` for a personal one. */
+function workingHostTeamId(
+  hosts: readonly HostScopeOption[],
+  activeHostId: string | null,
+): string | null {
+  const active = hosts.find((host) => host.hostId === activeHostId) ?? null;
+  return active === null ? null : (hostOptionTeamOwner(active)?.teamId ?? null);
 }

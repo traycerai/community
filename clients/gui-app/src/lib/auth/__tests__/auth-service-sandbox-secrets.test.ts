@@ -7,7 +7,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { MockRunnerHost } from "@traycer-clients/shared/host-client/mock/mock-runner-host";
 import type {
+  EnvironmentProvidersFetchResult,
   SandboxGrantsFetchResult,
+  TeamEnvironmentFetchResult,
   SecretRequestDecideFetchResult,
 } from "@traycer-clients/shared/host-client/sandbox-secrets";
 import { AuthService } from "@/lib/auth/auth-service";
@@ -184,6 +186,66 @@ describe("AuthService secrets-broker calls", () => {
       ).resolves.toEqual({ kind: "unauthorized" });
 
       expect(decideSecretRequest).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("signed out, environments", () => {
+    it("getTeamEnvironment answers unauthorized and never reaches the runner host", async () => {
+      const { service, host } = makeService();
+      const getTeamEnvironment = vi.spyOn(host, "getTeamEnvironment");
+
+      await expect(service.getTeamEnvironment("team-1")).resolves.toEqual({
+        kind: "unauthorized",
+      });
+
+      expect(getTeamEnvironment).not.toHaveBeenCalled();
+    });
+
+    it("getEnvironmentProviders answers unauthorized and never reaches the runner host", async () => {
+      const { service, host } = makeService();
+      const getEnvironmentProviders = vi.spyOn(host, "getEnvironmentProviders");
+
+      await expect(service.getEnvironmentProviders("env-1")).resolves.toEqual({
+        kind: "unauthorized",
+      });
+
+      expect(getEnvironmentProviders).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("signed in, environments", () => {
+    it("getTeamEnvironment hands the runner host the bearer and the team and returns its result", async () => {
+      const { service, host } = await signedInService();
+      const result: TeamEnvironmentFetchResult = {
+        kind: "ok",
+        environmentId: "env-acme",
+      };
+      const getTeamEnvironment = vi
+        .spyOn(host, "getTeamEnvironment")
+        .mockResolvedValue(result);
+
+      await expect(service.getTeamEnvironment("team-1")).resolves.toBe(result);
+
+      expect(getTeamEnvironment).toHaveBeenCalledTimes(1);
+      expect(getTeamEnvironment).toHaveBeenCalledWith(BEARER, "team-1");
+    });
+
+    it("getEnvironmentProviders hands the runner host the bearer and the environment and returns its result", async () => {
+      const { service, host } = await signedInService();
+      const result: EnvironmentProvidersFetchResult = {
+        kind: "ok",
+        counts: { providerSecretCount: 1, connectedPlanCount: 2 },
+      };
+      const getEnvironmentProviders = vi
+        .spyOn(host, "getEnvironmentProviders")
+        .mockResolvedValue(result);
+
+      await expect(service.getEnvironmentProviders("env-1")).resolves.toBe(
+        result,
+      );
+
+      expect(getEnvironmentProviders).toHaveBeenCalledTimes(1);
+      expect(getEnvironmentProviders).toHaveBeenCalledWith(BEARER, "env-1");
     });
   });
 

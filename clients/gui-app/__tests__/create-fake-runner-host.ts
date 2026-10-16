@@ -116,6 +116,10 @@ export function createFakeRunnerHost(
       Promise.resolve({ kind: "network-error" as const, detail: "fake" }),
     getSandboxGrants: () =>
       Promise.resolve({ kind: "network-error" as const, detail: "fake" }),
+    getTeamEnvironment: () =>
+      Promise.resolve({ kind: "network-error" as const, detail: "fake" }),
+    getEnvironmentProviders: () =>
+      Promise.resolve({ kind: "network-error" as const, detail: "fake" }),
     decideSecretRequest: () =>
       Promise.resolve({ kind: "network-error" as const, detail: "fake" }),
     mintExecutableWriteGrant: () =>

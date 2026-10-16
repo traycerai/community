@@ -36,7 +36,9 @@ import type {
   SandboxVerbFetchResult,
 } from "../host-client/sandbox-control";
 import type {
+  EnvironmentProvidersFetchResult,
   SandboxGrantsFetchResult,
+  TeamEnvironmentFetchResult,
   SecretRequestDecideFetchResult,
 } from "../host-client/sandbox-secrets";
 import type { SecretRequestDecision } from "@traycer/protocol/host/sandbox-secrets";
@@ -413,6 +415,19 @@ export interface IRunnerHost {
     environmentId: string | null,
     hostId: string,
   ): Promise<SandboxGrantsFetchResult>;
+  /**
+   * A team's environment id and an environment's provider counts (ticket E17
+   * checkpoint 3), both from authn with the user's bearer. See
+   * `host-client/sandbox-secrets.ts`.
+   */
+  getTeamEnvironment(
+    bearerToken: string,
+    teamId: string,
+  ): Promise<TeamEnvironmentFetchResult>;
+  getEnvironmentProviders(
+    bearerToken: string,
+    environmentId: string,
+  ): Promise<EnvironmentProvidersFetchResult>;
   decideSecretRequest(
     bearerToken: string,
     environmentId: string | null,

@@ -41,7 +41,9 @@ import type {
 } from "@traycer-clients/shared/host-client/sandbox-control";
 import type {
   decideSecretRequestViaHttp,
+  fetchEnvironmentProvidersViaHttp,
   fetchSandboxGrantsViaHttp,
+  fetchTeamEnvironmentViaHttp,
 } from "@traycer-clients/shared/host-client/sandbox-secrets";
 import { config } from "../../../config";
 import { FakeHostController } from "./fake-host-controller";
@@ -87,6 +89,19 @@ const decideSecretRequestViaHttpMock = vi.hoisted(() =>
     decidedBy: null,
   })),
 );
+/** The team environment and provider counts the two handlers read, observed. */
+const fetchTeamEnvironmentViaHttpMock = vi.hoisted(() =>
+  vi.fn<typeof fetchTeamEnvironmentViaHttp>(async () => ({
+    kind: "ok",
+    environmentId: "env-acme",
+  })),
+);
+const fetchEnvironmentProvidersViaHttpMock = vi.hoisted(() =>
+  vi.fn<typeof fetchEnvironmentProvidersViaHttp>(async () => ({
+    kind: "ok",
+    counts: { providerSecretCount: 2, connectedPlanCount: 1 },
+  })),
+);
 vi.mock(
   "@traycer-clients/shared/host-client/sandbox-control",
   async (importOriginal) => ({
@@ -100,6 +115,8 @@ vi.mock(
 );
 vi.mock("@traycer-clients/shared/host-client/sandbox-secrets", () => ({
   fetchSandboxGrantsViaHttp: fetchSandboxGrantsViaHttpMock,
+  fetchTeamEnvironmentViaHttp: fetchTeamEnvironmentViaHttpMock,
+  fetchEnvironmentProvidersViaHttp: fetchEnvironmentProvidersViaHttpMock,
   decideSecretRequestViaHttp: decideSecretRequestViaHttpMock,
 }));
 /**
@@ -668,6 +685,8 @@ describe("RunnerIpcBridge", () => {
           RunnerHostInvoke.openSandboxAutomation,
           // The secrets broker, on authn.
           RunnerHostInvoke.getSandboxGrants,
+          RunnerHostInvoke.getTeamEnvironment,
+          RunnerHostInvoke.getEnvironmentProviders,
           RunnerHostInvoke.decideSecretRequest,
           RunnerHostInvoke.mintExecutableWriteGrant,
           RunnerHostInvoke.listUserSessions,
@@ -1177,6 +1196,75 @@ describe("RunnerIpcBridge", () => {
     ).rejects.toThrow();
     expect(fetchSandboxGrantsViaHttpMock).toHaveBeenCalledTimes(2);
     expect(decideSecretRequestViaHttpMock).toHaveBeenCalledTimes(2);
+    bridge.dispose();
+  });
+
+  it("routes the team environment and provider reads to authn with the bearer, and rejects a malformed argument before any request", async () => {
+    const mod = await import("../register-runner-ipc");
+    const bridge = new mod.RunnerIpcBridge({
+      host: new FakeHost(),
+      hostController: new FakeHostController(),
+      authnBaseUrl: "http://localhost:5005",
+      authRedirectUri: null,
+      tray: null,
+      zoomController: undefined,
+      authTokenStore: undefined,
+      window: buildWindow(),
+    });
+    bridge.install();
+    const teamEnvironment = ipcMainState.handlers.get(
+      RunnerHostInvoke.getTeamEnvironment,
+    );
+    const providers = ipcMainState.handlers.get(
+      RunnerHostInvoke.getEnvironmentProviders,
+    );
+    if (teamEnvironment === undefined || providers === undefined) {
+      throw new Error("an environment handler is missing");
+    }
+    fetchTeamEnvironmentViaHttpMock.mockClear();
+    fetchEnvironmentProvidersViaHttpMock.mockClear();
+
+    await expect(
+      teamEnvironment(bareEvent(), "bearer-1", "team-acme"),
+    ).resolves.toEqual({ kind: "ok", environmentId: "env-acme" });
+    expect(fetchTeamEnvironmentViaHttpMock).toHaveBeenCalledTimes(1);
+    expect(fetchTeamEnvironmentViaHttpMock).toHaveBeenLastCalledWith(
+      "http://localhost:5005",
+      "bearer-1",
+      "team-acme",
+    );
+
+    await expect(
+      providers(bareEvent(), "bearer-2", "env-acme"),
+    ).resolves.toEqual({
+      kind: "ok",
+      counts: { providerSecretCount: 2, connectedPlanCount: 1 },
+    });
+    expect(fetchEnvironmentProvidersViaHttpMock).toHaveBeenCalledTimes(1);
+    expect(fetchEnvironmentProvidersViaHttpMock).toHaveBeenLastCalledWith(
+      "http://localhost:5005",
+      "bearer-2",
+      "env-acme",
+    );
+
+    for (const bad of [null, undefined, 7, {}]) {
+      await expect(
+        teamEnvironment(bareEvent(), bad, "team-acme"),
+      ).rejects.toThrow("getTeamEnvironment.bearerToken");
+      await expect(providers(bareEvent(), bad, "env-acme")).rejects.toThrow(
+        "getEnvironmentProviders.bearerToken",
+      );
+    }
+    for (const bad of ["", null, undefined, 7, {}]) {
+      await expect(
+        teamEnvironment(bareEvent(), "bearer-1", bad),
+      ).rejects.toThrow("getTeamEnvironment.teamId");
+      await expect(providers(bareEvent(), "bearer-1", bad)).rejects.toThrow(
+        "getEnvironmentProviders.environmentId",
+      );
+    }
+    expect(fetchTeamEnvironmentViaHttpMock).toHaveBeenCalledTimes(1);
+    expect(fetchEnvironmentProvidersViaHttpMock).toHaveBeenCalledTimes(1);
     bridge.dispose();
   });
 

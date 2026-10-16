@@ -27,7 +27,9 @@ import {
 } from "@traycer-clients/shared/host-client/sandbox-control";
 import {
   decideSecretRequestViaHttp,
+  fetchEnvironmentProvidersViaHttp,
   fetchSandboxGrantsViaHttp,
+  fetchTeamEnvironmentViaHttp,
 } from "@traycer-clients/shared/host-client/sandbox-secrets";
 import { mintExecutableWriteGrantViaHttp } from "@traycer-clients/shared/host-client/executable-write-grant";
 import { config } from "../../config";
@@ -43,6 +45,7 @@ import {
   assertString,
   parseDesktopAuthSession,
   parseMintHostCredentialRequest,
+  parseRequiredId,
   parseSandboxAutomationEnvironmentId,
   parseSandboxAutomationOpenTarget,
   parseSandboxCreateRequest,
@@ -339,6 +342,30 @@ export function registerAuthIpc(bridge: RunnerIpcBridge): void {
         bearerToken,
         environmentId,
         hostId,
+      );
+    },
+  );
+
+  bridge.handleInvoke(
+    RunnerHostInvoke.getTeamEnvironment,
+    async (_event, bearerToken: unknown, teamId: unknown) => {
+      assertString(bearerToken, "getTeamEnvironment.bearerToken");
+      return fetchTeamEnvironmentViaHttp(
+        bridge.options.authnBaseUrl,
+        bearerToken,
+        parseRequiredId(teamId, "getTeamEnvironment.teamId"),
+      );
+    },
+  );
+
+  bridge.handleInvoke(
+    RunnerHostInvoke.getEnvironmentProviders,
+    async (_event, bearerToken: unknown, environmentId: unknown) => {
+      assertString(bearerToken, "getEnvironmentProviders.bearerToken");
+      return fetchEnvironmentProvidersViaHttp(
+        bridge.options.authnBaseUrl,
+        bearerToken,
+        parseRequiredId(environmentId, "getEnvironmentProviders.environmentId"),
       );
     },
   );

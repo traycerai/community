@@ -2,7 +2,9 @@ import { afterEach, describe, expect, it, vi, type Mock } from "vitest";
 import {
   SANDBOX_SECRETS_FETCH_TIMEOUT_MS,
   decideSecretRequestViaHttp,
+  fetchEnvironmentProvidersViaHttp,
   fetchSandboxGrantsViaHttp,
+  fetchTeamEnvironmentViaHttp,
 } from "../sandbox-secrets";
 
 const BASE = "https://auth.example.test";
@@ -829,5 +831,314 @@ describe("decidedBy on the decide answer", () => {
       kind: "network-error",
       detail: "the decision's answer did not match the contract",
     });
+  });
+});
+
+const TEAM_ID = "team-acme";
+
+describe("fetchTeamEnvironmentViaHttp", () => {
+  it("GETs the team's environment route with the user bearer and no body", async () => {
+    const fetchMock = stubFetch(() =>
+      jsonResponse(200, { environmentId: "env_acme" }),
+    );
+
+    await fetchTeamEnvironmentViaHttp(BASE, BEARER, TEAM_ID);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${BASE}/api/v3/teams/${TEAM_ID}/environment`,
+      expect.objectContaining({
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${BEARER}`,
+          Accept: "application/json",
+        },
+        body: null,
+        signal: expect.any(AbortSignal),
+      }),
+    );
+  });
+
+  it("joins the path onto a base URL that already ends in a slash", async () => {
+    const fetchMock = stubFetch(() =>
+      jsonResponse(200, { environmentId: "env_acme" }),
+    );
+
+    await fetchTeamEnvironmentViaHttp(`${BASE}/`, BEARER, TEAM_ID);
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      `${BASE}/api/v3/teams/${TEAM_ID}/environment`,
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
+
+  it("returns the environment id on a 200", async () => {
+    stubFetch(() => jsonResponse(200, { environmentId: "env_acme" }));
+
+    await expect(
+      fetchTeamEnvironmentViaHttp(BASE, BEARER, TEAM_ID),
+    ).resolves.toEqual({ kind: "ok", environmentId: "env_acme" });
+  });
+
+  it("reads a 404 as not-a-member, even with an unparsable body", async () => {
+    stubFetch(() => textResponse(404, "<html>not found</html>"));
+
+    await expect(
+      fetchTeamEnvironmentViaHttp(BASE, BEARER, TEAM_ID),
+    ).resolves.toEqual({ kind: "not-a-member" });
+  });
+
+  it("reads a 401 and a 403 as unauthorized", async () => {
+    stubFetch(() => jsonResponse(401, { error: "bad token" }));
+    await expect(
+      fetchTeamEnvironmentViaHttp(BASE, BEARER, TEAM_ID),
+    ).resolves.toEqual({ kind: "unauthorized" });
+
+    stubFetch(() => jsonResponse(403, { error: "forbidden" }));
+    await expect(
+      fetchTeamEnvironmentViaHttp(BASE, BEARER, TEAM_ID),
+    ).resolves.toEqual({ kind: "unauthorized" });
+  });
+
+  it("fails a 200 whose body has no environment id, is empty or is not JSON", async () => {
+    const mismatch = {
+      kind: "network-error",
+      detail: "the environment answer did not match the contract",
+    };
+    for (const respond of [
+      () => jsonResponse(200, {}),
+      () => jsonResponse(200, { environmentId: "" }),
+      () => textResponse(200, ""),
+      () => textResponse(200, "<html>proxy</html>"),
+    ]) {
+      stubFetch(respond);
+      await expect(
+        fetchTeamEnvironmentViaHttp(BASE, BEARER, TEAM_ID),
+      ).resolves.toEqual(mismatch);
+    }
+  });
+
+  it("fails a status it has no meaning for, even with a well-formed body", async () => {
+    stubFetch(() => jsonResponse(500, { environmentId: "env_acme" }));
+
+    await expect(
+      fetchTeamEnvironmentViaHttp(BASE, BEARER, TEAM_ID),
+    ).resolves.toEqual({
+      kind: "network-error",
+      detail: "the environment answer did not match the contract",
+    });
+  });
+
+  it("refuses an environment id the server returns that is not one path segment", async () => {
+    stubFetch(() => jsonResponse(200, { environmentId: "a/b" }));
+
+    await expect(
+      fetchTeamEnvironmentViaHttp(BASE, BEARER, TEAM_ID),
+    ).resolves.toEqual(INVALID_ID_RESULT);
+  });
+
+  it("reads a thrown fetch as a network error that names only the error class", async () => {
+    stubRejectingFetch(new TypeError("connect ECONNREFUSED 10.0.0.1:443"));
+
+    await expect(
+      fetchTeamEnvironmentViaHttp(BASE, BEARER, TEAM_ID),
+    ).resolves.toEqual({
+      kind: "network-error",
+      detail: "the request never completed (TypeError)",
+    });
+  });
+
+  it("refuses a team id that is not one path segment before any request", async () => {
+    const fetchMock = stubFetch(() =>
+      jsonResponse(200, { environmentId: "env_acme" }),
+    );
+
+    for (const unsafe of UNSAFE_IDS) {
+      await expect(
+        fetchTeamEnvironmentViaHttp(BASE, BEARER, unsafe),
+      ).resolves.toEqual(INVALID_ID_RESULT);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+const PROVIDERS_ENV_ID = "env_acme";
+const SECRETS_URL = `${BASE}/api/v3/environments/${PROVIDERS_ENV_ID}/secrets`;
+const CONNECTIONS_URL = `${SECRETS_URL}/harness-connections`;
+
+/** Stubs `fetch` with a responder per URL, so the two reads can differ. */
+function stubFetchByUrl(
+  respond: (url: string) => Response,
+): Mock<typeof fetch> {
+  const fetchMock = vi.fn<typeof fetch>((input) =>
+    Promise.resolve(respond(String(input))),
+  );
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
+}
+
+/** The two reads answering `secrets` and `connections` (each a 200 body). */
+function providersResponder(
+  secrets: unknown,
+  connections: unknown,
+): (url: string) => Response {
+  return (url) =>
+    url === SECRETS_URL
+      ? jsonResponse(200, secrets)
+      : jsonResponse(200, connections);
+}
+
+describe("fetchEnvironmentProvidersViaHttp", () => {
+  it("GETs the secrets list without a trailing slash and the harness connections, each with the user bearer and no body", async () => {
+    const fetchMock = stubFetchByUrl(
+      providersResponder({ secrets: [] }, { connections: [] }),
+    );
+
+    await fetchEnvironmentProvidersViaHttp(BASE, BEARER, PROVIDERS_ENV_ID);
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const urls = fetchMock.mock.calls.map(([input]) => String(input)).sort();
+    expect(urls).toEqual([SECRETS_URL, CONNECTIONS_URL].sort());
+    for (const [, init] of fetchMock.mock.calls) {
+      expect(init).toEqual(
+        expect.objectContaining({
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${BEARER}`,
+            Accept: "application/json",
+          },
+          body: null,
+        }),
+      );
+    }
+  });
+
+  it("counts provider secrets by kind and connected plans by status, and keeps no name", async () => {
+    stubFetchByUrl(
+      providersResponder(
+        {
+          secrets: [
+            { kind: "provider", name: "ANTHROPIC_API_KEY" },
+            { kind: "provider", name: "OPENAI_API_KEY" },
+            { kind: "password", name: "DB_PASSWORD" },
+            { kind: "token", name: "GH_TOKEN" },
+          ],
+        },
+        {
+          connections: [
+            { status: "connected", harness: "claude" },
+            { status: "pending", harness: "codex" },
+            { status: "connected", harness: "gemini" },
+            { status: "disconnected", harness: "amp" },
+          ],
+        },
+      ),
+    );
+
+    await expect(
+      fetchEnvironmentProvidersViaHttp(BASE, BEARER, PROVIDERS_ENV_ID),
+    ).resolves.toEqual({
+      kind: "ok",
+      counts: { providerSecretCount: 2, connectedPlanCount: 2 },
+    });
+  });
+
+  it("counts zero and zero for an environment with nothing", async () => {
+    stubFetchByUrl(providersResponder({ secrets: [] }, { connections: [] }));
+
+    await expect(
+      fetchEnvironmentProvidersViaHttp(BASE, BEARER, PROVIDERS_ENV_ID),
+    ).resolves.toEqual({
+      kind: "ok",
+      counts: { providerSecretCount: 0, connectedPlanCount: 0 },
+    });
+  });
+
+  it("returns the failure of the secrets read when only it fails", async () => {
+    for (const [status, expected] of [
+      [401, { kind: "unauthorized" }],
+      [404, { kind: "not-found" }],
+      [500, { kind: "network-error", detail: "the broker answered HTTP 500" }],
+    ] as const) {
+      stubFetchByUrl((url) =>
+        url === SECRETS_URL
+          ? jsonResponse(status, { error: "x" })
+          : jsonResponse(200, { connections: [{ status: "connected" }] }),
+      );
+      await expect(
+        fetchEnvironmentProvidersViaHttp(BASE, BEARER, PROVIDERS_ENV_ID),
+      ).resolves.toEqual(expected);
+    }
+  });
+
+  it("returns the failure of the connections read when only it fails", async () => {
+    for (const [status, expected] of [
+      [403, { kind: "unauthorized" }],
+      [404, { kind: "not-found" }],
+      [502, { kind: "network-error", detail: "the broker answered HTTP 502" }],
+    ] as const) {
+      stubFetchByUrl((url) =>
+        url === CONNECTIONS_URL
+          ? jsonResponse(status, { error: "x" })
+          : jsonResponse(200, { secrets: [{ kind: "provider" }] }),
+      );
+      await expect(
+        fetchEnvironmentProvidersViaHttp(BASE, BEARER, PROVIDERS_ENV_ID),
+      ).resolves.toEqual(expected);
+    }
+  });
+
+  it("reads one thrown fetch as a network error naming only the error class", async () => {
+    const fetchMock = vi.fn<typeof fetch>((input) =>
+      String(input) === CONNECTIONS_URL
+        ? Promise.reject(new TypeError("connect ECONNREFUSED 10.0.0.1:443"))
+        : Promise.resolve(jsonResponse(200, { secrets: [] })),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      fetchEnvironmentProvidersViaHttp(BASE, BEARER, PROVIDERS_ENV_ID),
+    ).resolves.toEqual({
+      kind: "network-error",
+      detail: "the request never completed (TypeError)",
+    });
+  });
+
+  it("fails a 200 from either read whose body does not match the contract", async () => {
+    const mismatch = {
+      kind: "network-error",
+      detail: "the providers answer did not match the contract",
+    };
+    stubFetchByUrl(providersResponder({ nope: true }, { connections: [] }));
+    await expect(
+      fetchEnvironmentProvidersViaHttp(BASE, BEARER, PROVIDERS_ENV_ID),
+    ).resolves.toEqual(mismatch);
+
+    stubFetchByUrl(providersResponder({ secrets: [] }, { connections: 4 }));
+    await expect(
+      fetchEnvironmentProvidersViaHttp(BASE, BEARER, PROVIDERS_ENV_ID),
+    ).resolves.toEqual(mismatch);
+
+    stubFetchByUrl((url) =>
+      url === SECRETS_URL
+        ? textResponse(200, "<html>proxy</html>")
+        : jsonResponse(200, { connections: [] }),
+    );
+    await expect(
+      fetchEnvironmentProvidersViaHttp(BASE, BEARER, PROVIDERS_ENV_ID),
+    ).resolves.toEqual(mismatch);
+  });
+
+  it("refuses an environment id that is not one path segment before any request", async () => {
+    const fetchMock = stubFetchByUrl(
+      providersResponder({ secrets: [] }, { connections: [] }),
+    );
+
+    for (const unsafe of UNSAFE_IDS) {
+      await expect(
+        fetchEnvironmentProvidersViaHttp(BASE, BEARER, unsafe),
+      ).resolves.toEqual(INVALID_ID_RESULT);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

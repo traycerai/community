@@ -64,6 +64,31 @@ export type SecretRequestDecideFetchResult =
   | SandboxSecretsFailure;
 
 /**
+ * A team's environment (ticket E17 checkpoint 3): `ok` with its id, or
+ * `not-a-member` for the route's `404 team_not_found`, which it answers the
+ * same for a team the caller is not an accepted member of and one that does
+ * not exist.
+ */
+export type TeamEnvironmentFetchResult =
+  | { readonly kind: "ok"; readonly environmentId: string }
+  | { readonly kind: "not-a-member" }
+  | SandboxSecretsFailure;
+
+/**
+ * How many providers an environment has (ticket E17 checkpoint 3): its API
+ * keys (`provider` secrets) and its linked plans (`connected` harness
+ * connections). Counts only: no secret's name or value is kept.
+ */
+export interface EnvironmentProviderCounts {
+  readonly providerSecretCount: number;
+  readonly connectedPlanCount: number;
+}
+
+export type EnvironmentProvidersFetchResult =
+  | { readonly kind: "ok"; readonly counts: EnvironmentProviderCounts }
+  | SandboxSecretsFailure;
+
+/**
  * An id as a URL may carry it: one plain path segment. `encodeURIComponent`
  * leaves `.` and `..` alone and `new URL` resolves them as dot segments, so
  * an id that is not this shape is refused before a URL is built (as
@@ -90,6 +115,21 @@ function secretsUrl(
 }
 
 const environmentMeSchema = z.object({ environmentId: z.string().min(1) });
+
+/** Tolerant: only each secret's `kind` is read, so its name never is. */
+const secretKindsSchema = z.object({
+  secrets: z.array(z.object({ kind: z.string() })),
+});
+
+/** Tolerant: only each connection's `status` is read. */
+const connectionStatusesSchema = z.object({
+  connections: z.array(z.object({ status: z.string() })),
+});
+
+/** The `secret` kind a provider's API key is stored as. */
+const PROVIDER_SECRET_KIND = "provider";
+/** A harness connection that is linked and usable. */
+const CONNECTED_STATUS = "connected";
 
 type RawCall =
   | {
@@ -305,4 +345,108 @@ export async function decideSecretRequestViaHttp(
         code: parsed.data.code,
         decidedBy: parsed.data.decidedBy,
       };
+}
+
+/**
+ * `GET /api/v3/teams/:teamId/environment`: the team's environment id, for a
+ * sandbox created into the team. The route creates the environment and syncs
+ * the member's items on its first call, so a caller reads it for a team the
+ * person picked, never for every team.
+ */
+export async function fetchTeamEnvironmentViaHttp(
+  authnBaseUrl: string,
+  bearerToken: string,
+  teamId: string,
+): Promise<TeamEnvironmentFetchResult> {
+  if (!PATH_ID_PATTERN.test(teamId)) return INVALID_ID;
+  const base = authnBaseUrl.endsWith("/") ? authnBaseUrl : `${authnBaseUrl}/`;
+  const raw = await call(
+    new URL(`api/v3/teams/${teamId}/environment`, base).toString(),
+    "GET",
+    null,
+    bearerToken,
+  );
+  if (raw.kind === "network-error") return raw;
+  if (raw.status === 401 || raw.status === 403) return { kind: "unauthorized" };
+  if (raw.status === 404) return { kind: "not-a-member" };
+  const parsed = environmentMeSchema.safeParse(raw.body);
+  if (raw.status !== 200 || !parsed.success) {
+    return {
+      kind: "network-error",
+      detail: "the environment answer did not match the contract",
+    };
+  }
+  return PATH_ID_PATTERN.test(parsed.data.environmentId)
+    ? { kind: "ok", environmentId: parsed.data.environmentId }
+    : INVALID_ID;
+}
+
+/**
+ * Whether an environment has a provider: `GET .../secrets` counted by
+ * `kind === "provider"` (its API keys) and `GET .../secrets/harness-connections`
+ * counted by `status === "connected"` (its linked plans). Any member may read
+ * both. A failure of either read is the result.
+ */
+export async function fetchEnvironmentProvidersViaHttp(
+  authnBaseUrl: string,
+  bearerToken: string,
+  environmentId: string,
+): Promise<EnvironmentProvidersFetchResult> {
+  if (!PATH_ID_PATTERN.test(environmentId)) return INVALID_ID;
+  const [secrets, connections] = await Promise.all([
+    // No trailing slash: the list route is `.../secrets` itself.
+    call(
+      environmentsUrl(authnBaseUrl, `${environmentId}/secrets`),
+      "GET",
+      null,
+      bearerToken,
+    ),
+    call(
+      secretsUrl(authnBaseUrl, environmentId, "harness-connections"),
+      "GET",
+      null,
+      bearerToken,
+    ),
+  ]);
+  for (const raw of [secrets, connections]) {
+    if (raw.kind === "network-error") return raw;
+    const failure = sharedFailureOf(raw.status);
+    if (failure !== null) return failure;
+    if (raw.status !== 200) {
+      return {
+        kind: "network-error",
+        detail: `the broker answered HTTP ${raw.status}`,
+      };
+    }
+  }
+  const kinds =
+    secrets.kind === "response"
+      ? secretKindsSchema.safeParse(secrets.body)
+      : null;
+  const statuses =
+    connections.kind === "response"
+      ? connectionStatusesSchema.safeParse(connections.body)
+      : null;
+  if (
+    kinds === null ||
+    statuses === null ||
+    !kinds.success ||
+    !statuses.success
+  ) {
+    return {
+      kind: "network-error",
+      detail: "the providers answer did not match the contract",
+    };
+  }
+  return {
+    kind: "ok",
+    counts: {
+      providerSecretCount: kinds.data.secrets.filter(
+        (secret) => secret.kind === PROVIDER_SECRET_KIND,
+      ).length,
+      connectedPlanCount: statuses.data.connections.filter(
+        (connection) => connection.status === CONNECTED_STATUS,
+      ).length,
+    },
+  };
 }

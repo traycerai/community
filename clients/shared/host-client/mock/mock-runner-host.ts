@@ -17,8 +17,12 @@ import {
 } from "../sandbox-control";
 import {
   decideSecretRequestViaHttp,
+  fetchEnvironmentProvidersViaHttp,
   fetchSandboxGrantsViaHttp,
+  fetchTeamEnvironmentViaHttp,
+  type EnvironmentProvidersFetchResult,
   type SandboxGrantsFetchResult,
+  type TeamEnvironmentFetchResult,
   type SecretRequestDecideFetchResult,
 } from "../sandbox-secrets";
 import type { SecretRequestDecision } from "@traycer/protocol/host/sandbox-secrets";
@@ -697,6 +701,24 @@ export class MockRunnerHost implements IRunnerHost {
       bearerToken,
       environmentId,
       hostId,
+    );
+  }
+
+  getTeamEnvironment(
+    bearerToken: string,
+    teamId: string,
+  ): Promise<TeamEnvironmentFetchResult> {
+    return fetchTeamEnvironmentViaHttp(this.authnBaseUrl, bearerToken, teamId);
+  }
+
+  getEnvironmentProviders(
+    bearerToken: string,
+    environmentId: string,
+  ): Promise<EnvironmentProvidersFetchResult> {
+    return fetchEnvironmentProvidersViaHttp(
+      this.authnBaseUrl,
+      bearerToken,
+      environmentId,
     );
   }
 

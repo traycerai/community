@@ -11,12 +11,36 @@ import type {
 import { toastFromAuthError } from "@/lib/auth-error-toast";
 import { useHostBinding, type HostDirectoryService } from "@/lib/host";
 import { authQueryKeys, sandboxMutationKeys } from "@/lib/query-keys";
-import { sandboxFailureMessage } from "@/hooks/sandboxes/sandbox-failure-copy";
+import { sandboxCreateFailureMessage } from "@/hooks/sandboxes/sandbox-failure-copy";
 import {
   settledForStartingAccount,
   signedInUserId,
 } from "@/lib/sandboxes/sandbox-account-fence";
 import { useAuthStore } from "@/stores/auth/auth-store";
+
+/**
+ * What the form submits: the request, and the team's name when it belongs to
+ * a team, so a refusal can name it (the server names no team).
+ */
+export interface SandboxCreateSubmit {
+  readonly request: SandboxCreateRequest;
+  readonly teamName: string | null;
+}
+
+/**
+ * A refused create, carrying the server's refusal `code` (`null` for a
+ * failure with none) so the form can answer `insufficient_credit` on a team
+ * pick with the capacity line rather than only a toast.
+ */
+export class SandboxCreateError extends Error {
+  readonly code: string | null;
+
+  constructor(message: string, code: string | null) {
+    super(message);
+    this.name = "SandboxCreateError";
+    this.code = code;
+  }
+}
 
 interface SandboxCreateContext {
   readonly directory: HostDirectoryService | null;
@@ -35,7 +59,7 @@ interface SandboxCreateContext {
 export function useSandboxCreate(): UseMutationResult<
   SandboxCreateAccepted,
   Error,
-  SandboxCreateRequest,
+  SandboxCreateSubmit,
   SandboxCreateContext
 > {
   const binding = useHostBinding();
@@ -48,7 +72,10 @@ export function useSandboxCreate(): UseMutationResult<
       directory: binding === null ? null : binding.directory,
       userId: signedInUserId(),
     }),
-    mutationFn: async (request): Promise<SandboxCreateAccepted> => {
+    mutationFn: async ({
+      request,
+      teamName,
+    }): Promise<SandboxCreateAccepted> => {
       if (binding === null) {
         throw new Error("Sign in to create a sandbox.");
       }
@@ -56,12 +83,15 @@ export function useSandboxCreate(): UseMutationResult<
       if (result.kind === "ok") {
         return result.accepted;
       }
-      throw new Error(sandboxFailureMessage(result));
+      throw new SandboxCreateError(
+        sandboxCreateFailureMessage(result, teamName),
+        result.kind === "refused" ? result.code : null,
+      );
     },
     // At hook level, not the form's `mutate` call: the form unmounts when the
     // dialog closes, and a create can take minutes, so only the mutation
     // itself is still there to say it finished.
-    onSuccess: (_data, request, context) => {
+    onSuccess: (_data, { request }, context) => {
       if (!settledForStartingAccount(context)) return;
       toast.success(`Created ${request.displayName}`);
     },

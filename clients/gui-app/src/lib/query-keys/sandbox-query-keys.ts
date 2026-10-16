@@ -81,6 +81,41 @@ export const sandboxQueryKeys = {
     hostId,
   ],
   grantsAll: (): readonly unknown[] => ["auth", "sandbox-grants"],
+  // A team's environment id (ticket E17 checkpoint 3): fixed once created, so
+  // read once per team per session, and only for a team the person picked.
+  teamEnvironment: (
+    authService: object,
+    userId: string | null,
+    teamId: string,
+  ): readonly unknown[] => [
+    "auth",
+    "team-environment",
+    authService,
+    userId,
+    teamId,
+  ],
+  teamEnvironmentMissing: (): readonly unknown[] => [
+    "auth",
+    "team-environment",
+    "missing",
+  ],
+  // An environment's provider counts: its API keys and linked plans.
+  environmentProviders: (
+    authService: object,
+    userId: string | null,
+    environmentId: string,
+  ): readonly unknown[] => [
+    "auth",
+    "environment-providers",
+    authService,
+    userId,
+    environmentId,
+  ],
+  environmentProvidersMissing: (): readonly unknown[] => [
+    "auth",
+    "environment-providers",
+    "missing",
+  ],
   grantsMissing: (): readonly unknown[] => [
     "auth",
     "sandbox-grants",

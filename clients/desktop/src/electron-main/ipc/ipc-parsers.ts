@@ -573,6 +573,14 @@ export function parseSandboxCreateRequest(
 }
 
 /**
+ * A required id argument (a team id, an environment id): a non-empty
+ * string, or the call is refused.
+ */
+export function parseRequiredId(value: unknown, name: string): string {
+  return requireNonEmptyString(value, name);
+}
+
+/**
  * The environment a `getSandboxAutomation` reads: `null` for the person's own
  * Automations host, otherwise a non-empty id (an empty one would send
  * `?environmentId=` and read no environment at all).
