@@ -15,6 +15,7 @@ import {
   listAgentsResponseSchema,
   listAgentsResponseSchemaV100,
 } from "@traycer/protocol/host/agent/shared";
+import { epicListTaskHostsV10 } from "@traycer/protocol/host/epic/contracts";
 import { hostRpcRegistry } from "@traycer/protocol/host/registry";
 import {
   credentialUpdatePayloadSchema,
@@ -29,14 +30,16 @@ import {
 } from "../last-known-connectivity";
 import { sandboxSummarySchema } from "../sandbox-control";
 import {
+  listTaskHostsRequestSchema,
+  listTaskHostsResponseSchema,
   taskHostPrincipalSchema,
-  taskHostSummarySchema,
+  taskHostRowSchema,
 } from "../task-host-summary";
 
 /**
  * Wire shapes ticket E17 checkpoint 1 adds: the `principal_mismatch` error
  * code, `agent.list@10.1`, the host list `owner`, the sandbox card's member
- * names, the task host summary, and the member-credential handoff on the
+ * names, the task host row and `epic.listTaskHosts`, and the member-credential handoff on the
  * `CREDENTIAL_UPDATE` frame. Each case reads the shape through the schema a
  * peer would, so a missing key, a loosened arm or a wrong default fails here
  * rather than on a released client.
@@ -449,90 +452,170 @@ describe("last known connectivity", () => {
   });
 });
 
-describe("TaskHostSummary", () => {
-  const SUMMARY = {
+describe("TaskHostRow", () => {
+  const ROW = {
     hostId: "host-9",
     label: "Ada's laptop",
     principal: { kind: "user" as const, id: "user-9" },
     reach: "other_principal" as const,
-    agents: [{ agentId: "agent-1", title: "Plan" }],
-    state: { kind: "unknown" as const },
   };
 
-  it("keeps an unknown state unknown, never offline", () => {
-    const parsed = taskHostSummarySchema.parse(SUMMARY);
-
-    expect(parsed.state).toEqual({ kind: "unknown" });
-    expect(parsed.state.kind).toBe("unknown");
+  it("parses a row", () => {
+    expect(taskHostRowSchema.parse(ROW)).toEqual(ROW);
   });
 
-  it("parses a known state beside it", () => {
-    const parsed = taskHostSummarySchema.parse({
-      ...SUMMARY,
-      state: {
-        kind: "known",
-        connectivity: "connectable",
-        observedAt: 1_791_000_000_000,
-      },
+  it("parses a team principal beside a user one", () => {
+    const parsed = taskHostRowSchema.parse({
+      ...ROW,
+      principal: { kind: "team", id: "team-1" },
+      reach: "same_principal",
     });
 
-    expect(parsed.state).toEqual({
-      kind: "known",
-      connectivity: "connectable",
-      observedAt: 1_791_000_000_000,
-    });
-  });
-
-  it("parses a team principal whose name is null (the caller is not in that team)", () => {
-    const parsed = taskHostSummarySchema.parse({
-      ...SUMMARY,
-      principal: { kind: "team", id: "team-1", name: null },
-    });
-
-    expect(parsed.principal).toEqual({
-      kind: "team",
-      id: "team-1",
-      name: null,
-    });
+    expect(parsed.principal).toEqual({ kind: "team", id: "team-1" });
+    expect(parsed.reach).toBe("same_principal");
     expect(
-      taskHostPrincipalSchema.parse({
-        kind: "team",
-        id: "team-1",
-        name: "Platform",
-      }),
-    ).toEqual({ kind: "team", id: "team-1", name: "Platform" });
+      taskHostPrincipalSchema.parse({ kind: "team", id: "team-1" }),
+    ).toEqual({ kind: "team", id: "team-1" });
   });
 
-  it("requires the team principal to say whether it has a name", () => {
+  it("accepts a null label", () => {
+    const parsed = taskHostRowSchema.parse({ ...ROW, label: null });
+
+    expect(parsed.label).toBeNull();
+  });
+
+  it("is tolerant of a field a newer server adds, and strips it", () => {
+    const parsed = taskHostRowSchema.parse({ ...ROW, sandboxId: "sbx_1" });
+
+    expect(Object.hasOwn(parsed, "sandboxId")).toBe(false);
+    expect(parsed).toEqual(ROW);
+  });
+
+  it("strips a field a newer server adds to the principal, rather than refusing the row", () => {
+    const parsed = taskHostRowSchema.parse({
+      ...ROW,
+      principal: { kind: "team", id: "team-1", name: "Platform" },
+    });
+
+    expect(Object.hasOwn(parsed.principal, "name")).toBe(false);
+  });
+
+  it("refuses a principal kind outside user and team", () => {
+    for (const kind of ["org", "USER", ""]) {
+      expect(
+        taskHostRowSchema.safeParse({ ...ROW, principal: { kind, id: "x-1" } })
+          .success,
+        kind,
+      ).toBe(false);
+      expect(
+        taskHostPrincipalSchema.safeParse({ kind, id: "x-1" }).success,
+        kind,
+      ).toBe(false);
+    }
+  });
+
+  it("refuses an empty host id and an empty principal id", () => {
+    expect(taskHostRowSchema.safeParse({ ...ROW, hostId: "" }).success).toBe(
+      false,
+    );
     expect(
-      taskHostSummarySchema.safeParse({
-        ...SUMMARY,
-        principal: { kind: "team", id: "team-1" },
+      taskHostRowSchema.safeParse({
+        ...ROW,
+        principal: { kind: "user", id: "" },
+      }).success,
+    ).toBe(false);
+    expect(
+      taskHostRowSchema.safeParse({
+        ...ROW,
+        principal: { kind: "team", id: "" },
       }).success,
     ).toBe(false);
   });
 
-  it("takes a null label and an empty agent list, and refuses a reach outside the two arms", () => {
+  it("refuses a reach outside the two arms, null included", () => {
+    for (const reach of [null, "someone_else", ""]) {
+      expect(
+        taskHostRowSchema.safeParse({ ...ROW, reach }).success,
+        String(reach),
+      ).toBe(false);
+    }
     expect(
-      taskHostSummarySchema.safeParse({ ...SUMMARY, label: null, agents: [] })
-        .success,
+      taskHostRowSchema.safeParse({ ...ROW, reach: "same_principal" }).success,
     ).toBe(true);
+  });
+
+  it("refuses a row missing its host id, label, principal or reach", () => {
+    for (const field of ["hostId", "label", "principal", "reach"] as const) {
+      const { [field]: _omitted, ...without } = ROW;
+      expect(taskHostRowSchema.safeParse(without).success, field).toBe(false);
+    }
+  });
+});
+
+describe("epic.listTaskHosts", () => {
+  const ROW = {
+    hostId: "host-9",
+    label: null,
+    principal: { kind: "user" as const, id: "user-9" },
+    reach: "other_principal" as const,
+  };
+
+  it("needs a non-empty task id on the request", () => {
+    expect(listTaskHostsRequestSchema.parse({ taskId: "epic-1" })).toEqual({
+      taskId: "epic-1",
+    });
+    expect(listTaskHostsRequestSchema.safeParse({ taskId: "" }).success).toBe(
+      false,
+    );
+    expect(listTaskHostsRequestSchema.safeParse({}).success).toBe(false);
+  });
+
+  it("parses the response's hosts array, empty or not", () => {
+    expect(listTaskHostsResponseSchema.parse({ hosts: [] })).toEqual({
+      hosts: [],
+    });
     expect(
-      taskHostSummarySchema.safeParse({ ...SUMMARY, reach: null }).success,
-    ).toBe(false);
+      listTaskHostsResponseSchema.parse({
+        hosts: [ROW, { ...ROW, label: "x" }],
+      }).hosts,
+    ).toEqual([ROW, { ...ROW, label: "x" }]);
+  });
+
+  it("refuses a response whose hosts is missing or holds a bad row", () => {
+    expect(listTaskHostsResponseSchema.safeParse({}).success).toBe(false);
     expect(
-      taskHostSummarySchema.safeParse({ ...SUMMARY, reach: "someone_else" })
-        .success,
+      listTaskHostsResponseSchema.safeParse({
+        hosts: [{ ...ROW, reach: "someone_else" }],
+      }).success,
     ).toBe(false);
   });
 
-  it("is tolerant of a field a newer server adds, and strips it", () => {
-    const parsed = taskHostSummarySchema.parse({
-      ...SUMMARY,
-      sandboxId: "sbx_1",
+  it("strips a field a newer server adds to the response and to a row", () => {
+    const parsed = listTaskHostsResponseSchema.parse({
+      hosts: [{ ...ROW, sandboxId: "sbx_1" }],
+      nextCursor: "c1",
     });
 
-    expect(Object.hasOwn(parsed, "sandboxId")).toBe(false);
+    expect(Object.hasOwn(parsed, "nextCursor")).toBe(false);
+    expect(Object.hasOwn(parsed.hosts[0], "sandboxId")).toBe(false);
+  });
+
+  it("names the method and version 1.0 on the contract, over the same schemas", () => {
+    expect(epicListTaskHostsV10.method).toBe("epic.listTaskHosts");
+    expect(epicListTaskHostsV10.schemaVersion).toEqual({ major: 1, minor: 0 });
+    expect(epicListTaskHostsV10.requestSchema).toBe(listTaskHostsRequestSchema);
+    expect(epicListTaskHostsV10.responseSchema).toBe(
+      listTaskHostsResponseSchema,
+    );
+  });
+
+  it("registers 1.0 as the only version of major 1, degrading to unsupported", () => {
+    const entry = hostRpcRegistry["epic.listTaskHosts"];
+
+    expect(entry[1].latestMinor).toBe(0);
+    expect(entry[1].versions[0].contract).toBe(epicListTaskHostsV10);
+    expect(entry[1].versions[0].upgradeFromPreviousVersion).toBeNull();
+    expect(entry.degrade).toEqual({ kind: "unsupported" });
   });
 });
 

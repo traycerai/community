@@ -701,6 +701,7 @@ import {
   epicListCloudChatPayloadsV10,
   epicListCloudChatsV10,
   epicListCollaboratorsV10,
+  epicListTaskHostsV10,
   epicListCommentThreadsV10,
   epicReadChatAttachmentUpgradeV10ToV11,
   epicReadChatAttachmentV10,
@@ -8619,6 +8620,21 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
       versions: {
         0: {
           contract: epicListCloudChatsV10,
+          upgradeFromPreviousVersion: null,
+        },
+      },
+      downgradePathsFromLatest: {},
+    },
+    degrade: { kind: "unsupported" },
+  },
+  // The task's host list (ticket E17 checkpoint 4). Optional (non-floor):
+  // an older host answers `unsupported` and the client shows no host list.
+  "epic.listTaskHosts": {
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: {
+          contract: epicListTaskHostsV10,
           upgradeFromPreviousVersion: null,
         },
       },

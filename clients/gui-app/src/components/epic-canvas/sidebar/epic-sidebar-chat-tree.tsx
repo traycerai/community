@@ -15,6 +15,8 @@ import type {
 import type { CloudChatSummary } from "@traycer/protocol/host/epic/cloud-chat";
 import { v4 as uuidv4 } from "uuid";
 import { useHostReachability } from "@/hooks/agent/use-host-reachability";
+import { TaskHostGroupsSection } from "@/components/epic-canvas/sidebar/task-host-groups";
+import { useTaskHostsView } from "@/hooks/epic/use-task-hosts-view";
 import { useHostRefusesEpicStore } from "@/hooks/chats/use-host-refuses-epic-store";
 import { settleDetachedEpicMutation } from "@/lib/artifacts/detached-epic-mutation";
 import { UNKNOWN_HOST_PLACEHOLDER } from "@/lib/host/constants";
@@ -989,6 +991,10 @@ export function ChatTreePanelBody(props: ChatTreePanelBodyProps) {
   const isDisconnected = connectionStatus === "closed";
   const canEdit = isEditableRole(permissionRole);
   const canMutate = canEdit && !isDisconnected;
+  // The task's hosts, below the rows (ticket E17 checkpoint 4). Read here as
+  // well as in the section, which shares the query, because the tree's own
+  // layout depends on whether the section follows it.
+  const hostsSectionShown = useTaskHostsView(epicId).kind !== "none";
   // Read-only (viewer) indication is epic-level, so it is resolved ONCE here
   // and threaded down as a boolean rather than re-subscribing every row to
   // `useEpicPermissionRole()`. `viewer` specifically - a null (not-yet-known)
@@ -1343,11 +1349,13 @@ export function ChatTreePanelBody(props: ChatTreePanelBodyProps) {
             // The tree fills the panel, which is what puts its empty space
             // below the rows where a drop un-nests to root. With a section
             // following it that space would fall BETWEEN the rows and the
-            // section, so the rows shrink to their own height and the hits sit
-            // directly under them.
+            // section, so the rows shrink to their own height and the hits (or
+            // the Hosts section) sit directly under them.
             className={cn(
               "flex min-h-0 flex-col",
-              messageHits.node === null ? "flex-1" : "shrink-0",
+              messageHits.node === null && !hostsSectionShown
+                ? "flex-1"
+                : "shrink-0",
             )}
             exit={shouldReduceMotion ? undefined : { opacity: 0, x: -8 }}
             transition={{ duration: shouldReduceMotion ? 0 : 0.16 }}
@@ -1459,6 +1467,13 @@ export function ChatTreePanelBody(props: ChatTreePanelBodyProps) {
                       >
                         {panelContent}
                         {messageHits.node}
+                        {hostsSectionShown ? (
+                          <TaskHostGroupsSection
+                            epicId={epicId}
+                            tabId={tabId}
+                            canMutate={canMutate}
+                          />
+                        ) : null}
                       </SidebarGroupContent>
                     </SidebarGroup>
                   </SidebarContent>

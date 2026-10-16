@@ -3,77 +3,66 @@ import {
   agentReachSchema,
   type AgentReach,
 } from "@traycer/protocol/host/agent/shared";
-import {
-  lastKnownConnectivitySchema,
-  type LastKnownConnectivity,
-} from "@traycer/protocol/host/last-known-connectivity";
 import { z } from "zod";
 
 /**
- * Whose host a task host is (ticket E17): the same `{ kind, id }` authn's
- * owner principal and traycer-server's task-host list carry, plus a team's
- * display name. The name is read from the person's own teams and is `null`
- * when they are not in it; the GUI then says "a team". A user carries no name
- * on the wire: the GUI reads a collaborator's name from the task's
- * collaborator list and tells the caller's own hosts by its own id.
+ * Whose host a task host is (ticket E17): the `{ kind, id }` owner principal
+ * traycer-server's task host list carries. It names nobody: the GUI names a
+ * team from the person's own teams and a collaborator from the task's
+ * collaborator list, and tells the caller's own hosts by its own id.
  */
 export type TaskHostPrincipal =
   | { readonly kind: "user"; readonly id: string }
-  | {
-      readonly kind: "team";
-      readonly id: string;
-      readonly name: string | null;
-    };
+  | { readonly kind: "team"; readonly id: string };
 
 export const taskHostPrincipalSchema: z.ZodType<TaskHostPrincipal> = lazySchema(
   () =>
     z.discriminatedUnion("kind", [
       z.object({ kind: z.literal("user"), id: z.string().min(1) }),
-      z.object({
-        kind: z.literal("team"),
-        id: z.string().min(1),
-        name: z.string().min(1).nullable(),
-      }),
+      z.object({ kind: z.literal("team"), id: z.string().min(1) }),
     ]),
 );
 
-/** An agent a task host publishes to the task: its id and title only. */
-export interface TaskHostAgent {
-  readonly agentId: string;
-  readonly title: string | null;
-}
-
 /**
- * One host a task shows in its host list (ticket E17; E19 serves the rows).
- * A foreign row is this summary and nothing else - never the owner's sandbox
- * record.
+ * One host a task shows in its host list (ticket E17 checkpoint 4; served by
+ * `POST /api/tasks/hosts`, E19 checkpoint 5): the task-authorized summary, and
+ * nothing of the owner's sandbox record.
  *
- * - `label` is the host's approved display label, `null` when none is shown.
- * - `agents` is the host's own published set for the task, as the caller is
- *   authorized to see it.
- * - `state` is `unknown` unless a source the caller is authorized to read
- *   said otherwise, and never `offline` for want of one.
+ * - `label` is a sandbox's display name, `null` for a person's host.
+ * - `reach` is whether the principal of the host that read the list reaches
+ *   this one: the authoritative fact behind "not reachable from this host".
+ *
+ * No state, cost, payer or route: those need the owner's own authorization,
+ * so a reader shows them only from a source it is authorized for.
  */
-export interface TaskHostSummary {
+export interface TaskHostRow {
   readonly hostId: string;
   readonly label: string | null;
   readonly principal: TaskHostPrincipal;
   readonly reach: AgentReach;
-  readonly agents: readonly TaskHostAgent[];
-  readonly state: LastKnownConnectivity;
 }
 
 /** Tolerant: a field a newer server adds is stripped, never refused. */
-export const taskHostSummarySchema: z.ZodType<TaskHostSummary> = lazySchema(
-  () =>
-    z.object({
-      hostId: z.string().min(1),
-      label: z.string().nullable(),
-      principal: taskHostPrincipalSchema,
-      reach: agentReachSchema,
-      agents: z.array(
-        z.object({ agentId: z.string().min(1), title: z.string().nullable() }),
-      ),
-      state: lastKnownConnectivitySchema,
-    }),
+export const taskHostRowSchema: z.ZodType<TaskHostRow> = lazySchema(() =>
+  z.object({
+    hostId: z.string().min(1),
+    label: z.string().nullable(),
+    principal: taskHostPrincipalSchema,
+    reach: agentReachSchema,
+  }),
 );
+
+export const listTaskHostsRequestSchema = lazySchema(() =>
+  z.object({
+    taskId: z.string().min(1),
+  }),
+);
+export type ListTaskHostsRequest = z.infer<typeof listTaskHostsRequestSchema>;
+
+/** Every host that owns a chat the caller can read in the task. */
+export const listTaskHostsResponseSchema = lazySchema(() =>
+  z.object({
+    hosts: z.array(taskHostRowSchema),
+  }),
+);
+export type ListTaskHostsResponse = z.infer<typeof listTaskHostsResponseSchema>;
