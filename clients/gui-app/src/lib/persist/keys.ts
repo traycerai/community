@@ -431,6 +431,20 @@ export const PERSIST_STORES = [
     leaf: "composer-mirror-line-seen",
     kind: "static",
   },
+  // The team hosts whose first-tab disclosure each person has seen, keyed by
+  // viewer and host inside the record (`team-host-disclosure-seen-store.ts`).
+  {
+    camelName: "teamHostDisclosureSeen",
+    leaf: "team-host-disclosure-seen",
+    kind: "static",
+  },
+  // The teams whose "Continue on a <team> host" caution each person has
+  // confirmed (`team-continue-caution-seen-store.ts`).
+  {
+    camelName: "teamContinueCautionSeen",
+    leaf: "team-continue-caution-seen",
+    kind: "static",
+  },
 
   // ── Non-zustand keys ─────────────────────────────────────────────────────
   // `last-route:<windowId>` — per-window router history (persistent-history.ts).

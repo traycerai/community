@@ -204,6 +204,12 @@ export interface RemoteHostSandboxFacts {
    * before a wake, because the wake is billed to the person who opens it.
    */
   readonly ownerTeamName: string | null;
+  /**
+   * The owning team's id, beside its name and on the same rule: what the
+   * team-host surfaces key on (the first-tab disclosure's readers, a removed
+   * member's tiles), since a team's name is not unique.
+   */
+  readonly ownerTeamId: string | null;
 }
 
 /**
@@ -540,6 +546,7 @@ export function hostListItemToDirectoryEntry(
             ),
             profile: item.profile ?? null,
             ownerTeamName: item.owner?.kind === "team" ? item.owner.name : null,
+            ownerTeamId: item.owner?.kind === "team" ? item.owner.id : null,
           }
         : null,
   };

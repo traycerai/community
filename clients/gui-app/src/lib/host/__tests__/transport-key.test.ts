@@ -190,6 +190,7 @@ describe("hostTransportKeyFor - what OPEN presents is identity", () => {
       frozen: false,
       profile: null,
       ownerTeamName: null,
+      ownerTeamId: null,
     },
   });
 
@@ -213,6 +214,7 @@ describe("hostTransportKeyFor - what OPEN presents is identity", () => {
             frozen: false,
             profile: null,
             ownerTeamName: null,
+            ownerTeamId: null,
           },
         }),
         false,
@@ -228,6 +230,7 @@ describe("hostTransportKeyFor - what OPEN presents is identity", () => {
             frozen: false,
             profile: null,
             ownerTeamName: null,
+            ownerTeamId: null,
           },
         }),
         false,

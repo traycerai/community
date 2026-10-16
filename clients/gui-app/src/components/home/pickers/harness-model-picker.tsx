@@ -128,6 +128,8 @@ import {
 } from "@/components/epic-canvas/pane-activation";
 import { useProvidersFocusStore } from "@/stores/settings/providers-focus-store";
 import { useHostCredentialRefusal } from "@/hooks/host/use-host-credential-refusal";
+import { useOnTeamSandbox } from "@/hooks/sandboxes/use-on-team-sandbox";
+import { teamSandboxHarnessBlocked } from "@/lib/sandboxes/team-sandbox-harness";
 
 export type { ReasoningFooterConfig, ServiceTierFooterConfig };
 
@@ -941,10 +943,22 @@ function HarnessModelPickerImpl(props: HarnessModelPickerProps) {
     query: trimmedQuery,
     activeProviderId: resolvedActiveProviderId,
   });
+  const onTeamSandbox = useOnTeamSandbox(runTargetHostId);
   const selectRow = useCallback(
     (row: HarnessModelRow) => {
       if (disabled) {
         closeOnly();
+        return;
+      }
+      // The keyboard path to a row a team sandbox does not offer: the row is
+      // listed but not selectable (ticket E17 checkpoint 6).
+      const entry = catalogHarnesses.find(
+        (harness) => harness.id === row.harnessId,
+      );
+      if (
+        entry !== undefined &&
+        teamSandboxHarnessBlocked(entry.sandboxCredentialMode, onTeamSandbox)
+      ) {
         return;
       }
       // Commit the picked model through the memory-aware funnel (restores that
@@ -953,7 +967,14 @@ function HarnessModelPickerImpl(props: HarnessModelPickerProps) {
       // click / escape (handled by Popover's onOpenChange -> closeOnly).
       commitSelection(store, row.harnessId, row.value, activePanelProfileId);
     },
-    [activePanelProfileId, closeOnly, disabled, store],
+    [
+      activePanelProfileId,
+      catalogHarnesses,
+      closeOnly,
+      disabled,
+      onTeamSandbox,
+      store,
+    ],
   );
   const handleRailEntryChange = useCallback(
     (providerId: ProviderId) => {
@@ -973,11 +994,21 @@ function HarnessModelPickerImpl(props: HarnessModelPickerProps) {
       // Only an AVAILABLE, non-degraded entry commits a switch (restoring its
       // remembered model/effort/tier, or landing on an embedding's own
       // model). A degraded / unavailable entry just browses the rail - the
-      // panel shows its reauth / setup CTA, no commit.
+      // panel shows its reauth / setup CTA, no commit. Nor does a provider a
+      // team sandbox does not offer: the panel says so (ticket E17
+      // checkpoint 6).
       const entry = railEntries.find(
         (candidate) => candidate.harness.id === providerId,
       );
-      if (entry !== undefined && entry.harness.available && !entry.degraded) {
+      if (
+        entry !== undefined &&
+        entry.harness.available &&
+        !entry.degraded &&
+        !teamSandboxHarnessBlocked(
+          entry.harness.sandboxCredentialMode,
+          onTeamSandbox,
+        )
+      ) {
         commitSelection(
           store,
           providerId,
@@ -992,6 +1023,7 @@ function HarnessModelPickerImpl(props: HarnessModelPickerProps) {
       activeProviderId,
       embedding,
       lockedHarnessId,
+      onTeamSandbox,
       profilesByHarnessId,
       railEntries,
       selection.harnessId,
@@ -1005,6 +1037,18 @@ function HarnessModelPickerImpl(props: HarnessModelPickerProps) {
       // Mirrors `handleRailEntryChange`'s lock rule: while a fork lock is
       // active the strip stays interactive for the locked provider only.
       if (lockedHarnessId !== null && providerId !== lockedHarnessId) return;
+      // A provider a team sandbox does not offer is only browsed, never
+      // committed (ticket E17 checkpoint 6).
+      const entry = catalogHarnesses.find(
+        (harness) => harness.id === providerId,
+      );
+      if (
+        entry !== undefined &&
+        teamSandboxHarnessBlocked(entry.sandboxCredentialMode, onTeamSandbox)
+      ) {
+        setActiveRailEntry(providerId, profileId);
+        return;
+      }
       // Same-provider profile changes only replace the credential, preserving
       // the user's configured model, reasoning effort, and tier. The provider
       // can differ after browsing a degraded rail entry without committing it,
@@ -1025,7 +1069,14 @@ function HarnessModelPickerImpl(props: HarnessModelPickerProps) {
       }
       setActiveRailEntry(providerId, profileId);
     },
-    [embedding, lockedHarnessId, setActiveRailEntry, store],
+    [
+      catalogHarnesses,
+      embedding,
+      lockedHarnessId,
+      onTeamSandbox,
+      setActiveRailEntry,
+      store,
+    ],
   );
 
   const handleKeyDown = useCallback(

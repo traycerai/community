@@ -22,6 +22,7 @@ import {
   confirmTeamWake,
   teamWakeAsks,
 } from "@/stores/hosts/team-wake-confirm-store";
+import { TeamHostDisclosure } from "@/components/hosts/team-host-disclosure";
 
 /**
  * Wraps a tile's body. On a sandbox host that is frozen, asleep or waking,
@@ -79,6 +80,15 @@ function SandboxTileStateFrameInRuntime(props: {
       <div className="contents" inert={overlay !== null}>
         {props.children}
       </div>
+      {facts === null ||
+      facts.ownerTeamId === null ||
+      facts.ownerTeamName === null ? null : (
+        <TeamHostDisclosure
+          hostId={hostId}
+          teamId={facts.ownerTeamId}
+          teamName={facts.ownerTeamName}
+        />
+      )}
       {overlay === null ? null : (
         <SandboxTileOverlayLayer
           hostId={hostId}

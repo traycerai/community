@@ -29,6 +29,7 @@ import { TabNavigationRouteBridge } from "@/components/layout/bridges/tab-naviga
 import { TrayOpenEpicBridge } from "@/components/layout/bridges/tray-open-epic-bridge";
 import { ProviderProfileAddFlowHost } from "@/components/providers/provider-profile-add-flow-host";
 import { EpicAccessCoordinator } from "@/providers/epic-access-coordinator";
+import { TeamRemovalTileCloser } from "@/providers/team-removal-tile-closer";
 import { OnboardingPage } from "@/components/onboarding/onboarding-page";
 import { FirstTaskImportBridge } from "@/components/onboarding/first-task-guide";
 import { TabDetachOwner } from "@/components/layout/tabs/tab-detach-owner";
@@ -150,6 +151,7 @@ export function RootComponent() {
             <TrayOpenEpicBridge />
             <NotificationFocusBridge />
             <EpicAccessCoordinator />
+            <TeamRemovalTileCloser />
             <ProviderProfileAddFlowHost />
           </HostScopeReady>
           <RootSurface

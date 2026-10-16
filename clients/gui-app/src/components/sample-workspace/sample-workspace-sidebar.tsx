@@ -204,6 +204,7 @@ export function SampleWorkspaceSidebar(): ReactNode {
           />
         </ContextMenu>
         <PanelTaskHeaderBody
+          teamChip={null}
           testId={null}
           chip={
             <MonogramChip

@@ -30,6 +30,8 @@ import { useFocusedPaneModalOpen } from "@/components/epic-tabs/pane-visibility-
 import { useComposerToolbarStore } from "@/components/home/hooks/use-composer-toolbar-store";
 import { useTabHostId } from "@/components/epic-canvas/hooks/use-tab-host-id";
 import { useHostClientForHostId } from "@/hooks/host/use-host-client-for-host-id";
+import { useTeamSandboxHarnessBlocked } from "@/hooks/sandboxes/use-team-sandbox-harness-blocked";
+import { TEAM_SANDBOX_HARNESS_UNAVAILABLE } from "@/lib/sandboxes/team-sandbox-harness";
 import { useHostDirectoryList } from "@/hooks/host/use-host-directory-list-query";
 import { useHostNegotiatedMethodVersions } from "@/hooks/host/use-host-negotiated-method-version";
 import { useHostCapabilityProbe } from "@/hooks/host/use-host-capability-probe";
@@ -148,6 +150,11 @@ export interface ChatForkDialogTarget {
    * version, publication) applies to it exactly as to a hand-picked host.
    */
   readonly initialHostId: string | null;
+  /**
+   * The only hosts the picker lists (B1's "Continue on a <team> host", ticket
+   * E17 checkpoint 6), or `null` for every host.
+   */
+  readonly onlyHostIds: ReadonlySet<string> | null;
 }
 
 interface ChatForkDialogProps {
@@ -476,6 +483,14 @@ function ChatForkDialogBody(props: ChatForkDialogProps) {
     toolbarStore,
     (s) => s.selection.modelSlug.length > 0,
   );
+  // A harness a team sandbox does not offer holds Fork shut on that host,
+  // and the dialog says so (ticket E17 checkpoint 6, B5).
+  const forkHarnessId = useStore(toolbarStore, (s) => s.selection.harnessId);
+  const teamSandboxHarnessBlocked = useTeamSandboxHarnessBlocked({
+    hostId: selectedHostId,
+    client: selectedHostClient,
+    harnessId: forkHarnessId,
+  });
   const modelResolved =
     modelSlugPresent &&
     (!isCrossHost || catalogConfirmed || catalogSubstituted);
@@ -572,6 +587,7 @@ function ChatForkDialogBody(props: ChatForkDialogProps) {
     hasStagedPreselection: stagedIntentForKey !== null,
     createPending: createChat.isPending,
     hostClientResolved: selectedHostClient !== null,
+    teamSandboxHarnessBlocked,
     // Not a host-build fact any more, and the name says so. This one boolean
     // now carries the SOURCE CHAT's publication too - a frozen publication and
     // a boundary the published head does not cover both hold Fork shut, the
@@ -786,6 +802,7 @@ function ChatForkDialogBody(props: ChatForkDialogProps) {
       // the picker which row is exempt — a same-host fork needs no publication
       // at all.
       unselectableExceptHostId: remoteRowsUnselectable ? tabHostId : null,
+      onlyHostIds: target?.onlyHostIds ?? null,
     }),
     [
       hostRefusals,
@@ -794,6 +811,7 @@ function ChatForkDialogBody(props: ChatForkDialogProps) {
       selectedHostClient,
       selectedHostId,
       tabHostId,
+      target,
     ],
   );
 
@@ -937,6 +955,14 @@ function ChatForkDialogBody(props: ChatForkDialogProps) {
             seedIntentOverride={seedIntentOverride}
             hostScope={workspaceHostScope}
           />
+          {teamSandboxHarnessBlocked ? (
+            <p
+              className="text-ui-xs text-destructive"
+              data-testid="fork-team-sandbox-unavailable"
+            >
+              {TEAM_SANDBOX_HARNESS_UNAVAILABLE}
+            </p>
+          ) : null}
           <ChatForkTargetNotices
             isCrossHost={isCrossHost}
             carriesChanges={
@@ -1134,6 +1160,8 @@ function canSubmitFork(input: {
   readonly createPending: boolean;
   /** The selected host resolved to a client this app can actually dial. */
   readonly hostClientResolved: boolean;
+  /** The selected host is a team sandbox that does not offer the harness. */
+  readonly teamSandboxHarnessBlocked: boolean;
   /**
    * The combined Layer-1 verdict allows a submit - see `chat-fork-target`. It
    * spans BOTH subjects the dialog gates on: the selected host's build, and the
@@ -1148,6 +1176,7 @@ function canSubmitFork(input: {
   if (!input.modelResolved) return false;
   if (input.createPending) return false;
   if (!input.hostClientResolved) return false;
+  if (input.teamSandboxHarnessBlocked) return false;
   if (!input.verdictAllowsSubmit) return false;
   if (input.requiresStagedPreselection && !input.hasStagedPreselection) {
     return false;

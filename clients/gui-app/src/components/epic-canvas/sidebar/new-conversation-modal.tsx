@@ -178,6 +178,8 @@ import {
   worktreeStagingKeyString,
 } from "@/stores/worktree/worktree-intent-staging-store";
 import { useWorktreeIntentMemoryStore } from "@/stores/worktree/worktree-intent-memory-store";
+import { useTeamSandboxHarnessGate } from "@/hooks/sandboxes/use-team-sandbox-harness-blocked";
+import { TEAM_SANDBOX_HARNESS_UNAVAILABLE } from "@/lib/sandboxes/team-sandbox-harness";
 
 /** Nothing confirmed: below `epic.createChat@1.2`, or an upload that failed. */
 const NO_CONFIRMED_HASHES: ReadonlySet<string> = new Set<string>();
@@ -676,6 +678,12 @@ export function NewConversationModalBody(props: {
   });
   const resolvedHostId = composerPlacement.target.resolvedHostId;
   const hostClient = composerPlacement.target.client;
+  // A harness a team sandbox does not offer is refused at Send and at a
+  // terminal launch (ticket E17 checkpoint 6, B5).
+  const teamSandboxHarnessBlocked = useTeamSandboxHarnessGate({
+    hostId: resolvedHostId,
+    client: hostClient,
+  });
   const submitTarget = composerPlacement.submitTarget;
   const composerFollowsEffective = composerPlacement.followsEffective;
   const hostLabelFor = composerPlacement.hostLabelFor;
@@ -1401,6 +1409,15 @@ export function NewConversationModalBody(props: {
     // before resolution finished, the live check passed and the chat was
     // created from a keystroke the user had every reason to read as a no-op.
     if (!canSubmit) return;
+    if (
+      teamSandboxHarnessBlocked(toolbarStore.getState().selection.harnessId)
+    ) {
+      raiseHostNotice({
+        kind: "refused",
+        message: TEAM_SANDBOX_HARNESS_UNAVAILABLE,
+      });
+      return;
+    }
     const editor = editorRef.current;
     if (editor === null) return;
     const captured = editor.getJSON();
@@ -1697,6 +1714,8 @@ export function NewConversationModalBody(props: {
     // received.
     submitTarget,
     submitPreparedDraft,
+    teamSandboxHarnessBlocked,
+    toolbarStore,
   ]);
   // The re-entry itself. Declared AFTER `handleSubmit` so it can name it
   // directly - that is the whole point of routing through state instead of a
@@ -1723,6 +1742,13 @@ export function NewConversationModalBody(props: {
   const handleStartTerminal = useCallback(
     (launch: TerminalAgentLaunch) => {
       if (!canMutate || !workspaceCanStart) return;
+      if (teamSandboxHarnessBlocked(launch.harnessId)) {
+        raiseHostNotice({
+          kind: "refused",
+          message: TEAM_SANDBOX_HARNESS_UNAVAILABLE,
+        });
+        return;
+      }
       // Same §54 gate as `handleSubmit`, and for the same ordering reason:
       // `cleanupAfterSubmit` runs before the async create, so a placement that
       // cannot be created on must be refused here or the draft is gone before
@@ -1778,6 +1804,7 @@ export function NewConversationModalBody(props: {
       recordPlacement,
       rememberEpicIntent,
       tabId,
+      teamSandboxHarnessBlocked,
       terminalAgentCreate,
       worktreeIntentForSubmit,
       workspaceCanStart,

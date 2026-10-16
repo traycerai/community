@@ -21,7 +21,6 @@ import { useHostOptions } from "@/components/settings/host-scope/use-host-option
 import {
   findHostOption,
   unavailableHostOption,
-  type HostScopeOption,
 } from "@/components/settings/host-scope/host-scope-model";
 import { NO_HOST_OPTION_REFUSALS } from "@/components/settings/host-scope/host-option-model";
 import { activeRunNoticeFor } from "./active-run-notice";
@@ -117,9 +116,11 @@ import {
 } from "@/components/home/worktree/worktree-scripts-dialog";
 import {
   hostWorkspaceControlsScopeHostId,
+  hostPickerOptionsForScope,
   hostWorkspaceControlsScopeRefusals,
   type HostWorkspaceControlsHostScope,
 } from "./host-workspace-controls-scope";
+import { LandingOwnerChip } from "@/components/home/composer/landing-owner-chip";
 import { computeInEpicFolderMode } from "./compute-in-epic-folder-mode";
 import {
   type AddFolderHandler,
@@ -654,26 +655,24 @@ export function ActiveHostWorkspaceControls(
       seedIntent={props.seedIntent}
       seedIntentOverride={props.seedIntentOverride}
       restingMode="summary"
-      hostSlot={deviceSelect}
+      hostSlot={
+        // A new-task landing draft also says who the task belongs to (ticket
+        // E17 checkpoint 6, A1), beside the host it will run on.
+        props.stagingKey.surface === "landing" ? (
+          <>
+            {deviceSelect}
+            <LandingOwnerChip
+              draftId={props.stagingKey.draftId}
+              resolvedHostId={activeHostId}
+            />
+          </>
+        ) : (
+          deviceSelect
+        )
+      }
       disabled={disabled}
     />
   );
-}
-
-function hostPickerOptionsForScope(
-  scope: HostWorkspaceControlsHostScope,
-  selectedHostOption: HostScopeOption | null,
-  listedHostOption: HostScopeOption | null,
-  hosts: readonly HostScopeOption[],
-): readonly HostScopeOption[] {
-  if (scope.kind === "fixed") {
-    if (selectedHostOption === null) return [];
-    return [selectedHostOption];
-  }
-  if (selectedHostOption !== null && listedHostOption === null) {
-    return [selectedHostOption, ...hosts];
-  }
-  return hosts;
 }
 
 function HomeWorkspaceRows(props: {
