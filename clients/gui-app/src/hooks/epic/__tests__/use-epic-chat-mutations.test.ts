@@ -11,7 +11,11 @@ import type { ReactNode } from "react";
 import { createElement } from "react";
 
 vi.mock("sonner", () => ({
-  toast: { message: vi.fn(), error: vi.fn(), success: vi.fn() },
+  toast: Object.assign(vi.fn(), {
+    message: vi.fn(),
+    error: vi.fn(),
+    success: vi.fn(),
+  }),
 }));
 
 vi.mock("@/lib/host/runtime", async () => {
@@ -979,12 +983,9 @@ describe("useEpicArchiveChats", () => {
     expect(toast.error).toHaveBeenCalledTimes(1);
   });
 
-  it("reports one offline notice for the batch when an owning host is unreachable", async () => {
-    archiveChatMutateAsync.mockImplementation(
-      (input: ArchiveChatMutationInput) =>
-        input.chatId === "chat-1"
-          ? Promise.resolve({ updated: true })
-          : Promise.reject(hostOffline("epic.setChatArchived")),
+  it("reports one offline notice when every owning host in the batch is unreachable", async () => {
+    archiveChatMutateAsync.mockImplementation(() =>
+      Promise.reject(hostOffline("epic.setChatArchived")),
     );
     const { result } = renderHook(() => useEpicArchiveChats(), {
       wrapper: makeWrapper(),
@@ -1009,5 +1010,38 @@ describe("useEpicArchiveChats", () => {
     });
     expect(toast.message).toHaveBeenCalledTimes(1);
     expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("does not call a partly archived batch offline", async () => {
+    // One agent archived and one host unreachable is a partial failure: the
+    // offline notice says nothing was changed, which is false here.
+    archiveChatMutateAsync.mockImplementation(
+      (input: ArchiveChatMutationInput) =>
+        input.chatId === "chat-1"
+          ? Promise.resolve({ updated: true })
+          : Promise.reject(hostOffline("epic.setChatArchived")),
+    );
+    const { result } = renderHook(() => useEpicArchiveChats(), {
+      wrapper: makeWrapper(),
+    });
+
+    act(() => {
+      result.current.mutate({
+        epicId: "epic-1",
+        chats: [
+          { chatId: "chat-1", hostId: "host-test" },
+          { chatId: "chat-2", hostId: "remote-host" },
+        ],
+        archived: true,
+      });
+    });
+
+    await waitFor(() => {
+      expect(toast).toHaveBeenCalledTimes(1);
+    });
+    expect(toast.message).not.toHaveBeenCalledWith(
+      OFFLINE_NOTICE,
+      expect.anything(),
+    );
   });
 });

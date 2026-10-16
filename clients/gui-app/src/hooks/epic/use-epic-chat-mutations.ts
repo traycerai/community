@@ -39,7 +39,10 @@ import {
   toastFromHostError,
   toastFromHostErrorWithDetail,
 } from "@/lib/host-error-toast";
-import { toastFromOwnerHostWriteError } from "@/lib/owner-host-write-error-toast";
+import {
+  isOwnerHostOfflineFailure,
+  toastFromOwnerHostWriteError,
+} from "@/lib/owner-host-write-error-toast";
 import { invalidateEpicChatRecords } from "@/hooks/chats/use-epic-chat-records";
 import { invalidateChatRunSettings } from "@/hooks/chats/use-chat-run-settings-query";
 import { invalidateEpicTuiAgentRecords } from "@/hooks/chats/use-epic-tui-agent-records";
@@ -785,10 +788,25 @@ export function useEpicArchiveChats(): UseMutationResult<
       );
       if (firstFailure === undefined) return;
       const reason: unknown = firstFailure.reason;
-      toastFromOwnerHostWriteError(
-        toHostRpcError(reason, "epic.setChatArchived"),
-        "Couldn't archive some selected agents.",
+      const failure = toHostRpcError(reason, "epic.setChatArchived");
+      // "Nothing on it was changed" holds for the batch only when every
+      // archive failed that way; a partly archived batch keeps the ordinary
+      // failure toast.
+      const allOffline = results.every(
+        (result) =>
+          result.status === "rejected" &&
+          isOwnerHostOfflineFailure(
+            toHostRpcError(result.reason, "epic.setChatArchived"),
+          ),
       );
+      if (allOffline) {
+        toastFromOwnerHostWriteError(
+          failure,
+          "Couldn't archive some selected agents.",
+        );
+        return;
+      }
+      toastFromHostError(failure, "Couldn't archive some selected agents.");
     },
   });
 }

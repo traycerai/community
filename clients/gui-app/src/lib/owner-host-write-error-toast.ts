@@ -32,15 +32,19 @@ const OWNER_HOST_OFFLINE_NOTICE =
  * Every other failure keeps the ordinary toast. This changes the wording only;
  * where the write is sent is unchanged.
  */
+export function isOwnerHostOfflineFailure(error: HostRpcError): boolean {
+  return (
+    error instanceof RetryableTransportError &&
+    error.fatalDetails === null &&
+    !error.replaySafetyFromKey
+  );
+}
+
 export function toastFromOwnerHostWriteError(
   error: HostRpcError,
   fallback: string,
 ): void {
-  if (
-    error instanceof RetryableTransportError &&
-    error.fatalDetails === null &&
-    !error.replaySafetyFromKey
-  ) {
+  if (isOwnerHostOfflineFailure(error)) {
     toast.message(OWNER_HOST_OFFLINE_NOTICE, {
       id: OWNER_HOST_OFFLINE_TOAST_ID,
     });
