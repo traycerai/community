@@ -192,17 +192,30 @@ function transportNoticeToast(error: HostRpcError): void {
   );
 }
 
+/**
+ * Whether {@link toastFromHostError} says nothing for this error: a recoverable
+ * `UNAUTHORIZED` the app is already handling, or an aborted request. A caller
+ * that reports several failures as one uses it so a silent one is not the one
+ * it reports.
+ */
+export function isSilentHostError(error: HostRpcError): boolean {
+  return (
+    shouldSuppressRecoverableUnauthorized(error) ||
+    error instanceof HostRequestAbortedError
+  );
+}
+
 export function toastFromHostError(
   error: HostRpcError,
   fallback: string,
 ): void {
-  if (shouldSuppressRecoverableUnauthorized(error)) return;
-  // Silent, and deliberately BEFORE the transport branch: an aborted request
-  // is not a network condition at all - a caller-owned authority was replaced
-  // or disposed (tab closed, host rebound). Saying "reconnecting" for what was
-  // effectively a user navigation would be a NEW false statement, and saying
-  // "couldn't do X" for something they themselves cancelled is no better.
-  if (error instanceof HostRequestAbortedError) return;
+  // Silent, and the abort deliberately BEFORE the transport branch: an aborted
+  // request is not a network condition at all - a caller-owned authority was
+  // replaced or disposed (tab closed, host rebound). Saying "reconnecting" for
+  // what was effectively a user navigation would be a NEW false statement, and
+  // saying "couldn't do X" for something they themselves cancelled is no
+  // better.
+  if (isSilentHostError(error)) return;
   if (isTransportClassFailure(error)) {
     transportNoticeToast(error);
     return;

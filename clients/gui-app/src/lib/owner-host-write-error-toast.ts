@@ -3,7 +3,7 @@ import {
   type HostRpcError,
 } from "@traycer-clients/shared/host-transport/host-messenger";
 import { toast } from "sonner";
-import { toastFromHostError } from "@/lib/host-error-toast";
+import { isSilentHostError, toastFromHostError } from "@/lib/host-error-toast";
 
 /**
  * One id for every attempt, so a person who retries a few times against a host
@@ -70,38 +70,58 @@ export interface OwnerHostBatchWriteOutcome {
   readonly error: HostRpcError | null;
 }
 
+/** What a batch's notice says, in the words of the write it ran. */
+export interface OwnerHostBatchWriteCopy {
+  /** The failure of a batch with one write in it, e.g. "Couldn't archive agent." */
+  readonly single: string;
+  /** Some writes applied and some did not. */
+  readonly partial: (applied: number, failed: number) => string;
+  /** No write applied, for more than one reason. */
+  readonly none: (attempted: number) => string;
+}
+
+/** One id for every batch's result, so a retried batch replaces its line. */
+const OWNER_HOST_BATCH_RESULT_TOAST_ID = "owner-host-batch-result";
+
 /**
  * The one error toast for a batch of owner-host writes (archive or delete
  * several agents), whose members raise none of their own.
  *
- * "Nothing on it was changed" holds for the batch only when every write never
- * reached its host; a partly applied batch, or one with any other failure,
- * keeps the ordinary toast for its first failure. A batch of one reads like
- * the single write it is.
+ * A write the person cancelled, or one the app is quietly re-authorizing, is
+ * left out of the count the way a single write would say nothing about it, so
+ * it can never hide the rest. Of what remains: "nothing on it was changed"
+ * holds only when every write never reached its host; any other mix says how
+ * many applied and how many did not. A batch of one reads like the single
+ * write it is.
  */
 export function toastFromOwnerHostBatchWriteFailures(
   outcomes: readonly OwnerHostBatchWriteOutcome[],
-  fallback: string,
+  copy: OwnerHostBatchWriteCopy,
 ): void {
-  const failures = outcomes.flatMap((outcome) =>
+  const counted = outcomes.filter(
+    (outcome) => outcome.error === null || !isSilentHostError(outcome.error),
+  );
+  const failures = counted.flatMap((outcome) =>
     outcome.error === null ? [] : [outcome.error],
   );
   if (failures.length === 0) return;
-  const firstFailure = failures[0];
-  if (outcomes.length === 1) {
-    toastFromOwnerHostWriteError(firstFailure, fallback);
+  if (counted.length === 1) {
+    toastFromOwnerHostWriteError(failures[0], copy.single);
     return;
   }
-  if (
-    failures.length === outcomes.length &&
-    failures.every(isOwnerHostOfflineFailure)
-  ) {
+  const applied = counted.length - failures.length;
+  if (applied === 0 && failures.every(isOwnerHostOfflineFailure)) {
     toastOwnerHostsUnreachableForBatch(
-      outcomes.map((outcome) => outcome.hostId),
+      counted.map((outcome) => outcome.hostId),
     );
     return;
   }
-  toastFromHostError(firstFailure, fallback);
+  toast.error(
+    applied === 0
+      ? copy.none(counted.length)
+      : copy.partial(applied, failures.length),
+    { id: OWNER_HOST_BATCH_RESULT_TOAST_ID },
+  );
 }
 
 /**

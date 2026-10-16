@@ -42,6 +42,7 @@ import {
 import {
   toastFromOwnerHostBatchWriteFailures,
   toastFromOwnerHostWriteError,
+  type OwnerHostBatchWriteCopy,
 } from "@/lib/owner-host-write-error-toast";
 import { invalidateEpicChatRecords } from "@/hooks/chats/use-epic-chat-records";
 import { invalidateChatRunSettings } from "@/hooks/chats/use-chat-run-settings-query";
@@ -748,6 +749,22 @@ export interface ArchiveChatsMutationInput {
   readonly archived: boolean;
 }
 
+const ARCHIVE_BATCH_COPY: OwnerHostBatchWriteCopy = {
+  single: "Couldn't archive agent.",
+  partial: (applied, failed) =>
+    `Archived ${applied} of ${applied + failed} selected agents. ${failed} couldn't be archived.`,
+  none: (attempted) =>
+    `Couldn't archive any of the ${attempted} selected agents.`,
+};
+
+const UNARCHIVE_BATCH_COPY: OwnerHostBatchWriteCopy = {
+  single: "Couldn't unarchive agent.",
+  partial: (applied, failed) =>
+    `Unarchived ${applied} of ${applied + failed} selected agents. ${failed} couldn't be unarchived.`,
+  none: (attempted) =>
+    `Couldn't unarchive any of the ${attempted} selected agents.`,
+};
+
 export type ArchiveChatsMutationResult =
   readonly PromiseSettledResult<SetChatArchivedResponse>[];
 
@@ -790,7 +807,7 @@ export function useEpicArchiveChats(): UseMutationResult<
               ? toHostRpcError(result.reason, "epic.setChatArchived")
               : null,
         })),
-        "Couldn't archive some selected agents.",
+        variables.archived ? ARCHIVE_BATCH_COPY : UNARCHIVE_BATCH_COPY,
       );
     },
   });
