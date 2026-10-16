@@ -7,8 +7,12 @@ import {
   vi,
   type Mock,
 } from "vitest";
-import { cleanup, renderHook, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
+import {
+  focusManager,
+  QueryClient,
+  QueryClientProvider,
+} from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import type { TeamEnvironmentFetchResult } from "@traycer-clients/shared/host-client/sandbox-secrets";
 import { useAuthStore } from "@/stores/auth/auth-store";
@@ -55,7 +59,10 @@ function clientWrapper(): (props: {
   readonly children: ReactNode;
 }) => ReactNode {
   const client = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
+    // The app's own default: a query opts in to a focus read itself.
+    defaultOptions: {
+      queries: { retry: false, refetchOnWindowFocus: false },
+    },
   });
   return ({ children }) => (
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
@@ -80,6 +87,14 @@ function scriptAnswers(
   return spy;
 }
 
+/** The window loses focus and gets it back. */
+function returnToWindow(): void {
+  act(() => {
+    focusManager.setFocused(false);
+    focusManager.setFocused(true);
+  });
+}
+
 function readsOf(spy: Mock<GetTeamEnvironment>, teamId: string): number {
   return spy.mock.calls.filter(([id]) => id === teamId).length;
 }
@@ -100,6 +115,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  focusManager.setFocused(undefined);
   useAuthStore.setState({ status: "signed-out", contextMetadata: null });
 });
 
@@ -216,5 +232,53 @@ describe("useTeamEnvironment", () => {
     view.rerender({ teamId: "team-a" });
     await Promise.resolve();
     expect(readsOf(spy, "team-a")).toBe(2);
+  });
+  it("reads a network-error answer again when the window regains focus", async () => {
+    const spy = scriptAnswers({ "team-a": [FAILED, OK_A] });
+    const view = renderHook(() => useTeamEnvironment("team-a"), {
+      wrapper: clientWrapper(),
+    });
+    await waitFor(() => {
+      expect(view.result.current.data).toEqual(FAILED);
+    });
+
+    returnToWindow();
+
+    await waitFor(() => {
+      expect(view.result.current.data).toEqual(OK_A);
+    });
+    expect(readsOf(spy, "team-a")).toBe(2);
+  });
+
+  it("reads a not-a-member answer again when the window regains focus", async () => {
+    const spy = scriptAnswers({ "team-a": [NOT_A_MEMBER, OK_A] });
+    const view = renderHook(() => useTeamEnvironment("team-a"), {
+      wrapper: clientWrapper(),
+    });
+    await waitFor(() => {
+      expect(view.result.current.data).toEqual(NOT_A_MEMBER);
+    });
+
+    returnToWindow();
+
+    await waitFor(() => {
+      expect(view.result.current.data).toEqual(OK_A);
+    });
+    expect(readsOf(spy, "team-a")).toBe(2);
+  });
+
+  it("does not read an ok answer again when the window regains focus", async () => {
+    const spy = scriptAnswers({ "team-a": [OK_A] });
+    const view = renderHook(() => useTeamEnvironment("team-a"), {
+      wrapper: clientWrapper(),
+    });
+    await waitFor(() => {
+      expect(view.result.current.data).toEqual(OK_A);
+    });
+
+    returnToWindow();
+    await Promise.resolve();
+
+    expect(readsOf(spy, "team-a")).toBe(1);
   });
 });

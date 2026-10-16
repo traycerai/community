@@ -28,17 +28,20 @@ export interface SandboxCreateSubmit {
 }
 
 /**
- * A refused create, carrying the server's refusal `code` (`null` for a
- * failure with none) so the form can answer `insufficient_credit` on a team
- * pick with the capacity line rather than only a toast.
+ * A refused create, carrying the server's refusal `code` and its `reason`
+ * (`null` for a failure with none) so the form can answer
+ * `insufficient_credit` on a team pick with the capacity line rather than
+ * only a toast.
  */
 export class SandboxCreateError extends Error {
   readonly code: string | null;
+  readonly reason: string | null;
 
-  constructor(message: string, code: string | null) {
+  constructor(message: string, code: string | null, reason: string | null) {
     super(message);
     this.name = "SandboxCreateError";
     this.code = code;
+    this.reason = reason;
   }
 }
 
@@ -86,6 +89,7 @@ export function useSandboxCreate(): UseMutationResult<
       throw new SandboxCreateError(
         sandboxCreateFailureMessage(result, teamName),
         result.kind === "refused" ? result.code : null,
+        result.kind === "refused" ? result.reason : null,
       );
     },
     // At hook level, not the form's `mutate` call: the form unmounts when the

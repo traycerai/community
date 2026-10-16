@@ -3,6 +3,7 @@ import { useIsMutating } from "@tanstack/react-query";
 import type { AuthenticatedUser } from "@traycer/protocol/auth";
 import {
   SANDBOX_REFUSAL_CODE_ENVIRONMENT_NOT_FOUND,
+  SANDBOX_REFUSAL_CODE_ENVIRONMENT_UNAVAILABLE,
   SANDBOX_REFUSAL_CODE_INSUFFICIENT_CREDIT,
   type SandboxCatalogue,
   type SandboxCatalogueProvider,
@@ -166,19 +167,20 @@ function SandboxCreateDialogBody(props: {
   }
   if (catalogue.isError) {
     return (
-      <div className="flex flex-col items-start gap-2">
-        <p className="text-ui-sm text-muted-foreground">
-          {catalogue.error.message}
-        </p>
-        <Button
-          type="button"
-          variant="outline"
-          size="sm"
-          onClick={() => void catalogue.refetch()}
-        >
-          Try again
-        </Button>
-      </div>
+      <SandboxCreateRetry
+        message={catalogue.error.message}
+        onRetry={() => void catalogue.refetch()}
+      />
+    );
+  }
+  // Without the person's teams the form could only be Personal, whatever
+  // the opener preselected.
+  if (userQuery.isError) {
+    return (
+      <SandboxCreateRetry
+        message="Traycer couldn't load your teams."
+        onRetry={() => void userQuery.refetch()}
+      />
     );
   }
   const offered = offeredOses(catalogue.data);
@@ -229,6 +231,21 @@ function initialFormState(
     region: provider.regions.at(0)?.id ?? "",
     idleMinutes: DEFAULT_IDLE_MINUTES,
   };
+}
+
+/** A read the form needs failed: say so, with a retry. */
+function SandboxCreateRetry(props: {
+  readonly message: string;
+  readonly onRetry: () => void;
+}): ReactNode {
+  return (
+    <div className="flex flex-col items-start gap-2">
+      <p className="text-ui-sm text-muted-foreground">{props.message}</p>
+      <Button type="button" variant="outline" size="sm" onClick={props.onRetry}>
+        Try again
+      </Button>
+    </div>
+  );
 }
 
 function SandboxCreateForm(props: {
@@ -513,6 +530,9 @@ function SandboxPriceLine(props: {
 
 const PERSONAL_VALUE = "personal";
 
+/** The credit gate's `reason` when the credit service could not answer. */
+const UNVERIFIED_CREDIT_REASON = "unverified";
+
 /** The team Belongs to names, or `null` for Personal (or a team gone). */
 function pickedTeam(
   belongsTo: SandboxCreateBelongsTo,
@@ -560,19 +580,12 @@ function useTeamTarget(
   last: LastCreate,
   asked: AskedShape,
 ): TeamTarget {
-  const region = asked.region;
   const environment = useTeamEnvironment(team === null ? null : team.teamId);
   const answer = team === null ? null : (environment.data ?? null);
   const environmentId = answer?.kind === "ok" ? answer.environmentId : null;
   const providers = useEnvironmentProviders(environmentId);
   const counts = providers.data?.kind === "ok" ? providers.data.counts : null;
-  // The last create's refusal, if it was sent to this team's environment.
-  const refusalCode =
-    last.error instanceof SandboxCreateError &&
-    environmentId !== null &&
-    last.variables?.request.environmentId === environmentId
-      ? last.error.code
-      : null;
+  const refusal = refusalFor(last, environmentId);
   if (team === null) {
     return {
       environmentId: null,
@@ -591,13 +604,30 @@ function useTeamTarget(
     askAdmin:
       teamCannotCoverAnHour(
         teamSandboxBalanceMc(user, team.teamId),
-        region === null ? null : region.fromPriceMcPerHour.awakeMc,
+        asked.region === null ? null : asked.region.fromPriceMcPerHour.awakeMc,
       ) ||
-      (refusalCode === SANDBOX_REFUSAL_CODE_INSUFFICIENT_CREDIT &&
+      (refusal !== null &&
+        teamShortOfCredit(refusal) &&
         refusedThisShape(last, asked)),
     noProviders: teamHasNoProviders(counts),
-    refusalLine: teamRefusalLine(team, answer, refusalCode),
+    refusalLine: teamRefusalLine(
+      team,
+      answer,
+      refusal === null ? null : refusal.code,
+    ),
   };
+}
+
+/** The last create's refusal, if it was sent to this team's environment. */
+function refusalFor(
+  last: LastCreate,
+  environmentId: string | null,
+): SandboxCreateError | null {
+  if (!(last.error instanceof SandboxCreateError)) return null;
+  if (environmentId === null) return null;
+  return last.variables?.request.environmentId === environmentId
+    ? last.error
+    : null;
 }
 
 /**
@@ -616,6 +646,18 @@ function refusedThisShape(last: LastCreate, asked: AskedShape): boolean {
   );
 }
 
+/**
+ * Whether a refused create was the team's credit falling short. A 402 the
+ * credit service could not decide (`unverified`) is a moment to try again,
+ * not capacity to ask an admin for.
+ */
+function teamShortOfCredit(refusal: SandboxCreateError): boolean {
+  return (
+    refusal.code === SANDBOX_REFUSAL_CODE_INSUFFICIENT_CREDIT &&
+    refusal.reason !== UNVERIFIED_CREDIT_REASON
+  );
+}
+
 /** Why a picked team cannot be created into, named for it; else `null`. */
 function teamRefusalLine(
   team: SandboxCreateTeam,
@@ -624,6 +666,9 @@ function teamRefusalLine(
 ): string | null {
   if (refusalCode === SANDBOX_REFUSAL_CODE_ENVIRONMENT_NOT_FOUND) {
     return sandboxNotAMemberLine(team.name);
+  }
+  if (refusalCode === SANDBOX_REFUSAL_CODE_ENVIRONMENT_UNAVAILABLE) {
+    return SANDBOX_CREATE_ENVIRONMENT_UNAVAILABLE_LINE;
   }
   if (answer === null || answer.kind === "ok") return null;
   if (answer.kind === "not-a-member") return sandboxNotAMemberLine(team.name);
@@ -648,11 +693,9 @@ function SandboxBelongsToField(props: {
       <SandboxCreateSelect
         id={props.id}
         label="Belongs to"
-        value={
-          props.belongsTo.kind === "team"
-            ? props.belongsTo.teamId
-            : PERSONAL_VALUE
-        }
+        // A team the person has since left reads as Personal, which is
+        // what the form would create.
+        value={props.team === null ? PERSONAL_VALUE : props.team.teamId}
         testId="sandbox-create-belongs-to"
         options={[
           { value: PERSONAL_VALUE, label: "Personal" },

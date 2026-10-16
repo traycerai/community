@@ -5,6 +5,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -44,6 +45,9 @@ const mocks = vi.hoisted(() => ({
   user: null as AuthenticatedUser | null,
   /** The user query has not answered: no data, still pending. */
   userPending: false,
+  /** The user query failed: no data, no longer pending. */
+  userFailed: false,
+  userRefetch: vi.fn<() => Promise<void>>(),
   environments: new Map<string, TeamEnvironmentFetchResult>(),
   providers: new Map<string, EnvironmentProvidersFetchResult>(),
   mutate: vi.fn<(variables: CreateVariables, options: unknown) => void>(),
@@ -61,8 +65,10 @@ vi.mock("@/hooks/sandboxes/use-sandbox-catalogue-query", () => ({
 }));
 vi.mock("@/hooks/auth/use-auth-user-query", () => ({
   useAuthUser: () => ({
-    data: mocks.userPending ? undefined : mocks.user,
+    data: mocks.userPending || mocks.userFailed ? undefined : mocks.user,
     isPending: mocks.userPending,
+    isError: mocks.userFailed,
+    refetch: mocks.userRefetch,
   }),
 }));
 vi.mock("@/hooks/sandboxes/use-team-environment-query", () => ({
@@ -274,6 +280,9 @@ beforeEach(() => {
   };
   mocks.user = userInAcmeAndZeta();
   mocks.userPending = false;
+  mocks.userFailed = false;
+  mocks.userRefetch.mockReset();
+  mocks.userRefetch.mockResolvedValue(undefined);
   mocks.environments.clear();
   mocks.providers.clear();
   mocks.mutate.mockReset();
@@ -447,6 +456,54 @@ describe("<SandboxCreateDialog /> belongs to", () => {
       "Traycer couldn't check where this sandbox belongs. Try again in a moment.",
     );
   });
+  it("says Traycer could not load the teams, with a retry that reads them again, and shows no form, when the user read failed", async () => {
+    mocks.userFailed = true;
+    mountDialog(teamPreselect(ACME_ID));
+
+    expect(
+      await screen.findByText("Traycer couldn't load your teams."),
+    ).toBeDefined();
+    expect(screen.queryByTestId("sandbox-create-name")).toBeNull();
+    expect(screen.queryByTestId("sandbox-create-loading")).toBeNull();
+    expect(mocks.userRefetch).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole("button", { name: "Try again" }));
+
+    expect(mocks.userRefetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads Personal in Belongs to when the preselected team is not one of the person's", async () => {
+    await renderDialog(teamPreselect("team-gone"));
+
+    const trigger = screen.getByTestId("sandbox-create-belongs-to");
+    expect(trigger.textContent).toContain("Personal");
+    expect(screen.queryByTestId("sandbox-create-team-lines")).toBeNull();
+  });
+
+  it("reads Personal in Belongs to, not blank, when the picked team leaves the person's teams while the form is open", async () => {
+    await renderDialog(teamPreselect(ZETA_ID));
+    expect(
+      screen.getByTestId("sandbox-create-belongs-to").textContent,
+    ).toContain("zeta");
+
+    // The person leaves zeta. The mocks are not reactive: a store write the
+    // body selects makes it read them again (the working host's team is
+    // ignored here, being no team of the person's).
+    mocks.user = userInTeams([teamEntry(ACME_ID, "acme", 1_000)]);
+    act(() => {
+      useSandboxCreateDialogStore.setState({
+        workingHostTeamId: "unrelated-team",
+      });
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.getByTestId("sandbox-create-belongs-to").textContent,
+      ).toContain("Personal");
+    });
+    expect(screen.queryByTestId("sandbox-create-team-lines")).toBeNull();
+  });
+
   it("stays loading while the person has not loaded, then opens on the preselected team and not on Personal", async () => {
     mocks.userPending = true;
     mountDialog(teamPreselect(ACME_ID));
@@ -528,8 +585,12 @@ describe("<SandboxCreateDialog /> belongs to", () => {
       });
     }
 
-    function refusedWith(code: string, environmentId: string): void {
-      mocks.create.error = new SandboxCreateError("refused", code);
+    function refusedWith(
+      code: string,
+      environmentId: string,
+      reason: string | null,
+    ): void {
+      mocks.create.error = new SandboxCreateError("refused", code, reason);
       mocks.create.variables = {
         request: request(environmentId),
         teamName: "acme",
@@ -538,7 +599,7 @@ describe("<SandboxCreateDialog /> belongs to", () => {
 
     it("replaces Create with the ask-an-admin button when the create was refused 402 insufficient_credit", async () => {
       teamAnswered();
-      refusedWith("insufficient_credit", "env-acme");
+      refusedWith("insufficient_credit", "env-acme", null);
       await renderDialog(teamPreselect(ACME_ID));
 
       expect(
@@ -547,9 +608,42 @@ describe("<SandboxCreateDialog /> belongs to", () => {
       expect(screen.queryByTestId("sandbox-create-submit")).toBeNull();
     });
 
+    it("shows no ask-an-admin for a 402 the credit service could not decide, and keeps Create", async () => {
+      teamAnswered();
+      refusedWith("insufficient_credit", "env-acme", "unverified");
+      await renderDialog(teamPreselect(ACME_ID));
+
+      expect(screen.queryByTestId("sandbox-create-ask-admin")).toBeNull();
+      expect(screen.getByTestId("sandbox-create-submit")).toBeDefined();
+    });
+
+    it("shows ask-an-admin for a 402 the credit service denied", async () => {
+      teamAnswered();
+      refusedWith("insufficient_credit", "env-acme", "denied");
+      await renderDialog(teamPreselect(ACME_ID));
+
+      expect(
+        screen.getByTestId("sandbox-create-ask-admin").hasAttribute("disabled"),
+      ).toBe(true);
+      expect(screen.queryByTestId("sandbox-create-submit")).toBeNull();
+    });
+
+    it("says Traycer could not check where the sandbox belongs when the create was refused 503 environment_unavailable", async () => {
+      teamAnswered();
+      refusedWith("environment_unavailable", "env-acme", null);
+      await renderDialog(teamPreselect(ACME_ID));
+
+      expect(
+        screen.getByTestId("sandbox-create-team-refusal").textContent,
+      ).toBe(
+        "Traycer couldn't check where this sandbox belongs. Try again in a moment.",
+      );
+      expect(screen.queryByTestId("sandbox-create-ask-admin")).toBeNull();
+    });
+
     it("gives Create back when the size is changed after the refusal, and takes it again when the refused size returns", async () => {
       teamAnswered();
-      refusedWith("insufficient_credit", "env-acme");
+      refusedWith("insufficient_credit", "env-acme", null);
       await renderDialog(teamPreselect(ACME_ID));
       expect(screen.getByTestId("sandbox-create-ask-admin")).toBeDefined();
 
@@ -568,7 +662,7 @@ describe("<SandboxCreateDialog /> belongs to", () => {
 
     it("gives Create back when the region is changed after the refusal", async () => {
       teamAnswered();
-      refusedWith("insufficient_credit", "env-acme");
+      refusedWith("insufficient_credit", "env-acme", null);
       await renderDialog(teamPreselect(ACME_ID));
       expect(screen.getByTestId("sandbox-create-ask-admin")).toBeDefined();
 
@@ -580,7 +674,7 @@ describe("<SandboxCreateDialog /> belongs to", () => {
 
     it("keeps the not-a-member line whatever the size or region", async () => {
       teamAnswered();
-      refusedWith("environment_not_found", "env-acme");
+      refusedWith("environment_not_found", "env-acme", null);
       await renderDialog(teamPreselect(ACME_ID));
       const line = "You are not a member of acme.";
       expect(
@@ -600,7 +694,7 @@ describe("<SandboxCreateDialog /> belongs to", () => {
 
     it("says the person is not a member of the team when the create was refused 404 environment_not_found", async () => {
       teamAnswered();
-      refusedWith("environment_not_found", "env-acme");
+      refusedWith("environment_not_found", "env-acme", null);
       await renderDialog(teamPreselect(ACME_ID));
 
       expect(
@@ -610,7 +704,7 @@ describe("<SandboxCreateDialog /> belongs to", () => {
 
     it("answers neither for a refusal of another code", async () => {
       teamAnswered();
-      refusedWith("provider_unavailable", "env-acme");
+      refusedWith("provider_unavailable", "env-acme", null);
       await renderDialog(teamPreselect(ACME_ID));
 
       expect(screen.queryByTestId("sandbox-create-ask-admin")).toBeNull();
@@ -620,19 +714,19 @@ describe("<SandboxCreateDialog /> belongs to", () => {
 
     it("answers neither for a refusal of a create sent to another environment", async () => {
       teamAnswered();
-      refusedWith("insufficient_credit", "env-zeta");
+      refusedWith("insufficient_credit", "env-zeta", null);
       await renderDialog(teamPreselect(ACME_ID));
       expect(screen.queryByTestId("sandbox-create-ask-admin")).toBeNull();
       cleanup();
 
-      refusedWith("environment_not_found", "env-zeta");
+      refusedWith("environment_not_found", "env-zeta", null);
       await renderDialog(teamPreselect(ACME_ID));
       expect(screen.queryByTestId("sandbox-create-team-refusal")).toBeNull();
     });
 
     it("answers neither on a Personal pick", async () => {
       teamAnswered();
-      refusedWith("insufficient_credit", "env-acme");
+      refusedWith("insufficient_credit", "env-acme", null);
       await renderDialog(null);
 
       expect(screen.queryByTestId("sandbox-create-ask-admin")).toBeNull();

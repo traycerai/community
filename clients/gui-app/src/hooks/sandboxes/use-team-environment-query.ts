@@ -31,6 +31,8 @@ function teamEnvironmentQueryOptions(
     // a member yet, a failed read) is read again on the next pick or focus.
     staleTime: (query) =>
       query.state.data?.kind === "ok" ? Number.POSITIVE_INFINITY : 0,
+    // The app's default is off; a failed read must come back on return.
+    refetchOnWindowFocus: true,
   });
 }
 

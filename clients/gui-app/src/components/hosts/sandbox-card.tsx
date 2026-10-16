@@ -107,8 +107,8 @@ export function SandboxCard(props: {
   readonly sandbox: HostScopeSandbox;
   /**
    * What "New sandbox like this" preselects: this sandbox's owner, or `null`
-   * when it is a team's whose id has not been read yet (the form's default
-   * rule then decides).
+   * when it is a team's whose id has not been read yet, which offers no
+   * "like this" (it would open on Personal).
    */
   readonly likeThis: SandboxCreateBelongsTo | null;
 }): ReactNode {
@@ -908,8 +908,8 @@ function SandboxCardFooter(props: {
   readonly likeThis: SandboxCreateBelongsTo | null;
 }): ReactNode {
   const openCreateSandbox = useSandboxCreateDialogStore((s) => s.openDialog);
-  const offersLikeThis = props.summary.kind !== "automation";
-  if (props.actions.length === 0 && !offersLikeThis) return null;
+  const likeThis = props.summary.kind === "automation" ? null : props.likeThis;
+  if (props.actions.length === 0 && likeThis === null) return null;
   return (
     <CardFooter className="flex flex-wrap gap-2">
       {props.actions.length === 0 ? null : (
@@ -920,17 +920,17 @@ function SandboxCardFooter(props: {
           teamOwned={props.teamOwned}
         />
       )}
-      {offersLikeThis ? (
+      {likeThis === null ? null : (
         <Button
           type="button"
           variant="ghost"
           size="sm"
           data-testid="sandbox-card-new-like-this"
-          onClick={() => openCreateSandbox(props.likeThis, null)}
+          onClick={() => openCreateSandbox(likeThis, null)}
         >
           New sandbox like this
         </Button>
-      ) : null}
+      )}
     </CardFooter>
   );
 }

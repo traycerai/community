@@ -2995,7 +2995,7 @@ function overviewBusySnapshot(
 /**
  * What a sandbox's "New sandbox like this" preselects: its team, Personal
  * for the person's own, or `null` for a team's whose id the registry has not
- * answered yet, leaving the form's default rule to decide.
+ * answered yet, which hides the button until it has.
  */
 function sandboxLikeThis(
   host: HostScopeOption,

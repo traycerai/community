@@ -739,6 +739,23 @@ describe("settling under another account", () => {
       expect(rejection).toBeInstanceOf(SandboxCreateError);
       if (!(rejection instanceof SandboxCreateError)) return;
       expect(rejection.code).toBe("insufficient_credit");
+      // `refusal()` carries no reason: nothing to pass on.
+      expect(rejection.reason).toBeNull();
+    });
+
+    it("carries the refusal's reason, so an unverified credit check can be told from a denied one", async () => {
+      for (const reason of ["unverified", "denied"]) {
+        const rejection = await createRefusedAs(
+          { ...refusal(402, "insufficient_credit"), reason },
+          "acme",
+        );
+
+        expect(rejection).toBeInstanceOf(SandboxCreateError);
+        if (!(rejection instanceof SandboxCreateError)) return;
+        expect(rejection.code).toBe("insufficient_credit");
+        expect(rejection.reason).toBe(reason);
+        cleanup();
+      }
     });
 
     it("rejects a failure with no refusal code as a SandboxCreateError whose code is null", async () => {
@@ -747,6 +764,7 @@ describe("settling under another account", () => {
       expect(rejection).toBeInstanceOf(SandboxCreateError);
       if (!(rejection instanceof SandboxCreateError)) return;
       expect(rejection.code).toBeNull();
+      expect(rejection.reason).toBeNull();
       expect(rejection.message).toBe(
         "Couldn't reach Traycer. Try again in a moment.",
       );

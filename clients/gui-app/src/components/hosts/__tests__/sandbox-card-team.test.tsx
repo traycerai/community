@@ -673,21 +673,21 @@ describe("<SandboxCard /> New sandbox like this", () => {
     expect(store.workingHostTeamId).toBeNull();
   });
 
-  it("opens the create form with no preselection when the card cannot name its team yet", () => {
-    useSandboxCreateDialogStore.setState({
-      preselect: { kind: "team", teamId: "stale-team" },
-    });
+  it("is absent when the card cannot name its team yet, and the card's own actions stay", () => {
     renderCardLikeThis(
       sandboxOf("awake", false, { environmentId: ENV }),
       true,
       null,
     );
 
-    press();
+    expect(screen.queryByTestId("sandbox-card-new-like-this")).toBeNull();
+    expect(screen.getByTestId("sandbox-card-suspend")).toBeDefined();
+  });
 
-    const store = useSandboxCreateDialogStore.getState();
-    expect(store.open).toBe(true);
-    expect(store.preselect).toBeNull();
+  it("is absent, with no footer, on a card with neither actions nor a team to offer", () => {
+    renderCardLikeThis(sandboxOf("creating", false, {}), true, null);
+
+    expect(screen.queryByTestId("sandbox-card-new-like-this")).toBeNull();
   });
 
   it("is offered on a card with no lifecycle actions", () => {
