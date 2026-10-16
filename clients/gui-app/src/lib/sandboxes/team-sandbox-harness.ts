@@ -9,7 +9,7 @@ export const TEAM_SANDBOX_HARNESS_UNAVAILABLE =
  * every member's agent can read it. An unknown mode is not offered there.
  */
 export function teamSandboxHarnessBlocked(
-  mode: "placeholder" | "process-scoped" | "unsupported" | null,
+  mode: "placeholder" | "process-scoped" | "unsupported" | null | undefined,
   onTeamHost: boolean,
 ): boolean {
   return onTeamHost && mode !== "placeholder";

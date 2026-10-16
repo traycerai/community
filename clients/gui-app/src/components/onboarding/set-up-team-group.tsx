@@ -2,7 +2,7 @@ import { useMemo, type ReactNode } from "react";
 import { Users } from "lucide-react";
 import { useRegisteredHosts } from "@/hooks/auth/use-registered-hosts-query";
 import { cn } from "@/lib/utils";
-import { useAuthStore } from "@/stores/auth/auth-store";
+import { useAuthStore, type EpicShareableTeam } from "@/stores/auth/auth-store";
 import { useTeamHostDisclosureSeenStore } from "@/stores/hosts/team-host-disclosure-seen-store";
 import { newcomerTeams, teamNewcomerLine } from "./set-up-team-model";
 
@@ -16,6 +16,16 @@ export function SetUpTeamGroup(props: {
   readonly surface: "settings" | "home";
 }): ReactNode {
   const teams = useAuthStore((s) => s.shareableTeams);
+  // No team, no line: the host registry is read only for someone in one.
+  if (teams.length === 0) return null;
+  return <SetUpTeamLines surface={props.surface} teams={teams} />;
+}
+
+function SetUpTeamLines(props: {
+  readonly surface: "settings" | "home";
+  readonly teams: ReadonlyArray<EpicShareableTeam>;
+}): ReactNode {
+  const { teams } = props;
   const viewerUserId = useAuthStore((s) => s.contextMetadata?.userId ?? "");
   const registry = useRegisteredHosts().data ?? null;
   const seen = useTeamHostDisclosureSeenStore((s) => s.seen);

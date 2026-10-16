@@ -32,9 +32,16 @@ const mocks = vi.hoisted(() => {
   return { entry };
 });
 
-vi.mock("@/hooks/host/use-host-directory-entry", () => ({
-  useHostDirectoryEntry: () => mocks.entry.current,
-}));
+vi.mock(
+  "@traycer-clients/shared/host-client/host-connection-registry",
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import("@traycer-clients/shared/host-client/host-connection-registry")
+    >()),
+    readHostDirectoryEntry: () => mocks.entry.current,
+    subscribeHostRowChanged: () => () => undefined,
+  }),
+);
 // jsdom has no layout, so the virtualised list renders no rows: render them all.
 vi.mock("react-virtuoso", () => ({
   Virtuoso: (props: {
