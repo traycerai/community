@@ -116,6 +116,8 @@ export function EpicMigrationModal(props: EpicMigrationModalProps): ReactNode {
           // overlay inset (`window-chrome.css`) would leave its top uncovered.
           // The joined tab is this surface's own, so it takes the dim too.
           data-overlay-scope="surface"
+          // Open while mounted: its fade-in plays, as the tab's dim does.
+          data-state="open"
           className="absolute inset-0 bg-black/40 transition-opacity duration-100 supports-backdrop-filter:backdrop-blur-xs data-open:animate-in data-open:fade-in-0"
         >
           <BackdropDimSource strength="40" />

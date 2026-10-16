@@ -86,7 +86,9 @@
   border-start-end-radius: var(--radius-xl);
   background-color: var(--dim);
   opacity: 0;
-  transition: opacity var(--panel-motion-duration) ease-out;
+  /* The backdrops' own fade: tw-animate's `animate-in` / `animate-out`, whose
+     default easing is `ease`. */
+  transition: opacity var(--panel-motion-duration) ease;
 
   /* The bridge's feet (index.css), in the dim: the arc's line in the border,
      the fill beyond it in the shadow. The bridge's offsets are taken from
