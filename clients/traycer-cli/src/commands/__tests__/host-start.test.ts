@@ -1279,6 +1279,11 @@ describe("runHostStart - signal/exit propagation", () => {
     recorded.findCrashReportResult = {
       filename: "report.oom.json",
       summary: "event=Allocation failed trigger=FatalError",
+      memory: {
+        heapLimitBytes: 4831838208,
+        heapUsedBytes: 4100000000,
+        rssBytes: 4750000000,
+      },
     };
 
     const originalSpawn = deps.spawn;
@@ -1350,6 +1355,12 @@ describe("runHostStart - signal/exit propagation", () => {
     expect(report.signal).toBeNull();
     expect(report.exitMeaning).toContain("0xC0000409");
     expect(report.hasDiagnosticReport).toBe(true);
+    // The report's memory numbers reach the telemetry the supervisor sends.
+    expect(report.reportMemory).toEqual({
+      heapLimitBytes: 4831838208,
+      heapUsedBytes: 4100000000,
+      rssBytes: 4750000000,
+    });
     expect(report.hostVersion).toBe(sampleRecord(exec).version);
     expect(report.attemptId).toBe(crashed?.fields.attemptId);
     expect(report.uptimeMs).toBeGreaterThanOrEqual(0);
@@ -1384,6 +1395,7 @@ describe("runHostStart - signal/exit propagation", () => {
       recorded.findCrashReportResult = {
         filename: "report.abrt.json",
         summary: "event=FatalError",
+        memory: { heapLimitBytes: null, heapUsedBytes: null, rssBytes: null },
       };
       const originalSpawn = deps.spawn;
       if (originalSpawn === undefined) {
