@@ -40,9 +40,8 @@ import {
   toastFromHostErrorWithDetail,
 } from "@/lib/host-error-toast";
 import {
-  isOwnerHostUnreachableFailure,
+  toastFromOwnerHostBatchWriteFailures,
   toastFromOwnerHostWriteError,
-  toastOwnerHostsUnreachableForBatch,
 } from "@/lib/owner-host-write-error-toast";
 import { invalidateEpicChatRecords } from "@/hooks/chats/use-epic-chat-records";
 import { invalidateChatRunSettings } from "@/hooks/chats/use-chat-run-settings-query";
@@ -783,36 +782,47 @@ export function useEpicArchiveChats(): UseMutationResult<
         ),
       ),
     onSuccess: (results, variables) => {
-      const firstFailure = results.find(
-        (result): result is PromiseRejectedResult =>
-          result.status === "rejected",
+      toastFromOwnerHostBatchWriteFailures(
+        results.map((result, index) => ({
+          hostId: variables.chats[index]?.hostId ?? null,
+          error:
+            result.status === "rejected"
+              ? toHostRpcError(result.reason, "epic.setChatArchived")
+              : null,
+        })),
+        "Couldn't archive some selected agents.",
       );
-      if (firstFailure === undefined) return;
-      const reason: unknown = firstFailure.reason;
-      const failure = toHostRpcError(reason, "epic.setChatArchived");
-      // "Nothing on it was changed" holds for the batch only when every
-      // archive failed that way; a partly archived batch keeps the ordinary
-      // failure toast.
-      const allOffline = results.every(
-        (result) =>
-          result.status === "rejected" &&
-          isOwnerHostUnreachableFailure(
-            toHostRpcError(result.reason, "epic.setChatArchived"),
-          ),
-      );
-      if (allOffline) {
-        toastOwnerHostsUnreachableForBatch(
-          variables.chats.map((chat) => chat.hostId),
-        );
-        return;
-      }
-      toastFromHostError(failure, "Couldn't archive some selected agents.");
     },
   });
 }
 
 /** Deletes on the owning host and retires the viewer's confirmed replica. */
 export function useEpicDeleteChat(): UseMutationResult<
+  DeleteChatResponse,
+  HostRpcError,
+  DeleteChatMutationInput,
+  DeleteChatMutationContext
+> {
+  return useEpicDeleteChatMutation("individual");
+}
+
+/**
+ * `useEpicDeleteChat` for one delete among several in a batch: the caller
+ * reports the batch's failures once (`toastFromOwnerHostBatchWriteFailures`),
+ * so a failure here raises no notice of its own.
+ */
+export function useEpicDeleteChatInBatch(): UseMutationResult<
+  DeleteChatResponse,
+  HostRpcError,
+  DeleteChatMutationInput,
+  DeleteChatMutationContext
+> {
+  return useEpicDeleteChatMutation("aggregate");
+}
+
+function useEpicDeleteChatMutation(
+  failurePresentation: "individual" | "aggregate",
+): UseMutationResult<
   DeleteChatResponse,
   HostRpcError,
   DeleteChatMutationInput,
@@ -990,7 +1000,9 @@ export function useEpicDeleteChat(): UseMutationResult<
         useEpicCanvasStore
           .getState()
           .unmarkArtifactSelfDeleted(variables.chatId);
-        toastFromOwnerHostWriteError(error, "Couldn't delete agent.");
+        if (failurePresentation === "individual") {
+          toastFromOwnerHostWriteError(error, "Couldn't delete agent.");
+        }
       },
     },
   });

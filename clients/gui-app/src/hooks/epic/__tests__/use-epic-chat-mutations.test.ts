@@ -162,6 +162,7 @@ import {
   useEpicCreateChatForHostClient,
   useEpicRenameChat,
   useEpicDeleteChat,
+  useEpicDeleteChatInBatch,
 } from "@/hooks/epic/use-epic-chat-mutations";
 import {
   HostRpcError,
@@ -665,6 +666,24 @@ describe("useEpicDeleteChat", () => {
       expect.anything(),
     );
     expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("leaves a batch member's failure to its caller and still rolls back the row", () => {
+    renderHook(() => useEpicDeleteChatInBatch(), { wrapper: makeWrapper() });
+    useEpicCanvasStore.getState().markArtifactSelfDeleted("chat-1");
+    const opts = getCapturedMutation("epic.deleteChat").options as {
+      onError: (e: HostRpcError, variables: DeleteChatMutationInput) => void;
+    };
+    opts.onError(hostUnreachable("epic.deleteChat"), {
+      epicId: "epic-1",
+      chatId: "chat-1",
+      hostId: "host-test",
+    });
+    expect(toast.message).not.toHaveBeenCalled();
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(
+      useEpicCanvasStore.getState().selfDeletedArtifactIds.has("chat-1"),
+    ).toBe(false);
   });
 
   it("uses the session client when the named host is the session host", () => {

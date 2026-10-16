@@ -85,6 +85,21 @@ export type RenameTuiAgentMutationInput = RenameTuiAgentRequest &
 
 /** Delete on the owning host, which also tears down its runtime and worktree binding. */
 export function useEpicDeleteTuiAgent() {
+  return useEpicDeleteTuiAgentMutation("individual");
+}
+
+/**
+ * `useEpicDeleteTuiAgent` for one delete among several in a batch: the caller
+ * reports the batch's failures once (`toastFromOwnerHostBatchWriteFailures`),
+ * so a failure here raises no notice of its own.
+ */
+export function useEpicDeleteTuiAgentInBatch() {
+  return useEpicDeleteTuiAgentMutation("aggregate");
+}
+
+function useEpicDeleteTuiAgentMutation(
+  failurePresentation: "individual" | "aggregate",
+) {
   const client = useEpicRecordMutationClient();
   const sessionClient = useEpicSessionHostClient();
   const queryClient = useQueryClient();
@@ -123,9 +138,15 @@ export function useEpicDeleteTuiAgent() {
           source: "direct_ui",
         });
       },
-      onError: (error) => {
-        toastFromOwnerHostWriteError(error, "Couldn't delete terminal agent.");
-      },
+      onError:
+        failurePresentation === "individual"
+          ? (error) => {
+              toastFromOwnerHostWriteError(
+                error,
+                "Couldn't delete terminal agent.",
+              );
+            }
+          : undefined,
     },
   });
 }

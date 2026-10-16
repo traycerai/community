@@ -171,8 +171,10 @@ import {
 import { displayTitle } from "@/lib/display-title";
 import {
   useEpicArchiveChats,
-  useEpicDeleteChat,
+  useEpicDeleteChatInBatch,
 } from "@/hooks/epic/use-epic-chat-mutations";
+import { toastFromOwnerHostBatchWriteFailures } from "@/lib/owner-host-write-error-toast";
+import { toHostRpcError } from "@traycer-clients/shared/host-transport/host-messenger";
 import {
   useChatArchiveSupported,
   SET_CHAT_ARCHIVED_METHOD,
@@ -185,7 +187,7 @@ import {
   useEpicCreateArtifact,
   useEpicDeleteArtifact,
 } from "@/hooks/epic/use-epic-node-mutations";
-import { useEpicDeleteTuiAgent } from "@/hooks/epic/use-epic-tui-agent-mutations";
+import { useEpicDeleteTuiAgentInBatch } from "@/hooks/epic/use-epic-tui-agent-mutations";
 import {
   DEFAULT_EPIC_NODE_NAMES,
   isEpicArtifactKind,
@@ -1531,8 +1533,10 @@ function SidebarBulkDeleteController(props: {
   // artifact it speaks for. It reads its own `deletePending` off the
   // selection store rather than the hook's flag.
   const deleteArtifact = useEpicDeleteArtifact(null);
-  const deleteChat = useEpicDeleteChat();
-  const deleteTerminalAgent = useEpicDeleteTuiAgent();
+  // The batch reports its agents' failures once, below, so a selection
+  // spanning several unreachable hosts reads as that and not as one host.
+  const deleteChat = useEpicDeleteChatInBatch();
+  const deleteTerminalAgent = useEpicDeleteTuiAgentInBatch();
   const sessionHostId = useEpicSessionHostId();
   const chatsById = useChatsByIdForWriteRoute();
   const recordById = useMemo(
@@ -1596,6 +1600,10 @@ function SidebarBulkDeleteController(props: {
       if (target.kind !== "terminal-agent") markArtifactSelfDeleted(target.id);
     });
     setDeletePending(true);
+    const agentHostId = (target: (typeof targets)[number]): string | null =>
+      target.kind === "chat"
+        ? (chatsById[target.id]?.hostId ?? sessionHostId)
+        : (recordById.get(target.id)?.hostId ?? sessionHostId);
     void Promise.allSettled(
       targets.map((target) => {
         switch (target.kind) {
@@ -1608,18 +1616,42 @@ function SidebarBulkDeleteController(props: {
             return deleteChat.mutateAsync({
               epicId: props.epicId,
               chatId: target.id,
-              hostId: chatsById[target.id]?.hostId ?? sessionHostId,
+              hostId: agentHostId(target),
             });
           case "terminal-agent":
             return deleteTerminalAgent.mutateAsync({
               epicId: props.epicId,
               tuiAgentId: target.id,
-              hostId: recordById.get(target.id)?.hostId ?? sessionHostId,
+              hostId: agentHostId(target),
             });
         }
       }),
     )
       .then((results) => {
+        const agentOutcomes = targets.flatMap((target, index) => {
+          if (target.kind === "artifact") return [];
+          const result = results[index];
+          return [
+            {
+              hostId: agentHostId(target),
+              error:
+                result.status === "rejected"
+                  ? toHostRpcError(
+                      result.reason,
+                      target.kind === "chat"
+                        ? "epic.deleteChat"
+                        : "epic.deleteTuiAgent",
+                    )
+                  : null,
+            },
+          ];
+        });
+        toastFromOwnerHostBatchWriteFailures(
+          agentOutcomes,
+          agentOutcomes.length === 1
+            ? "Couldn't delete agent."
+            : "Couldn't delete some selected agents.",
+        );
         const successfulIds = targets.flatMap((target, index) =>
           results[index].status === "fulfilled" ? [target.id] : [],
         );
