@@ -20,16 +20,22 @@ import {
   setPhoneLayoutOnly,
   setRetentionProfile,
 } from "@traycer-clients/gui-app";
-import type {
-  RemoteHostFetcher,
-  RemoteHostFetchOutcome,
+import {
+  fetchRegisteredHostsViaHttp,
+  type RemoteHostFetcher,
+  type RemoteHostFetchOutcome,
 } from "@traycer-clients/shared/host-client/remote-fetcher";
 import {
   registerDevicePushTokenViaHttp,
   removeDevicePushTokenViaHttp,
 } from "@traycer-clients/shared/auth/push-token-fetcher";
 import { startNativeKeyboardBridge } from "./native-keyboard-bridge";
-import { buildDevHostFetcher } from "./dev-host-discovery";
+import {
+  buildDevHostDiscovery,
+  buildDevHostFetcher,
+  fleetRowsOf,
+  readDevHostDiscovery,
+} from "./dev-host-discovery";
 import { AuthSession, MobileAuthSheet } from "../auth-sheet";
 import { SANDBOXES_UNAVAILABLE_IN_STAGING } from "@traycer-clients/shared/host-client/sandbox-control";
 import { MobileRunnerHost } from "../mobile-runner-host";
@@ -102,14 +108,13 @@ function buildOpenPushSettings(): (() => Promise<void>) | null {
 
 const config = __TRAYCER_MOBILE_CONFIG__;
 
-// `null` hands discovery to gui-app's default fetcher — the registry list
-// (`GET /api/v3/hosts` through `MobileRunnerHost.listRegisteredHosts`)
-// projected into relay-backed `remote` entries. The same production path the
-// desktop shell is on.
+// `null` (a shipped build) hands discovery to gui-app's default fetcher — the
+// registry list (`GET /api/v3/hosts` through
+// `MobileRunnerHost.listRegisteredHosts`) projected into relay-backed `remote`
+// entries. The same production path the desktop shell is on. The dev entry
+// adds its loopback host to that same list (`buildDevHostDiscovery`, F25).
 const devHostFetch: (() => Promise<RemoteHostFetchOutcome>) | null =
   config.devHost === null ? null : buildDevHostFetcher(config.devHost);
-const remoteFetcher: RemoteHostFetcher | null =
-  devHostFetch === null ? null : () => devHostFetch();
 
 function bootstrap(): void {
   // Crash reporting comes up before anything that can fail, so a bootstrap
@@ -254,18 +259,22 @@ async function mount(input: {
       returnScheme === null
         ? null
         : new MobileAuthSheet(AuthSession, App, returnScheme),
-    // The selection authority's fleet rides the same dev-slot source the
-    // directory's fetcher uses, so a loopback dev host (never registered in
-    // the cloud) is still a derivation candidate. `null` = registry list.
+    // The selection authority's fleet rides the same discovery the
+    // directory's fetcher uses - the loopback dev host plus the account's
+    // registry hosts - so Activate accepts every host the directory lists.
+    // `null` = registry list.
     fleetHostIds:
       devHostFetch === null
         ? null
-        : async () => {
-            const outcome = await devHostFetch();
-            return outcome.kind === "hosts"
-              ? outcome.entries.map((entry) => entry.hostId)
-              : null;
-          },
+        : async (bearerToken) =>
+            fleetRowsOf(
+              await readDevHostDiscovery(devHostFetch, {
+                bearerToken: () => Promise.resolve(bearerToken),
+                listRegisteredHosts: (token) =>
+                  fetchRegisteredHostsViaHttp(config.authnBaseUrl, token),
+                relayBaseUrl: config.relayBaseUrl,
+              }),
+            ),
     // `@capacitor/barcode-scanner` has no web implementation, so the camera
     // capability exists only on a native install; the browser entry keeps the
     // manual code-entry path alone.
@@ -308,6 +317,17 @@ async function mount(input: {
   // listeners attach now so a cold-start tap is captured before the GUI
   // mounts.
   pushRegistration?.start(host.tokenStore, host);
+  const remoteFetcher: RemoteHostFetcher | null =
+    devHostFetch === null
+      ? null
+      : buildDevHostDiscovery(devHostFetch, {
+          bearerToken: async () => {
+            const stored = await host.tokenStore.get();
+            return stored === null ? null : stored.token;
+          },
+          listRegisteredHosts: (token) => host.listRegisteredHosts(token),
+          relayBaseUrl: host.relayBaseUrl,
+        });
   await stylesheet;
   const container = document.getElementById("root");
   if (container === null) {

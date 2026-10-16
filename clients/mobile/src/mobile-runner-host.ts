@@ -149,6 +149,12 @@ import type {
 import type { MobileAuthSheet } from "./auth-sheet";
 import type { MobilePushRegistration } from "./push-registration";
 
+/** One selection-fleet member: a host id, and whether it is a sandbox. */
+export interface FleetHostRow {
+  readonly hostId: string;
+  readonly sandbox: boolean;
+}
+
 export interface MobileRunnerHostOptions {
   readonly signInUrl: string;
   readonly authnBaseUrl: string;
@@ -197,10 +203,13 @@ export interface MobileRunnerHostOptions {
    * bearer). The dev entry passes the same dev-slot source the directory's
    * `remoteFetcher` uses, so the authority can derive an effective host for a
    * loopback dev host that is not registered in the cloud. Resolves to the
-   * fleet's host ids, or `null` on a transient failure (the current fleet is
-   * retained - a blip must not read as "you own no hosts").
+   * fleet's rows, each flagged sandbox or not, or `null` on a transient
+   * failure (the current fleet is retained - a blip must not read as "you own
+   * no hosts"). Given the stored bearer, or `null` while signed out.
    */
-  readonly fleetHostIds: (() => Promise<readonly string[] | null>) | null;
+  readonly fleetHostIds:
+    | ((bearerToken: string | null) => Promise<readonly FleetHostRow[] | null>)
+    | null;
   /**
    * Native QR scanner for link-login sign-in, or `null` where no camera
    * exists (the dev web entry, tests). Constructed by the entry point so the
@@ -345,7 +354,7 @@ export class MobileRunnerHost implements IRunnerHost {
   private readonly selectionAuthorityMount: InProcessSelectionAuthority;
   readonly selectionAuthority: SelectionAuthorityClient;
   private readonly fleetHostIds:
-    | (() => Promise<readonly string[] | null>)
+    | ((bearerToken: string | null) => Promise<readonly FleetHostRow[] | null>)
     | null;
 
   constructor(options: MobileRunnerHostOptions) {
@@ -467,16 +476,11 @@ export class MobileRunnerHost implements IRunnerHost {
     return null;
   }
 
-  private async resolveFleetHostIds(): Promise<ReadonlyArray<{
-    readonly hostId: string;
-    readonly sandbox: boolean;
-  }> | null> {
+  private async resolveFleetHostIds(): Promise<readonly FleetHostRow[] | null> {
     if (this.fleetHostIds !== null) {
-      // The dev-slot source names loopback hosts only, never a sandbox.
-      const hostIds = await this.fleetHostIds();
-      return hostIds === null
-        ? null
-        : hostIds.map((hostId) => ({ hostId, sandbox: false }));
+      // The dev entry's discovery: its loopback host plus the registry's.
+      const stored = await this.tokenStore.get();
+      return this.fleetHostIds(stored === null ? null : stored.token);
     }
     const stored = await this.tokenStore.get();
     if (stored === null) {
