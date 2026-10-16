@@ -12,8 +12,12 @@
 # processes until macOS swaps the machine to a halt. A slot bounds how many of
 # them run on the machine at the same time.
 #
-# `auto` sizes the pool from physical memory: one slot per 16 GB, minimum one.
-# `TRAYCER_MACHINE_SLOTS` overrides it for every name.
+# `auto` sizes the pool from the memory available when the slot is asked for:
+# one slot per 16 GiB, minimum one. On Linux that is MemAvailable from
+# /proc/meminfo (MemTotal on a kernel that does not report it); on macOS it is
+# physical memory. `TRAYCER_MACHINE_SLOTS` overrides it for every name.
+# `TRAYCER_MACHINE_SLOT_MEMINFO` points the Linux read at another file; it
+# exists for the tests and nothing else should set it.
 #
 # The internal monorepo's hook sources this file through its traycer/
 # submodule, so both repos' hooks take the same lock files and a commit in
@@ -52,16 +56,32 @@ machine_slot__count() {
             if [ "$requested" != "auto" ]; then
                 echo "machine-slot: ignoring invalid slot count '$requested'; using auto" >&2
             fi
-            local bytes=""
-            if [ -r /proc/meminfo ]; then
-                bytes=$(awk '/^MemTotal:/ { print $2 * 1024; exit }' /proc/meminfo)
+            # Linux: MemAvailable, read now. MemTotal counts memory that is
+            # not there to be had: files in a tmpfs /tmp (worker scratch on a
+            # shared VM) and the resident set of everything already running.
+            # Three type-checks sized from a 62 GB MemTotal with ~25 GB of
+            # tmpfs in use ran out of memory. MemTotal is only the fallback
+            # for a kernel that predates MemAvailable.
+            # macOS keeps hw.memsize: it compresses memory, so the free pages
+            # vm_stat reports are not a usable budget.
+            local kib="" meminfo="${TRAYCER_MACHINE_SLOT_MEMINFO:-/proc/meminfo}"
+            if [ -r "$meminfo" ]; then
+                kib=$(awk '
+                    /^MemAvailable:/ { available = $2 }
+                    /^MemTotal:/ { total = $2 }
+                    END { print (available != "" ? available : total) }
+                ' "$meminfo")
             else
-                bytes=$(sysctl -n hw.memsize 2>/dev/null || true)
+                kib=$(sysctl -n hw.memsize 2>/dev/null || true)
+                case "$kib" in
+                    '' | *[!0-9]*) kib="" ;;
+                    *) kib=$((kib / 1024)) ;;
+                esac
             fi
-            case "$bytes" in
+            case "$kib" in
                 '' | *[!0-9]*) echo 1 ;;
                 *)
-                    local slots=$((bytes / 17179869184))
+                    local slots=$((kib / 16777216))
                     [ "$slots" -lt 1 ] && slots=1
                     echo "$slots"
                     ;;
@@ -149,6 +169,10 @@ def report(message):
         handle.write(message + "\n")
     os.replace(staging, status_file)
 
+# The slot count is sized from available memory at each acquisition, so two callers
+# can disagree on it. That is safe: exclusion is the flock on one slot FILE,
+# so a smaller count only means this caller tries fewer files (indices
+# 0..slots-1) and never shares one a holder has.
 descriptors = []
 for index in range(slots):
     path = os.path.join(directory, "traycer-slot-%s.%d.lock" % (name, index))

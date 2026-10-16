@@ -513,3 +513,116 @@ describe("machine-slot.sh executable mode", () => {
     );
   });
 });
+
+// `auto` sizes the pool from MemAvailable, not MemTotal: on a Linux box whose
+// /tmp is tmpfs full of scratch (or whose RSS is already high) MemTotal counts
+// memory that is not there to be had. TRAYCER_MACHINE_SLOT_MEMINFO is a
+// test-only seam that points the count at a fake meminfo file, so these cases
+// do not depend on the memory of the machine running them.
+const KIB_PER_GIB = 1024 * 1024;
+
+function writeMeminfo(dir, { totalGib, availableGib }) {
+  const lines = [`MemTotal:       ${totalGib * KIB_PER_GIB} kB`];
+  lines.push(`MemFree:        ${KIB_PER_GIB} kB`);
+  if (availableGib !== undefined) {
+    lines.push(`MemAvailable:   ${availableGib * KIB_PER_GIB} kB`);
+  }
+  lines.push("Buffers:        1024 kB", "Cached:         4096 kB");
+  const path = join(dir, "meminfo");
+  writeFileSync(path, `${lines.join("\n")}\n`);
+  return path;
+}
+
+/** Sources the script and prints what machine_slot__count returns for
+ * `requested`, with a fake meminfo (and optionally the override) applied. */
+function slotCount(requested, env) {
+  return execFileSync(
+    "/bin/bash",
+    ["-c", `. "$1"; machine_slot__count "$2"`, "_", SCRIPT, requested],
+    { env: { ...baseEnv(), ...env }, encoding: "utf8" },
+  ).trim();
+}
+
+describe("machine_slot__count auto sizing", () => {
+  it("counts MemAvailable, not MemTotal: 62 GB total with 20 GB available is 1 slot", () => {
+    const meminfo = writeMeminfo(freshSlotDir(), {
+      totalGib: 62,
+      availableGib: 20,
+    });
+    expect(slotCount("auto", { TRAYCER_MACHINE_SLOT_MEMINFO: meminfo })).toBe(
+      "1",
+    );
+  });
+
+  it("gives one slot per 16 GiB available: 40 GB available is 2 slots", () => {
+    const meminfo = writeMeminfo(freshSlotDir(), {
+      totalGib: 62,
+      availableGib: 40,
+    });
+    expect(slotCount("auto", { TRAYCER_MACHINE_SLOT_MEMINFO: meminfo })).toBe(
+      "2",
+    );
+  });
+
+  it("never goes below one slot when almost nothing is available", () => {
+    const meminfo = writeMeminfo(freshSlotDir(), {
+      totalGib: 62,
+      availableGib: 2,
+    });
+    expect(slotCount("auto", { TRAYCER_MACHINE_SLOT_MEMINFO: meminfo })).toBe(
+      "1",
+    );
+  });
+
+  it("falls back to MemTotal when the kernel reports no MemAvailable", () => {
+    const meminfo = writeMeminfo(freshSlotDir(), { totalGib: 33 });
+    expect(slotCount("auto", { TRAYCER_MACHINE_SLOT_MEMINFO: meminfo })).toBe(
+      "2",
+    );
+  });
+
+  it("lets TRAYCER_MACHINE_SLOTS win over what is available", () => {
+    const meminfo = writeMeminfo(freshSlotDir(), {
+      totalGib: 62,
+      availableGib: 20,
+    });
+    expect(
+      slotCount("auto", {
+        TRAYCER_MACHINE_SLOT_MEMINFO: meminfo,
+        TRAYCER_MACHINE_SLOTS: "3",
+      }),
+    ).toBe("3");
+  });
+});
+
+describe("a count that differs between acquisitions", () => {
+  it("only makes a newcomer try fewer slot files; it never shares a held one", async () => {
+    const dir = freshSlotDir();
+    const logFile = join(dir, "log.txt");
+    const env = { TRAYCER_MACHINE_SLOT_DIR: dir, LOGFILE: logFile };
+    const waitForLine = async (line) => {
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        if (readLogLines(logFile).includes(line)) return;
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      throw new Error(`timed out waiting for ${line}`);
+    };
+
+    // Plenty of memory when A and B ask: they take slot files 0 and 1.
+    const a = runSlot(["shrink", "2", ...markerCommand("A", "0.6")], env);
+    await waitForLine("start:A");
+    const b = runSlot(["shrink", "2", ...markerCommand("B", "3")], env);
+    await waitForLine("start:B");
+    // Memory has since dropped: C's count is 1, so it only tries slot file 0,
+    // which A holds, and must wait for A even though slot file 1 exists.
+    const c = runSlot(["shrink", "1", ...markerCommand("C", "0.1")], env);
+    const results = await Promise.all([a.done, b.done, c.done]);
+    for (const result of results) {
+      expect(result.code, result.stderr).toBe(0);
+    }
+
+    const lines = readLogLines(logFile);
+    expect(lines.indexOf("start:C")).toBeGreaterThan(lines.indexOf("end:A"));
+    expect(lines.indexOf("start:C")).toBeLessThan(lines.indexOf("end:B"));
+  }, 15000);
+});
