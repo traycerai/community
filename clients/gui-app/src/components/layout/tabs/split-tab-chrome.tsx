@@ -15,8 +15,23 @@ import { useWhollyInTabStrip } from "./use-wholly-in-tab-strip";
 const SPLIT_ROW_PADDING_CLASS = "pr-[clamp(0.75rem,5%,1.5rem)] pl-2";
 const SPLIT_CONTROL_WIDTH_CLASS = "w-11";
 
-/** Whether the members below sit in the selected pair, which draws the underline. */
-const SplitPairSelectedContext = createContext(false);
+/**
+ * Whether the members below sit in the selected pair, which draws the
+ * underline, and if so whether its box runs into the sheet: a joined box
+ * paints the pane's fill behind the raised member, an unjoined one (partly
+ * out of the strip, the layout editor's miniature) paints none.
+ */
+type SplitPairSelection = "unselected" | "joined" | "unjoined";
+const SplitPairSelectionContext =
+  createContext<SplitPairSelection>("unselected");
+
+function splitPairSelection(
+  selected: boolean,
+  pane: SheetJoinPane | null,
+): SplitPairSelection {
+  if (!selected) return "unselected";
+  return pane === null ? "unjoined" : "joined";
+}
 
 interface SplitTabLayoutProps {
   readonly splitId: string;
@@ -40,8 +55,9 @@ export function SplitTabLayout(props: SplitTabLayoutProps): ReactNode {
   const pane = inStrip ? props.joined : null;
   usePublishSheetJoin(pane, null);
   const selected = props.selectedSide !== null;
+  const selection = splitPairSelection(selected, pane);
   return (
-    <SplitPairSelectedContext value={selected}>
+    <SplitPairSelectionContext value={selection}>
       <div className="relative flex w-full min-w-0 items-end">
         <div
           className={cn(
@@ -96,7 +112,7 @@ export function SplitTabLayout(props: SplitTabLayoutProps): ReactNode {
           </div>
         </div>
       </div>
-    </SplitPairSelectedContext>
+    </SplitPairSelectionContext>
   );
 }
 
@@ -161,13 +177,13 @@ export function SplitMemberChrome(props: {
   readonly focused: boolean;
   readonly color: string | null;
 }) {
-  const pairSelected = useContext(SplitPairSelectedContext);
+  const selection = useContext(SplitPairSelectionContext);
   const accent = props.color ?? "var(--color-primary)";
   if (props.focused) {
-    return <SplitRaisedTab color={accent} />;
+    return <SplitRaisedTab color={accent} filled={selection !== "joined"} />;
   }
 
-  if (pairSelected) {
+  if (selection !== "unselected") {
     return (
       <>
         <span
@@ -201,16 +217,24 @@ export function SplitMemberChrome(props: {
 /**
  * The focused member's raised tab: sides and top in `color`, open at the
  * bottom, with a concave foot at each bottom corner that lands on the
- * underline's level, so the underline on either side runs into it.
+ * underline's level, so the underline on either side runs into it. `filled`
+ * paints its inside in the background when no joined box paints it.
  */
-function SplitRaisedTab(props: { readonly color: string }) {
+function SplitRaisedTab(props: {
+  readonly color: string;
+  readonly filled: boolean;
+}) {
   return (
     <span
       aria-hidden
       data-testid="split-member-raised-tab"
+      data-filled={props.filled ? "true" : "false"}
       className="pointer-events-none absolute inset-x-0 inset-y-0.5"
       style={{ "--swatch": props.color } as CSSProperties}
     >
+      {props.filled ? (
+        <span className="absolute inset-x-[calc(--spacing(2)-1px)] inset-y-0 rounded-t-lg bg-background" />
+      ) : null}
       {/* Inset one pixel less than a foot is wide, so its side border lies
           on the foot's. */}
       <span className="absolute inset-x-[calc(--spacing(2)-1px)] top-0 bottom-2 rounded-t-lg border border-b-0 border-(--swatch)" />

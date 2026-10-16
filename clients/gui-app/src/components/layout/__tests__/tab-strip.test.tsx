@@ -1388,6 +1388,52 @@ describe("<TabStrip />", () => {
     ).toBe("var(--color-primary)");
   });
 
+  it("fills the raised member only when no joined box paints behind it", () => {
+    const pair = (joined: "surface" | null): ReactNode => (
+      <SplitTabLayout
+        splitId="pair"
+        selectedSide="left"
+        joined={joined}
+        control={null}
+        left={<SplitMemberChrome focused color={null} />}
+        right={<SplitMemberChrome focused={false} color={null} />}
+      />
+    );
+    const { rerender } = render(pair("surface"));
+    expect(screen.getByTestId("split-member-raised-tab").dataset.filled).toBe(
+      "false",
+    );
+
+    // Partly out of the strip, or in the drag overlay: unjoined, so nothing
+    // behind the member paints, and it takes the background itself.
+    rerender(pair(null));
+    expect(screen.getByTestId("split-member-raised-tab").dataset.filled).toBe(
+      "true",
+    );
+  });
+
+  it("draws no underline or raised member on an unselected pair", () => {
+    render(
+      <SplitTabLayout
+        splitId="pair"
+        selectedSide={null}
+        joined={null}
+        control={null}
+        left={<SplitMemberChrome focused={false} color={null} />}
+        right={<SplitMemberChrome focused={false} color="#12ab34" />}
+      />,
+    );
+    expect(screen.queryByTestId("split-underline-control-pair")).toBeNull();
+    expect(screen.queryByTestId("split-underline-segment")).toBeNull();
+    expect(screen.queryByTestId("split-member-raised-tab")).toBeNull();
+    expect(screen.getByTestId("split-tab-divider-pair")).toBeTruthy();
+    expect(
+      screen
+        .getByTestId("tab-color-edge-line")
+        .style.getPropertyValue("--swatch"),
+    ).toBe("#12ab34");
+  });
+
   it("draws a grouped tab in its group's colour, and in its own again once it leaves the group", async () => {
     const { beta } = seedTwoEpicTabs();
     useTabsStore.getState().setTabCustomization(beta, { color: "#ff0000" });
