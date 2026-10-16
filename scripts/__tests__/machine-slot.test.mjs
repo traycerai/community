@@ -340,9 +340,10 @@ describe("machine-slot.sh executable mode", () => {
       shimPath,
       [
         "#!/bin/bash",
-        // Only the holder's own invocation (dir, name, slots, timeout,
-        // status_file, parent -> 8 args total) has more than 3 arguments;
-        // the `python3 -c 'import fcntl'` capability probe has 2.
+        // Only the holder's own invocation (-c, the script, then dir, name,
+        // slots, timeout, status_file, parent, admit, meminfo -> 10 args
+        // total) has more than 3 arguments; the `python3 -c 'import fcntl'`
+        // capability probe has 2.
         'if [ "$1" = "-c" ] && [ "$#" -gt 3 ]; then',
         "    sleep 0.6",
         "fi",
@@ -613,9 +614,9 @@ describe("machine_slot__count auto pool", () => {
   it("reads a MemTotal with leading zeros as decimal, not octal", () => {
     const dir = freshSlotDir();
     const meminfo = join(dir, "meminfo");
-    writeFileSync(meminfo, "MemTotal:       0062914560 kB\n");
+    writeFileSync(meminfo, "MemTotal:       0100663296 kB\n");
     expect(slotCount("auto", { TRAYCER_MACHINE_SLOT_MEMINFO: meminfo })).toBe(
-      "3",
+      "6",
     );
   });
 
@@ -642,32 +643,61 @@ describe("machine-slot.sh auto admission", () => {
   const LOW = { totalGib: 62, availableGib: 5 };
   const HIGH = { totalGib: 62, availableGib: 20 };
 
+  /** Env for a run against a fake meminfo. The settle window is set to 0 by
+   * default so only the tests about it depend on it. */
+  function admissionEnv(dir, extra) {
+    return {
+      TRAYCER_MACHINE_SLOT_DIR: dir,
+      TRAYCER_MACHINE_SLOT_MEMINFO: join(dir, "meminfo"),
+      TRAYCER_MACHINE_SLOT_SETTLE: "0",
+      TRAYCER_MACHINE_SLOT_TIMEOUT: "30",
+      LOGFILE: join(dir, "log.txt"),
+      ...extra,
+    };
+  }
+
+  /** An outside process that holds the flock on one lock file until killed. */
+  async function holdFile(path) {
+    const holder = spawn(
+      "python3",
+      [
+        "-I",
+        "-c",
+        [
+          "import fcntl, os, sys, time",
+          "fd = os.open(sys.argv[1], os.O_CREAT | os.O_RDWR, 0o600)",
+          "fcntl.flock(fd, fcntl.LOCK_EX)",
+          'sys.stdout.write("locked\\n")',
+          "sys.stdout.flush()",
+          "time.sleep(60)",
+        ].join("\n"),
+        path,
+      ],
+      { stdio: ["ignore", "pipe", "inherit"] },
+    );
+    pidsToKill.push(holder.pid);
+    await new Promise((resolve) => holder.stdout.once("data", resolve));
+    return holder;
+  }
+
   it("always admits a lone caller, even when less than 16 GiB is available", async () => {
     const dir = freshSlotDir();
-    const logFile = join(dir, "log.txt");
-    const meminfo = writeMeminfo(dir, LOW);
-    const { done } = runSlot(["lone", "auto", ...markerCommand("A", "0.1")], {
-      TRAYCER_MACHINE_SLOT_DIR: dir,
-      TRAYCER_MACHINE_SLOT_MEMINFO: meminfo,
-      LOGFILE: logFile,
-      TRAYCER_MACHINE_SLOT_TIMEOUT: "10",
-    });
+    writeMeminfo(dir, LOW);
+    const { done } = runSlot(
+      ["lone", "auto", ...markerCommand("A", "0.1")],
+      admissionEnv(dir, { TRAYCER_MACHINE_SLOT_TIMEOUT: "10" }),
+    );
     const result = await done;
     expect(result.code, result.stderr).toBe(0);
     expect(result.stderr).not.toMatch(/waited|waiting/);
-    expect(readLogLines(logFile)).toEqual(["start:A", "end:A"]);
+    expect(readLogLines(join(dir, "log.txt"))).toEqual(["start:A", "end:A"]);
   }, 15000);
 
   it("refuses a second holder while under 16 GiB is available and admits it once the meminfo is rewritten", async () => {
     const dir = freshSlotDir();
     const logFile = join(dir, "log.txt");
-    const meminfo = writeMeminfo(dir, LOW);
-    const env = {
-      TRAYCER_MACHINE_SLOT_DIR: dir,
-      TRAYCER_MACHINE_SLOT_MEMINFO: meminfo,
-      LOGFILE: logFile,
-      TRAYCER_MACHINE_SLOT_TIMEOUT: "20",
-    };
+    writeMeminfo(dir, LOW);
+    const env = admissionEnv(dir, { TRAYCER_MACHINE_SLOT_TIMEOUT: "20" });
 
     const a = runSlot(["gate", "auto", ...markerCommand("A", "6")], env);
     await waitForLine(logFile, "start:A");
@@ -685,22 +715,17 @@ describe("machine-slot.sh auto admission", () => {
     expect(ra.code, ra.stderr).toBe(0);
   }, 25000);
 
-  it("admits a waiter as soon as memory allows, and a later arrival does not strand it or jump ahead of it", async () => {
+  it("admits a waiter and a later arrival once memory allows, without either waiting for the holder to finish", async () => {
     const dir = freshSlotDir();
     const logFile = join(dir, "log.txt");
-    const meminfo = writeMeminfo(dir, LOW);
-    const env = {
-      TRAYCER_MACHINE_SLOT_DIR: dir,
-      TRAYCER_MACHINE_SLOT_MEMINFO: meminfo,
-      LOGFILE: logFile,
-      TRAYCER_MACHINE_SLOT_TIMEOUT: "20",
-    };
+    writeMeminfo(dir, LOW);
+    const env = admissionEnv(dir, { TRAYCER_MACHINE_SLOT_TIMEOUT: "20" });
 
     const a = runSlot(["order", "auto", ...markerCommand("A", "8")], env);
     await waitForLine(logFile, "start:A");
     const b = runSlot(["order", "auto", ...markerCommand("B", "0.1")], env);
     await pause(1500);
-    // C arrives later and under the same low memory: it must not get in first.
+    // C arrives later, still under low memory: neither of them starts yet.
     const c = runSlot(["order", "auto", ...markerCommand("C", "0.1")], env);
     await pause(1500);
     expect(readLogLines(logFile)).toEqual(["start:A"]);
@@ -712,7 +737,7 @@ describe("machine-slot.sh auto admission", () => {
       // Neither of them timed out and ran unserialized.
       expect(result.stderr).not.toMatch(/waited/);
     }
-    // Both ran while A still held its file: nobody waited for A to finish.
+    // Both ran while A still held its file.
     const lines = readLogLines(logFile);
     expect(lines.indexOf("end:A")).toBe(-1);
     expect(lines).toEqual(
@@ -721,33 +746,138 @@ describe("machine-slot.sh auto admission", () => {
     expect((await a.done).code).toBe(0);
   }, 30000);
 
+  it("makes a caller that is not alone wait out the settle window of a holder just admitted, even with plenty of memory", async () => {
+    const dir = freshSlotDir();
+    const logFile = join(dir, "log.txt");
+    writeMeminfo(dir, HIGH);
+    const env = admissionEnv(dir, { TRAYCER_MACHINE_SLOT_SETTLE: "5" });
+
+    const a = runSlot(["settle", "auto", ...markerCommand("A", "12")], env);
+    await waitForLine(logFile, "start:A");
+    const b = runSlot(["settle", "auto", ...markerCommand("B", "0.1")], env);
+    // Memory would admit B; A is still ramping up to its peak.
+    await pause(2500);
+    expect(readLogLines(logFile)).toEqual(["start:A"]);
+
+    // The window passes while A is still running, and B gets in.
+    await waitForLine(logFile, "start:B");
+    expect(readLogLines(logFile)).not.toContain("end:A");
+    const rb = await b.done;
+    expect(rb.code, rb.stderr).toBe(0);
+    expect(rb.stderr).not.toMatch(/waited/);
+    await a.done;
+  }, 30000);
+
+  it("does not apply the settle window to a lone caller, whatever the last holder left behind", async () => {
+    const dir = freshSlotDir();
+    const logFile = join(dir, "log.txt");
+    writeMeminfo(dir, HIGH);
+    const env = admissionEnv(dir, { TRAYCER_MACHINE_SLOT_SETTLE: "600" });
+
+    const first = await runSlot(
+      ["lone-window", "auto", ...markerCommand("A", "0.1")],
+      env,
+    ).done;
+    expect(first.code, first.stderr).toBe(0);
+    // A's slot file was stamped a moment ago but nothing holds it now.
+    const startedAt = Date.now();
+    const second = await runSlot(
+      ["lone-window", "auto", ...markerCommand("B", "0.1")],
+      env,
+    ).done;
+    expect(second.code, second.stderr).toBe(0);
+    expect(Date.now() - startedAt).toBeLessThan(4000);
+    expect(readLogLines(logFile)).toEqual([
+      "start:A",
+      "end:A",
+      "start:B",
+      "end:B",
+    ]);
+  }, 15000);
+
+  it("sees a holder that is only on slot file 1: a probe of file 0 alone would admit the newcomer", async () => {
+    const dir = freshSlotDir();
+    const logFile = join(dir, "log.txt");
+    writeMeminfo(dir, LOW);
+    const env = admissionEnv(dir);
+
+    const holder = await holdFile(join(dir, "traycer-slot-file-one.1.lock"));
+    const a = runSlot(["file-one", "auto", ...markerCommand("A", "0.1")], env);
+    // Under low memory, with file 1 held, A is not alone and must wait.
+    await pause(2000);
+    expect(readLogLines(logFile)).toEqual([]);
+
+    holder.kill("SIGKILL");
+    const result = await a.done;
+    expect(result.code, result.stderr).toBe(0);
+    expect(readLogLines(logFile)).toEqual(["start:A", "end:A"]);
+  }, 20000);
+
+  it("sees a holder from a larger explicit pool on a file beyond the caller's own pool", async () => {
+    const dir = freshSlotDir();
+    const logFile = join(dir, "log.txt");
+    // MemTotal 20 GiB: the auto pool is 1 file, but a holder of an explicit
+    // pool of 5 sits on slot file 3.
+    writeMeminfo(dir, { totalGib: 20, availableGib: 5 });
+    const env = admissionEnv(dir);
+    for (let index = 0; index < 3; index += 1) {
+      writeFileSync(join(dir, `traycer-slot-beyond.${index}.lock`), "");
+    }
+
+    const holder = await holdFile(join(dir, "traycer-slot-beyond.3.lock"));
+    const a = runSlot(["beyond", "auto", ...markerCommand("A", "0.1")], env);
+    await pause(2000);
+    expect(readLogLines(logFile)).toEqual([]);
+
+    holder.kill("SIGKILL");
+    const result = await a.done;
+    expect(result.code, result.stderr).toBe(0);
+    expect(readLogLines(logFile)).toEqual(["start:A", "end:A"]);
+  }, 20000);
+
+  it("runs three low-memory callers launched at once with nothing held strictly one at a time", async () => {
+    const dir = freshSlotDir();
+    const logFile = join(dir, "log.txt");
+    writeMeminfo(dir, LOW);
+    const env = admissionEnv(dir);
+
+    const runs = ["A", "B", "C"].map((label) =>
+      runSlot(["burst", "auto", ...markerCommand(label, "0.4")], env),
+    );
+    const results = await Promise.all(runs.map((run) => run.done));
+    for (const result of results) {
+      expect(result.code, result.stderr).toBe(0);
+      expect(result.stderr).not.toMatch(/waited/);
+    }
+
+    const lines = readLogLines(logFile);
+    expect(lines).toHaveLength(6);
+    for (let index = 0; index < lines.length; index += 2) {
+      const label = lines[index].slice("start:".length);
+      expect(lines[index]).toBe(`start:${label}`);
+      expect(lines[index + 1]).toBe(`end:${label}`);
+    }
+  }, 40000);
+
   it("does not check memory for an explicit count", async () => {
     const dir = freshSlotDir();
     const logFile = join(dir, "log.txt");
-    const meminfo = writeMeminfo(dir, LOW);
-    const env = {
-      TRAYCER_MACHINE_SLOT_DIR: dir,
-      TRAYCER_MACHINE_SLOT_MEMINFO: meminfo,
-      LOGFILE: logFile,
-    };
-    const a = runSlot(["explicit", "2", ...markerCommand("A", "1")], env);
+    writeMeminfo(dir, LOW);
+    const env = admissionEnv(dir, { TRAYCER_MACHINE_SLOT_SETTLE: "600" });
+    const a = runSlot(["explicit", "2", ...markerCommand("A", "4")], env);
     await waitForLine(logFile, "start:A");
     const b = runSlot(["explicit", "2", ...markerCommand("B", "0.1")], env);
     await waitForLine(logFile, "end:B");
     expect(readLogLines(logFile)).not.toContain("end:A");
     await Promise.all([a.done, b.done]);
-  }, 15000);
+  }, 20000);
 
   it("does not check memory when the kernel reports no MemAvailable", async () => {
     const dir = freshSlotDir();
     const logFile = join(dir, "log.txt");
-    const meminfo = writeMeminfo(dir, { totalGib: 33 });
-    const env = {
-      TRAYCER_MACHINE_SLOT_DIR: dir,
-      TRAYCER_MACHINE_SLOT_MEMINFO: meminfo,
-      LOGFILE: logFile,
-    };
-    const a = runSlot(["nomemavail", "auto", ...markerCommand("A", "1")], env);
+    writeMeminfo(dir, { totalGib: 33 });
+    const env = admissionEnv(dir, { TRAYCER_MACHINE_SLOT_SETTLE: "600" });
+    const a = runSlot(["nomemavail", "auto", ...markerCommand("A", "4")], env);
     await waitForLine(logFile, "start:A");
     const b = runSlot(
       ["nomemavail", "auto", ...markerCommand("B", "0.1")],
@@ -756,7 +886,7 @@ describe("machine-slot.sh auto admission", () => {
     await waitForLine(logFile, "end:B");
     expect(readLogLines(logFile)).not.toContain("end:A");
     await Promise.all([a.done, b.done]);
-  }, 15000);
+  }, 20000);
 });
 
 describe("a count that differs between acquisitions", () => {

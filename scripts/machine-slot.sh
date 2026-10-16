@@ -18,19 +18,34 @@
 #   (MemTotal on Linux, hw.memsize on macOS), minimum one. It is stable, so
 #   every caller on a machine agrees on it.
 #
-#   ADMISSION: on Linux, a caller only takes a free slot file while MemAvailable
-#   (re-read on every poll while it waits) is at least 16 GiB, or while no slot
-#   file is held at all, so a lone caller is never starved. MemAvailable already
-#   leaves out what the current holders use, which is why it gates a newcomer
-#   rather than sizing the pool: sizing from it would count the holders twice.
-#   Memory in a tmpfs /tmp and other resident sets show up in it, MemTotal
-#   hides them. A kernel without MemAvailable, and macOS (it compresses
-#   memory, so vm_stat's free pages are not a usable budget), get the pool only.
+#   ADMISSION: on Linux, a caller only takes a free slot file in one of two
+#   cases. Either no slot file is held at all, so a lone caller is never
+#   starved; or MemAvailable (re-read on every poll while it waits) is at least
+#   16 GiB AND no held slot file was taken in the last 75 seconds. The two
+#   halves cover different holders. MemAvailable already leaves out what the
+#   holders use, but only holders that have reached their peak: a holder just
+#   admitted is still in format or nx startup, long before its type-check
+#   takes its ~8 GB. The settle window covers that ramp-up, so commits
+#   arriving seconds apart are not all admitted on the same memory reading.
+#   (A holder stamps its slot file's mtime when it is admitted.) MemAvailable
+#   gates a newcomer rather than sizing the pool because sizing from it would
+#   count the holders twice. Memory in a tmpfs /tmp and other resident sets
+#   show up in it, MemTotal hides them. A kernel without MemAvailable, and
+#   macOS (it compresses memory, so vm_stat's free pages are not a usable
+#   budget), get the pool only.
+#
+#   A caller refused by admission behind a long holder waits up to
+#   TRAYCER_MACHINE_SLOT_TIMEOUT and then runs unserialized with a warning,
+#   which is what happened before this lock existed.
 #
 # `TRAYCER_MACHINE_SLOTS` (or an explicit count argument) is a pool of exactly
-# that size with no admission check. `TRAYCER_MACHINE_SLOT_MEMINFO` points the
-# Linux reads at another regular file; it exists for the tests and nothing
-# else should set it.
+# that size with no admission check: it turns admission off. Admission also
+# looks at up to 16 slot files for the name, not only this caller's pool, so a
+# holder from a larger explicit pool is seen.
+#
+# Test-only, nothing else should set them: `TRAYCER_MACHINE_SLOT_MEMINFO`
+# points the Linux reads at another regular file, and
+# `TRAYCER_MACHINE_SLOT_SETTLE` is the settle window in seconds.
 #
 # The internal monorepo's hook sources this file through its traycer/
 # submodule, so both repos' hooks take the same lock files and a commit in
@@ -105,11 +120,18 @@ machine_slot__count() {
                 kib=$(sysctl -n hw.memsize 2>/dev/null || true)
                 case "$kib" in
                     '' | *[!0-9]*) kib="" ;;
-                    *) kib=$((10#$kib / 1024)) ;;
+                    *)
+                        if [ "${#kib}" -gt 15 ]; then
+                            kib=""
+                        else
+                            kib=$((10#$kib / 1024))
+                        fi
+                        ;;
                 esac
             fi
-            # Cap the digits before arithmetic, as for an explicit count: an
-            # absurd value must not overflow into something negative.
+            # Cap the digits before the pool arithmetic, as for an explicit
+            # count (the macOS value was capped above, before its own division):
+            # an absurd value must not overflow into something negative.
             case "$kib" in
                 '' | *[!0-9]*) echo 1 ;;
                 *)
@@ -221,6 +243,19 @@ for index in range(slots):
         sys.exit(0)
 
 ADMIT_KIB = 16 * 1024 * 1024
+# Admission looks at this many slot files for the name, so a holder from a
+# larger explicit pool than the one this caller sized is seen too.
+PROBE_LIMIT = 16
+
+def settle_seconds():
+    # How long a newly admitted holder is given to reach its peak. Test-only
+    # override; anything unusable keeps the default.
+    value = os.environ.get("TRAYCER_MACHINE_SLOT_SETTLE", "")
+    if value.isdigit() and len(value) <= 6:
+        return int(value)
+    return 75
+
+SETTLE = settle_seconds()
 
 def available_kib():
     # MemAvailable in KiB, or None when there is nothing to check against:
@@ -244,8 +279,24 @@ def available_kib():
 def busy(error):
     return error.errno in (errno.EWOULDBLOCK, errno.EAGAIN, errno.EACCES)
 
+def open_extra_files():
+    # Existing slot files beyond the pool this caller sized, never created here. The
+    # first missing one ends the run.
+    extras = []
+    for index in range(slots, max(slots, PROBE_LIMIT)):
+        path = os.path.join(directory, "traycer-slot-%s.%d.lock" % (name, index))
+        try:
+            extras.append(os.open(path, os.O_RDWR | os.O_NOFOLLOW))
+        except OSError:
+            break
+    return extras
+
+def settling(descriptor):
+    age = time.time() - os.fstat(descriptor).st_mtime
+    return 0 <= age < SETTLE
+
 def try_take():
-    # The first free slot file, if memory admits one more holder, else None.
+    # The first free slot file, if admission allows one more holder, else None.
     # Exclusion is only ever the flock on a slot file, so nothing here can
     # let two holders share one. Memory is read again on every call.
     available = available_kib()
@@ -256,26 +307,29 @@ def try_take():
             if not busy(error):
                 raise
             continue
-        if available is None or available >= ADMIT_KIB:
+        if available is None:
             return descriptor
-        # Short of memory: admit only if no other slot file is held, so a
-        # lone caller still runs. Probe the others, then give the probes back.
+        # Probe every other slot file, then give the probes back. A file the
+        # probe cannot lock is held by someone else.
+        extras = open_extra_files()
         probed = []
-        alone = True
-        for other in descriptors:
-            if other == descriptor:
-                continue
+        others_held = []
+        for other in [d for d in descriptors if d != descriptor] + extras:
             try:
                 fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 probed.append(other)
             except OSError as error:
                 if not busy(error):
                     raise
-                alone = False
-                break
+                others_held.append(other)
         for other in probed:
             fcntl.flock(other, fcntl.LOCK_UN)
-        if alone:
+        ramping = any(settling(other) for other in others_held)
+        for extra in extras:
+            os.close(extra)
+        # Alone: always admitted. Otherwise memory must allow it and no
+        # holder may still be ramping up to its peak.
+        if not others_held or (available >= ADMIT_KIB and not ramping):
             return descriptor
         fcntl.flock(descriptor, fcntl.LOCK_UN)
         return None
@@ -295,7 +349,7 @@ while held is None:
         sys.exit(0)
     if not announced:
         sys.stderr.write(
-            "machine-slot: waiting for a %r slot (%d slot file(s); a free one is only taken while memory allows)...\n" % (name, slots)
+            "machine-slot: waiting for a %r slot (%d slot file(s); a free one is only taken while memory allows and no holder is still starting up)...\n" % (name, slots)
         )
         sys.stderr.flush()
         announced = True
@@ -305,6 +359,12 @@ while held is None:
 for descriptor in descriptors:
     if descriptor != held:
         os.close(descriptor)
+# Stamp the slot file: a newcomer that is not alone waits out the settle window
+# from here. Best effort.
+try:
+    os.utime(held)
+except OSError:
+    pass
 # Let go of the caller stderr: pre-commit reads the hook output until EOF,
 # and this process outlives the hook by up to one poll interval.
 null = os.open(os.devnull, os.O_WRONLY)
