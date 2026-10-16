@@ -12,12 +12,25 @@
 # processes until macOS swaps the machine to a halt. A slot bounds how many of
 # them run on the machine at the same time.
 #
-# `auto` sizes the pool from the memory available when the slot is asked for:
-# one slot per 16 GiB, minimum one. On Linux that is MemAvailable from
-# /proc/meminfo (MemTotal on a kernel that does not report it); on macOS it is
-# physical memory. `TRAYCER_MACHINE_SLOTS` overrides it for every name.
-# `TRAYCER_MACHINE_SLOT_MEMINFO` points the Linux read at another file; it
-# exists for the tests and nothing else should set it.
+# `auto` has two parts.
+#
+#   POOL: how many slot files exist, one per 16 GiB of physical memory
+#   (MemTotal on Linux, hw.memsize on macOS), minimum one. It is stable, so
+#   every caller on a machine agrees on it.
+#
+#   ADMISSION: on Linux, a caller only takes a free slot file while MemAvailable
+#   (re-read on every poll while it waits) is at least 16 GiB, or while no slot
+#   file is held at all, so a lone caller is never starved. MemAvailable already
+#   leaves out what the current holders use, which is why it gates a newcomer
+#   rather than sizing the pool: sizing from it would count the holders twice.
+#   Memory in a tmpfs /tmp and other resident sets show up in it, MemTotal
+#   hides them. A kernel without MemAvailable, and macOS (it compresses
+#   memory, so vm_stat's free pages are not a usable budget), get the pool only.
+#
+# `TRAYCER_MACHINE_SLOTS` (or an explicit count argument) is a pool of exactly
+# that size with no admission check. `TRAYCER_MACHINE_SLOT_MEMINFO` points the
+# Linux reads at another regular file; it exists for the tests and nothing
+# else should set it.
 #
 # The internal monorepo's hook sources this file through its traycer/
 # submodule, so both repos' hooks take the same lock files and a commit in
@@ -46,6 +59,30 @@
 #
 # Written for bash 3.2 (macOS /bin/bash): no coproc, no {fd} redirections.
 
+# True when the slot count is a number (an argument or TRAYCER_MACHINE_SLOTS)
+# rather than `auto`. An explicit count has no admission check.
+machine_slot__explicit() {
+    local requested="$1"
+    if [ -n "${TRAYCER_MACHINE_SLOTS:-}" ]; then
+        requested="$TRAYCER_MACHINE_SLOTS"
+    fi
+    case "$requested" in
+        '' | *[!0-9]*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+# The file the Linux memory reads come from. The test seam is only honoured
+# for a regular file: a FIFO or a device would hang the read.
+machine_slot__meminfo() {
+    if [ -n "${TRAYCER_MACHINE_SLOT_MEMINFO:-}" ] && [ -f "$TRAYCER_MACHINE_SLOT_MEMINFO" ]; then
+        printf '%s' "$TRAYCER_MACHINE_SLOT_MEMINFO"
+    else
+        printf '%s' /proc/meminfo
+    fi
+}
+
+# Prints the size of the pool: how many slot files there are.
 machine_slot__count() {
     local requested="$1"
     if [ -n "${TRAYCER_MACHINE_SLOTS:-}" ]; then
@@ -56,34 +93,33 @@ machine_slot__count() {
             if [ "$requested" != "auto" ]; then
                 echo "machine-slot: ignoring invalid slot count '$requested'; using auto" >&2
             fi
-            # Linux: MemAvailable, read now. MemTotal counts memory that is
-            # not there to be had: files in a tmpfs /tmp (worker scratch on a
-            # shared VM) and the resident set of everything already running.
-            # Three type-checks sized from a 62 GB MemTotal with ~25 GB of
-            # tmpfs in use ran out of memory. MemTotal is only the fallback
-            # for a kernel that predates MemAvailable.
-            # macOS keeps hw.memsize: it compresses memory, so the free pages
-            # vm_stat reports are not a usable budget.
-            local kib="" meminfo="${TRAYCER_MACHINE_SLOT_MEMINFO:-/proc/meminfo}"
-            if [ -r "$meminfo" ]; then
-                kib=$(awk '
-                    /^MemAvailable:/ { available = $2 }
-                    /^MemTotal:/ { total = $2 }
-                    END { print (available != "" ? available : total) }
-                ' "$meminfo")
+            # The pool is physical memory, never MemAvailable: MemAvailable
+            # already leaves out what the current holders use, so dividing it
+            # by 16 GiB would count them twice (see ADMISSION in the header).
+            # macOS keeps hw.memsize.
+            local kib="" meminfo
+            meminfo="$(machine_slot__meminfo)"
+            if [ -f "$meminfo" ] && [ -r "$meminfo" ]; then
+                kib=$(awk '/^MemTotal:/ { print $2; exit }' "$meminfo")
             else
                 kib=$(sysctl -n hw.memsize 2>/dev/null || true)
                 case "$kib" in
                     '' | *[!0-9]*) kib="" ;;
-                    *) kib=$((kib / 1024)) ;;
+                    *) kib=$((10#$kib / 1024)) ;;
                 esac
             fi
+            # Cap the digits before arithmetic, as for an explicit count: an
+            # absurd value must not overflow into something negative.
             case "$kib" in
                 '' | *[!0-9]*) echo 1 ;;
                 *)
-                    local slots=$((kib / 16777216))
-                    [ "$slots" -lt 1 ] && slots=1
-                    echo "$slots"
+                    if [ "${#kib}" -gt 12 ]; then
+                        echo 1
+                    else
+                        local slots=$((10#$kib / 16777216))
+                        [ "$slots" -lt 1 ] && slots=1
+                        echo "$slots"
+                    fi
                     ;;
             esac
             ;;
@@ -138,8 +174,13 @@ machine_slot_acquire() {
         return 0
     fi
 
-    local slots dir timeout status_file status holder
+    local slots admit meminfo dir timeout status_file status holder
     slots="$(machine_slot__count "$2")"
+    admit=1
+    if machine_slot__explicit "$2"; then
+        admit=0
+    fi
+    meminfo="$(machine_slot__meminfo)"
     dir="$(machine_slot__dir)"
     timeout="${TRAYCER_MACHINE_SLOT_TIMEOUT:-1800}"
     case "$timeout" in '' | *[!0-9]*) timeout=1800 ;; esac
@@ -156,9 +197,9 @@ machine_slot_acquire() {
     # while python is still starting has already reparented it to pid 1, and a
     # holder that adopted 1 as its parent would hold the slot until reboot.
     python3 -c '
-import errno, fcntl, os, sys, time
+import errno, fcntl, os, random, sys, time
 
-directory, name, slots, timeout, status_file, parent = sys.argv[1:7]
+directory, name, slots, timeout, status_file, parent, admit, meminfo = sys.argv[1:9]
 slots, timeout, parent = int(slots), int(timeout), int(parent)
 if os.getppid() != parent:
     sys.exit(0)
@@ -169,10 +210,6 @@ def report(message):
         handle.write(message + "\n")
     os.replace(staging, status_file)
 
-# The slot count is sized from available memory at each acquisition, so two callers
-# can disagree on it. That is safe: exclusion is the flock on one slot FILE,
-# so a smaller count only means this caller tries fewer files (indices
-# 0..slots-1) and never shares one a holder has.
 descriptors = []
 for index in range(slots):
     path = os.path.join(directory, "traycer-slot-%s.%d.lock" % (name, index))
@@ -183,18 +220,72 @@ for index in range(slots):
         report("error cannot open %s: %s" % (path, error.strerror))
         sys.exit(0)
 
+ADMIT_KIB = 16 * 1024 * 1024
+
+def available_kib():
+    # MemAvailable in KiB, or None when there is nothing to check against:
+    # an explicit count, macOS, a kernel without MemAvailable, an unreadable file.
+    if admit != "1":
+        return None
+    try:
+        if not os.path.isfile(meminfo):
+            return None
+        with open(meminfo) as handle:
+            for line in handle:
+                if line.startswith("MemAvailable:"):
+                    fields = line.split()
+                    if len(fields) >= 2 and fields[1].isdigit() and len(fields[1]) <= 12:
+                        return int(fields[1])
+                    return None
+    except OSError:
+        return None
+    return None
+
+def busy(error):
+    return error.errno in (errno.EWOULDBLOCK, errno.EAGAIN, errno.EACCES)
+
+def try_take():
+    # The first free slot file, if memory admits one more holder, else None.
+    # Exclusion is only ever the flock on a slot file, so nothing here can
+    # let two holders share one. Memory is read again on every call.
+    available = available_kib()
+    for descriptor in descriptors:
+        try:
+            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as error:
+            if not busy(error):
+                raise
+            continue
+        if available is None or available >= ADMIT_KIB:
+            return descriptor
+        # Short of memory: admit only if no other slot file is held, so a
+        # lone caller still runs. Probe the others, then give the probes back.
+        probed = []
+        alone = True
+        for other in descriptors:
+            if other == descriptor:
+                continue
+            try:
+                fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                probed.append(other)
+            except OSError as error:
+                if not busy(error):
+                    raise
+                alone = False
+                break
+        for other in probed:
+            fcntl.flock(other, fcntl.LOCK_UN)
+        if alone:
+            return descriptor
+        fcntl.flock(descriptor, fcntl.LOCK_UN)
+        return None
+    return None
+
 deadline = time.monotonic() + timeout
 announced = False
 held = None
 while held is None:
-    for descriptor in descriptors:
-        try:
-            fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            held = descriptor
-            break
-        except OSError as error:
-            if error.errno not in (errno.EWOULDBLOCK, errno.EAGAIN, errno.EACCES):
-                raise
+    held = try_take()
     if held is not None:
         break
     if os.getppid() != parent:
@@ -204,11 +295,12 @@ while held is None:
         sys.exit(0)
     if not announced:
         sys.stderr.write(
-            "machine-slot: all %d %r slot(s) are busy on this machine; waiting...\n" % (slots, name)
+            "machine-slot: waiting for a %r slot (%d slot file(s); a free one is only taken while memory allows)...\n" % (name, slots)
         )
         sys.stderr.flush()
         announced = True
-    time.sleep(0.5)
+    # Jitter keeps two probing newcomers from lock-stepping.
+    time.sleep(0.4 + 0.2 * random.random())
 
 for descriptor in descriptors:
     if descriptor != held:
@@ -222,7 +314,7 @@ report("held")
 # Hold until the shell that asked for the slot is gone.
 while os.getppid() == parent:
     time.sleep(0.2)
-' "$dir" "$name" "$slots" "$timeout" "$status_file" "$$" </dev/null >/dev/null &
+' "$dir" "$name" "$slots" "$timeout" "$status_file" "$$" "$admit" "$meminfo" </dev/null >/dev/null &
     holder=$!
 
     # Poll rather than block on a pipe: a holder that dies before reporting
