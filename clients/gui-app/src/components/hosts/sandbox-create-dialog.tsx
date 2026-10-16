@@ -70,6 +70,7 @@ import { sandboxMutationKeys } from "@/lib/query-keys";
 import { useAuthStore } from "@/stores/auth/auth-store";
 import {
   useSandboxCreateDialogStore,
+  type SandboxCreatedLine,
   type SandboxCreateDraft,
 } from "@/stores/settings/sandbox-create-dialog-store";
 
@@ -113,6 +114,9 @@ const OS_LABEL: Record<SandboxOs, string> = {
 export function SandboxCreateDialog(): ReactNode {
   const open = useSandboxCreateDialogStore((s) => s.open);
   const closeDialog = useSandboxCreateDialogStore((s) => s.closeDialog);
+  // Keyed on the open: a new open is a new form, even one asked for while
+  // the dialog was already up.
+  const openId = useSandboxCreateDialogStore((s) => s.openId);
   return (
     <Dialog
       open={open}
@@ -131,7 +135,9 @@ export function SandboxCreateDialog(): ReactNode {
             while awake and suspends when idle.
           </DialogDescription>
         </DialogHeader>
-        {open ? <SandboxCreateDialogBody onDone={closeDialog} /> : null}
+        {open ? (
+          <SandboxCreateDialogBody key={openId} onDone={closeDialog} />
+        ) : null}
       </DialogContent>
     </Dialog>
   );
@@ -151,19 +157,19 @@ function SandboxCreateDialogBody(props: {
   // Signed out, the catalogue query is disabled and stays pending with no
   // fetch behind it: say why instead of spinning.
   if (!signedIn) {
-    return (
+    return withFailure(
       <p
         className="text-ui-sm text-muted-foreground"
         data-testid="sandbox-create-signed-out"
       >
         Sign in to create a sandbox.
-      </p>
+      </p>,
     );
   }
   // The form takes its Belongs to once, from the person's teams: wait for
   // them, or a team preselection would open on Personal.
   if (catalogue.isPending || userQuery.isPending) {
-    return (
+    return withFailure(
       <div className="flex items-center gap-2 text-ui-sm text-muted-foreground">
         <AgentSpinningDots
           className={undefined}
@@ -171,15 +177,15 @@ function SandboxCreateDialogBody(props: {
           variant={undefined}
         />
         Loading sizes and regions…
-      </div>
+      </div>,
     );
   }
   if (catalogue.isError) {
-    return (
+    return withFailure(
       <SandboxCreateRetry
         message={catalogue.error.message}
         onRetry={() => void catalogue.refetch()}
-      />
+      />,
     );
   }
   // Settled with no user is a failed first read. Without the person's teams
@@ -187,19 +193,19 @@ function SandboxCreateDialogBody(props: {
   // failed refetch keeps the teams it had, and a Personal create needs none.
   const opensOnTeam = preselect?.kind === "team" || workingHostTeamId !== null;
   if (userQuery.data === undefined && opensOnTeam) {
-    return (
+    return withFailure(
       <SandboxCreateRetry
         message="Traycer couldn't load your teams."
         onRetry={() => void userQuery.refetch()}
-      />
+      />,
     );
   }
   const offered = offeredOses(catalogue.data);
   if (offered.length === 0) {
-    return (
+    return withFailure(
       <p className="text-ui-sm text-muted-foreground">
         Sandboxes aren&apos;t offered right now.
-      </p>
+      </p>,
     );
   }
   const teams = sandboxCreateTeams(user);
@@ -310,6 +316,31 @@ function SandboxCreateFailure(props: { readonly shown: boolean }): ReactNode {
   );
 }
 
+/**
+ * A body state other than the form, with the last create's failure under it:
+ * a create can settle while the body waits on a read (F46).
+ */
+function withFailure(node: ReactNode): ReactNode {
+  return (
+    <>
+      {node}
+      <SandboxCreateFailure shown />
+    </>
+  );
+}
+
+/**
+ * A create in flight for this account holds the submit, and so does one that
+ * already succeeded in this open: the form is closing or offering the team
+ * task, and its values were sent.
+ */
+function submitHeld(
+  creating: boolean,
+  created: SandboxCreatedLine | null,
+): boolean {
+  return creating || created !== null;
+}
+
 /** A read the form needs failed: say so, with a retry. */
 function SandboxCreateRetry(props: {
   readonly message: string;
@@ -340,8 +371,13 @@ function SandboxCreateForm(props: {
     props.initialBelongsTo,
   );
   const setFailure = useSandboxCreateDialogStore((s) => s.setFailure);
+  const created = useSandboxCreateDialogStore((s) => s.created);
   const team = pickedTeam(belongsTo, props.teams);
-  const firstTeamTask = useFirstTeamTaskOffer(team);
+  const firstTeamTaskOffer = useFirstTeamTaskOffer(
+    created,
+    props.teams,
+    props.onDone,
+  );
   const create = useSandboxCreate();
   // A create outlives this form: closing the dialog unmounts it, and a
   // reopened form's own mutation is idle. Any create in flight for this
@@ -370,14 +406,14 @@ function SandboxCreateForm(props: {
     problem === null &&
     region !== null &&
     name.length > 0 &&
-    !creating &&
+    !submitHeld(creating, created) &&
     target.ready;
 
-  if (firstTeamTask.offer !== null) {
+  if (firstTeamTaskOffer !== null) {
     return (
       <StartTeamTaskSuccess
-        teamSlug={firstTeamTask.offer.teamSlug}
-        hostId={firstTeamTask.offer.hostId}
+        teamSlug={firstTeamTaskOffer.teamSlug}
+        hostId={firstTeamTaskOffer.hostId}
         onDone={props.onDone}
       />
     );
@@ -396,30 +432,24 @@ function SandboxCreateForm(props: {
         event.preventDefault();
         if (!canSubmit) return;
         setFailure(null);
-        create.mutate(
-          {
-            request: {
-              os: form.os,
-              cpus: rounded.cpus,
-              memoryMb: rounded.memoryMb,
-              diskMb: null,
-              region: region.id,
-              displayName: name,
-              idleMinutes: form.idleMinutes,
-              burst: false,
-              createdByHostId: null,
-              createdByAgentId: null,
-              // Personal stays `null`, the request as it always was.
-              environmentId: target.environmentId,
-            },
-            teamName: target.teamName,
+        create.mutate({
+          request: {
+            os: form.os,
+            cpus: rounded.cpus,
+            memoryMb: rounded.memoryMb,
+            diskMb: null,
+            region: region.id,
+            displayName: name,
+            idleMinutes: form.idleMinutes,
+            burst: false,
+            createdByHostId: null,
+            createdByAgentId: null,
+            // Personal stays `null`, the request as it always was.
+            environmentId: target.environmentId,
           },
-          {
-            onSuccess: (accepted) => {
-              firstTeamTask.afterCreate(accepted.hostId, props.onDone);
-            },
-          },
-        );
+          teamName: target.teamName,
+          teamId: target.teamId,
+        });
       }}
     >
       <SandboxBelongsToField
@@ -651,6 +681,8 @@ interface TeamTarget {
   readonly environmentId: string | null;
   /** The picked team's name, for a refusal the server leaves unnamed. */
   readonly teamName: string | null;
+  /** The picked team, `null` for Personal. */
+  readonly teamId: string | null;
   /** Personal, or a team whose environment has been read. */
   readonly ready: boolean;
   /** The bundle under the team cannot cover an hour (lower bound or 402). */
@@ -681,6 +713,7 @@ function useTeamTarget(
     return {
       environmentId: null,
       teamName: null,
+      teamId: null,
       ready: true,
       askAdmin: false,
       noProviders: false,
@@ -690,6 +723,7 @@ function useTeamTarget(
   return {
     environmentId,
     teamName: team.name,
+    teamId: team.teamId,
     // Without its environment the create would be the person's own.
     ready: environmentId !== null,
     askAdmin:
@@ -945,23 +979,27 @@ interface FirstTeamTaskOffer {
 
 /**
  * A4: a team sandbox created by someone with no task in that team yet ends on
- * "Start a <team> task" instead of closing. `afterCreate` either holds the
- * offer or closes.
+ * "Start a <team> task" instead of closing; any other create closes. Read
+ * from the store's `created`, so a form that remounted while the create ran
+ * ends the same way (F46).
  */
-function useFirstTeamTaskOffer(team: SandboxCreateTeam | null): {
-  readonly offer: FirstTeamTaskOffer | null;
-  readonly afterCreate: (hostId: string, close: () => void) => void;
-} {
-  const hasTeamTask = usePersonHasTeamTask(team?.teamId ?? null);
-  const [offer, setOffer] = useState<FirstTeamTaskOffer | null>(null);
-  return {
-    offer,
-    afterCreate: (hostId, close) => {
-      if (team === null || hasTeamTask) {
-        close();
-        return;
-      }
-      setOffer({ teamSlug: team.name, hostId });
-    },
-  };
+function useFirstTeamTaskOffer(
+  created: SandboxCreatedLine | null,
+  teams: readonly SandboxCreateTeam[],
+  close: () => void,
+): FirstTeamTaskOffer | null {
+  const team =
+    created === null || created.teamId === null
+      ? null
+      : (teams.find((t) => t.teamId === created.teamId) ?? null);
+  const hasTeamTask = usePersonHasTeamTask(team === null ? null : team.teamId);
+  const offer =
+    created === null || team === null || hasTeamTask
+      ? null
+      : { teamSlug: team.name, hostId: created.hostId };
+  const closes = created !== null && offer === null;
+  useEffect(() => {
+    if (closes) close();
+  }, [closes, close]);
+  return offer;
 }

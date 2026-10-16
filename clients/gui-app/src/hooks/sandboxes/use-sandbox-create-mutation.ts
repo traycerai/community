@@ -17,7 +17,11 @@ import {
   signedInUserId,
 } from "@/lib/sandboxes/sandbox-account-fence";
 import { useAuthStore } from "@/stores/auth/auth-store";
-import { useSandboxCreateDialogStore } from "@/stores/settings/sandbox-create-dialog-store";
+import {
+  sandboxCreateOpenIdNow,
+  sandboxCreateOpenIsCurrent,
+  useSandboxCreateDialogStore,
+} from "@/stores/settings/sandbox-create-dialog-store";
 
 /**
  * What the form submits: the request, and the team's name when it belongs to
@@ -26,6 +30,8 @@ import { useSandboxCreateDialogStore } from "@/stores/settings/sandbox-create-di
 export interface SandboxCreateSubmit {
   readonly request: SandboxCreateRequest;
   readonly teamName: string | null;
+  /** The team it is created for, `null` for Personal. */
+  readonly teamId: string | null;
 }
 
 /**
@@ -50,6 +56,8 @@ interface SandboxCreateContext {
   readonly directory: HostDirectoryService | null;
   /** The account signed in when the create started. */
   readonly userId: string | null;
+  /** The dialog open that sent it, `null` when no dialog was open. */
+  readonly openId: number | null;
 }
 
 /**
@@ -75,6 +83,7 @@ export function useSandboxCreate(): UseMutationResult<
     onMutate: (): SandboxCreateContext => ({
       directory: binding === null ? null : binding.directory,
       userId: signedInUserId(),
+      openId: sandboxCreateOpenIdNow(),
     }),
     mutationFn: async ({
       request,
@@ -100,9 +109,17 @@ export function useSandboxCreate(): UseMutationResult<
     // At hook level, not the form's `mutate` call: the form unmounts when the
     // dialog closes, and a create can take minutes, so only the mutation
     // itself is still there to say it finished.
-    onSuccess: (_data, { request }, context) => {
+    // The open that sent it closes, or offers the team task, from here rather
+    // than from the form's own `mutate` callback: that callback is dropped
+    // when the form remounted while the create ran (F46).
+    onSuccess: (accepted, { request, teamId }, context) => {
       if (!settledForStartingAccount(context)) return;
       toast.success(`Created ${request.displayName}`);
+      if (sandboxCreateOpenIsCurrent(context.openId)) {
+        useSandboxCreateDialogStore
+          .getState()
+          .setCreated({ hostId: accepted.hostId, teamId });
+      }
     },
     // Settled, not only success: a `502 provider_failed` leaves a `failed`
     // row behind, which the lists must show so it can be destroyed.
@@ -113,13 +130,12 @@ export function useSandboxCreate(): UseMutationResult<
         queryKey: authQueryKeys.registeredHostsAll(),
       });
     },
-    // With the dialog open the form says it, beside the values that were
-    // sent (F46); a toast is for a create that outlived its dialog.
+    // The open that sent it says it, beside the values that were sent (F46);
+    // a create that outlived its open, closed or replaced by a new one, toasts.
     onError: (error, _variables, context) => {
       if (!settledForStartingAccount(context)) return;
-      const dialog = useSandboxCreateDialogStore.getState();
-      if (dialog.open) {
-        dialog.setFailure({
+      if (sandboxCreateOpenIsCurrent(context.openId)) {
+        useSandboxCreateDialogStore.getState().setFailure({
           message:
             error instanceof SandboxCreateError
               ? error.message

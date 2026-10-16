@@ -617,7 +617,11 @@ describe("settling under another account", () => {
       );
       const view = renderHook(() => useSandboxCreate(), { wrapper });
       act(() => {
-        view.result.current.mutate({ request: CREATE_REQUEST, teamName: null });
+        view.result.current.mutate({
+          request: CREATE_REQUEST,
+          teamName: null,
+          teamId: null,
+        });
       });
       return { queryClient, invalidate, pending };
     }
@@ -722,6 +726,7 @@ describe("settling under another account", () => {
           await result.current.mutateAsync({
             request: TEAM_REQUEST,
             teamName,
+            teamId: teamName === null ? null : "team-acme",
           });
         } catch (error: unknown) {
           rejection = error;

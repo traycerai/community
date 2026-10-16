@@ -9,6 +9,7 @@ import { draftRuntimeRegistry } from "@/stores/home/draft-runtime-registry";
 import { fileEditRuntimeRegistry } from "@/lib/workspace/file-edit-runtime-registry";
 import { useSettingsHostScopeStore } from "@/stores/settings/settings-host-scope-store";
 import { useAddHostDialogStore } from "@/stores/settings/add-host-dialog-store";
+import { useSandboxCreateDialogStore } from "@/stores/settings/sandbox-create-dialog-store";
 import { useProvidersFocusStore } from "@/stores/settings/providers-focus-store";
 import { useProfileSyncModalStore } from "@/stores/settings/profile-sync-modal-store";
 import { useWatchHostStore } from "@/stores/host-scope/watch-host-store";
@@ -102,6 +103,10 @@ export function EpicSessionLifecycleBridge(
       // host B already owns is absent from that snapshot and gets announced as
       // the machine that just connected.
       useAddHostDialogStore.getState().closeDialog();
+      // The New sandbox dialog is the same shape: left open it would show
+      // account B what A typed and A's last failure, which can name A's team.
+      // `closeDialog` drops the draft, the failure and the created line too.
+      useSandboxCreateDialogStore.getState().closeDialog();
       // The Providers deep-link intent is the third module-level store on this
       // boundary, and the most dangerous of them: `focusHostId` names account
       // A's machine and `startSignIn` asks Providers to begin a sign-in flow

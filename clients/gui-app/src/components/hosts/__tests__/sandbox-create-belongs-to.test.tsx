@@ -38,6 +38,7 @@ interface CatalogueState {
 interface CreateVariables {
   readonly request: SandboxCreateRequest;
   readonly teamName: string | null;
+  readonly teamId: string | null;
 }
 
 const mocks = vi.hoisted(() => ({
@@ -367,6 +368,7 @@ describe("<SandboxCreateDialog /> belongs to", () => {
     expect(mocks.mutate.mock.calls[0][0]).toEqual({
       request: request(null),
       teamName: null,
+      teamId: null,
     });
   });
 
@@ -384,6 +386,7 @@ describe("<SandboxCreateDialog /> belongs to", () => {
     expect(mocks.mutate.mock.calls[0][0]).toEqual({
       request: request("env-acme"),
       teamName: "acme",
+      teamId: ACME_ID,
     });
   });
 
@@ -613,6 +616,7 @@ describe("<SandboxCreateDialog /> belongs to", () => {
       mocks.create.variables = {
         request: request(environmentId),
         teamName: "acme",
+        teamId: ACME_ID,
       };
     }
 
