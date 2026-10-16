@@ -241,6 +241,7 @@ import { SplitResizeHandle } from "@/components/epic-canvas/canvas/resize-handle
 import {
   isSidebarBulkSelectionPanelId,
   rootmostSelectedSidebarIds,
+  sidebarBulkDeleteIds,
   sidebarIdsWithinRoots,
   SidebarBulkSelectionProvider,
   useSidebarBulkSelection,
@@ -1555,9 +1556,10 @@ function SidebarBulkDeleteController(props: {
   // the one row that silently remained.
   const blockedDeleteReason = useMemo(() => {
     if (pendingDeleteIds === null) return null;
-    const blockedTitles = rootmostSelectedSidebarIds({
+    const blockedTitles = sidebarBulkDeleteIds({
       ids: pendingDeleteIds,
       tree,
+      isAgentId: (id) => isAgentRecord(recordById.get(id)),
     }).flatMap((id) => {
       const record = recordById.get(id);
       if (record === undefined || record.type !== "chat") return [];
@@ -1577,11 +1579,12 @@ function SidebarBulkDeleteController(props: {
     // The dialog's confirm is already disabled while this is non-null; the
     // check is here too because a keyboard submit is not the button.
     if (blockedDeleteReason !== null) return;
-    const rootmostIds = rootmostSelectedSidebarIds({
+    const deleteIds = sidebarBulkDeleteIds({
       ids: pendingDeleteIds,
       tree,
+      isAgentId: (id) => isAgentRecord(recordById.get(id)),
     });
-    const targets = rootmostIds.flatMap((id) => {
+    const targets = deleteIds.flatMap((id) => {
       const target = sidebarDeleteTargetForRecord(recordById.get(id));
       return target === null ? [] : [target];
     });
@@ -1719,6 +1722,13 @@ function SidebarBulkDeleteController(props: {
       isPending={deletePending}
       onConfirm={handleConfirmDelete}
     />
+  );
+}
+
+function isAgentRecord(record: EpicTreeRecord | undefined): boolean {
+  return (
+    record !== undefined &&
+    (record.type === "chat" || record.type === "terminal-agent")
   );
 }
 

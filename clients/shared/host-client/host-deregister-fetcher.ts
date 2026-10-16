@@ -28,6 +28,8 @@
  * which is a different machine-local operation entirely.
  */
 
+import { timeoutSignal } from "./timeout-signal";
+
 /** Per-request budget, mirrors `HOST_LIST_FETCH_TIMEOUT_MS`. */
 const HOST_DEREGISTER_FETCH_TIMEOUT_MS = 10_000;
 
@@ -80,7 +82,7 @@ export async function deregisterHostViaHttp(
         Authorization: `Bearer ${bearerToken}`,
         Accept: "application/json",
       },
-      signal: AbortSignal.timeout(HOST_DEREGISTER_FETCH_TIMEOUT_MS),
+      signal: timeoutSignal(HOST_DEREGISTER_FETCH_TIMEOUT_MS),
     });
   } catch {
     // A thrown `fetch` — transport failure or the per-attempt timeout — is

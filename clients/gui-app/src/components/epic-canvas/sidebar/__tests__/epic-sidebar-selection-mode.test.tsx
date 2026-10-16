@@ -1496,7 +1496,7 @@ describe("epic sidebar selection mode", () => {
     });
   });
 
-  it("selects chat rows explicitly and bulk-deletes topmost selected chat roots", async () => {
+  it("selects chat rows explicitly and bulk-deletes every selected agent, nested ones included", async () => {
     seedChatTree();
 
     render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
@@ -1541,15 +1541,55 @@ describe("epic sidebar selection mode", () => {
         hostId: null,
       });
     });
-    expect(testState.deleteChatMutateAsync).not.toHaveBeenCalledWith({
-      epicId: EPIC_ID,
-      chatId: "chat-child",
-      hostId: null,
+    // Deleting an agent keeps the agents nested under it, so a selected
+    // child is a row the user asked for and nothing else would delete.
+    await waitFor(() => {
+      expect(testState.deleteChatMutateAsync).toHaveBeenCalledWith({
+        epicId: EPIC_ID,
+        chatId: "chat-child",
+        hostId: null,
+      });
     });
+    expect(testState.deleteChatMutateAsync).toHaveBeenCalledTimes(2);
     expect(testState.deleteTuiAgentMutateAsync).toHaveBeenCalledWith({
       epicId: EPIC_ID,
       tuiAgentId: "agent-root",
       hostId: "host-1",
+    });
+  });
+
+  it("keeps deleting the other selected agents when one delete fails", async () => {
+    seedChatTree();
+    testState.deleteChatMutateAsync.mockImplementation(
+      (input: { readonly chatId: string }) =>
+        input.chatId === "chat-child"
+          ? Promise.reject(new Error("host refused"))
+          : Promise.resolve({}),
+    );
+
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "Select agents" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+    fireEvent.click(screen.getByTestId("epic-sidebar-delete-selected-chats"));
+    fireEvent.click(screen.getByTestId("confirm-action"));
+
+    await waitFor(() => {
+      expect(testState.deleteTuiAgentMutateAsync).toHaveBeenCalledWith({
+        epicId: EPIC_ID,
+        tuiAgentId: "agent-root",
+        hostId: "host-1",
+      });
+    });
+    expect(testState.deleteChatMutateAsync).toHaveBeenCalledWith({
+      epicId: EPIC_ID,
+      chatId: "chat-root",
+      hostId: null,
+    });
+    expect(testState.deleteChatMutateAsync).toHaveBeenCalledWith({
+      epicId: EPIC_ID,
+      chatId: "chat-child",
+      hostId: null,
     });
   });
 
