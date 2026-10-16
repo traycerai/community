@@ -375,7 +375,12 @@ describe("sandboxTileOverlay", () => {
 describe("sandboxSecretsReadiness", () => {
   it("is null when the summary reports no phase", () => {
     expect(
-      sandboxSecretsReadiness("awake", false, summaryOf({ phase: null }), "online"),
+      sandboxSecretsReadiness(
+        "awake",
+        false,
+        summaryOf({ phase: null }),
+        "online",
+      ),
     ).toBeNull();
   });
 
@@ -383,7 +388,9 @@ describe("sandboxSecretsReadiness", () => {
     const summary = summaryOf({ phase: "ready" });
     for (const state of HOST_SANDBOX_STATES) {
       if (state === "awake") continue;
-      expect(sandboxSecretsReadiness(state, false, summary, "online")).toBeNull();
+      expect(
+        sandboxSecretsReadiness(state, false, summary, "online"),
+      ).toBeNull();
     }
     expect(sandboxSecretsReadiness(null, false, summary, "online")).toBeNull();
   });
@@ -395,7 +402,9 @@ describe("sandboxSecretsReadiness", () => {
       if (hostState === "online" || hostState === "reported-reachable") {
         continue;
       }
-      expect(sandboxSecretsReadiness("awake", false, summary, hostState)).toBeNull();
+      expect(
+        sandboxSecretsReadiness("awake", false, summary, hostState),
+      ).toBeNull();
     }
   });
 
@@ -412,7 +421,12 @@ describe("sandboxSecretsReadiness", () => {
 
   it("is null while the sandbox is frozen", () => {
     expect(
-      sandboxSecretsReadiness("awake", true, summaryOf({ phase: "ready" }), "online"),
+      sandboxSecretsReadiness(
+        "awake",
+        true,
+        summaryOf({ phase: "ready" }),
+        "online",
+      ),
     ).toBeNull();
   });
 
@@ -429,7 +443,8 @@ describe("sandboxSecretsReadiness", () => {
 
   it.each(["proxy-reachable", "ready"])("reads %s as ready", (phase) => {
     expect(
-      sandboxSecretsReadiness("awake", false, summaryOf({ phase }), "online")?.tone,
+      sandboxSecretsReadiness("awake", false, summaryOf({ phase }), "online")
+        ?.tone,
     ).toBe("ready");
   });
 
@@ -437,7 +452,8 @@ describe("sandboxSecretsReadiness", () => {
     "reads %s as pending",
     (phase) => {
       expect(
-        sandboxSecretsReadiness("awake", false, summaryOf({ phase }), "online")?.tone,
+        sandboxSecretsReadiness("awake", false, summaryOf({ phase }), "online")
+          ?.tone,
       ).toBe("pending");
     },
   );
