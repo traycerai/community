@@ -1646,12 +1646,13 @@ function SidebarBulkDeleteController(props: {
             },
           ];
         });
-        toastFromOwnerHostBatchWriteFailures(
-          agentOutcomes,
-          agentOutcomes.length === 1
-            ? "Couldn't delete agent."
-            : "Couldn't delete some selected agents.",
-        );
+        toastFromOwnerHostBatchWriteFailures(agentOutcomes, {
+          single: "Couldn't delete agent.",
+          partial: (applied, failed) =>
+            `Deleted ${applied} of ${applied + failed} selected agents. ${failed} couldn't be deleted.`,
+          none: (attempted) =>
+            `Couldn't delete any of the ${attempted} selected agents.`,
+        });
         const successfulIds = targets.flatMap((target, index) =>
           results[index].status === "fulfilled" ? [target.id] : [],
         );

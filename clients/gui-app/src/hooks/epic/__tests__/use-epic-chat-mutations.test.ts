@@ -1001,7 +1001,8 @@ describe("useEpicArchiveChats", () => {
       ]);
     });
     expect(toast.error).toHaveBeenCalledWith(
-      "Couldn't archive some selected agents.",
+      "Archived 1 of 2 selected agents. 1 couldn't be archived.",
+      expect.anything(),
     );
     expect(toast.error).toHaveBeenCalledTimes(1);
   });
@@ -1089,11 +1090,13 @@ describe("useEpicArchiveChats", () => {
     });
 
     await waitFor(() => {
-      expect(toast).toHaveBeenCalledTimes(1);
+      expect(toast.error).toHaveBeenCalledWith(
+        "Archived 1 of 2 selected agents. 1 couldn't be archived.",
+        expect.anything(),
+      );
     });
-    expect(toast.message).not.toHaveBeenCalledWith(
-      UNREACHABLE_NOTICE,
-      expect.anything(),
-    );
+    expect(toast.error).toHaveBeenCalledTimes(1);
+    expect(toast).not.toHaveBeenCalled();
+    expect(toast.message).not.toHaveBeenCalled();
   });
 });
