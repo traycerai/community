@@ -27,7 +27,9 @@ export function HarnessModelPickerTriggerTooltip(
       {...triggerProps}
       label={label}
       open={pickerOpen ? false : tooltipOpen}
-      onOpenChange={setTooltipOpen}
+      onOpenChange={(open) => {
+        if (!pickerOpen) setTooltipOpen(open);
+      }}
       side="top"
       sideOffset={undefined}
       align={undefined}
