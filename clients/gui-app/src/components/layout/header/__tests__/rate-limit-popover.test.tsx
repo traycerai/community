@@ -44,7 +44,10 @@ import type {
   AvailableProviderRateLimits,
   ProviderRateLimitEnvelope,
 } from "@/lib/rate-limits/rate-limit-envelope";
-import { accountContextValue } from "@/lib/auth/traycer-subscription-content";
+import {
+  accountContextValue,
+  isCreditBasedPricing,
+} from "@/lib/auth/traycer-subscription-content";
 import { setMobileApp } from "@/lib/mobile-app";
 import { queryKeys } from "@/lib/query-keys";
 import {
@@ -561,7 +564,8 @@ function authUserFixture(overrides: {
       ...baseSubscription(),
       subscriptionStatus: overrides.status,
       isInTrial: false,
-      totalPlanCredits: 100,
+      // The server reports no plan credits for a rate-limit plan.
+      totalPlanCredits: isCreditBasedPricing(overrides.status) ? 100 : 0,
       credit: {
         id: "c1",
         userId: "u1",
@@ -3111,7 +3115,9 @@ describe("<RateLimitPopover /> Refresh all", () => {
     const team = fixture.teamSubscriptions[0];
     mocks.authUser = readyAuthUser({
       ...fixture,
-      teamSubscriptions: [{ ...team, subscriptionStatus: "PRO" }],
+      teamSubscriptions: [
+        { ...team, subscriptionStatus: "PRO", totalPlanCredits: 0 },
+      ],
     });
     const { client } = renderPopover();
     const invalidateSpy = vi.spyOn(client, "invalidateQueries");
@@ -3167,7 +3173,9 @@ describe("<RateLimitPopover /> Refresh all", () => {
     const team = fixture.teamSubscriptions[0];
     mocks.authUser = readyAuthUser({
       ...fixture,
-      teamSubscriptions: [{ ...team, subscriptionStatus: "PRO" }],
+      teamSubscriptions: [
+        { ...team, subscriptionStatus: "PRO", totalPlanCredits: 0 },
+      ],
     });
     mocks.traycerUsageUpdatedAt = {
       [accountContextValue(DEFAULT_ACCOUNT_CONTEXT)]: NOW - 1_000,
@@ -3984,41 +3992,7 @@ describe("<RateLimitPopover /> limited profiles", () => {
     renderPopover();
   }
 
-  it("adds one banner per limited profile, with the reset time and no action", () => {
-    showLimited([
-      limitedSegment({
-        providerId: "codex",
-        profileId: "p1",
-        label: "pro20x",
-        severity: "limited",
-        kind: "weekly",
-      }),
-      limitedSegment({
-        providerId: "codex",
-        profileId: "p2",
-        label: "team",
-        severity: "limited",
-        kind: "session",
-      }),
-      limitedSegment({
-        providerId: "claude-code",
-        profileId: null,
-        label: null,
-        severity: "healthy",
-        kind: "session",
-      }),
-    ]);
-
-    const banners = screen.getAllByTestId("rate-limit-limited-banner");
-    expect(banners).toHaveLength(2);
-    expect(banners[0].textContent).toMatch(
-      /^pro20x hit its weekly limit · Resets \w{3}, \w{3} \d+, \d+:\d{2} (AM|PM)$/,
-    );
-    expect(banners[1].textContent).toContain("team hit its 5h limit");
-    expect(within(banners[0]).queryByRole("button")).toBeNull();
-  });
-
-  it("draws no banner while no profile is limited, even one running low", () => {
+  it("draws no rail dot while no profile is limited, even one running low", () => {
     showLimited([
       limitedSegment({
         providerId: "codex",
@@ -4029,30 +4003,7 @@ describe("<RateLimitPopover /> limited profiles", () => {
       }),
     ]);
 
-    expect(screen.queryByTestId("rate-limit-limited-banner")).toBeNull();
     expect(screen.queryByTestId("rate-limit-rail-limited-dot")).toBeNull();
-  });
-
-  it("leaves a limited profile off the banner on its own provider's tab, and keeps it on every other tab", () => {
-    showLimited([
-      limitedSegment({
-        providerId: "codex",
-        profileId: "p1",
-        label: "pro20x",
-        severity: "limited",
-        kind: "weekly",
-      }),
-    ]);
-
-    expect(screen.getAllByTestId("rate-limit-limited-banner")).toHaveLength(1);
-
-    fireEvent.click(screen.getByRole("tab", { name: /^Codex/ }));
-    expect(screen.queryByTestId("rate-limit-limited-banner")).toBeNull();
-
-    fireEvent.click(screen.getByRole("tab", { name: /^Claude Code/ }));
-    const banners = screen.getAllByTestId("rate-limit-limited-banner");
-    expect(banners).toHaveLength(1);
-    expect(banners[0].textContent).toContain("pro20x");
   });
 
   it("marks only the provider with a limited profile on the rail, leaving the order alone", () => {

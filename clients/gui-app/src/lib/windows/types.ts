@@ -394,12 +394,14 @@ export type DesktopCapturedField<T> =
 
 /**
  * Field-for-field match with ticket 05's `SupportContextSnapshot`
- * (`@/lib/support-context-registry`). `hostId` here is the tab-bound host,
- * not necessarily the "local host" Electron main attaches logs from.
+ * (`@/lib/support-context-registry`). `hostId` here is the app-wide effective
+ * host; `tabHostId` is the host the active chat tab is bound to. Neither is
+ * necessarily the "local host" Electron main attaches logs from.
  */
 export interface DesktopContextRegistrySnapshot {
   readonly routeTemplate: DesktopCapturedField<string>;
   readonly hostId: DesktopCapturedField<string>;
+  readonly tabHostId: DesktopCapturedField<string>;
   readonly epicId: DesktopCapturedField<string>;
   readonly tabId: DesktopCapturedField<string>;
   readonly artifactId: DesktopCapturedField<string>;

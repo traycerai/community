@@ -35,10 +35,14 @@ import {
   nativeAuthResultSchema,
   nativeListQuerySchema,
   nativeListResultSchema,
+  nativeListResultSchemaBeforeMcpRemedies,
   nativeListResultSchemaV70Preimage,
   nativeMutationResultSchema,
+  nativeMutationResultSchemaV10Preimage,
   nativeMutationSchema,
+  nativeMutationSchemaV10Preimage,
   providerNativeCapabilitiesSchema,
+  providerNativeCapabilitiesSchemaBeforeMcpRemedies,
   providerNativeCapabilitiesSchemaV70,
   providerNativeCapabilitiesSchemaV70Preimage,
   type ModelProviderAuthAction,
@@ -318,6 +322,7 @@ export const PROVIDER_DISPLAY_NAMES: Record<ProviderId, string> = {
   huggingface: "Hugging Face",
   reasonix: "Reasonix",
   antigravity: "Antigravity",
+  commandcode: "Command Code",
 };
 
 /**
@@ -2145,7 +2150,7 @@ export type ProviderCliStateV91 = z.infer<typeof providerCliStateSchemaV91>;
 export const providersListResponseSchemaV91 = lazySchema(() =>
   z.object({
     providers: z.array(providerCliStateSchemaV91),
-    native: nativeListResultSchema.nullable().default(null),
+    native: nativeListResultSchemaBeforeMcpRemedies.nullable().default(null),
   }),
 );
 export type ProvidersListResponseV91 = z.infer<
@@ -2165,6 +2170,45 @@ export const providerCliStateSchemaV90 = lazySchema(() =>
   }),
 );
 export type ProviderCliStateV90 = z.infer<typeof providerCliStateSchemaV90>;
+
+/**
+ * Frozen `providers.list@9.2` provider state: 9.1's shape with the five-key
+ * login capability 9.2 was opened to publish.
+ *
+ * 9.2 bound the live state while it was the head line. `1.5.0` shipped it, so
+ * the next provider id would have widened it in place, which is what happened
+ * to 8.0 with Antigravity. It is frozen here and major 10 carries the ids added
+ * since.
+ *
+ * Derived from the 9.1 snapshot, so every pin that one took covers this line
+ * too: both `providerId` enums (`providerIdSchemaV91`, twenty-one ids), the
+ * profile row, `managedInstallState`, `advisory`, `autoJudge` and
+ * `nativeCapabilities`. Only `loginCapability` differs, and it reads the live
+ * capability by reference: 9.2 is the line that shipped `remoteSafe` and
+ * `selfOpensBrowser`, and `frozen-catalog-lines.test.ts` pins this row's whole
+ * serialized shape, so a key added to that capability reddens it rather than
+ * widening this line unseen. When that happens, hand-freeze the capability
+ * here; do not regenerate the fixture.
+ *
+ * Do NOT add fields or ids here. Add them to `providerCliStateBaseShape`
+ * above, which only the head line (10.0 today) publishes.
+ */
+export const providerCliStateSchemaV92 = lazySchema(() =>
+  providerCliStateSchemaV91.extend({
+    loginCapability: providerLoginCapabilitySchema.nullable().catch(null),
+  }),
+);
+export type ProviderCliStateV92 = z.infer<typeof providerCliStateSchemaV92>;
+
+export const providersListResponseSchemaV92 = lazySchema(() =>
+  z.object({
+    providers: z.array(providerCliStateSchemaV92),
+    native: nativeListResultSchemaBeforeMcpRemedies.nullable().default(null),
+  }),
+);
+export type ProvidersListResponseV92 = z.infer<
+  typeof providersListResponseSchemaV92
+>;
 
 /**
  * Canonical (live) `providers.list` request. Optional `native` list/discover
@@ -2257,6 +2301,21 @@ export const providersListResponseSchema = lazySchema(() =>
 );
 export type ProvidersListResponse = z.infer<typeof providersListResponseSchema>;
 
+/** The list@10.0 response before MCP remedies and notices were introduced. */
+export const providersListResponseSchemaV100Preimage = lazySchema(() =>
+  z.object({
+    providers: z.array(
+      providerCliStateSchema.extend({
+        nativeCapabilities:
+          providerNativeCapabilitiesSchemaBeforeMcpRemedies.catch(
+            DEFAULT_PROVIDER_NATIVE_CAPABILITIES,
+          ),
+      }),
+    ),
+    native: nativeListResultSchemaBeforeMcpRemedies.nullable().default(null),
+  }),
+);
+
 /**
  * Frozen `providers.list@9.0` response - the pre-`autoJudge` provider state.
  *
@@ -2270,7 +2329,7 @@ export type ProvidersListResponse = z.infer<typeof providersListResponseSchema>;
 export const providersListResponseSchemaV90 = lazySchema(() =>
   z.object({
     providers: z.array(providerCliStateSchemaV90),
-    native: nativeListResultSchema.nullable().default(null),
+    native: nativeListResultSchemaBeforeMcpRemedies.nullable().default(null),
   }),
 );
 export type ProvidersListResponseV90 = z.infer<
@@ -2660,7 +2719,7 @@ export type ProviderCliStateV70 = z.infer<typeof providerCliStateSchemaV70>;
 export const providersListResponseSchemaV70 = lazySchema(() =>
   z.object({
     providers: z.array(providerCliStateSchemaV70),
-    native: nativeListResultSchema.nullable().default(null),
+    native: nativeListResultSchemaBeforeMcpRemedies.nullable().default(null),
   }),
 );
 export type ProvidersListResponseV70 = z.infer<
@@ -2780,7 +2839,7 @@ export type ProviderCliStateV80 = z.infer<typeof providerCliStateSchemaV80>;
 export const providersListResponseSchemaV80 = lazySchema(() =>
   z.object({
     providers: z.array(providerCliStateSchemaV80),
-    native: nativeListResultSchema.nullable().default(null),
+    native: nativeListResultSchemaBeforeMcpRemedies.nullable().default(null),
   }),
 );
 export type ProvidersListResponseV80 = z.infer<
@@ -3808,6 +3867,12 @@ export const providersNativeMutateRequestSchema = lazySchema(() =>
     mutation: nativeMutationSchema,
   }),
 );
+export const providersNativeMutateRequestSchemaV10Preimage = lazySchema(() =>
+  z.object({
+    providerId: providerIdSchema,
+    mutation: nativeMutationSchemaV10Preimage,
+  }),
+);
 export type ProvidersNativeMutateRequest = z.infer<
   typeof providersNativeMutateRequestSchema
 >;
@@ -3822,6 +3887,9 @@ export const providersNativeMutateResponseSchema = lazySchema(() =>
   z.object({
     result: nativeMutationResultSchema,
   }),
+);
+export const providersNativeMutateResponseSchemaV10Preimage = lazySchema(() =>
+  z.object({ result: nativeMutationResultSchemaV10Preimage }),
 );
 export type ProvidersNativeMutateResponse = z.infer<
   typeof providersNativeMutateResponseSchema
@@ -4976,6 +5044,18 @@ export function downgradeProviderCliStateListToV80(
   states: readonly unknown[],
 ): ProviderCliStateV80[] {
   return projectRowsOntoFrozenLine(providerCliStateSchemaV80, states);
+}
+
+/**
+ * Drop the providers major 9 cannot spell for an already-shipped major-9
+ * client. Nothing else differs from the head row, so the reparse is a pure row
+ * filter - an id outside the frozen enum fails the parse and the row is
+ * dropped, exactly as the v8.0 helper drops a post-v8.0 one.
+ */
+export function downgradeProviderCliStateListToV92(
+  states: readonly unknown[],
+): ProviderCliStateV92[] {
+  return projectRowsOntoFrozenLine(providerCliStateSchemaV92, states);
 }
 
 /**

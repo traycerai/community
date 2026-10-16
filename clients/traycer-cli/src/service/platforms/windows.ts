@@ -736,10 +736,18 @@ async function statusService(label: ServiceLabel): Promise<ServiceStatus> {
     // task, and reading it as "not installed" sent `host ensure` down the
     // register path, whose `/Create /F` replaced a task that exists and every
     // setting on it - re-enabling one the user had disabled.
+    //
+    // schtasks words "no such task" in the system's language, so on a
+    // non-English Windows the text checks cannot recognise one. Task
+    // Scheduler's own answer is a code (see `scheduledTaskProvedAbsent`), asked
+    // only for a failure the text did not name so an English query pays
+    // nothing for it. Without it the install's pre-swap status read threw on a
+    // machine with no registration yet, and `host ensure` failed there.
     if (
       err instanceof ProcessRunError &&
       (schtasksNamesMissingTask(err.stderr) ||
-        schtasksNamesCorruptTask(err.stderr))
+        schtasksNamesCorruptTask(err.stderr) ||
+        (await scheduledTaskProvedAbsent(taskName)))
     ) {
       registered = false;
     } else {

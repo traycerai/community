@@ -4,6 +4,7 @@ import {
   applySlowDown,
   createPollSchedule,
   DEFAULT_DEVICE_REQUEST_TIMEOUT_MS,
+  describeDeviceAuthorizeFailure,
   isDeviceExpired,
   pollDeviceToken,
   resetPollInterval,
@@ -155,6 +156,12 @@ export class DeviceFlowController {
       { signal: undefined, timeoutMs: DEFAULT_DEVICE_REQUEST_TIMEOUT_MS },
     );
     if (authorization.kind !== "started") {
+      // The renderer only learns "could not start sign-in"; this line is the
+      // one place the desktop log says why. Fixed words and a status number
+      // only (`describeDeviceAuthorizeFailure`): the log travels in feedback.
+      log.warn(
+        `[device-flow] authorize failed cause=${describeDeviceAuthorizeFailure(authorization.cause)}`,
+      );
       return { ok: false };
     }
     const attemptId = randomUUID();

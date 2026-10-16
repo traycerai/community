@@ -8,6 +8,7 @@ import type { CloudBearerSource } from "../auth/bearer-source";
 import type { AuthEra } from "../auth/request-context-provider";
 import { applyHostKeyPins } from "./host-key-pin";
 import type { HostDirectoryEntry } from "./host-directory";
+import { timeoutSignal } from "./timeout-signal";
 
 /**
  * Remote-host discovery for Remote Host Support S1 (Architecture §7, §9).
@@ -69,7 +70,7 @@ export async function fetchRegisteredHostsViaHttp(
         Authorization: `Bearer ${bearerToken}`,
         Accept: "application/json",
       },
-      signal: AbortSignal.timeout(HOST_LIST_FETCH_TIMEOUT_MS),
+      signal: timeoutSignal(HOST_LIST_FETCH_TIMEOUT_MS),
     });
   } catch {
     // A thrown `fetch` — transport failure or the per-attempt timeout — is

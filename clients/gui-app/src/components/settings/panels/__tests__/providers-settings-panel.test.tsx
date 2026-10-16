@@ -296,6 +296,10 @@ vi.mock("@/hooks/providers/use-providers-mcp-mutate-mutation", () => ({
     mutateAsync: vi.fn(),
     isPending: false,
   }),
+  useProvidersMcpApplyRemedy: () => ({
+    mutateAsync: vi.fn(),
+    isPending: false,
+  }),
 }));
 
 vi.mock("@/hooks/providers/use-providers-mcp-discover-mutation", () => ({
@@ -2485,6 +2489,24 @@ describe("<ProvidersSettingsPanel />", () => {
       ),
     ).toBe(true);
     expect(document.querySelector("header")?.contains(status)).toBe(true);
+  });
+
+  it("carries no Model list timeout control on the heading row - it lives in each provider's CLI & Args tab", () => {
+    render(
+      <TooltipProvider>
+        <ProvidersSettingsPanel />
+      </TooltipProvider>,
+    );
+
+    const header = document.querySelector("header");
+    if (header === null) throw new Error("expected the heading row");
+    expect(screen.getByTestId("providers-global-status")).toBeTruthy();
+    expect(within(header).queryByText(/Model list timeout/)).toBeNull();
+    expect(within(header).queryByLabelText(/Model list timeout/)).toBeNull();
+    expect(
+      within(header).queryByTestId("providers-catalog-timeout-chip"),
+    ).toBeNull();
+    expect(screen.queryByTestId("providers-catalog-timeout-chip")).toBeNull();
   });
 
   it("refreshes the SELECTED host, never the ambient one", async () => {
