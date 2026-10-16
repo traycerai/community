@@ -451,6 +451,9 @@ export function useLandingComposerActions(
           input.workspaceFolderInfoByPath,
         ),
         chat: input.chat,
+        // The person's own epic; a team choice arrives with E17's create
+        // flow and requires epic.create@1.3 of the host.
+        owner: null,
       })
         .then((response) => {
           // A REFUSAL resolves, so it arrives HERE and not in the `.catch`

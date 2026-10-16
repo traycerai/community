@@ -22,6 +22,7 @@ import {
   createCommentThreadResponseSchema,
   createEpicRequestSchema,
   createEpicRequestSchemaV12,
+  createEpicRequestSchemaV13,
   createEpicResponseSchema,
   createEpicResponseSchemaPre11,
   createEpicResponseSchemaV12,
@@ -686,6 +687,31 @@ export const epicCreateUpgradeV11ToV12 = defineUpgradePath<
                 : { ...request.chat.initialMessage, sentFromHostId: null },
           },
   }),
+  upgradeResponse: (response) => response,
+});
+
+/**
+ * `epic.create@1.3` - the epic's owner (ticket E13 checkpoint 5): `owner`
+ * names the person or one of their teams, `null` the person. The request is a
+ * stripping object, so the field is additive and rides a minor; the response
+ * is `@1.2`'s, unchanged.
+ */
+export const epicCreateV13 = defineRpcContract({
+  method: "epic.create",
+  schemaVersion: { major: 1, minor: 3 } as const,
+  requestSchema: createEpicRequestSchemaV13,
+  responseSchema: createEpicResponseSchemaV12,
+});
+
+// A `@1.2` caller named no owner, which is the person: the upgrade fills the
+// honest `null`. The response is the same instance both sides.
+export const epicCreateUpgradeV12ToV13 = defineUpgradePath<
+  typeof epicCreateV12,
+  typeof epicCreateV13
+>({
+  from: epicCreateV12.schemaVersion,
+  to: epicCreateV13.schemaVersion,
+  upgradeRequest: (request) => ({ ...request, owner: null }),
   upgradeResponse: (response) => response,
 });
 
