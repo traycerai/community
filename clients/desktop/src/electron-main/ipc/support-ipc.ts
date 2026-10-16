@@ -21,10 +21,12 @@ import type {
   SupportEnvironmentItem,
   SupportEnvironmentItemArgs,
   SupportEnvironmentPolicy,
+  SupportEnvironmentReachDenial,
   SupportEnvironmentRotation,
   SupportEnvironmentRotationEvidence,
   SupportEnvironmentRotationProducer,
   SupportEnvironmentSection,
+  SupportEnvironmentServedTask,
   SupportEnvironmentSetupAttempt,
   SupportFreezeEvidenceInput,
   SupportImageAttachmentInput,
@@ -588,7 +590,30 @@ const ENVIRONMENT_SECTION_KEYS = contractKeySet<SupportEnvironmentSection>({
   setupAttempts: true,
   policy: true,
   rotations: true,
+  reachDenials: true,
+  servedTask: true,
 });
+
+// A refusal is references and categories only (ticket E13 checkpoint 4): a
+// host's label, a display name or an owner's id inside one is refused by name.
+const ENVIRONMENT_REACH_DENIAL_KEYS =
+  contractKeySet<SupportEnvironmentReachDenial>({
+    denialId: true,
+    at: true,
+    sourceHostRef: true,
+    targetHostRef: true,
+    taskRef: true,
+    reason: true,
+    sourcePrincipal: true,
+    targetPrincipal: true,
+    count: true,
+  });
+
+const ENVIRONMENT_SERVED_TASK_KEYS =
+  contractKeySet<SupportEnvironmentServedTask>({
+    taskRef: true,
+    otherHostPrincipals: true,
+  });
 
 const ENVIRONMENT_ITEM_KEYS = contractKeySet<SupportEnvironmentItem>({
   kind: true,
@@ -1045,6 +1070,67 @@ function parseEnvironmentRotation(
   };
 }
 
+function parseReachPrincipalCategory(value: unknown, context: string): string {
+  if (value === "personal" || value === "team" || value === "unknown") {
+    return value;
+  }
+  throw new Error(`${context} must be "personal", "team", or "unknown"`);
+}
+
+function parseEnvironmentReachDenial(
+  value: unknown,
+  context: string,
+): SupportEnvironmentReachDenial {
+  assertClosedRecord(value, ENVIRONMENT_REACH_DENIAL_KEYS, context);
+  assertNumber(value.at, `${context}.at`);
+  assertNumber(value.count, `${context}.count`);
+  if (value.reason !== "principal_mismatch") {
+    throw new Error(`${context}.reason must be "principal_mismatch"`);
+  }
+  return {
+    denialId: parseEnvironmentId(value.denialId, `${context}.denialId`),
+    at: value.at,
+    sourceHostRef: parseEnvironmentId(
+      value.sourceHostRef,
+      `${context}.sourceHostRef`,
+    ),
+    targetHostRef: parseEnvironmentId(
+      value.targetHostRef,
+      `${context}.targetHostRef`,
+    ),
+    taskRef:
+      value.taskRef === null
+        ? null
+        : parseEnvironmentId(value.taskRef, `${context}.taskRef`),
+    reason: "principal_mismatch",
+    sourcePrincipal: parseReachPrincipalCategory(
+      value.sourcePrincipal,
+      `${context}.sourcePrincipal`,
+    ),
+    targetPrincipal: parseReachPrincipalCategory(
+      value.targetPrincipal,
+      `${context}.targetPrincipal`,
+    ),
+    count: value.count,
+  };
+}
+
+function parseEnvironmentServedTask(
+  value: unknown,
+  context: string,
+): SupportEnvironmentServedTask | null {
+  if (value === null) return null;
+  assertClosedRecord(value, ENVIRONMENT_SERVED_TASK_KEYS, context);
+  return {
+    taskRef: parseEnvironmentId(value.taskRef, `${context}.taskRef`),
+    otherHostPrincipals: parseArray(
+      value.otherHostPrincipals,
+      `${context}.otherHostPrincipals`,
+      parseReachPrincipalCategory,
+    ),
+  };
+}
+
 function parseEnvironmentSection(
   value: unknown,
   context: string,
@@ -1091,6 +1177,15 @@ function parseEnvironmentSection(
       value.rotations,
       `${context}.rotations`,
       parseEnvironmentRotation,
+    ),
+    reachDenials: parseNullableArray(
+      value.reachDenials,
+      `${context}.reachDenials`,
+      parseEnvironmentReachDenial,
+    ),
+    servedTask: parseEnvironmentServedTask(
+      value.servedTask,
+      `${context}.servedTask`,
     ),
   };
 }

@@ -77,6 +77,8 @@ const EARLIER_HOST_SECTION: SupportEnvironmentSection = {
   setupAttempts: null,
   policy: null,
   rotations: null,
+  reachDenials: null,
+  servedTask: null,
 };
 
 function secret(secretId: string, name: string): EnvironmentSecret {

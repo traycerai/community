@@ -8,6 +8,7 @@ import { useAddressableHostId } from "@/hooks/host/use-addressable-host-id";
 import { useHostClientForHostId } from "@/hooks/host/use-host-client-for-host-id";
 import { useHostQuery } from "@/hooks/host/use-host-query";
 import { useHostMethodSupport } from "@/hooks/host/use-host-supports-method";
+import { useActiveEpicId } from "@/stores/epics/canvas/store";
 import type { HostRpcRegistry } from "@/lib/host";
 import { secretRotationSettled } from "@/lib/sandboxes/secret-rotation-line";
 import {
@@ -60,6 +61,11 @@ function SupportEnvironmentHost(props: { readonly hostId: string }): ReactNode {
     "environment.secrets.list",
   );
   const policySupported = useHostMethodSupport(hostId, "autoPolicy.get");
+  const reachSupported = useHostMethodSupport(
+    hostId,
+    "environment.reachDiagnostics",
+  );
+  const epicId = useActiveEpicId();
   const status = useHostQuery<HostRpcRegistry, "environment.status">({
     cacheKeyIdentity: undefined,
     client,
@@ -83,6 +89,13 @@ function SupportEnvironmentHost(props: { readonly hostId: string }): ReactNode {
     params: NO_PARAMS,
     options: { enabled: statusSupported === true && listSupported === true },
   });
+  const reach = useHostQuery<HostRpcRegistry, "environment.reachDiagnostics">({
+    cacheKeyIdentity: undefined,
+    client,
+    method: "environment.reachDiagnostics",
+    params: { epicId },
+    options: { enabled: statusSupported === true && reachSupported === true },
+  });
   const [policy, setPolicy] = useState<SupportEnvironmentPolicy | null>(null);
   const [rotations, setRotations] = useState<
     ReadonlyMap<string, SupportEnvironmentRotationRead>
@@ -91,6 +104,7 @@ function SupportEnvironmentHost(props: { readonly hostId: string }): ReactNode {
   const secrets = list.data?.secrets ?? null;
   const statusData = status.data ?? null;
   const attemptsData = attempts.data?.attempts ?? null;
+  const reachData = reach.data ?? null;
   useEffect(() => {
     // Until this host has answered, nothing is known about it: a previous
     // host's section never stands in for the selected one.
@@ -110,6 +124,7 @@ function SupportEnvironmentHost(props: { readonly hostId: string }): ReactNode {
               const read = rotations.get(secret.secretId);
               return read === undefined ? [] : [read];
             }),
+      reachDiagnostics: reachData,
     });
     // A host that stopped answering keeps its last answer, labelled as such.
     setSupportEnvironmentSection(
@@ -124,6 +139,7 @@ function SupportEnvironmentHost(props: { readonly hostId: string }): ReactNode {
     policy,
     secrets,
     rotations,
+    reachData,
   ]);
 
   const onRotation = useCallback(

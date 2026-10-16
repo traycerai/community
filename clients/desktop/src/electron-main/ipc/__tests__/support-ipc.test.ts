@@ -8,10 +8,12 @@ import {
 import type {
   SupportEnvironmentItem,
   SupportEnvironmentPolicy,
+  SupportEnvironmentReachDenial,
   SupportEnvironmentRotation,
   SupportEnvironmentRotationEvidence,
   SupportEnvironmentRotationProducer,
   SupportEnvironmentSection,
+  SupportEnvironmentServedTask,
   SupportEnvironmentSetupAttempt,
 } from "../../../ipc-contracts/window-types";
 import {
@@ -233,6 +235,35 @@ const ENV_ROTATION: SupportEnvironmentRotation = {
   producers: [ENV_WORKER_PRODUCER, ENV_HOST_PRODUCER],
 };
 
+// Ticket E13, checkpoint 4: the reach section. A denial is opaque references
+// and principal categories; the same-principal refusal reads "personal" and
+// "team" so a mismatch is visible without naming anyone.
+const ENV_REACH_DENIAL: SupportEnvironmentReachDenial = {
+  denialId: "denial-1",
+  at: 1_700_000_000_000,
+  sourceHostRef: "host-ref-source",
+  targetHostRef: "host-ref-target",
+  taskRef: "task-ref-1",
+  reason: "principal_mismatch",
+  sourcePrincipal: "personal",
+  targetPrincipal: "team",
+  count: 3,
+};
+
+const ENV_REACH_DENIAL_NO_TASK: SupportEnvironmentReachDenial = {
+  ...ENV_REACH_DENIAL,
+  denialId: "denial-2",
+  taskRef: null,
+  sourcePrincipal: "unknown",
+  targetPrincipal: "unknown",
+  count: 1,
+};
+
+const ENV_SERVED_TASK: SupportEnvironmentServedTask = {
+  taskRef: "task-ref-1",
+  otherHostPrincipals: ["personal", "team", "unknown"],
+};
+
 const FULL_ENVIRONMENT_SECTION: SupportEnvironmentSection = {
   hostId: "host-1",
   principal: "team",
@@ -246,6 +277,8 @@ const FULL_ENVIRONMENT_SECTION: SupportEnvironmentSection = {
   setupAttempts: [ENV_ATTEMPT, ENV_OPEN_ATTEMPT],
   policy: ENV_POLICY,
   rotations: [ENV_ROTATION],
+  reachDenials: [ENV_REACH_DENIAL, ENV_REACH_DENIAL_NO_TASK],
+  servedTask: ENV_SERVED_TASK,
 };
 
 const KNOWN_ENVIRONMENT = {
@@ -731,6 +764,8 @@ describe("parseSupportSubmitReportRequest", () => {
         setupAttempts: null,
         policy: null,
         rotations: null,
+        reachDenials: null,
+        servedTask: null,
       };
       const result = submitWithSection(sparse);
       expect(result.privateDiagnostics?.environment).toEqual({
@@ -920,6 +955,119 @@ describe("parseSupportSubmitReportRequest", () => {
       expect(() => submitWithSection(withoutReachability)).toThrow(
         "missing required field: reachability",
       );
+    });
+
+    it("rejects a section missing reachDenials, by name", () => {
+      const { reachDenials: _reachDenials, ...withoutReachDenials } =
+        FULL_ENVIRONMENT_SECTION;
+      expect(() => submitWithSection(withoutReachDenials)).toThrow(
+        "missing required field: reachDenials",
+      );
+    });
+
+    it("rejects a section missing servedTask, by name", () => {
+      const { servedTask: _servedTask, ...withoutServedTask } =
+        FULL_ENVIRONMENT_SECTION;
+      expect(() => submitWithSection(withoutServedTask)).toThrow(
+        "missing required field: servedTask",
+      );
+    });
+
+    // Ticket E13, checkpoint 4: a refusal is references and categories only.
+    // These three are the pins: a host's label, a person's display name or an
+    // owner's id inside a denial is refused by NAME, never passed through.
+    it("refuses a reach denial carrying a host label", () => {
+      expect(() =>
+        submitWithSection(
+          sectionWith({
+            reachDenials: [{ ...ENV_REACH_DENIAL, label: "Alice's Mac" }],
+          }),
+        ),
+      ).toThrow("contains a disallowed field: label");
+    });
+
+    it("refuses a reach denial carrying a displayName", () => {
+      expect(() =>
+        submitWithSection(
+          sectionWith({
+            reachDenials: [{ ...ENV_REACH_DENIAL, displayName: "Alice" }],
+          }),
+        ),
+      ).toThrow("contains a disallowed field: displayName");
+    });
+
+    it("refuses a reach denial carrying an ownerId", () => {
+      expect(() =>
+        submitWithSection(
+          sectionWith({
+            reachDenials: [{ ...ENV_REACH_DENIAL, ownerId: "user-42" }],
+          }),
+        ),
+      ).toThrow("contains a disallowed field: ownerId");
+    });
+
+    it("refuses a served task carrying an extra key", () => {
+      expect(() =>
+        submitWithSection(
+          sectionWith({
+            servedTask: { ...ENV_SERVED_TASK, hostLabel: "Alice's Mac" },
+          }),
+        ),
+      ).toThrow("contains a disallowed field: hostLabel");
+    });
+
+    it("accepts a reach denial and a served task and returns them unchanged", () => {
+      const result = submitWithSection(FULL_ENVIRONMENT_SECTION);
+      expect(result.privateDiagnostics?.environment).toEqual({
+        status: "known",
+        value: FULL_ENVIRONMENT_SECTION,
+      });
+    });
+
+    it("accepts an empty denials list and a null served task", () => {
+      const quiet: SupportEnvironmentSection = {
+        ...FULL_ENVIRONMENT_SECTION,
+        reachDenials: [],
+        servedTask: null,
+      };
+      const result = submitWithSection(quiet);
+      expect(result.privateDiagnostics?.environment).toEqual({
+        status: "known",
+        value: quiet,
+      });
+    });
+
+    it("refuses a reach denial reason other than principal_mismatch", () => {
+      expect(() =>
+        submitWithSection(
+          sectionWith({
+            reachDenials: [{ ...ENV_REACH_DENIAL, reason: "no_such_host" }],
+          }),
+        ),
+      ).toThrow('reason must be "principal_mismatch"');
+    });
+
+    it.each(["sourcePrincipal", "targetPrincipal"])(
+      "refuses a reach denial %s outside personal, team and unknown",
+      (key) => {
+        expect(() =>
+          submitWithSection(
+            sectionWith({
+              reachDenials: [{ ...ENV_REACH_DENIAL, [key]: "Acme" }],
+            }),
+          ),
+        ).toThrow('must be "personal", "team", or "unknown"');
+      },
+    );
+
+    it("refuses a served task principal outside personal, team and unknown", () => {
+      expect(() =>
+        submitWithSection(
+          sectionWith({
+            servedTask: { ...ENV_SERVED_TASK, otherHostPrincipals: ["Acme"] },
+          }),
+        ),
+      ).toThrow('must be "personal", "team", or "unknown"');
     });
 
     it("rejects an item missing one of its keys, by name", () => {

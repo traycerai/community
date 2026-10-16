@@ -1,4 +1,5 @@
 import type {
+  EnvironmentReachDiagnosticsResponse,
   EnvironmentSecretsRotationResponse,
   EnvironmentStatusResponse,
   SetupAttempt,
@@ -34,6 +35,37 @@ export interface SupportEnvironmentSection {
   readonly policy: SupportEnvironmentPolicy | null;
   /** `null` until the host's secrets were listed. */
   readonly rotations: readonly SupportEnvironmentRotation[] | null;
+  /**
+   * The host's recent same-principal refusals (ticket E13 checkpoint 4),
+   * newest first; `null` until read or on a host that serves none.
+   */
+  readonly reachDenials: readonly SupportEnvironmentReachDenial[] | null;
+  /**
+   * The selected task with the principal categories of its other hosts;
+   * `null` until read, with no task selected, or on a host that serves none.
+   */
+  readonly servedTask: SupportEnvironmentServedTask | null;
+}
+
+/**
+ * One refusal: opaque host and task references and principal categories,
+ * never a label, a team's name or an owner's id.
+ */
+export interface SupportEnvironmentReachDenial {
+  readonly denialId: string;
+  readonly at: number;
+  readonly sourceHostRef: string;
+  readonly targetHostRef: string;
+  readonly taskRef: string | null;
+  readonly reason: string;
+  readonly sourcePrincipal: string;
+  readonly targetPrincipal: string;
+  readonly count: number;
+}
+
+export interface SupportEnvironmentServedTask {
+  readonly taskRef: string;
+  readonly otherHostPrincipals: readonly string[];
 }
 
 export interface SupportEnvironmentItem {
@@ -147,6 +179,8 @@ export interface SupportEnvironmentReads {
   readonly policy: SupportEnvironmentPolicy | null;
   /** `null` until listed; a secret with no rotation is left out. */
   readonly rotations: readonly SupportEnvironmentRotationRead[] | null;
+  /** `null` until read, or on a host older than the read. */
+  readonly reachDiagnostics: EnvironmentReachDiagnosticsResponse | null;
 }
 
 type RotationProducerRead = NonNullable<
@@ -257,5 +291,28 @@ export function supportEnvironmentSection(
                   },
                 ],
           ),
+    reachDenials:
+      reads.reachDiagnostics === null
+        ? null
+        : reads.reachDiagnostics.denials.map((denial) => ({
+            denialId: id(denial.denialId),
+            at: denial.at,
+            sourceHostRef: id(denial.sourceHostRef),
+            targetHostRef: id(denial.targetHostRef),
+            taskRef: denial.taskRef === null ? null : id(denial.taskRef),
+            reason: code(denial.reason),
+            sourcePrincipal: code(denial.sourcePrincipal),
+            targetPrincipal: code(denial.targetPrincipal),
+            count: denial.count,
+          })),
+    servedTask:
+      reads.reachDiagnostics === null ||
+      reads.reachDiagnostics.servedTask === null
+        ? null
+        : {
+            taskRef: id(reads.reachDiagnostics.servedTask.taskRef),
+            otherHostPrincipals:
+              reads.reachDiagnostics.servedTask.otherHostPrincipals.map(code),
+          },
   };
 }

@@ -172,9 +172,9 @@ function expectDowngradeUnsupported(thrown: unknown): void {
 // ── (a) ─────────────────────────────────────────────────────────────────────
 
 describe("new methods are off every released floor", () => {
-  it("registers exactly 26 environment methods", () => {
-    expect(ENVIRONMENT_METHOD_NAMES).toHaveLength(26);
-    expect(Object.keys(ENVIRONMENT_RPC_METHODS)).toHaveLength(26);
+  it("registers exactly 27 environment methods", () => {
+    expect(ENVIRONMENT_METHOD_NAMES).toHaveLength(27);
+    expect(Object.keys(ENVIRONMENT_RPC_METHODS)).toHaveLength(27);
   });
 
   it("keeps all of them out of RELEASED_FLOOR_METHOD_NAMES", () => {

@@ -445,6 +445,29 @@ export interface SupportEnvironmentSection {
   readonly setupAttempts: readonly SupportEnvironmentSetupAttempt[] | null;
   readonly policy: SupportEnvironmentPolicy | null;
   readonly rotations: readonly SupportEnvironmentRotation[] | null;
+  readonly reachDenials: readonly SupportEnvironmentReachDenial[] | null;
+  readonly servedTask: SupportEnvironmentServedTask | null;
+}
+
+/**
+ * One same-principal refusal (ticket E13 checkpoint 4): opaque host and task
+ * references and principal categories, never a label or an owner's id.
+ */
+export interface SupportEnvironmentReachDenial {
+  readonly denialId: string;
+  readonly at: number;
+  readonly sourceHostRef: string;
+  readonly targetHostRef: string;
+  readonly taskRef: string | null;
+  readonly reason: string;
+  readonly sourcePrincipal: string;
+  readonly targetPrincipal: string;
+  readonly count: number;
+}
+
+export interface SupportEnvironmentServedTask {
+  readonly taskRef: string;
+  readonly otherHostPrincipals: readonly string[];
 }
 
 export interface SupportEnvironmentItem {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type {
   EnvironmentItemStatus,
+  EnvironmentReachDiagnosticsResponse,
   EnvironmentSecretsRotationResponse,
   EnvironmentStatusResponse,
   SetupAttempt,
@@ -30,10 +31,12 @@ const SECTION_KEYS = [
   "items",
   "policy",
   "principal",
+  "reachDenials",
   "reachability",
   "receiptAgeMs",
   "receivedRevision",
   "rotations",
+  "servedTask",
   "setupAttempts",
 ];
 
@@ -167,12 +170,13 @@ function reads(
       teamPolicyVersion: null,
     },
     rotations: [rotationRead("STRIPE_KEY", [WORKER_PRODUCER, HOST_PRODUCER])],
+    reachDiagnostics: null,
     ...overrides,
   };
 }
 
 describe("supportEnvironmentSection", () => {
-  it("has exactly the twelve ruled keys, however much the host sent", () => {
+  it("has exactly the fourteen ruled keys, however much the host sent", () => {
     const section = supportEnvironmentSection(reads({}));
     expect(Object.keys(section).sort()).toEqual(SECTION_KEYS);
   });
@@ -411,6 +415,125 @@ describe("supportEnvironmentSection", () => {
       reads({ rotations: [{ secretName: "NEVER_ROTATED", rotation: null }] }),
     );
     expect(section.rotations).toEqual([]);
+  });
+
+  it("maps two denials and the served task, with ids capped at 256 and codes at 64", () => {
+    const diagnostics: EnvironmentReachDiagnosticsResponse = {
+      denials: [
+        {
+          denialId: "d".repeat(300),
+          at: 1_700_000_000_000,
+          sourceHostRef: "s".repeat(300),
+          targetHostRef: "t".repeat(300),
+          taskRef: "k".repeat(300),
+          reason: "principal_mismatch",
+          sourcePrincipal: "personal",
+          targetPrincipal: "team",
+          count: 3,
+        },
+        {
+          denialId: "denial-2",
+          at: 1_700_000_001_000,
+          sourceHostRef: "host-ref-b",
+          targetHostRef: "host-ref-c",
+          taskRef: null,
+          reason: "principal_mismatch",
+          sourcePrincipal: "unknown",
+          targetPrincipal: "unknown",
+          count: 1,
+        },
+      ],
+      servedTask: {
+        taskRef: "m".repeat(300),
+        otherHostPrincipals: ["team", "unknown"],
+      },
+    };
+
+    const section = supportEnvironmentSection(
+      reads({ reachDiagnostics: diagnostics }),
+    );
+
+    expect(section.reachDenials).toHaveLength(2);
+    expect(section.reachDenials?.[0]).toEqual({
+      denialId: "d".repeat(256),
+      at: 1_700_000_000_000,
+      sourceHostRef: "s".repeat(256),
+      targetHostRef: "t".repeat(256),
+      taskRef: "k".repeat(256),
+      reason: "principal_mismatch",
+      sourcePrincipal: "personal",
+      targetPrincipal: "team",
+      count: 3,
+    });
+    expect(section.reachDenials?.[1]).toEqual({
+      denialId: "denial-2",
+      at: 1_700_000_001_000,
+      sourceHostRef: "host-ref-b",
+      targetHostRef: "host-ref-c",
+      taskRef: null,
+      reason: "principal_mismatch",
+      sourcePrincipal: "unknown",
+      targetPrincipal: "unknown",
+      count: 1,
+    });
+    expect(section.servedTask).toEqual({
+      taskRef: "m".repeat(256),
+      otherHostPrincipals: ["team", "unknown"],
+    });
+  });
+
+  it("holds each denial and the served task to their ruled keys, so no label or owner id rides along", () => {
+    const section = supportEnvironmentSection(
+      reads({
+        reachDiagnostics: {
+          denials: [
+            {
+              denialId: "denial-1",
+              at: 1_700_000_000_000,
+              sourceHostRef: "host-ref-a",
+              targetHostRef: "host-ref-b",
+              taskRef: "task-ref-1",
+              reason: "principal_mismatch",
+              sourcePrincipal: "personal",
+              targetPrincipal: "team",
+              count: 1,
+            },
+          ],
+          servedTask: { taskRef: "task-ref-1", otherHostPrincipals: [] },
+        },
+      }),
+    );
+    expect(Object.keys(section.reachDenials?.[0] ?? {}).sort()).toEqual([
+      "at",
+      "count",
+      "denialId",
+      "reason",
+      "sourceHostRef",
+      "sourcePrincipal",
+      "targetHostRef",
+      "targetPrincipal",
+      "taskRef",
+    ]);
+    expect(Object.keys(section.servedTask ?? {}).sort()).toEqual([
+      "otherHostPrincipals",
+      "taskRef",
+    ]);
+  });
+
+  it("gives null for both reach members when the reach read is null", () => {
+    const section = supportEnvironmentSection(
+      reads({ reachDiagnostics: null }),
+    );
+    expect(section.reachDenials).toBeNull();
+    expect(section.servedTask).toBeNull();
+  });
+
+  it("gives an empty denial list and a null served task for a quiet host", () => {
+    const section = supportEnvironmentSection(
+      reads({ reachDiagnostics: { denials: [], servedTask: null } }),
+    );
+    expect(section.reachDenials).toEqual([]);
+    expect(section.servedTask).toBeNull();
   });
 
   it("passes unread setup attempts, policy and rotations through as null", () => {

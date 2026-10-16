@@ -607,6 +607,8 @@ describe("buildPublicDraftFields", () => {
           ],
         },
       ],
+      reachDenials: null,
+      servedTask: null,
     };
 
     it.each(["bug", "idea", "other"] as const)(

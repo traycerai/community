@@ -339,6 +339,8 @@ const ENVIRONMENT_SECTION: SupportEnvironmentSection = {
       ],
     },
   ],
+  reachDenials: null,
+  servedTask: null,
 };
 
 /** `DELIVERY_FORM` carrying `environment`, with the diagnostics toggle as given. */
@@ -1117,6 +1119,56 @@ describe("DesktopSupportService.submitReport - includeDiagnostics gate", () => {
     expect(parseContextJson(lastEnvironmentContext().rotations)).toEqual(
       ENVIRONMENT_SECTION.rotations,
     );
+  });
+
+  // Ticket E13 checkpoint 4: the same-principal refusals and the served task
+  // ride as JSON text too; a section without them delivers the text "null".
+  it("delivers reachDenials and servedTask as JSON text, and null as the text null", async () => {
+    const reachDenials = [
+      {
+        denialId: "denial-1",
+        at: 1_700_000_000_000,
+        sourceHostRef: "host-source",
+        targetHostRef: "host-target",
+        taskRef: "task-1",
+        reason: "principal_mismatch",
+        sourcePrincipal: "personal",
+        targetPrincipal: "team",
+        count: 3,
+      },
+    ];
+    const servedTask = {
+      taskRef: "task-1",
+      otherHostPrincipals: ["team", "unknown"],
+    };
+    const service = buildService(null);
+    await service.freezeEvidence(KEY, null);
+    await service.submitReport(
+      formWithEnvironment(
+        {
+          status: "known",
+          value: { ...ENVIRONMENT_SECTION, reachDenials, servedTask },
+        },
+        true,
+      ),
+      KEY,
+    );
+    const delivered = lastEnvironmentContext();
+    expect(typeof delivered.reachDenials).toBe("string");
+    expect(typeof delivered.servedTask).toBe("string");
+    expect(parseContextJson(delivered.reachDenials)).toEqual(reachDenials);
+    expect(parseContextJson(delivered.servedTask)).toEqual(servedTask);
+
+    await service.submitReport(
+      formWithEnvironment(
+        { status: "known", value: ENVIRONMENT_SECTION },
+        true,
+      ),
+      KEY,
+    );
+    const empty = lastEnvironmentContext();
+    expect(empty.reachDenials).toBe("null");
+    expect(empty.servedTask).toBe("null");
   });
 
   it("attaches nothing named environment when the toggle is off, section or not", async () => {
@@ -2650,6 +2702,8 @@ describe("DesktopSupportService.submitReport - the environment context's leaves 
         producers: [WORKER, HOST],
       },
     ],
+    reachDenials: null,
+    servedTask: null,
   };
 
   function rotationWith(

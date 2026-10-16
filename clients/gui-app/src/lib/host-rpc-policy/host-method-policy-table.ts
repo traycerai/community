@@ -2213,6 +2213,9 @@ export const HOST_METHOD_POLL_TABLE = {
   },
   "environment.agentDefinitions.list": { ...LATEST_SCHEDULING, poll: null },
   "environment.setup.get": { ...LATEST_SCHEDULING, poll: null },
+  // The support report's reach section (ticket E13 checkpoint 4): read with
+  // the rest of the environment section, never polled on its own.
+  "environment.reachDiagnostics": { ...LATEST_SCHEDULING, poll: null },
   // Machine setup re-reads it while open: a run started by a save, a retry or
   // a restart ends on its own, and nothing else tells the page it did.
   "environment.setup.attempts": {

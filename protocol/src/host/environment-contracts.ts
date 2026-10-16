@@ -381,6 +381,24 @@ export const ENVIRONMENT_RPC_METHODS = {
       downgradePathsFromLatest: {},
     },
   },
+  "environment.reachDiagnostics": {
+    degrade: { kind: "unsupported" },
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: {
+          contract: defineRpcContract({
+            method: "environment.reachDiagnostics",
+            schemaVersion: { major: 1, minor: 0 },
+            requestSchema: schemas.environmentReachDiagnosticsRequestSchema,
+            responseSchema: schemas.environmentReachDiagnosticsResponseSchema,
+          }),
+          upgradeFromPreviousVersion: null,
+        },
+      },
+      downgradePathsFromLatest: {},
+    },
+  },
   "environment.setup.retry": {
     degrade: { kind: "unsupported" },
     1: {
