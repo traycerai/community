@@ -92,6 +92,14 @@ export interface BatchDeleteEpicVariables {
    * to cloud while the person confirms or the mutation starts.
    */
   readonly isLocalHomedNow: (epicId: string) => boolean;
+  /**
+   * The account the selection and the confirm dialog were built under (the
+   * host client's request identity then). The request is refused at send when
+   * the host client would carry it as anyone else: a delete chosen under one
+   * account must never be carried out as another. `null` when there was no
+   * signed-in identity to bind to, which no request can match.
+   */
+  readonly boundUserId: string | null;
   readonly worktreeCleanup: {
     readonly candidates: ReadonlyArray<BatchDeleteWorktreeCandidate>;
   } | null;
@@ -99,28 +107,52 @@ export interface BatchDeleteEpicVariables {
 
 type DeleteNavigationTarget = HeaderTab | null | undefined;
 
+// Byte-identical with the host's `CLOUD_DELETE_NOT_AUTHORIZED_DETAIL`
+// (traycer-internal `epic-batch-delete-resolver.ts`), which answers the same
+// refusal per item: the toast dedupes reasons by exact text
+// (`epicDeleteFailureDetail`), so a client-refused id and a host-refused one
+// read as one reason, not two that fill `MAX_LISTED_DELETE_REASONS`.
 const EPIC_DELETE_SIGNED_OUT_MESSAGE =
   "This task was not deleted because Traycer couldn't confirm your sign-in. Try again once you're signed in.";
 
-/** Ids each dispatch refused at send time, merged into its answer. */
-const epicDeleteRefusedIds = new WeakMap<
+export const EPIC_DELETE_ACCOUNT_CHANGED_MESSAGE =
+  "This task was not deleted because the signed-in account changed after you chose it. Choose it again to delete it.";
+
+/** The ids one dispatch refused at send time, and why. */
+interface EpicDeleteRefusal {
+  readonly ids: ReadonlyArray<string>;
+  readonly message: string;
+}
+
+/** Each dispatch's send-time refusal, merged into its answer. */
+const epicDeleteRefusals = new WeakMap<
   BatchDeleteEpicVariables,
-  ReadonlyArray<string>
+  EpicDeleteRefusal
 >();
 
 function refusedEpicDeleteResults(
-  taskIds: ReadonlyArray<string>,
+  refusal: EpicDeleteRefusal,
 ): BatchDeleteItemResult[] {
-  return taskIds.map((taskId) => ({
+  return refusal.ids.map((taskId) => ({
     taskId,
     success: false,
-    errorMessage: EPIC_DELETE_SIGNED_OUT_MESSAGE,
+    errorMessage: refusal.message,
   }));
 }
 
 /**
  * The one `epic.batchDelete` request, admitted at the latest point before it
- * is sent, from live state. While the session is signed in every id goes.
+ * is sent, from live state.
+ *
+ * First, the account: `requestUserId` is the identity the host client will
+ * send this request under, read in the same tick it schedules the request
+ * (`useHostMutation` builds and sends without an await between). When it is
+ * not the account the delete was chosen under (`boundUserId`), nothing is
+ * sent and every id is answered "not deleted". The host acts as whoever the
+ * request carries and has no way to tell who confirmed it, so this is the
+ * one place a switch between choosing and sending can be caught.
+ *
+ * Then the verdict. While the session is signed in every id goes.
  * Otherwise only the ids whose row is local-homed now go - deleting those
  * spends nothing on the account - and the rest are answered "not deleted".
  * A same-user demotion to `unverified` keeps the bearer, so this is what stops
@@ -132,21 +164,52 @@ function refusedEpicDeleteResults(
  * rest "not deleted", so a very large selection can come back partly not
  * deleted and deleting again finishes it.
  */
-function admitEpicDeleteRequest(variables: BatchDeleteEpicVariables): {
+function admitEpicDeleteRequest(
+  variables: BatchDeleteEpicVariables,
+  requestUserId: string | null,
+): {
   ids: string[];
 } {
+  if (
+    variables.boundUserId === null ||
+    requestUserId !== variables.boundUserId
+  ) {
+    // No identity to send as is a sign-in problem, not an account switch:
+    // choosing the tasks again cannot help until someone is signed in.
+    epicDeleteRefusals.set(variables, {
+      ids: [...variables.ids],
+      message:
+        requestUserId === null
+          ? EPIC_DELETE_SIGNED_OUT_MESSAGE
+          : EPIC_DELETE_ACCOUNT_CHANGED_MESSAGE,
+    });
+    throw new Error(
+      "epic.batchDelete: the account changed after the tasks were chosen",
+    );
+  }
   const signedIn = authorizesCloudCapability(useAuthStore.getState().status);
   const ids = signedIn
     ? [...variables.ids]
     : variables.ids.filter((id) => variables.isLocalHomedNow(id));
-  epicDeleteRefusedIds.set(
-    variables,
-    signedIn ? [] : variables.ids.filter((id) => !ids.includes(id)),
-  );
+  epicDeleteRefusals.set(variables, {
+    ids: signedIn ? [] : variables.ids.filter((id) => !ids.includes(id)),
+    message: EPIC_DELETE_SIGNED_OUT_MESSAGE,
+  });
   if (ids.length === 0) {
     throw new Error("epic.batchDelete: no task admitted without a sign-in");
   }
   return { ids };
+}
+
+/**
+ * Reads the account `useEpicBatchDelete` would send a delete as, now. It is
+ * the same host client, so the account a caller binds a delete to
+ * (`BatchDeleteEpicVariables.boundUserId`) is read exactly as
+ * `admitEpicDeleteRequest` reads the one it is checked against.
+ */
+export function useEpicDeleteRequestUserId(): () => string | null {
+  const client = useHostClient();
+  return useCallback(() => client.getRequestContextUserId(), [client]);
 }
 
 export function useEpicBatchDelete(): UseMutationResult<
@@ -170,13 +233,16 @@ export function useEpicBatchDelete(): UseMutationResult<
   >({
     client,
     method: "epic.batchDelete",
-    mapVariables: admitEpicDeleteRequest,
+    mapVariables: (variables) =>
+      admitEpicDeleteRequest(variables, client.getRequestContextUserId()),
     resolveResponse: (response, variables) => {
-      const refused = epicDeleteRefusedIds.get(variables) ?? [];
-      if (refused.length === 0) return Promise.resolve(response);
+      const refusal = epicDeleteRefusals.get(variables);
+      if (refusal === undefined || refusal.ids.length === 0) {
+        return Promise.resolve(response);
+      }
       return Promise.resolve({
         ...response,
-        results: [...response.results, ...refusedEpicDeleteResults(refused)],
+        results: [...response.results, ...refusedEpicDeleteResults(refusal)],
       });
     },
     options: {
@@ -351,11 +417,14 @@ export function useEpicBatchDelete(): UseMutationResult<
         // silent for an aborted or recoverable-unauthorized request, and a
         // progress toast nothing dismisses would spin forever.
         if (ctx !== undefined) toast.dismiss(ctx.progressToastId);
-        const refused = epicDeleteRefusedIds.get(variables);
-        if (refused !== undefined && refused.length === variables.ids.length) {
+        const refusal = epicDeleteRefusals.get(variables);
+        if (
+          refusal !== undefined &&
+          refusal.ids.length === variables.ids.length
+        ) {
           // Refused before any request: nothing was sent, so say why.
           const parts = epicDeleteToastParts({
-            failures: refusedEpicDeleteResults(refused),
+            failures: refusedEpicDeleteResults(refusal),
             successes: 0,
             total: variables.ids.length,
             deletedIds: [],
