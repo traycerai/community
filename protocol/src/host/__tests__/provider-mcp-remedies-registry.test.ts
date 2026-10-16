@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   providersListResponseSchema,
   providersListResponseSchemaV100Preimage,
+  providersListResponseSchemaV101Preimage,
   providersListResponseSchemaV92,
 } from "@traycer/protocol/host/provider-schemas";
 import { hostRpcRegistry } from "@traycer/protocol/host/registry";
@@ -60,7 +61,12 @@ describe("registry lines", () => {
   const mutateMajor1 = hostRpcRegistry["providers.nativeMutate"][1];
 
   it("opens providers.list@10.1 and nativeMutate@1.1 with upgrade paths from the released minors", () => {
-    expect(listMajor10.latestMinor).toBe(1);
+    // The released 10.1 minor stays registered with its bridge; later minors
+    // (10.2 opened for `macosRequirement`) may sit above it.
+    expect(listMajor10.versions[1].contract.schemaVersion).toEqual({
+      major: 10,
+      minor: 1,
+    });
     expect(listMajor10.versions[1].upgradeFromPreviousVersion).not.toBeNull();
     expect(mutateMajor1.latestMinor).toBe(1);
     expect(mutateMajor1.versions[1].upgradeFromPreviousVersion).not.toBeNull();
@@ -74,7 +80,7 @@ describe("registry lines", () => {
     };
     const parsed100 = list10.parse(payload);
     expect(parsed100.native).not.toHaveProperty("notices");
-    const parsed101 = providersListResponseSchema.parse(payload);
+    const parsed101 = providersListResponseSchemaV101Preimage.parse(payload);
     expect(
       parsed101.native?.ok && parsed101.native.kind === "mcp"
         ? parsed101.native.notices
