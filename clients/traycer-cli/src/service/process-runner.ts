@@ -112,12 +112,15 @@ export function runCommand(
       },
       (err, stdout, stderr) => {
         disarmEscalation();
-        // `decodeOutput` never rejects: an unreadable codepage is UTF-8.
-        void Promise.all([decodeOutput(stdout), decodeOutput(stderr)]).then(
-          ([stdoutStr, stderrStr]) => {
+        // A decode that throws must still settle the call: nothing awaits
+        // this chain, so a rejection here would hang it and crash Node.
+        Promise.all([decodeOutput(stdout), decodeOutput(stderr)])
+          .then(([stdoutStr, stderrStr]) => {
             settle(err, stdoutStr, stderrStr);
-          },
-        );
+          })
+          .catch((error: unknown) => {
+            reject(error);
+          });
       },
     );
     const settle = (
@@ -244,17 +247,21 @@ export function runCommandForBytes(
       },
       (err, stdout, stderr) => {
         disarmEscalation();
-        void decodeOutput(stderr).then((stderrText) => {
-          if (err === null) {
-            resolve({ stdout, stderr: stderrText, exitCode: 0 });
-            return;
-          }
-          if (typeof err.code === "number") {
-            resolve({ stdout, stderr: stderrText, exitCode: err.code });
-            return;
-          }
-          reject(err);
-        });
+        decodeOutput(stderr)
+          .then((stderrText) => {
+            if (err === null) {
+              resolve({ stdout, stderr: stderrText, exitCode: 0 });
+              return;
+            }
+            if (typeof err.code === "number") {
+              resolve({ stdout, stderr: stderrText, exitCode: err.code });
+              return;
+            }
+            reject(err);
+          })
+          .catch((error: unknown) => {
+            reject(error);
+          });
       },
     );
     disarmEscalation = armTimeoutKillEscalation(child, options.timeoutMs);
