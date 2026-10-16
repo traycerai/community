@@ -1100,11 +1100,9 @@ export type EnvironmentSecretsConsentResponse = z.infer<
  * never a team's name. `unknown` is a directory row with no owner, or a host
  * the account's directory does not list.
  */
-export const reachPrincipalCategorySchema = z.enum([
-  "personal",
-  "team",
-  "unknown",
-]);
+export const reachPrincipalCategorySchema = lazySchema(() =>
+  z.enum(["personal", "team", "unknown"]),
+);
 export type ReachPrincipalCategory = z.infer<
   typeof reachPrincipalCategorySchema
 >;
