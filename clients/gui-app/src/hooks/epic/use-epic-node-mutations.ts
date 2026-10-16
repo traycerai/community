@@ -9,6 +9,7 @@ import { Analytics, AnalyticsEvent } from "@/lib/analytics";
 import { hostQueryKeys } from "@/lib/query-keys";
 import { useOpenEpicHandle } from "@/providers/use-open-epic-handle";
 import type { CommandRecord } from "@traycer-clients/shared/replica-runtime";
+import { HostRpcError } from "@traycer-clients/shared/host-transport/host-messenger";
 import type { EpicWriteCommandIntent } from "@/stores/epics/open-epic/runtime/epic-write-command";
 import type { OpenEpicStoreHandle } from "@/stores/epics/open-epic/store";
 import { toast } from "sonner";
@@ -19,9 +20,20 @@ interface CommandMutationCallbacks<Response, Variables> {
   readonly onError?: (error: Error, variables: Variables) => void;
 }
 
+/**
+ * Enqueues `intent` and waits for its terminal state.
+ *
+ * A rejection is thrown as a `HostRpcError` carrying the authority's own
+ * `code` (an unknown one reads as `RPC_ERROR`), not as a bare `Error`: a
+ * caller that reports refusals by their code - the sidebar's batch notice,
+ * whose members raise no toast of their own - would otherwise see only a
+ * generic failure and lose the refusal's guidance (out of disk space,
+ * view-only access). `method` names the RPC the write stands for.
+ */
 async function enqueueAndWait(
   handle: OpenEpicStoreHandle,
   intent: EpicWriteCommandIntent,
+  method: string,
 ): Promise<CommandRecord<EpicWriteCommandIntent>> {
   const state = handle.store.getState();
   // AWAITED: the queue is worker-side now, so it mints the id over the bridge.
@@ -35,7 +47,14 @@ async function enqueueAndWait(
   const command = await state.waitForWriteCommand(commandId);
   if (command.state === "committed") return command;
   if (command.resolution?.kind === "rejected") {
-    throw new Error(command.resolution.reason);
+    throw HostRpcError.fromWireEnvelope(
+      {
+        code: command.resolution.code,
+        message: command.resolution.reason,
+      },
+      commandId,
+      method,
+    );
   }
   throw new Error("A newer authoritative change superseded this write");
 }
@@ -158,10 +177,14 @@ function useEpicDeleteArtifactCommand(
   }
   const mutateAsync = async (variables: Variables): Promise<Response> => {
     try {
-      await enqueueAndWait(handle, {
-        kind: "delete-artifact",
-        artifactId: variables.artifactId,
-      });
+      await enqueueAndWait(
+        handle,
+        {
+          kind: "delete-artifact",
+          artifactId: variables.artifactId,
+        },
+        "epic.deleteArtifact",
+      );
       pruneRecoveryTiles(
         (tile, epicId) =>
           epicId === variables.epicId && tile.id === variables.artifactId,
@@ -242,12 +265,16 @@ export function useEpicUpdateArtifactStatus(artifactId: string | null) {
   }
   const mutateAsync = async (variables: Variables): Promise<Response> => {
     try {
-      await enqueueAndWait(handle, {
-        kind: "update-artifact-status",
-        artifactId: variables.artifactId,
-        artifactType: variables.artifactType,
-        status: variables.status,
-      });
+      await enqueueAndWait(
+        handle,
+        {
+          kind: "update-artifact-status",
+          artifactId: variables.artifactId,
+          artifactType: variables.artifactType,
+          status: variables.status,
+        },
+        "epic.updateArtifactStatus",
+      );
       Analytics.getInstance().track(AnalyticsEvent.ArtifactStatusChanged, {
         kind: variables.artifactType,
         status: analyticsTicketStatus(variables.status),
@@ -308,11 +335,15 @@ export function useEpicRenameArtifact(
   }
   const mutateAsync = async (variables: Variables): Promise<Response> => {
     try {
-      await enqueueAndWait(handle, {
-        kind: "rename-artifact",
-        artifactId: variables.artifactId,
-        title: variables.title,
-      });
+      await enqueueAndWait(
+        handle,
+        {
+          kind: "rename-artifact",
+          artifactId: variables.artifactId,
+          title: variables.title,
+        },
+        "epic.renameArtifact",
+      );
       if (trackUserIntent) {
         Analytics.getInstance().track(AnalyticsEvent.ArtifactRenamed, null);
       }
