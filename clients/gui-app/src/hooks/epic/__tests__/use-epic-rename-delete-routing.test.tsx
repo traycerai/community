@@ -757,7 +757,7 @@ describe("useEpicDeleteTuiAgent routing", () => {
     });
   });
 
-  it("says the owning host is offline when the delete never reached it", async () => {
+  it("says the owning host is unreachable when the delete never reached it", async () => {
     seedRemoteTuiAgent();
     vi.mocked(toast.error).mockClear();
     vi.mocked(toast.message).mockClear();

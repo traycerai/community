@@ -193,10 +193,10 @@ function makeError(code: RpcErrorCode): HostRpcError {
   });
 }
 
-const OFFLINE_NOTICE =
+const UNREACHABLE_NOTICE =
   "Traycer can't reach that host right now, so nothing on it was changed. Try again once it is reachable.";
 
-function hostOffline(method: string): RetryableTransportError {
+function hostUnreachable(method: string): RetryableTransportError {
   return new RetryableTransportError({
     replaySafetyFromKey: false,
     code: "RPC_ERROR",
@@ -646,18 +646,18 @@ describe("useEpicDeleteChat", () => {
     expect(toast.error).toHaveBeenCalledWith("Couldn't delete agent.");
   });
 
-  it("says the owning host is offline when the delete never reached it", () => {
+  it("says the owning host is unreachable when the delete never reached it", () => {
     renderHook(() => useEpicDeleteChat(), { wrapper: makeWrapper() });
     const opts = getCapturedMutation("epic.deleteChat").options as {
       onError: (e: HostRpcError, variables: DeleteChatMutationInput) => void;
     };
-    opts.onError(hostOffline("epic.deleteChat"), {
+    opts.onError(hostUnreachable("epic.deleteChat"), {
       epicId: "epic-1",
       chatId: "chat-1",
       hostId: "host-test",
     });
     expect(toast.message).toHaveBeenCalledWith(
-      OFFLINE_NOTICE,
+      UNREACHABLE_NOTICE,
       expect.anything(),
     );
     expect(toast.error).not.toHaveBeenCalled();
@@ -850,14 +850,14 @@ describe("useEpicArchiveChat", () => {
     });
   });
 
-  it("says the owning host is offline, not a generic transport toast, when archive never reached it", () => {
+  it("says the owning host is unreachable, not a generic transport toast, when archive never reached it", () => {
     renderHook(() => useEpicArchiveChat(), { wrapper: makeWrapper() });
     const opts = getCapturedMutation("epic.setChatArchived").options as {
       onError: (e: HostRpcError) => void;
     };
-    opts.onError(hostOffline("epic.setChatArchived"));
+    opts.onError(hostUnreachable("epic.setChatArchived"));
     expect(toast.message).toHaveBeenCalledWith(
-      OFFLINE_NOTICE,
+      UNREACHABLE_NOTICE,
       expect.anything(),
     );
     expect(toast.error).not.toHaveBeenCalled();
@@ -983,9 +983,9 @@ describe("useEpicArchiveChats", () => {
     expect(toast.error).toHaveBeenCalledTimes(1);
   });
 
-  it("reports one offline notice when every owning host in the batch is unreachable", async () => {
+  it("reports one unreachable notice when every owning host in the batch is unreachable", async () => {
     archiveChatMutateAsync.mockImplementation(() =>
-      Promise.reject(hostOffline("epic.setChatArchived")),
+      Promise.reject(hostUnreachable("epic.setChatArchived")),
     );
     const { result } = renderHook(() => useEpicArchiveChats(), {
       wrapper: makeWrapper(),
@@ -1004,7 +1004,7 @@ describe("useEpicArchiveChats", () => {
 
     await waitFor(() => {
       expect(toast.message).toHaveBeenCalledWith(
-        OFFLINE_NOTICE,
+        UNREACHABLE_NOTICE,
         expect.anything(),
       );
     });
@@ -1012,14 +1012,14 @@ describe("useEpicArchiveChats", () => {
     expect(toast.error).not.toHaveBeenCalled();
   });
 
-  it("does not call a partly archived batch offline", async () => {
+  it("does not call a partly archived batch unreachable", async () => {
     // One agent archived and one host unreachable is a partial failure: the
     // offline notice says nothing was changed, which is false here.
     archiveChatMutateAsync.mockImplementation(
       (input: ArchiveChatMutationInput) =>
         input.chatId === "chat-1"
           ? Promise.resolve({ updated: true })
-          : Promise.reject(hostOffline("epic.setChatArchived")),
+          : Promise.reject(hostUnreachable("epic.setChatArchived")),
     );
     const { result } = renderHook(() => useEpicArchiveChats(), {
       wrapper: makeWrapper(),
@@ -1040,7 +1040,7 @@ describe("useEpicArchiveChats", () => {
       expect(toast).toHaveBeenCalledTimes(1);
     });
     expect(toast.message).not.toHaveBeenCalledWith(
-      OFFLINE_NOTICE,
+      UNREACHABLE_NOTICE,
       expect.anything(),
     );
   });

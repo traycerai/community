@@ -180,7 +180,13 @@ function transportNoticeToast(error: HostRpcError): void {
   // telling a user to wait for a recovery that is not coming is the worse
   // error of the two. Narrating the connection is the session-level
   // affordance's job; this toast's job is the gesture's outcome.
-  if (error instanceof RetryableTransportError) {
+  // `replaySafetyFromKey` is the other ground for the same class: a keyed
+  // request that WAS sent and whose answer was lost, so the host may have run
+  // it. Only the pre-send ground earns "never received it".
+  if (
+    error instanceof RetryableTransportError &&
+    !error.replaySafetyFromKey
+  ) {
     toast("That didn't go through — the Traycer host never received it.", {
       id: TRANSPORT_NOTICE_TOAST_ID,
     });

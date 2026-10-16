@@ -110,8 +110,8 @@ export function createRetryingMessenger<Registry extends VersionedRpcRegistry>(
       }
     }
     // Final attempt: out of the retry budget, so let whatever it throws -
-    // retryable or not - propagate to the caller unchanged. Still carries the
-    // requirement: being the last attempt does not make an unkeyed replay any
+    // retryable or not - propagate to the caller. It is handed on as thrown,
+    // except for the one restoration below. Still carries the requirement: being the last attempt does not make an unkeyed replay any
     // safer.
     throwIfAuthorityAborted(authority, method);
     try {

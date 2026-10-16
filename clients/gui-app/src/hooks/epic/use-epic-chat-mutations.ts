@@ -40,7 +40,7 @@ import {
   toastFromHostErrorWithDetail,
 } from "@/lib/host-error-toast";
 import {
-  isOwnerHostOfflineFailure,
+  isOwnerHostUnreachableFailure,
   toastFromOwnerHostWriteError,
 } from "@/lib/owner-host-write-error-toast";
 import { invalidateEpicChatRecords } from "@/hooks/chats/use-epic-chat-records";
@@ -795,7 +795,7 @@ export function useEpicArchiveChats(): UseMutationResult<
       const allOffline = results.every(
         (result) =>
           result.status === "rejected" &&
-          isOwnerHostOfflineFailure(
+          isOwnerHostUnreachableFailure(
             toHostRpcError(result.reason, "epic.setChatArchived"),
           ),
       );
