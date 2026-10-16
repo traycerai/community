@@ -39,6 +39,7 @@ import {
 import {
   readPendingDeleteEpicIds,
   useEpicBatchDelete,
+  useEpicDeleteRequestUserId,
   useIsEpicDeleteInFlight,
   usePendingDeleteEpicIds,
 } from "@/hooks/epic/use-epic-batch-delete-mutation";
@@ -506,6 +507,16 @@ function EpicsListPanelBody(props: EpicsListPanelBodyProps): ReactNode {
     ReadonlyMap<string, boolean>
   >(() => new Map());
   const deleteMutation = useEpicBatchDelete();
+  // The account the delete would be sent as, read from the client
+  // `useEpicBatchDelete` sends through.
+  const readDeleteRequestUserId = useEpicDeleteRequestUserId();
+  // The account a selection was started under, held for as long as anything
+  // is selected. A delete of the selection is bound to it, not to whoever is
+  // signed in when the dialog opens: a selection made as one account and
+  // confirmed as another is refused at send (`admitEpicDeleteRequest`).
+  const selectionUserIdRef = useRef<string | null>(null);
+  // The account the open delete dialog is bound to.
+  const pendingDeleteUserIdRef = useRef<string | null>(null);
   const setPinnedMutation = useEpicSetPinned();
   const setPinned = setPinnedMutation.mutate;
   const pendingSetPinnedEpicIds = usePendingSetPinnedEpicIds();
@@ -694,14 +705,32 @@ function EpicsListPanelBody(props: EpicsListPanelBodyProps): ReactNode {
     [abortSelectAll, selectableIdSet, selectionEnabled],
   );
 
+  useEffect(() => {
+    if (selectedIds.size === 0) {
+      selectionUserIdRef.current = null;
+      return;
+    }
+    if (selectionUserIdRef.current === null) {
+      selectionUserIdRef.current = readDeleteRequestUserId();
+    }
+  }, [readDeleteRequestUserId, selectedIds]);
+
   const requestDelete = useCallback(
     (ids: ReadonlyArray<string>) => {
       if (!selectionEnabled) return;
       const deletableIds = ids.filter((id) => selectableIdSet.has(id));
       if (deletableIds.length === 0) return;
+      // A delete of the selection keeps the selection's account; a row's own
+      // delete is chosen now, under the account signed in now.
+      const fromSelection =
+        selectionUserIdRef.current !== null &&
+        deletableIds.every((id) => selectedIds.has(id));
+      pendingDeleteUserIdRef.current = fromSelection
+        ? selectionUserIdRef.current
+        : readDeleteRequestUserId();
       setPendingDeleteIds(deletableIds);
     },
-    [selectableIdSet, selectionEnabled],
+    [readDeleteRequestUserId, selectableIdSet, selectedIds, selectionEnabled],
   );
 
   const visibleSelectedIds = useMemo(() => {
@@ -832,6 +861,11 @@ function EpicsListPanelBody(props: EpicsListPanelBodyProps): ReactNode {
       isLocalHomedNow: (epicId) =>
         visibleItemsRef.current.find((item) => item.epicId === epicId)
           ?.isLocalHome === true,
+      // Checked against the account the request is sent as, when it is sent.
+      // An account change also clears the selection and closes this dialog
+      // (the scope reset above), but that reset follows History's own
+      // identity, and the send is where the account it would act as is known.
+      boundUserId: pendingDeleteUserIdRef.current,
       worktreeCleanup:
         approvedWorktrees.length > 0 ? { candidates: approvedWorktrees } : null,
     });

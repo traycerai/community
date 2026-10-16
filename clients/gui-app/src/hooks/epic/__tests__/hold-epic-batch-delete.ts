@@ -32,6 +32,7 @@ export function holdEpicBatchDelete(
   const variables: BatchDeleteEpicVariables = {
     ids,
     isLocalHomedNow: () => false,
+    boundUserId: "user-1",
     worktreeCleanup: null,
   };
   const mutation = queryClient
