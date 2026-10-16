@@ -21,42 +21,43 @@
 #   ADMISSION: on Linux, a caller only takes a free slot file in one of two
 #   cases. Either no slot file is held at all, so a lone caller is never
 #   starved; or MemAvailable (re-read on every poll while it waits) is at least
-#   16 GiB plus 12 GiB (above one tsgo peak) for EVERY held slot file. MemAvailable
-#   already leaves out what the holders use, but only once they have reached
-#   their peak: a holder just admitted is still in format or nx startup, long
-#   before its type-check takes its memory, and how long that takes varies
-#   with the hook. So every live holder is assumed not to have peaked yet, for
-#   as long as it holds its slot. That double-counts a holder already at its
-#   peak, on purpose: the reservation can never expire early, and it needs no
-#   clock (nothing to age across a suspend or a clock step).
+#   16 GiB plus 12 GiB (above one tsgo peak) for EVERY held slot file.
+#   MemAvailable already leaves out what the holders use, but only once they
+#   have reached their peak: a holder just admitted is still in format or nx
+#   startup, long before its type-check takes its memory, and how long that
+#   takes varies with the hook. So every live holder is assumed not to have
+#   peaked yet, for as long as it holds its slot. That double-counts a holder
+#   already at its peak, on purpose: the reservation can never expire early, and
+#   it needs no clock (nothing to age across a suspend or a clock step).
 #   MemAvailable gates a newcomer rather than sizing the pool because sizing
 #   from it would count the holders twice. Memory in a tmpfs /tmp and other
 #   resident sets show up in it, MemTotal hides them. A kernel without
 #   MemAvailable, and macOS (it compresses memory, so vm_stat's free pages are
 #   not a usable budget), get the pool only.
 #
-#   Admission is atomic and ordered. Every auto caller holds an exclusive
-#   flock on traycer-slot-<name>.admit.lock around its read of MemAvailable,
-#   the probe and the lock, so a second caller always sees the first one's
-#   lock. A caller stopped (SIGSTOP) while it holds the gate, a window
-#   of milliseconds per admission, makes the others wait until it continues
-#   or they time out. A caller that is refused leaves a ticket
-#   (traycer-slot-<name>.wait.<pid>, holding its start time and its own
-#   deadline) and only the oldest live ticket is admitted, so a later arrival
-#   cannot keep overtaking a waiter. A ticket is live while its owner holds a
-#   flock on it, which the kernel drops on any death, so SIGTERM, an OOM kill,
-#   a reboot or a recycled pid cannot keep one alive; whoever can lock a
-#   ticket removes it. The owner also rewrites a heartbeat into its ticket on
-#   every poll, and a locked ticket whose heartbeat is more than 5 seconds old
-#   is ignored, so a stopped (Ctrl-Z) waiter stops blocking within seconds,
-#   even a lone caller. A ticket past its owner's deadline is ignored too.
-#   Ticket times are time.monotonic(), one clock for every process, so a clock
-#   step or a suspend cannot reorder or wedge anything.
+#   Admission is atomic and ordered. Every auto caller holds an exclusive flock
+#   on traycer-slot-<name>.admit.lock around its read of MemAvailable, the probe
+#   and the lock, so a second caller always sees the first one's lock. A caller
+#   stopped (SIGSTOP) while it holds the gate, a window of milliseconds per
+#   admission, makes the others wait until it continues or they time out. A
+#   caller that is refused leaves a ticket (traycer-slot-<name>.wait.<pid>,
+#   holding its start time and its own deadline) and only the oldest live ticket
+#   is admitted, so a later arrival cannot keep overtaking a waiter. A ticket is
+#   live while its owner holds a flock on it, which the kernel drops on any
+#   death, so SIGTERM, an OOM kill, a reboot or a recycled pid cannot keep one
+#   alive; whoever can lock a ticket removes it. The owner also rewrites a
+#   heartbeat into its ticket on every poll that gets through the admission
+#   gate, and a locked ticket whose heartbeat is more than 5 seconds old is
+#   ignored, so a stopped (Ctrl-Z) waiter stops blocking within seconds, even a
+#   lone caller. A ticket past its owner's deadline is ignored too. Ticket times
+#   are time.monotonic(), one clock for every process, so a clock step or a
+#   suspend cannot reorder or wedge anything.
 #
 #   A caller refused by admission behind a long holder waits up to
-#   TRAYCER_MACHINE_SLOT_TIMEOUT and then runs unserialized with a warning
-#   that names the last reason (memory shortfall, a waiter ahead, no free
-#   file, another caller holding the admission gate), which is what happened before this lock existed.
+#   TRAYCER_MACHINE_SLOT_TIMEOUT and then runs unserialized with a warning that
+#   names the last reason (memory shortfall, a waiter ahead, no free file,
+#   another caller holding the admission gate), which is what happened before
+#   this lock existed.
 #
 # `TRAYCER_MACHINE_SLOTS` (or an explicit count argument) is a pool of exactly
 # that size with no admission check: it turns admission off. Admission also
@@ -263,15 +264,16 @@ for index in range(slots):
 
 ADMIT_KIB = 16 * 1024 * 1024
 # Above one type-check peak: the internal hook runs nx --parallel=3 and
-# the traycer-host type-check alone is about 6 GiB, so one hook can exceed 8 GiB.
+# the traycer-host type-check alone is about 6 GiB, so one hook can exceed
+# 8 GiB.
 # Every live holder is assumed not to have reached its peak yet, however long it
 # has held its slot: a newcomer must leave this much per held slot file on top
 # of ADMIT_KIB. That double-counts a holder already at its peak, on purpose: it
 # can never expire early and needs no clock.
 RAMP_KIB = 12 * 1024 * 1024
-# A locked ticket counts only while the heartbeat of its owner is this fresh. The
-# owner beats on every poll (at most about a second apart), so a stopped owner
-# stops blocking others within a few seconds.
+# A locked ticket counts only while the heartbeat of its owner is this fresh.
+# The owner beats on every poll that gets through the admission gate, so a
+# stopped owner stops blocking others within a few seconds.
 HEARTBEAT_SECONDS = 5.0
 # Admission looks at this many slot files for the name, so a holder from a
 # larger explicit pool than the one this caller sized is seen too.
@@ -310,6 +312,14 @@ def open_extra_files():
         except OSError:
             break
     return extras
+
+def take_without_admission():
+    # No admission applies (explicit count, macOS, no MemAvailable, or it just
+    # went away): the first free slot file, and no ticket stays behind.
+    descriptor = first_free()
+    if descriptor is not None:
+        drop_ticket()
+    return descriptor
 
 def first_free():
     for descriptor in descriptors:
@@ -429,7 +439,7 @@ def live_tickets():
 
 def admit_one(available):
     if available is None:
-        return first_free()
+        return take_without_admission()
     waiting_ahead = [ticket for ticket in live_tickets() if ticket < me]
     descriptor = first_free()
     allowed = False
@@ -474,7 +484,7 @@ def try_take():
     # Exclusion is only ever the flock on a slot file, so nothing here can
     # let two holders share one. Memory is read again on every call.
     if available_kib() is None:
-        return first_free()
+        return take_without_admission()
     if not take_gate():
         refusal[0] = "another caller held the admission gate"
         return None

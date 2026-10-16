@@ -750,6 +750,41 @@ describe("machine-slot.sh auto admission", () => {
     expect((await a.done).code).toBe(0);
   }, 30000);
 
+  it("keeps a long-queued waiter ahead of a later caller: its heartbeat is refreshed, not written once", async () => {
+    const dir = freshSlotDir();
+    const logFile = join(dir, "log.txt");
+    writeMeminfo(dir, LOW);
+    const env = admissionEnv(dir, { TRAYCER_MACHINE_SLOT_TIMEOUT: "60" });
+
+    const a = runSlot(["beat", "auto", ...markerCommand("A", "12")], env);
+    await waitForLine(logFile, "start:A");
+    const w = runSlot(["beat", "auto", ...markerCommand("W", "0.1")], env);
+    await waitForFiles(dir, (names) => names.some(isTicket));
+    const readBeat = () =>
+      Number(
+        readFileSync(join(dir, readdirSync(dir).find(isTicket)), "utf8").split(
+          /\s+/,
+        )[2],
+      );
+    const firstBeat = readBeat();
+    // Long enough that a heartbeat written once, at creation, would be stale.
+    await pause(7500);
+    expect(readBeat() - firstBeat).toBeGreaterThan(5);
+    expect(readLogLines(logFile)).toEqual(["start:A"]);
+
+    writeMeminfo(dir, HIGH);
+    const l = runSlot(["beat", "auto", ...markerCommand("L", "0.1")], env);
+    const results = await Promise.all([w.done, l.done]);
+    for (const result of results) {
+      expect(result.code, result.stderr).toBe(0);
+    }
+    const lines = readLogLines(logFile);
+    expect(lines.indexOf("end:A")).toBe(-1);
+    expect(lines.indexOf("start:W")).toBeGreaterThan(-1);
+    expect(lines.indexOf("start:W")).toBeLessThan(lines.indexOf("start:L"));
+    expect((await a.done).code).toBe(0);
+  }, 40000);
+
   it("takes the admission gate around admission: a caller waits while another process holds it", async () => {
     const dir = freshSlotDir();
     const logFile = join(dir, "log.txt");
@@ -810,8 +845,7 @@ describe("machine-slot.sh auto admission", () => {
     const dir = freshSlotDir();
     const logFile = join(dir, "log.txt");
     writeMeminfo(dir, { totalGib: 62, availableGib: 20 });
-    // The old settle window is gone; this variable must change nothing.
-    const env = admissionEnv(dir, { TRAYCER_MACHINE_SLOT_SETTLE: "0" });
+    const env = admissionEnv(dir);
 
     const a = runSlot(["no-lapse", "auto", ...markerCommand("A", "10")], env);
     await waitForLine(logFile, "start:A");
