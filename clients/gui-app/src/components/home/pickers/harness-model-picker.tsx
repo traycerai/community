@@ -994,11 +994,21 @@ function HarnessModelPickerImpl(props: HarnessModelPickerProps) {
       // Only an AVAILABLE, non-degraded entry commits a switch (restoring its
       // remembered model/effort/tier, or landing on an embedding's own
       // model). A degraded / unavailable entry just browses the rail - the
-      // panel shows its reauth / setup CTA, no commit.
+      // panel shows its reauth / setup CTA, no commit. Nor does a provider a
+      // team sandbox does not offer: the panel says so (ticket E17
+      // checkpoint 6).
       const entry = railEntries.find(
         (candidate) => candidate.harness.id === providerId,
       );
-      if (entry !== undefined && entry.harness.available && !entry.degraded) {
+      if (
+        entry !== undefined &&
+        entry.harness.available &&
+        !entry.degraded &&
+        !teamSandboxHarnessBlocked(
+          entry.harness.sandboxCredentialMode,
+          onTeamSandbox,
+        )
+      ) {
         commitSelection(
           store,
           providerId,
@@ -1013,6 +1023,7 @@ function HarnessModelPickerImpl(props: HarnessModelPickerProps) {
       activeProviderId,
       embedding,
       lockedHarnessId,
+      onTeamSandbox,
       profilesByHarnessId,
       railEntries,
       selection.harnessId,
@@ -1026,6 +1037,18 @@ function HarnessModelPickerImpl(props: HarnessModelPickerProps) {
       // Mirrors `handleRailEntryChange`'s lock rule: while a fork lock is
       // active the strip stays interactive for the locked provider only.
       if (lockedHarnessId !== null && providerId !== lockedHarnessId) return;
+      // A provider a team sandbox does not offer is only browsed, never
+      // committed (ticket E17 checkpoint 6).
+      const entry = catalogHarnesses.find(
+        (harness) => harness.id === providerId,
+      );
+      if (
+        entry !== undefined &&
+        teamSandboxHarnessBlocked(entry.sandboxCredentialMode, onTeamSandbox)
+      ) {
+        setActiveRailEntry(providerId, profileId);
+        return;
+      }
       // Same-provider profile changes only replace the credential, preserving
       // the user's configured model, reasoning effort, and tier. The provider
       // can differ after browsing a degraded rail entry without committing it,
@@ -1046,7 +1069,14 @@ function HarnessModelPickerImpl(props: HarnessModelPickerProps) {
       }
       setActiveRailEntry(providerId, profileId);
     },
-    [embedding, lockedHarnessId, setActiveRailEntry, store],
+    [
+      catalogHarnesses,
+      embedding,
+      lockedHarnessId,
+      onTeamSandbox,
+      setActiveRailEntry,
+      store,
+    ],
   );
 
   const handleKeyDown = useCallback(

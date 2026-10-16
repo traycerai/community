@@ -5,7 +5,7 @@ import { installCrossWindowRehydrate } from "@/lib/persist/cross-window-rehydrat
 
 /**
  * A once-per-person notice's memory: which (viewer, subject) pairs have seen
- * it, valued by when. Machine-local, capped (oldest out), re-read from
+ * it, valued by when. Machine-local, capped (oldest out), joined with
  * storage before every write so another window's marks survive, and
  * following other windows' writes. The shape the mirror line's store has
  * (`composer-mirror-line-seen-store.ts`), for the notices after it.
@@ -59,6 +59,25 @@ function persistedSeen(persistedState: unknown): SeenRecord {
   return next;
 }
 
+/**
+ * What this window knows joined with what storage holds, newest `cap` kept.
+ * Pairs are only ever added, so a union loses nothing: storage that was
+ * cleared or never written does not erase this window's marks, and another
+ * window's marks are taken in.
+ */
+function unionSeen(
+  current: SeenRecord,
+  persisted: SeenRecord,
+  cap: number,
+): SeenRecord {
+  const merged: Record<string, number> = { ...current, ...persisted };
+  const entries = Object.entries(merged);
+  if (entries.length <= cap) return merged;
+  return Object.fromEntries(
+    entries.toSorted((a, b) => a[1] - b[1]).slice(entries.length - cap),
+  );
+}
+
 // The store's type is zustand's own persisted-store type, inferred.
 export function createKeyedSeenStore(storageKey: string, cap: number) {
   const store = create<KeyedSeenState>()(
@@ -84,7 +103,11 @@ export function createKeyedSeenStore(storageKey: string, cap: number) {
         storage: createJSONStorage(() => localStorage),
         merge: (persistedState, currentState) => ({
           ...currentState,
-          seen: persistedSeen(persistedState),
+          seen: unionSeen(
+            currentState.seen,
+            persistedSeen(persistedState),
+            cap,
+          ),
         }),
         partialize: (state) => ({ seen: state.seen }),
       },

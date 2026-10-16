@@ -26,7 +26,13 @@ export const useLandingOwnerStore = create<LandingOwnerState>()((set) => ({
   setChoice: (draftId, choice) => {
     set((state) => ({ byDraftId: { ...state.byDraftId, [draftId]: choice } }));
   },
-  clearChoice: () => undefined,
+  clearChoice: (draftKey) => {
+    set((state) => {
+      if (!Object.hasOwn(state.byDraftId, draftKey)) return state;
+      const { [draftKey]: _cleared, ...rest } = state.byDraftId;
+      return { byDraftId: rest };
+    });
+  },
   migrateChoice: (fromKey, toDraftId) => {
     set((state) => {
       if (!Object.hasOwn(state.byDraftId, fromKey)) return state;

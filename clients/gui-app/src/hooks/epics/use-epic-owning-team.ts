@@ -54,6 +54,12 @@ function useCloudTaskCacheRead<T extends string | boolean | null>(
       // otherwise re-scan them for nothing.
       const cache = queryClient.getQueryCache();
       return cache.subscribe((event) => {
+        // A removed query is no longer in the cache to look up, so any
+        // removal re-reads: removals are rare, and one may be a task list.
+        if (event.type === "removed") {
+          callback();
+          return;
+        }
         // Looked up by hash for a typed key: the event's own query is `any`.
         const key = cache.get(event.query.queryHash)?.queryKey ?? [];
         if (

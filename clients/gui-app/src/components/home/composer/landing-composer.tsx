@@ -87,6 +87,7 @@ import { subscribeFollowingSurfaceReset } from "@/stores/host/surface-host-selec
 import { ComposerHostNotice } from "@/components/home/composer/composer-host-notice";
 import { LandingTeamChatLine } from "@/components/home/composer/landing-owner-chip";
 import { useLandingOwner } from "@/hooks/home/use-landing-owner";
+import { useTeamSandboxHarnessGate } from "@/hooks/sandboxes/use-team-sandbox-harness-blocked";
 import {
   NO_DRAFT_OWNER_KEY,
   useLandingOwnerStore,
@@ -157,6 +158,12 @@ export function LandingComposer(props: LandingComposerProps) {
   // Who the task belongs to (ticket E17 checkpoint 6, A1), read at submit.
   const owner = useLandingOwner(props.draftId, resolvedHostId);
   const hostClient = placementTarget.client;
+  // A harness a team sandbox does not offer is refused at submit and at a
+  // terminal launch (ticket E17 checkpoint 6, B5).
+  const teamSandboxHarnessBlockedFor = useTeamSandboxHarnessGate({
+    hostId: resolvedHostId,
+    client: hostClient,
+  });
   const activityEnabled = useSurfaceActivity();
   const runtime = draftRuntimeRegistry.getOrHydrate(props.draftId);
   const [unboundRuntime] = useState(() =>
@@ -656,7 +663,9 @@ export function LandingComposer(props: LandingComposerProps) {
         permission: toolbar.permission,
       },
       owner,
-      teamSandboxHarnessBlocked: false,
+      teamSandboxHarnessBlocked: teamSandboxHarnessBlockedFor(
+        toolbar.selection.harnessId,
+      ),
     });
     // Nothing was created when a refusal comes back - the draft, its content
     // and its staged workspace are exactly as the user left them, and the
@@ -674,6 +683,7 @@ export function LandingComposer(props: LandingComposerProps) {
     pickerStore,
     raiseHostNotice,
     setComposerExpanded,
+    teamSandboxHarnessBlockedFor,
     toolbarStore,
   ]);
 
@@ -683,14 +693,14 @@ export function LandingComposer(props: LandingComposerProps) {
         launch,
         draftId,
         owner,
-        false,
+        teamSandboxHarnessBlockedFor(launch.harnessId),
       );
       raiseHostNotice(
         refusal === null ? null : { kind: "refused", message: refusal.message },
       );
       return refusal === null;
     },
-    [actions, draftId, owner, raiseHostNotice],
+    [actions, draftId, owner, raiseHostNotice, teamSandboxHarnessBlockedFor],
   );
   const handleStartTerminal = useCallback(
     (launch: TerminalAgentLaunch, assembledFor: string | null): boolean => {

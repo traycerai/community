@@ -37,6 +37,12 @@ import {
   landingOwnerRefusal,
   type LandingOwnerTeam,
 } from "@/components/home/composer/landing-owner-model";
+import {
+  NO_DRAFT_OWNER_KEY,
+  landingOwnerDraftKey,
+  useLandingOwnerStore,
+} from "@/stores/home/landing-owner-store";
+import { TEAM_SANDBOX_HARNESS_UNAVAILABLE } from "@/lib/sandboxes/team-sandbox-harness";
 import { readNegotiatedMethodVersion } from "@/lib/host/read-negotiated-method-version";
 import {
   selectWorkspaceFoldersBucket,
@@ -1515,6 +1521,9 @@ export function useLandingComposerActions(
       if (placement.kind === "refused") {
         return { message: placement.message };
       }
+      if (args.teamSandboxHarnessBlocked) {
+        return { message: TEAM_SANDBOX_HARNESS_UNAVAILABLE };
+      }
       const ownerRefusal = refuseTeamOwner(args.owner, placement.hostId);
       if (ownerRefusal !== null) return ownerRefusal;
       const workspaceContext = readLandingWorkspaceContext(
@@ -1524,6 +1533,7 @@ export function useLandingComposerActions(
       );
       if (workspaceContext.worktreeIntentSuspended) return null;
       dispatchSubmission(args, workspaceContext, placement.hostId);
+      clearLandingOwnerChoice(args.draftId);
       return null;
     },
     [dispatchSubmission, queryClient, resolveAdmittedPlacement],
@@ -1534,11 +1544,14 @@ export function useLandingComposerActions(
       launch: TerminalAgentLaunch,
       draftId: string | null,
       owner: LandingOwnerTeam | null,
-      _teamSandboxHarnessBlocked: boolean,
+      teamSandboxHarnessBlocked: boolean,
     ): LandingPlacementRefusal | null => {
       const placement = resolveAdmittedPlacement();
       if (placement.kind === "refused") {
         return { message: placement.message };
+      }
+      if (teamSandboxHarnessBlocked) {
+        return { message: TEAM_SANDBOX_HARNESS_UNAVAILABLE };
       }
       const ownerRefusal = refuseTeamOwner(owner, placement.hostId);
       if (ownerRefusal !== null) return ownerRefusal;
@@ -1549,6 +1562,7 @@ export function useLandingComposerActions(
       );
       if (workspaceContext.worktreeIntentSuspended) return null;
       dispatchTerminalAgent(launch, workspaceContext, placement.hostId, owner);
+      clearLandingOwnerChoice(draftId);
       return null;
     },
     [dispatchTerminalAgent, queryClient, resolveAdmittedPlacement],
@@ -1577,6 +1591,17 @@ export function useLandingComposerActions(
       terminalAgentCreate.isPending,
     ],
   );
+}
+
+/**
+ * Forgets the Belongs to pick once its create is sent, under the draft's key
+ * and the not-yet-a-draft key, so the next task starts from the host's team
+ * again (ticket E17 checkpoint 6).
+ */
+function clearLandingOwnerChoice(draftId: string | null): void {
+  const store = useLandingOwnerStore.getState();
+  store.clearChoice(landingOwnerDraftKey(draftId));
+  store.clearChoice(NO_DRAFT_OWNER_KEY);
 }
 
 function ensureSubmissionDraft(

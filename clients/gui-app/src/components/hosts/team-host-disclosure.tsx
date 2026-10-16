@@ -6,7 +6,10 @@ import {
   useCloudChatViewerId,
 } from "@/hooks/chats/use-cloud-chat-queries";
 import { useEpicSessionHostClient } from "@/hooks/epic/use-epic-session-host-client";
-import { useEpicCollaboratorsQuery } from "@/hooks/epics/use-epic-collaborators-query";
+import {
+  useEpicCollaboratorsQuery,
+  type UseEpicCollaboratorsQueryResult,
+} from "@/hooks/epics/use-epic-collaborators-query";
 import { useMaybeOpenEpicHandle } from "@/providers/use-open-epic-handle";
 import {
   teamHostDisclosureSeen,
@@ -43,15 +46,20 @@ export function TeamHostDisclosure(props: {
     enabled: cloudAuthorized && epicId.length > 0,
     poll: false,
     staleTime: undefined,
-  }).data;
+  });
   if (viewerUserId.length === 0) return null;
   if (teamHostDisclosureSeen(seen, viewerUserId, props.hostId)) return null;
-  const sentences = teamHostDisclosureSentences(props.teamName);
-  const outside = taskHasReadersOutsideTeam({
+  const outside = readersOutsideTeam({
+    hasTask: epicId.length > 0,
+    cloudAuthorized,
+    collaborators,
     viewerUserId,
     teamId: props.teamId,
-    collaborators: collaborators ?? null,
   });
+  // The card waits for the reader list rather than showing first and growing
+  // a line later.
+  if (outside === "loading") return null;
+  const sentences = teamHostDisclosureSentences(props.teamName);
   return (
     <div
       role="status"
@@ -83,4 +91,29 @@ export function TeamHostDisclosure(props: {
       </Button>
     </div>
   );
+}
+
+/**
+ * Whether the open task has readers outside the team. A list the person
+ * cannot read (no cloud authorization, or the read failed or never ran) is
+ * not "nobody outside": it counts as outside readers.
+ */
+function readersOutsideTeam(input: {
+  readonly hasTask: boolean;
+  readonly cloudAuthorized: boolean;
+  readonly collaborators: UseEpicCollaboratorsQueryResult;
+  readonly viewerUserId: string;
+  readonly teamId: string;
+}): boolean | "loading" {
+  if (!input.hasTask) return false;
+  if (!input.cloudAuthorized || input.collaborators.isError) return true;
+  const data = input.collaborators.data;
+  if (data !== undefined) {
+    return taskHasReadersOutsideTeam({
+      viewerUserId: input.viewerUserId,
+      teamId: input.teamId,
+      collaborators: data,
+    });
+  }
+  return input.collaborators.isLoading ? "loading" : true;
 }
