@@ -348,6 +348,11 @@ vi.mock("@/hooks/epic/use-epic-chat-mutations", () => ({
     mutateAsync: testState.deleteChatMutateAsync,
     isPending: false,
   }),
+  useEpicDeleteChatInBatch: () => ({
+    mutate: vi.fn(),
+    mutateAsync: testState.deleteChatMutateAsync,
+    isPending: false,
+  }),
   useEpicRenameChat: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
@@ -410,6 +415,11 @@ vi.mock("@/hooks/epic/use-epic-node-mutations", () => ({
 
 vi.mock("@/hooks/epic/use-epic-tui-agent-mutations", () => ({
   useEpicDeleteTuiAgent: () => ({
+    mutate: vi.fn(),
+    mutateAsync: testState.deleteTuiAgentMutateAsync,
+    isPending: false,
+  }),
+  useEpicDeleteTuiAgentInBatch: () => ({
     mutate: vi.fn(),
     mutateAsync: testState.deleteTuiAgentMutateAsync,
     isPending: false,

@@ -19,6 +19,7 @@ import {
 import { useHostMutation } from "@/hooks/host/use-host-query";
 import { useEpicSessionHostClient } from "@/hooks/epic/use-epic-session-host-client";
 import { toastFromHostError } from "@/lib/host-error-toast";
+import { toastFromOwnerHostWriteError } from "@/lib/owner-host-write-error-toast";
 import { invalidateEpicTuiAgentRecords } from "@/hooks/chats/use-epic-tui-agent-records";
 import { Analytics, AnalyticsEvent } from "@/lib/analytics";
 
@@ -93,6 +94,21 @@ export type RenameTuiAgentMutationInput = RenameTuiAgentRequest &
  * the cloud row (`outcome: "requested"`); the owner tears down when it is back.
  */
 export function useEpicDeleteTuiAgent() {
+  return useEpicDeleteTuiAgentMutation("individual");
+}
+
+/**
+ * `useEpicDeleteTuiAgent` for one delete among several in a batch: the caller
+ * reports the batch's failures once (`toastFromOwnerHostBatchWriteFailures`),
+ * so a failure here raises no notice of its own.
+ */
+export function useEpicDeleteTuiAgentInBatch() {
+  return useEpicDeleteTuiAgentMutation("aggregate");
+}
+
+function useEpicDeleteTuiAgentMutation(
+  failurePresentation: "individual" | "aggregate",
+) {
   const client = useEpicRecordLifecycleMutationClient();
   const sessionClient = useEpicSessionHostClient();
   const binding = useHostBinding();
@@ -139,9 +155,15 @@ export function useEpicDeleteTuiAgent() {
           });
         }
       },
-      onError: (error) => {
-        toastFromHostError(error, "Couldn't delete terminal agent.");
-      },
+      onError:
+        failurePresentation === "individual"
+          ? (error) => {
+              toastFromOwnerHostWriteError(
+                error,
+                "Couldn't delete terminal agent.",
+              );
+            }
+          : undefined,
     },
   });
 }

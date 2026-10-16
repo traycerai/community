@@ -4,12 +4,13 @@
  * `epic.batchDelete` goes to the active host while its lease can serve. When
  * it cannot, the call goes to a live host - this machine's host first, then any
  * other live host - carrying only the cloud-homed ids; the local-homed ones
- * exist on the down host alone and are refused with the offline notice.
+ * exist on the down host alone and are answered "not deleted", counted in the
+ * outcome toast with the reason.
  *
  * Real: the hook, `useHostMutation`, the `QueryClient`, the selection
- * authority store. Faked at their boundaries: the hosts (one client per host
- * id, recording what it was sent), the router, sonner, the worktree cleanup and
- * the host-error toast.
+ * authority store, the auth store (signed in). Faked at their boundaries: the
+ * hosts (one client per host id, recording what it was sent), the router,
+ * sonner, the reportable toasts, the worktree cleanup and the host-error toast.
  */
 import { createElement, type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -26,6 +27,8 @@ const mocks = vi.hoisted(() => ({
   toastDismiss: vi.fn(),
   toastGetToasts: vi.fn(() => []),
   toastFromHostError: vi.fn(),
+  reportableWarningToast: vi.fn(),
+  reportableErrorToast: vi.fn(),
   publishDeletedEpicNotification: vi.fn(),
   navigate: vi.fn(() => Promise.resolve()),
   runWorktreeCleanup: vi.fn(() =>
@@ -114,17 +117,23 @@ vi.mock("@/lib/host-error-toast", () => ({
   toastFromHostError: mocks.toastFromHostError,
 }));
 
+vi.mock("@/lib/reportable-error-toast", () => ({
+  reportableWarningToast: mocks.reportableWarningToast,
+  reportableErrorToast: mocks.reportableErrorToast,
+}));
+
 vi.mock("@/lib/epics/deleted-epic-events", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/epics/deleted-epic-events")>()),
   publishDeletedEpicNotification: mocks.publishDeletedEpicNotification,
 }));
 
 import {
-  OWNER_HOST_UNREACHABLE_NOTICE,
+  EPIC_DELETE_HOST_UNREACHABLE_MESSAGE,
   routeEpicBatchDelete,
   useEpicBatchDelete,
   type BatchDeleteEpicVariables,
 } from "@/hooks/epic/use-epic-batch-delete-mutation";
+import { useAuthStore } from "@/stores/auth/auth-store";
 import { useSelectionAuthorityStore } from "@/stores/host/selection-authority-store";
 
 function lease(
@@ -152,10 +161,9 @@ async function dispatch(variables: BatchDeleteEpicVariables): Promise<void> {
   });
 }
 
-function offlineNotices(): number {
-  return mocks.toastMessage.mock.calls.filter(
-    (call) => call[0] === OWNER_HOST_UNREACHABLE_NOTICE,
-  ).length;
+/** The rows local-homed now, among `ids`. */
+function localHomed(...ids: string[]): (epicId: string) => boolean {
+  return (epicId) => ids.includes(epicId);
 }
 
 beforeEach(() => {
@@ -163,6 +171,7 @@ beforeEach(() => {
   hosts.state.localHostId = "this-machine";
   hosts.state.sent.length = 0;
   for (const mock of Object.values(mocks)) mock.mockClear();
+  useAuthStore.setState({ status: "signed-in" });
 });
 
 afterEach(() => {
@@ -180,7 +189,7 @@ describe("Task delete while the active host is down", () => {
 
     await dispatch({
       ids: ["cloud-a", "local-b", "cloud-c"],
-      localHomeIds: ["local-b"],
+      isLocalHomedNow: localHomed("local-b"),
       worktreeCleanup: null,
     });
 
@@ -191,8 +200,16 @@ describe("Task delete while the active host is down", () => {
         params: { ids: ["cloud-a", "cloud-c"] },
       },
     ]);
-    expect(offlineNotices()).toBe(1);
-    expect(mocks.toastSuccess).toHaveBeenCalledWith("2 epics deleted");
+    // The outcome counts the person's whole selection: the refused Task is
+    // one of three, with the reason it was not deleted.
+    expect(mocks.toastSuccess).not.toHaveBeenCalled();
+    expect(mocks.reportableWarningToast).toHaveBeenCalledTimes(1);
+    expect(mocks.reportableWarningToast.mock.calls[0]?.[0]).toBe(
+      "Deleted 2 of 3; 1 failed.",
+    );
+    expect(mocks.reportableWarningToast.mock.calls[0]?.[1]).toEqual({
+      description: EPIC_DELETE_HOST_UNREACHABLE_MESSAGE,
+    });
   });
 
   it("goes to another live host when this machine's host is not live", async () => {
@@ -204,14 +221,15 @@ describe("Task delete while the active host is down", () => {
 
     await dispatch({
       ids: ["cloud-a"],
-      localHomeIds: [],
+      isLocalHomedNow: localHomed(),
       worktreeCleanup: null,
     });
 
     expect(hosts.state.sent.map((request) => request.hostId)).toEqual([
       "elsewhere",
     ]);
-    expect(offlineNotices()).toBe(0);
+    expect(mocks.toastSuccess).toHaveBeenCalledTimes(1);
+    expect(mocks.reportableWarningToast).not.toHaveBeenCalled();
   });
 
   it("sends nothing when every id is local-homed, and says why", async () => {
@@ -219,12 +237,18 @@ describe("Task delete while the active host is down", () => {
 
     await dispatch({
       ids: ["local-a", "local-b"],
-      localHomeIds: ["local-a", "local-b"],
+      isLocalHomedNow: localHomed("local-a", "local-b"),
       worktreeCleanup: null,
     });
 
     expect(hosts.state.sent).toEqual([]);
-    expect(offlineNotices()).toBe(1);
+    expect(mocks.reportableErrorToast).toHaveBeenCalledTimes(1);
+    expect(mocks.reportableErrorToast.mock.calls[0]?.[0]).toBe(
+      "Couldn't delete 2 tasks.",
+    );
+    expect(mocks.reportableErrorToast.mock.calls[0]?.[1]).toEqual({
+      description: EPIC_DELETE_HOST_UNREACHABLE_MESSAGE,
+    });
     expect(mocks.toastFromHostError).not.toHaveBeenCalled();
     // The progress toast is taken down, never left spinning.
     expect(mocks.toastDismiss).toHaveBeenCalled();
@@ -235,7 +259,7 @@ describe("Task delete while the active host is down", () => {
 
     await dispatch({
       ids: ["cloud-a"],
-      localHomeIds: [],
+      isLocalHomedNow: localHomed(),
       worktreeCleanup: {
         candidates: [{ worktreePath: "/wt/a", ownerEpicIds: ["cloud-a"] }],
       },
@@ -248,13 +272,41 @@ describe("Task delete while the active host is down", () => {
   });
 });
 
+describe("Task delete while the active host is down and the session is not signed in", () => {
+  it("answers the cloud-homed ids not deleted for the sign-in and the local-homed ones for the host, sending nothing", async () => {
+    publishLeases(lease("active", "dead"), lease("this-machine", "ready"));
+    useAuthStore.setState({ status: "unverified" });
+
+    await dispatch({
+      ids: ["cloud-a", "local-b"],
+      isLocalHomedNow: localHomed("local-b"),
+      worktreeCleanup: null,
+    });
+
+    expect(hosts.state.sent).toEqual([]);
+    expect(mocks.reportableErrorToast).toHaveBeenCalledTimes(1);
+    expect(mocks.reportableErrorToast.mock.calls[0]?.[0]).toBe(
+      "Couldn't delete 2 tasks.",
+    );
+    const detail = String(
+      (
+        mocks.reportableErrorToast.mock.calls[0]?.[1] as
+          | { readonly description: string }
+          | undefined
+      )?.description,
+    );
+    expect(detail).toContain(EPIC_DELETE_HOST_UNREACHABLE_MESSAGE);
+    expect(detail).toContain("couldn't confirm your sign-in");
+  });
+});
+
 describe("unchanged paths", () => {
   it("an active host that can serve takes every id, local-homed included", async () => {
     publishLeases(lease("active", "ready"), lease("this-machine", "ready"));
 
     await dispatch({
       ids: ["cloud-a", "local-b"],
-      localHomeIds: ["local-b"],
+      isLocalHomedNow: localHomed("local-b"),
       worktreeCleanup: null,
     });
 
@@ -265,7 +317,7 @@ describe("unchanged paths", () => {
         params: { ids: ["cloud-a", "local-b"] },
       },
     ]);
-    expect(offlineNotices()).toBe(0);
+    expect(mocks.reportableWarningToast).not.toHaveBeenCalled();
   });
 
   it("with no live host the call still goes to the active host", async () => {
@@ -277,7 +329,7 @@ describe("unchanged paths", () => {
 
     await dispatch({
       ids: ["cloud-a", "local-b"],
-      localHomeIds: ["local-b"],
+      isLocalHomedNow: localHomed("local-b"),
       worktreeCleanup: null,
     });
 
@@ -299,7 +351,7 @@ describe("routeEpicBatchDelete", () => {
       routeEpicBatchDelete({
         activeHostId: "active",
         ids: ["a", "b"],
-        localHomeIds: ["b"],
+        isLocalHomedNow: localHomed("b"),
         fleet,
         localHostId: () => null,
       }),
@@ -316,7 +368,7 @@ describe("routeEpicBatchDelete", () => {
       routeEpicBatchDelete({
         activeHostId: null,
         ids: ["a"],
-        localHomeIds: [],
+        isLocalHomedNow: localHomed(),
         fleet,
         localHostId: () => null,
       }),

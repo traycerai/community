@@ -45,6 +45,10 @@ import {
   toastFromHostError,
   toastFromHostErrorWithDetail,
 } from "@/lib/host-error-toast";
+import {
+  toastFromOwnerHostBatchWriteFailures,
+  toastFromOwnerHostWriteError,
+} from "@/lib/owner-host-write-error-toast";
 import { invalidateEpicChatRecords } from "@/hooks/chats/use-epic-chat-records";
 import { invalidateChatRunSettings } from "@/hooks/chats/use-chat-run-settings-query";
 import { invalidateEpicTuiAgentRecords } from "@/hooks/chats/use-epic-tui-agent-records";
@@ -753,7 +757,8 @@ function useEpicArchiveChatMutation(
       },
       onError:
         failurePresentation === "individual"
-          ? (error) => toastFromHostError(error, "Couldn't archive agent.")
+          ? (error) =>
+              toastFromOwnerHostWriteError(error, "Couldn't archive agent.")
           : undefined,
     },
   });
@@ -798,15 +803,15 @@ export function useEpicArchiveChats(): UseMutationResult<
           }),
         ),
       ),
-    onSuccess: (results) => {
-      const firstFailure = results.find(
-        (result): result is PromiseRejectedResult =>
-          result.status === "rejected",
-      );
-      if (firstFailure === undefined) return;
-      const reason: unknown = firstFailure.reason;
-      toastFromHostError(
-        toHostRpcError(reason, "epic.setChatArchived"),
+    onSuccess: (results, variables) => {
+      toastFromOwnerHostBatchWriteFailures(
+        results.map((result, index) => ({
+          hostId: variables.chats[index]?.hostId ?? null,
+          error:
+            result.status === "rejected"
+              ? toHostRpcError(result.reason, "epic.setChatArchived")
+              : null,
+        })),
         "Couldn't archive some selected agents.",
       );
     },
@@ -820,6 +825,31 @@ export function useEpicArchiveChats(): UseMutationResult<
  * on the owner are untouched.
  */
 export function useEpicDeleteChat(): UseMutationResult<
+  DeleteChatResponse,
+  HostRpcError,
+  DeleteChatMutationInput,
+  DeleteChatMutationContext
+> {
+  return useEpicDeleteChatMutation("individual");
+}
+
+/**
+ * `useEpicDeleteChat` for one delete among several in a batch: the caller
+ * reports the batch's failures once (`toastFromOwnerHostBatchWriteFailures`),
+ * so a failure here raises no notice of its own.
+ */
+export function useEpicDeleteChatInBatch(): UseMutationResult<
+  DeleteChatResponse,
+  HostRpcError,
+  DeleteChatMutationInput,
+  DeleteChatMutationContext
+> {
+  return useEpicDeleteChatMutation("aggregate");
+}
+
+function useEpicDeleteChatMutation(
+  failurePresentation: "individual" | "aggregate",
+): UseMutationResult<
   DeleteChatResponse,
   HostRpcError,
   DeleteChatMutationInput,
@@ -1005,7 +1035,9 @@ export function useEpicDeleteChat(): UseMutationResult<
         useEpicCanvasStore
           .getState()
           .unmarkArtifactSelfDeleted(variables.chatId);
-        toastFromHostError(error, "Couldn't delete agent.");
+        if (failurePresentation === "individual") {
+          toastFromOwnerHostWriteError(error, "Couldn't delete agent.");
+        }
       },
     },
   });

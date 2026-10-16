@@ -33,7 +33,7 @@ import {
   worktreeCleanupFailureDetail,
   type WorktreeCleanupOutcome,
 } from "@/lib/epics/run-worktree-cleanup";
-import { toastFromHostError } from "@/lib/host-error-toast";
+import { toastFromOwnerHostWriteError } from "@/lib/owner-host-write-error-toast";
 import { progressToast } from "@/lib/toast/progress-toast";
 import { LANDING_ROUTE } from "@/lib/routes";
 import { navigateToTabIntent } from "@/lib/tab-navigation";
@@ -54,6 +54,10 @@ import {
   reportableWarningToast,
 } from "@/lib/reportable-error-toast";
 import { Analytics, AnalyticsEvent } from "@/lib/analytics";
+import {
+  authorizesCloudCapability,
+  useAuthStore,
+} from "@/stores/auth/auth-store";
 
 interface BatchDeleteEpicMutationContext {
   /** The active host: the scope the person deleted from. */
@@ -97,12 +101,13 @@ export interface BatchDeleteWorktreeCandidate {
 export interface BatchDeleteEpicVariables {
   readonly ids: ReadonlyArray<string>;
   /**
-   * The ids whose row says the Task is local-homed on the active host - a
-   * dispatch-side fact, like `SetEpicPinnedVariables.isLocalHome`, never sent
-   * on the wire. Read only when the active host is down: those Tasks exist on
-   * that machine alone, so no other host can delete them.
+   * Whether a Task's row is local-homed right now, asked when the request is
+   * built rather than recorded at confirm: a local row can finish promotion
+   * to cloud while the person confirms or the mutation starts. Never sent on
+   * the wire. Also read when the active host is down: a local-homed Task
+   * exists on that machine alone, so no other host can delete it.
    */
-  readonly localHomeIds: ReadonlyArray<string>;
+  readonly isLocalHomedNow: (epicId: string) => boolean;
   readonly worktreeCleanup: {
     readonly candidates: ReadonlyArray<BatchDeleteWorktreeCandidate>;
   } | null;
@@ -147,7 +152,7 @@ export type EpicBatchDeleteRoute =
 export function routeEpicBatchDelete(args: {
   readonly activeHostId: string | null;
   readonly ids: ReadonlyArray<string>;
-  readonly localHomeIds: ReadonlyArray<string>;
+  readonly isLocalHomedNow: (epicId: string) => boolean;
   readonly fleet: SurfacePinFleetView;
   readonly localHostId: () => string | null;
 }): EpicBatchDeleteRoute {
@@ -165,9 +170,8 @@ export function routeEpicBatchDelete(args: {
     preferredHostIds: () => [args.localHostId()],
   });
   if (!route.fellBack) return direct;
-  const localHome = new Set(args.localHomeIds);
-  const sentIds = ids.filter((id) => !localHome.has(id));
-  const refusedIds = ids.filter((id) => localHome.has(id));
+  const sentIds = ids.filter((id) => !args.isLocalHomedNow(id));
+  const refusedIds = ids.filter((id) => args.isLocalHomedNow(id));
   if (sentIds.length === 0) {
     return { kind: "refused", hostId: null, sentIds, refusedIds };
   }
@@ -175,13 +179,11 @@ export function routeEpicBatchDelete(args: {
 }
 
 /**
- * Said when Tasks are not deleted because the host they live on cannot be
- * reached. Same sentence and id as the owner-host offline notice, so a person
- * who also hit it on an agent write reads one line.
+ * The answer for a local-homed Task a stand-in host was not asked to delete:
+ * it exists only on the active host, which cannot be reached.
  */
-const OWNER_HOST_OFFLINE_TOAST_ID = "owner-host-offline-notice";
-export const OWNER_HOST_UNREACHABLE_NOTICE =
-  "Traycer can't reach that host right now, so nothing on it was changed. Try again once it is reachable.";
+export const EPIC_DELETE_HOST_UNREACHABLE_MESSAGE =
+  "This task was not deleted because Traycer can't reach the host it is on. Try again once that host is reachable.";
 
 /**
  * Each dispatch's route, decided ONCE and shared by the client choice, the
@@ -194,13 +196,72 @@ const batchDeleteRoutes = new WeakMap<
   EpicBatchDeleteRoute
 >();
 
-function toastRefusedLocalHomeDeletes(): void {
-  toast.message(OWNER_HOST_UNREACHABLE_NOTICE, {
-    id: OWNER_HOST_OFFLINE_TOAST_ID,
-  });
+type DeleteNavigationTarget = HeaderTab | null | undefined;
+
+const EPIC_DELETE_SIGNED_OUT_MESSAGE =
+  "This task was not deleted because Traycer couldn't confirm your sign-in. Try again once you're signed in.";
+
+/**
+ * The ids each dispatch did not send, answered "not deleted" with the reason,
+ * merged into its answer so the outcome toast counts them.
+ */
+const epicDeleteRefusedResults = new WeakMap<
+  BatchDeleteEpicVariables,
+  ReadonlyArray<BatchDeleteItemResult>
+>();
+
+function refusedEpicDeleteResults(
+  route: EpicBatchDeleteRoute,
+  signedOutIds: ReadonlyArray<string>,
+): BatchDeleteItemResult[] {
+  const refused = (
+    taskIds: ReadonlyArray<string>,
+    errorMessage: string,
+  ): BatchDeleteItemResult[] =>
+    taskIds.map((taskId) => ({ taskId, success: false, errorMessage }));
+  return [
+    ...refused(route.refusedIds, EPIC_DELETE_HOST_UNREACHABLE_MESSAGE),
+    ...refused(signedOutIds, EPIC_DELETE_SIGNED_OUT_MESSAGE),
+  ];
 }
 
-type DeleteNavigationTarget = HeaderTab | null | undefined;
+/**
+ * The one `epic.batchDelete` request, admitted at the latest point before it
+ * is sent, from live state, over the ids its route sends (a stand-in host is
+ * never sent a local-homed id). While the session is signed in every one goes.
+ * Otherwise only the ids whose row is local-homed now go - deleting those
+ * spends nothing on the account - and the rest are answered "not deleted".
+ * A same-user demotion to `unverified` keeps the bearer, so this is what stops
+ * a cloud delete from going out on it. With nothing admitted no request is
+ * sent and `onError` says why.
+ *
+ * One request carries every admitted id: the cloud bounds it itself, deleting
+ * ten Tasks per transaction within the request's time limit and answering the
+ * rest "not deleted", so a very large selection can come back partly not
+ * deleted and deleting again finishes it.
+ */
+function admitEpicDeleteRequest(
+  variables: BatchDeleteEpicVariables,
+  route: EpicBatchDeleteRoute,
+): {
+  ids: string[];
+} {
+  const signedIn = authorizesCloudCapability(useAuthStore.getState().status);
+  const ids = signedIn
+    ? [...route.sentIds]
+    : route.sentIds.filter((id) => variables.isLocalHomedNow(id));
+  epicDeleteRefusedResults.set(
+    variables,
+    refusedEpicDeleteResults(
+      route,
+      route.sentIds.filter((id) => !ids.includes(id)),
+    ),
+  );
+  if (ids.length === 0) {
+    throw new Error("epic.batchDelete: no task admitted without a sign-in");
+  }
+  return { ids };
+}
 
 export function useEpicBatchDelete(): UseMutationResult<
   ResponseOfMethod<HostRpcRegistry, "epic.batchDelete">,
@@ -221,7 +282,7 @@ export function useEpicBatchDelete(): UseMutationResult<
     const route = routeEpicBatchDelete({
       activeHostId: activeClient.getActiveHostId(),
       ids: variables.ids,
-      localHomeIds: variables.localHomeIds,
+      isLocalHomedNow: variables.isLocalHomedNow,
       fleet: readSelectionFleetSnapshot(),
       localHostId: readLocalHostIdSnapshot,
     });
@@ -250,7 +311,16 @@ export function useEpicBatchDelete(): UseMutationResult<
       }
     },
     method: "epic.batchDelete",
-    mapVariables: (variables) => ({ ids: [...routeFor(variables).sentIds] }),
+    mapVariables: (variables) =>
+      admitEpicDeleteRequest(variables, routeFor(variables)),
+    resolveResponse: (response, variables) => {
+      const refused = epicDeleteRefusedResults.get(variables) ?? [];
+      if (refused.length === 0) return Promise.resolve(response);
+      return Promise.resolve({
+        ...response,
+        results: [...response.results, ...refused],
+      });
+    },
     options: {
       mutationKey: epicMutationKeys.batchDelete(),
       onMutate: (variables) => {
@@ -351,7 +421,6 @@ export function useEpicBatchDelete(): UseMutationResult<
           deletedIds,
           successes,
         );
-        if (ctx.route.refusedIds.length > 0) toastRefusedLocalHomeDeletes();
         // The outcome toast takes the progress toast's place. Dismiss-then-emit
         // rather than an update by id: Sonner MERGES updates that reuse an id,
         // so the outcome would inherit the progress toast's infinite lifetime
@@ -421,16 +490,32 @@ export function useEpicBatchDelete(): UseMutationResult<
           ctx.route.hostId,
         ]);
       },
-      onError: (error, _variables, ctx) => {
+      onError: (error, variables, ctx) => {
         // Explicit, never left to the error toast: `toastFromHostError` stays
         // silent for an aborted or recoverable-unauthorized request, and a
         // progress toast nothing dismisses would spin forever.
         if (ctx !== undefined) toast.dismiss(ctx.progressToastId);
-        if (ctx?.route.kind === "refused") {
-          toastRefusedLocalHomeDeletes();
+        // A `refused` route sends nothing, so admission never ran for it.
+        const refused =
+          epicDeleteRefusedResults.get(variables) ??
+          (ctx?.route.kind === "refused"
+            ? refusedEpicDeleteResults(ctx.route, [])
+            : undefined);
+        if (refused !== undefined && refused.length === variables.ids.length) {
+          // Refused before any request: nothing was sent, so say why.
+          const parts = epicDeleteToastParts({
+            failures: refused,
+            successes: 0,
+            total: variables.ids.length,
+            deletedIds: [],
+            epicTitlesById: ctx?.epicTitlesById ?? {},
+          });
+          emitEpicDeleteToast(parts.level, parts.message, parts.detail);
           return;
         }
-        toastFromHostError(error, "Couldn't delete epics.");
+        // The one request failed. When it never reached the host, nothing on
+        // it was changed - neither the ids it carried nor any refused above.
+        toastFromOwnerHostWriteError(error, "Couldn't delete tasks.");
       },
     },
   });
@@ -454,13 +539,32 @@ export function usePendingDeleteEpicIds(): ReadonlySet<string> {
     select: (mutation) => mutation.state.variables,
   });
   return useMemo(
-    () =>
-      new Set(
-        pendingVariables.flatMap((variables) =>
-          isBatchDeleteEpicVariables(variables) ? variables.ids : [],
-        ),
-      ),
+    () => pendingDeleteEpicIdsFromVariables(pendingVariables),
     [pendingVariables],
+  );
+}
+
+/** Reads pending deletes at callback time, avoiding a render-time snapshot. */
+export function readPendingDeleteEpicIds(
+  queryClient: QueryClient,
+): ReadonlySet<string> {
+  const pendingVariables = queryClient
+    .getMutationCache()
+    .findAll({
+      mutationKey: epicMutationKeys.batchDelete(),
+      status: "pending",
+    })
+    .map((mutation) => mutation.state.variables);
+  return pendingDeleteEpicIdsFromVariables(pendingVariables);
+}
+
+function pendingDeleteEpicIdsFromVariables(
+  pendingVariables: ReadonlyArray<unknown>,
+): ReadonlySet<string> {
+  return new Set(
+    pendingVariables.flatMap((variables) =>
+      isBatchDeleteEpicVariables(variables) ? variables.ids : [],
+    ),
   );
 }
 
@@ -661,8 +765,8 @@ export function epicDeleteToastParts(args: {
       level: "error",
       message:
         failureCount === 1
-          ? "Couldn't delete epic."
-          : `Couldn't delete ${failureCount} epics.`,
+          ? "Couldn't delete task."
+          : `Couldn't delete ${failureCount} tasks.`,
       detail,
     };
   }

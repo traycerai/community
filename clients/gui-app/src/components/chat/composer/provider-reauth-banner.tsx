@@ -532,6 +532,7 @@ function ReauthBannerInner({
           providerId={providerId}
           providerLabel={providerLabel}
           loginCapability={state?.loginCapability ?? null}
+          hostBlock={signInHostBlock}
           isLocalHost={isLocalHost}
         />
       ) : null}
@@ -635,11 +636,13 @@ function OAuthReauthForm({
   providerId,
   providerLabel,
   loginCapability,
+  hostBlock,
   isLocalHost,
 }: {
   readonly providerId: ProviderId;
   readonly providerLabel: string;
   readonly loginCapability: ProviderLoginCapability | null;
+  readonly hostBlock: ProviderHostBlock | null;
   readonly isLocalHost: boolean;
 }) {
   const startLogin = useProvidersStartLogin();
@@ -651,6 +654,7 @@ function OAuthReauthForm({
 
   const supportsLoginOwnership = useProvidersLoginOwnership();
   const flow = useProviderProfileLoginFlow({
+    hostBlock,
     supportsLoginOwnership,
     mode: "reauth",
     providerId,
