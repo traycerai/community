@@ -53,6 +53,9 @@ vi.mock("@/hooks/sandboxes/use-team-sandbox-harness-blocked", () => ({
     });
     return dialogMocks.blocked.current;
   },
+  // The toolbar store's palette controls ask too; the dialog's own Fork gate
+  // is what this suite is about.
+  useTeamSandboxHarnessGate: () => (): boolean => false,
 }));
 
 vi.mock("@/hooks/epic/use-epic-chat-mutations", () => ({

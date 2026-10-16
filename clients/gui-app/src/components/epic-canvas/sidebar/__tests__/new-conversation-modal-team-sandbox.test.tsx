@@ -26,6 +26,7 @@ import type { JsonContent } from "@traycer/protocol/common/registry";
 import type { ComposerBodyProps } from "@/components/home/composer/composer-body";
 import type { ComposerPromptEditorHandle } from "@/components/chat/composer/composer-prompt-editor";
 import type { TerminalAgentLaunch } from "@/components/home/hooks/use-landing-composer-actions";
+import type { TuiHarnessId } from "@traycer/protocol/persistence/epic/schemas";
 import { createComposerEditorIncarnation } from "@/lib/composer/composer-editor-incarnation";
 import { TEAM_SANDBOX_HARNESS_UNAVAILABLE } from "@/lib/sandboxes/team-sandbox-harness";
 import { useNewConversationModalStore } from "@/stores/epics/new-conversation-modal-store";
@@ -89,7 +90,7 @@ const testState = vi.hoisted(() => ({
     | ((launch: TerminalAgentLaunch, assembledFor: string | null) => void)
     | null,
   installEditor: null as (() => void) | null,
-  placement: {
+  placement: ((): { current: PlacementTargetShape } => ({
     current: {
       resolvedHostId: "host-a",
       client: { getActiveHostId: () => "host-a" },
@@ -97,10 +98,10 @@ const testState = vi.hoisted(() => ({
       isPinned: false,
       namedHostDead: false,
     },
-  },
+  }))(),
 }));
 
-function terminalLaunch(harnessId: string): TerminalAgentLaunch {
+function terminalLaunch(harnessId: TuiHarnessId): TerminalAgentLaunch {
   return {
     harnessId,
     model: null,
