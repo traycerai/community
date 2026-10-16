@@ -424,6 +424,13 @@ export const PERSIST_STORES = [
     leaf: "feature-announcements",
     kind: "static",
   },
+  // The tasks whose mirror line each person has seen, keyed by viewer and
+  // epic inside the record (`composer-mirror-line-seen-store.ts`).
+  {
+    camelName: "composerMirrorLineSeen",
+    leaf: "composer-mirror-line-seen",
+    kind: "static",
+  },
 
   // ── Non-zustand keys ─────────────────────────────────────────────────────
   // `last-route:<windowId>` — per-window router history (persistent-history.ts).

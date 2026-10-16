@@ -339,6 +339,16 @@ vi.mock("@/hooks/host/use-composer-placement", () => ({
   }),
 }));
 
+// The mirror line (E17 checkpoint 5) reads the task's hosts and the host
+// registry, which this suite's `@/lib/host` mock does not carry; it has its own
+// suite (`composer-mirror-line.test.tsx`), so here it shows nothing.
+const NO_MIRROR_LINE = vi.hoisted(() =>
+  Object.freeze({ notice: null, markSeen: (): void => undefined }),
+);
+vi.mock("@/hooks/composer/use-composer-mirror-line", () => ({
+  useComposerMirrorLine: () => NO_MIRROR_LINE,
+}));
+
 vi.mock("@/hooks/epic/use-epic-session-host-id", () => ({
   useEpicSessionHostId: () => HOST_ID,
 }));

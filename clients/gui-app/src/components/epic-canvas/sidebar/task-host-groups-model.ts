@@ -7,6 +7,21 @@ export const TASK_HOST_UNNAMED_LABEL = "Unnamed host";
 export type TaskHostState = "online" | "offline";
 
 /**
+ * The task's hosts that this host's principal does not reach, from the
+ * server's `reach` alone (ticket E17 checkpoint 5): the Agents tree marks the
+ * agents on them.
+ */
+export function otherPrincipalHostIds(
+  hosts: readonly TaskHostRow[],
+): ReadonlySet<string> {
+  return new Set(
+    hosts
+      .filter((row) => row.reach === "other_principal")
+      .map((row) => row.hostId),
+  );
+}
+
+/**
  * A host in the person's own host directory: its label, and its state or
  * `null` when the directory cannot say.
  */

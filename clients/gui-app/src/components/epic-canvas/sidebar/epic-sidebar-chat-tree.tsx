@@ -17,6 +17,18 @@ import { v4 as uuidv4 } from "uuid";
 import { useHostReachability } from "@/hooks/agent/use-host-reachability";
 import { TaskHostGroupsSection } from "@/components/epic-canvas/sidebar/task-host-groups";
 import { useTaskHostsView } from "@/hooks/epic/use-task-hosts-view";
+import {
+  TaskHostReachContext,
+  useOwnerHostNotReachable,
+} from "@/hooks/epic/use-task-host-reach";
+import {
+  AgentReachHoverLine,
+  AgentReachRowMark,
+} from "@/components/epic-canvas/sidebar/agent-reach-mark";
+import {
+  otherPrincipalHostIds,
+  TASK_HOST_UNREACHABLE_LINE,
+} from "@/components/epic-canvas/sidebar/task-host-groups-model";
 import { useHostRefusesEpicStore } from "@/hooks/chats/use-host-refuses-epic-store";
 import { settleDetachedEpicMutation } from "@/lib/artifacts/detached-epic-mutation";
 import { UNKNOWN_HOST_PLACEHOLDER } from "@/lib/host/constants";
@@ -220,6 +232,7 @@ import {
   useState,
   useSyncExternalStore,
   type KeyboardEvent,
+  type ReactElement,
   type ReactNode,
 } from "react";
 import { useShallow } from "zustand/react/shallow";
@@ -994,7 +1007,16 @@ export function ChatTreePanelBody(props: ChatTreePanelBodyProps) {
   // The task's hosts, below the rows (ticket E17 checkpoint 4). Read here as
   // well as in the section, which shares the query, because the tree's own
   // layout depends on whether the section follows it.
-  const hostsSectionShown = useTaskHostsView(epicId).kind !== "none";
+  const taskHostsView = useTaskHostsView(epicId);
+  const hostsSectionShown = taskHostsView.kind !== "none";
+  // The hosts whose agents get the reach mark (checkpoint 5), computed once
+  // here and read by each row from context. From `reach` alone; no rows, no
+  // marks.
+  const taskHosts = taskHostsView.kind === "hosts" ? taskHostsView.hosts : null;
+  const unreachableHostIds = useMemo(
+    () => otherPrincipalHostIds(taskHosts ?? []),
+    [taskHosts],
+  );
   // Read-only (viewer) indication is epic-level, so it is resolved ONCE here
   // and threaded down as a boolean rather than re-subscribing every row to
   // `useEpicPermissionRole()`. `viewer` specifically - a null (not-yet-known)
@@ -1445,43 +1467,47 @@ export function ChatTreePanelBody(props: ChatTreePanelBodyProps) {
     >
       <NotificationIndicatorSnapshot onChange={setNotificationIndicators} />
       <SidebarChatSharingContext.Provider value={chatSharingValue}>
-        <SidebarViewerContext.Provider value={isViewer}>
-          <SidebarSortContext.Provider value={comparator}>
-            <SidebarSortClockContext.Provider value={sortClock}>
-              <SidebarFilterVisibilityContext.Provider value={visibleIds}>
-                {searchOpen && !selectionMode && surfaceSearchQuery === null ? (
-                  <ChatSearchHeaderInput
-                    tabId={tabId}
-                    resultCount={searchResultCount}
-                  />
-                ) : null}
-                {/* One clock for the tree's rows, owner cards and name labels
+        <TaskHostReachContext value={unreachableHostIds}>
+          <SidebarViewerContext.Provider value={isViewer}>
+            <SidebarSortContext.Provider value={comparator}>
+              <SidebarSortClockContext.Provider value={sortClock}>
+                <SidebarFilterVisibilityContext.Provider value={visibleIds}>
+                  {searchOpen &&
+                  !selectionMode &&
+                  surfaceSearchQuery === null ? (
+                    <ChatSearchHeaderInput
+                      tabId={tabId}
+                      resultCount={searchResultCount}
+                    />
+                  ) : null}
+                  {/* One clock for the tree's rows, owner cards and name labels
                     alike: the first waits, the next row's opens at once. */}
-                <HoverCardGroup>
-                  <SidebarContent>
-                    <SidebarGroup className="min-h-0 flex-1">
-                      <SidebarGroupContent
-                        ref={treeRegionRef}
-                        className="flex min-h-0 flex-1 flex-col"
-                        data-testid="epic-chat-tree-region"
-                      >
-                        {panelContent}
-                        {messageHits.node}
-                        {hostsSectionShown ? (
-                          <TaskHostGroupsSection
-                            epicId={epicId}
-                            tabId={tabId}
-                            canMutate={canMutate}
-                          />
-                        ) : null}
-                      </SidebarGroupContent>
-                    </SidebarGroup>
-                  </SidebarContent>
-                </HoverCardGroup>
-              </SidebarFilterVisibilityContext.Provider>
-            </SidebarSortClockContext.Provider>
-          </SidebarSortContext.Provider>
-        </SidebarViewerContext.Provider>
+                  <HoverCardGroup>
+                    <SidebarContent>
+                      <SidebarGroup className="min-h-0 flex-1">
+                        <SidebarGroupContent
+                          ref={treeRegionRef}
+                          className="flex min-h-0 flex-1 flex-col"
+                          data-testid="epic-chat-tree-region"
+                        >
+                          {panelContent}
+                          {messageHits.node}
+                          {hostsSectionShown ? (
+                            <TaskHostGroupsSection
+                              epicId={epicId}
+                              tabId={tabId}
+                              canMutate={canMutate}
+                            />
+                          ) : null}
+                        </SidebarGroupContent>
+                      </SidebarGroup>
+                    </SidebarContent>
+                  </HoverCardGroup>
+                </SidebarFilterVisibilityContext.Provider>
+              </SidebarSortClockContext.Provider>
+            </SidebarSortContext.Provider>
+          </SidebarViewerContext.Provider>
+        </TaskHostReachContext>
       </SidebarChatSharingContext.Provider>
     </ChatIndicatorHostScopes>
   );
@@ -2937,6 +2963,7 @@ function chatRowAriaLabel(input: {
   readonly isArchived: boolean;
   readonly sharedWithTask: boolean;
   readonly offlineLock: OfflineRowLock | null;
+  readonly ownerNotReachable: boolean;
   readonly sessionState: AgentSessionState | null;
 }): string {
   const stateSuffix = [
@@ -2944,6 +2971,7 @@ function chatRowAriaLabel(input: {
     describeSessionStateForAria(input.sessionState, input.isArchived, true),
     input.sharedWithTask ? "shared with task" : null,
     describeOfflineLockForAria(input.offlineLock),
+    input.ownerNotReachable ? TASK_HOST_UNREACHABLE_LINE : null,
   ]
     .filter((part): part is string => part !== null)
     .join(", ");
@@ -2993,6 +3021,14 @@ function offlineRowLockTooltip(lock: OfflineRowLock): string {
   return lock.access === "published-copy"
     ? `Lives on ${lock.hostLabel}, which is offline. Opens read-only from the last published copy.`
     : `Lives on ${lock.hostLabel}, which is offline. The agent and its transcript stay on that machine, and it becomes available again when ${lock.hostLabel} is back.`;
+}
+
+/**
+ * The hover card's reach line, or `null`: the card hangs a section under any
+ * non-null content, so an absent fact must be `null` and not an empty element.
+ */
+function reachHoverContent(ownerNotReachable: boolean): ReactElement | null {
+  return ownerNotReachable ? <AgentReachHoverLine /> : null;
 }
 
 // Only chats and terminal-agents own a resource-tracked process tree; other
@@ -3141,6 +3177,9 @@ function ChatRowButton(props: ChatRowButtonProps) {
   );
   const rowOwnerUserId = useEpicNodeOwnerUserId(nodeId);
   const ownerIsUnreachable = ownerReachability.status === "unreachable";
+  // Reach, not connectivity (ticket E17 checkpoint 5): the owner host is
+  // another principal's. Independent of the lock above, which is liveness.
+  const ownerNotReachable = useOwnerHostNotReachable(ownerHostId);
   // The reachable-but-too-old owner (`HOST_OLDER_THAN_DATA`), read from the
   // same registry `ChatNode` builds the click's ref from.
   const ownerRefusesStore = useHostRefusesEpicStore(ownerHostId, epicId);
@@ -3324,6 +3363,7 @@ function ChatRowButton(props: ChatRowButtonProps) {
         isArchived,
         sharedWithTask: showSharedIndicator,
         offlineLock,
+        ownerNotReachable,
         sessionState: sessionFacet.sessionState,
       })}
       data-testid={`epic-sidebar-item-${nodeId}`}
@@ -3392,6 +3432,10 @@ function ChatRowButton(props: ChatRowButtonProps) {
                 />
               </LazySidebarTooltipWrapper>
             ) : null}
+            <AgentReachRowMark
+              ownerHostId={ownerHostId}
+              testId={`epic-sidebar-tree-reach-${nodeId}`}
+            />
             <AgentRoleBadgesForOwner
               ownerKind={resourceOwnerKind}
               claims={roleClaims}
@@ -3445,7 +3489,7 @@ function ChatRowButton(props: ChatRowButtonProps) {
       ownerHostUnreachable={ownerIsUnreachable}
       ownerKind={ownerKind}
       roleClaims={roleClaims}
-      extraContent={null}
+      extraContent={reachHoverContent(ownerNotReachable)}
       side={popoverSide}
     />
   );
