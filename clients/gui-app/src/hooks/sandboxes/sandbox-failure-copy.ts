@@ -28,6 +28,8 @@ const SHAPE_REASON_COPY: Record<string, string> = {
   "memory-per-cpu-out-of-range":
     "That much memory per vCPU is outside what's offered.",
   "disk-out-of-range": "That disk size is outside what's offered.",
+  "provider-plan-too-small":
+    "This account's sandbox plan can't run a sandbox yet.",
 };
 
 function insufficientCreditCopy(

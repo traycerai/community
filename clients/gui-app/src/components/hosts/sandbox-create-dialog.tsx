@@ -4,6 +4,7 @@ import type { AuthenticatedUser } from "@traycer/protocol/auth";
 import {
   SANDBOX_REFUSAL_CODE_ENVIRONMENT_NOT_FOUND,
   SANDBOX_REFUSAL_CODE_ENVIRONMENT_UNAVAILABLE,
+  SANDBOX_NOT_CREATABLE_REASON_PLAN_MEMORY,
   SANDBOX_REFUSAL_CODE_INSUFFICIENT_CREDIT,
   type SandboxCatalogue,
   type SandboxCatalogueProvider,
@@ -341,6 +342,90 @@ function submitHeld(
   return creating || created !== null;
 }
 
+/** What the OS select needs: the form it switches. */
+interface SandboxOsSelectProps {
+  readonly id: string;
+  readonly catalogue: SandboxCatalogue;
+  readonly form: SandboxFormState;
+  readonly setForm: (form: SandboxFormState) => void;
+}
+
+/** The OS pick; a switch starts the new provider's defaults, keeping the name. */
+function SandboxOsSelect(props: SandboxOsSelectProps): ReactNode {
+  return (
+    <SandboxCreateSelect
+      id={props.id}
+      label="Operating system"
+      value={props.form.os}
+      testId={null}
+      options={offeredOses(props.catalogue).map((os) => ({
+        value: os,
+        label: OS_LABEL[os],
+      }))}
+      onChange={(value) => {
+        const os = offeredOses(props.catalogue).find((o) => o === value);
+        if (os === undefined) return;
+        props.setForm({
+          ...initialFormState(providerFor(props.catalogue, os), os),
+          name: props.form.name,
+          idleMinutes: props.form.idleMinutes,
+        });
+      }}
+    />
+  );
+}
+
+/**
+ * What the form shows instead of itself: the A4 team-task offer once a
+ * create landed, or, for a provider the account's plan cannot create (F45),
+ * the OS pick and why, with no size, price or Create. Its shape bounds are
+ * not a shape (max below min), so nothing is computed from them.
+ */
+function formReplacement(
+  offer: FirstTeamTaskOffer | null,
+  provider: SandboxCatalogueProvider,
+  osSelect: SandboxOsSelectProps & { readonly onDone: () => void },
+): ReactNode | null {
+  if (offer !== null) {
+    return (
+      <StartTeamTaskSuccess
+        teamSlug={offer.teamSlug}
+        hostId={offer.hostId}
+        onDone={osSelect.onDone}
+      />
+    );
+  }
+  if (provider.creatable) return null;
+  return (
+    <div className="flex flex-col gap-4">
+      <SandboxOsSelect
+        id={osSelect.id}
+        catalogue={osSelect.catalogue}
+        form={osSelect.form}
+        setForm={osSelect.setForm}
+      />
+      <p
+        className="text-ui-sm text-muted-foreground"
+        data-testid="sandbox-create-not-creatable"
+      >
+        {notCreatableLine(provider)}
+      </p>
+      <SandboxCreateFailure shown />
+    </div>
+  );
+}
+
+/** Why a provider cannot be created into, from the catalogue's own row. */
+function notCreatableLine(provider: SandboxCatalogueProvider): string {
+  if (
+    provider.notCreatableReason === SANDBOX_NOT_CREATABLE_REASON_PLAN_MEMORY
+  ) {
+    const needs = formatMemory(provider.shape.memoryMinMb);
+    return `This account's sandbox plan allows ${formatMemory(provider.shape.memoryMaxMb)} of memory per sandbox; a sandbox needs ${needs}. Sandboxes can be created once the plan allows ${needs}.`;
+  }
+  return "Sandboxes can't be created on this account right now.";
+}
+
 /** A read the form needs failed: say so, with a retry. */
 function SandboxCreateRetry(props: {
   readonly message: string;
@@ -409,15 +494,14 @@ function SandboxCreateForm(props: {
     !submitHeld(creating, created) &&
     target.ready;
 
-  if (firstTeamTaskOffer !== null) {
-    return (
-      <StartTeamTaskSuccess
-        teamSlug={firstTeamTaskOffer.teamSlug}
-        hostId={firstTeamTaskOffer.hostId}
-        onDone={props.onDone}
-      />
-    );
-  }
+  const replacement = formReplacement(firstTeamTaskOffer, provider, {
+    id: `${ids}-os`,
+    catalogue: props.catalogue,
+    form,
+    setForm,
+    onDone: props.onDone,
+  });
+  if (replacement !== null) return replacement;
 
   return (
     // `noValidate`: the number inputs carry the catalogue's min / max / step
@@ -471,24 +555,11 @@ function SandboxCreateForm(props: {
         />
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <SandboxCreateSelect
+        <SandboxOsSelect
           id={`${ids}-os`}
-          label="Operating system"
-          value={form.os}
-          testId={null}
-          options={offeredOses(props.catalogue).map((os) => ({
-            value: os,
-            label: OS_LABEL[os],
-          }))}
-          onChange={(value) => {
-            const os = offeredOses(props.catalogue).find((o) => o === value);
-            if (os === undefined) return;
-            setForm({
-              ...initialFormState(providerFor(props.catalogue, os), os),
-              name: form.name,
-              idleMinutes: form.idleMinutes,
-            });
-          }}
+          catalogue={props.catalogue}
+          form={form}
+          setForm={setForm}
         />
         <SandboxCreateSelect
           id={`${ids}-region`}
