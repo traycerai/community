@@ -239,6 +239,10 @@ function unenrolledSandboxOption(
   };
 }
 
+export function isUnenrolledSandboxOption(_host: HostScopeOption): boolean {
+  return false;
+}
+
 /**
  * The registry kind and sandbox facts of one row. The registry row speaks
  * first (it is what `include=sandboxState` answered); a directory-only row

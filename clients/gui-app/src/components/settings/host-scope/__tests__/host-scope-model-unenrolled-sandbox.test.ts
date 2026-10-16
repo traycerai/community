@@ -5,8 +5,10 @@ import type { HostDirectoryEntry } from "@traycer-clients/shared/host-client/hos
 import { hostListItemToDirectoryEntry } from "@traycer-clients/shared/host-client/remote-fetcher";
 import {
   buildHostScopeOptions,
+  isUnenrolledSandboxOption,
   type HostScopeOption,
 } from "@/components/settings/host-scope/host-scope-model";
+import { hostScopeOptionFixture } from "@/components/settings/host-scope/host-scope-fixture";
 import { sandboxSummaryFixture } from "@/hooks/sandboxes/__tests__/sandbox-fixtures";
 
 /**
@@ -17,6 +19,15 @@ import { sandboxSummaryFixture } from "@/hooks/sandboxes/__tests__/sandbox-fixtu
  * management-only sandbox row, or the toast "It's listed as failed; destroy it
  * and try again." points at nothing.
  */
+
+/**
+ * A summary as the server really sends it: `environmentId` is a NOT NULL
+ * column, so every listed sandbox names one. `createdBy` is set only for a
+ * team agent sandbox, which a test says out loud.
+ */
+function listedSummary(overrides: Partial<SandboxSummary>): SandboxSummary {
+  return sandboxSummaryFixture({ environmentId: "env_1", ...overrides });
+}
 
 function registryItem(hostId: string): HostListItem {
   return {
@@ -71,7 +82,7 @@ function optionsFor(
 
 describe("buildHostScopeOptions a listed sandbox with no host row", () => {
   it("lists a failed sandbox no directory entry or registry row stands for as one management-only sandbox row", () => {
-    const summary = sandboxSummaryFixture({
+    const summary = listedSummary({
       id: "sbx_failed",
       hostId: "sbx-never-enrolled",
       displayName: "Broken box",
@@ -106,7 +117,7 @@ describe("buildHostScopeOptions a listed sandbox with no host row", () => {
   });
 
   it("lists a creating sandbox whose guest has not enrolled yet the same way", () => {
-    const summary = sandboxSummaryFixture({
+    const summary = listedSummary({
       id: "sbx_creating",
       hostId: "sbx-still-creating",
       displayName: "New box",
@@ -144,7 +155,7 @@ describe("buildHostScopeOptions a listed sandbox with no host row", () => {
         directory: [],
         registry: [],
         sandboxes: [
-          sandboxSummaryFixture({
+          listedSummary({
             id: "sbx_failed",
             hostId: "sbx-never-enrolled",
             state: "failed",
@@ -159,40 +170,19 @@ describe("buildHostScopeOptions a listed sandbox with no host row", () => {
     expect(rows[0].isActive).toBe(true);
   });
 
-  it("reads a team sandbox (one with an environment) as team owned", () => {
+  it("reads a personal sandbox (an environment, no creator) as not team owned", () => {
     const rows = optionsFor(
       build({
         directory: [],
         registry: [],
         sandboxes: [
-          sandboxSummaryFixture({
-            id: "sbx_team",
-            hostId: "sbx-team-failed",
-            state: "failed",
-            failureCode: "PROVIDER_CREATE_FAILED",
-            environmentId: "env_team_1",
-          }),
-        ],
-        activeHostId: null,
-      }),
-      "sbx-team-failed",
-    );
-    expect(rows).toHaveLength(1);
-    expect(rows[0].sandbox?.teamOwned).toBe(true);
-  });
-
-  it("reads a sandbox with no environment as not team owned", () => {
-    const rows = optionsFor(
-      build({
-        directory: [],
-        registry: [],
-        sandboxes: [
-          sandboxSummaryFixture({
+          listedSummary({
             id: "sbx_mine",
             hostId: "sbx-mine-failed",
             state: "failed",
             failureCode: "PROVIDER_CREATE_FAILED",
-            environmentId: null,
+            environmentId: "env_personal_1",
+            createdBy: null,
           }),
         ],
         activeHostId: null,
@@ -203,6 +193,29 @@ describe("buildHostScopeOptions a listed sandbox with no host row", () => {
     expect(rows[0].sandbox?.teamOwned).toBe(false);
   });
 
+  it("reads a team agent sandbox (an environment and a creator) as team owned", () => {
+    const rows = optionsFor(
+      build({
+        directory: [],
+        registry: [],
+        sandboxes: [
+          listedSummary({
+            id: "sbx_team",
+            hostId: "sbx-team-failed",
+            state: "failed",
+            failureCode: "PROVIDER_CREATE_FAILED",
+            environmentId: "env_team_1",
+            createdBy: { userId: "user-ada", displayName: "Ada Lovelace" },
+          }),
+        ],
+        activeHostId: null,
+      }),
+      "sbx-team-failed",
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0].sandbox?.teamOwned).toBe(true);
+  });
+
   it("adds one row per listed sandbox without a host row and leaves the rows that have one alone", () => {
     const enrolled = registryItem("sbx-enrolled");
     const rows = build({
@@ -211,20 +224,20 @@ describe("buildHostScopeOptions a listed sandbox with no host row", () => {
       ],
       registry: [enrolled],
       sandboxes: [
-        sandboxSummaryFixture({
+        listedSummary({
           id: "sbx_a",
           hostId: "sbx-enrolled",
           displayName: "Enrolled box",
           state: "awake",
         }),
-        sandboxSummaryFixture({
+        listedSummary({
           id: "sbx_b",
           hostId: "sbx-orphan-b",
           displayName: "Orphan B",
           state: "failed",
           failureCode: "PROVIDER_CREATE_FAILED",
         }),
-        sandboxSummaryFixture({
+        listedSummary({
           id: "sbx_c",
           hostId: "sbx-orphan-c",
           displayName: "Orphan C",
@@ -245,7 +258,7 @@ describe("buildHostScopeOptions a listed sandbox with no host row", () => {
 describe("buildHostScopeOptions a listed sandbox that already has a host row", () => {
   it("yields exactly one row for a sandbox the registry lists, and it is the joined registry row", () => {
     const enrolled = registryItem("sbx-enrolled");
-    const summary = sandboxSummaryFixture({
+    const summary = listedSummary({
       id: "sbx_1",
       hostId: "sbx-enrolled",
       displayName: "Control plane name",
@@ -278,7 +291,7 @@ describe("buildHostScopeOptions a listed sandbox that already has a host row", (
         directory: [entry],
         registry: [],
         sandboxes: [
-          sandboxSummaryFixture({
+          listedSummary({
             id: "sbx_1",
             hostId: "sbx-directory-only",
           }),
@@ -314,5 +327,70 @@ describe("buildHostScopeOptions before the sandbox list has answered", () => {
         activeHostId: null,
       }),
     ).toEqual([]);
+  });
+});
+
+describe("isUnenrolledSandboxOption", () => {
+  it("is true for the row built from a listed sandbox no host row stands for", () => {
+    const rows = optionsFor(
+      build({
+        directory: [],
+        registry: [],
+        sandboxes: [
+          listedSummary({
+            id: "sbx_failed",
+            hostId: "sbx-never-enrolled",
+            state: "failed",
+            failureCode: "PROVIDER_CREATE_FAILED",
+          }),
+        ],
+        activeHostId: null,
+      }),
+      "sbx-never-enrolled",
+    );
+    expect(rows).toHaveLength(1);
+    expect(isUnenrolledSandboxOption(rows[0])).toBe(true);
+  });
+
+  it("is false for a sandbox row the registry lists", () => {
+    const enrolled = registryItem("sbx-enrolled");
+    const rows = optionsFor(
+      build({
+        directory: [],
+        registry: [enrolled],
+        sandboxes: [listedSummary({ id: "sbx_1", hostId: "sbx-enrolled" })],
+        activeHostId: null,
+      }),
+      "sbx-enrolled",
+    );
+    expect(rows).toHaveLength(1);
+    expect(isUnenrolledSandboxOption(rows[0])).toBe(false);
+  });
+
+  it("is false for a sandbox row only the directory lists", () => {
+    const enrolled = registryItem("sbx-directory-only");
+    const rows = optionsFor(
+      build({
+        directory: [
+          hostListItemToDirectoryEntry(enrolled, "wss://relay.example.test"),
+        ],
+        registry: [],
+        sandboxes: [
+          listedSummary({ id: "sbx_1", hostId: "sbx-directory-only" }),
+        ],
+        activeHostId: null,
+      }),
+      "sbx-directory-only",
+    );
+    expect(rows).toHaveLength(1);
+    expect(isUnenrolledSandboxOption(rows[0])).toBe(false);
+  });
+
+  it("is false for a plain host that is not a sandbox", () => {
+    expect(
+      isUnenrolledSandboxOption(
+        hostScopeOptionFixture({ hostId: "laptop", name: "Laptop" }),
+      ),
+    ).toBe(false);
   });
 });

@@ -135,6 +135,13 @@ import {
 const NAME = "build-box";
 
 function renderCard(sandbox: HostScopeSandbox): void {
+  renderCardDestroyed(sandbox, null);
+}
+
+function renderCardDestroyed(
+  sandbox: HostScopeSandbox,
+  onDestroyed: (() => void) | null,
+): void {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
   });
@@ -144,6 +151,7 @@ function renderCard(sandbox: HostScopeSandbox): void {
         hostName="Host name"
         sandbox={sandbox}
         likeThis={{ kind: "personal" }}
+        onDestroyed={onDestroyed}
       />
     </QueryClientProvider>,
   );
@@ -809,6 +817,68 @@ describe("<SandboxCard /> destroy", () => {
     fireEvent.click(screen.getByTestId("confirm-action"));
     await waitFor(() => {
       expect(mocks.toastSuccess).toHaveBeenCalledWith(`Destroyed ${NAME}`);
+    });
+  });
+
+  describe("onDestroyed (an unenrolled row returns Settings to the active host)", () => {
+    async function confirmDestroy(): Promise<void> {
+      openDestroy();
+      await screen.findByTestId("confirm-destructive-dialog");
+      fireEvent.click(screen.getByTestId("confirm-action"));
+    }
+
+    it("calls onDestroyed once when the destroy settled (gone)", async () => {
+      const onDestroyed = vi.fn<() => void>();
+      renderCardDestroyed(sandboxOf("suspended", false, {}), onDestroyed);
+      await confirmDestroy();
+
+      await waitFor(() => {
+        expect(mocks.toastSuccess).toHaveBeenCalledWith(`Destroyed ${NAME}`);
+      });
+      expect(onDestroyed).toHaveBeenCalledTimes(1);
+    });
+
+    it("calls onDestroyed when the row was already gone (404 sandbox_not_found)", async () => {
+      mocks.binding?.auth.destroySandbox.mockResolvedValue(
+        refusal(404, "sandbox_not_found"),
+      );
+      const onDestroyed = vi.fn<() => void>();
+      renderCardDestroyed(sandboxOf("suspended", false, {}), onDestroyed);
+      await confirmDestroy();
+
+      await waitFor(() => {
+        expect(mocks.toastSuccess).toHaveBeenCalledWith(`Destroyed ${NAME}`);
+      });
+      expect(onDestroyed).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not call onDestroyed when the destroy was accepted but is not gone yet (202)", async () => {
+      mocks.binding?.auth.destroySandbox.mockResolvedValue({
+        kind: "ok",
+        settled: false,
+      });
+      const onDestroyed = vi.fn<() => void>();
+      renderCardDestroyed(sandboxOf("suspended", false, {}), onDestroyed);
+      await confirmDestroy();
+
+      await waitFor(() => {
+        expect(mocks.toastInfo).toHaveBeenCalledWith(`Destroying ${NAME}…`);
+      });
+      expect(onDestroyed).not.toHaveBeenCalled();
+    });
+
+    it("destroys without throwing when onDestroyed is null", async () => {
+      renderCardDestroyed(sandboxOf("suspended", false, {}), null);
+      await confirmDestroy();
+
+      await waitFor(() => {
+        expect(mocks.binding?.auth.destroySandbox).toHaveBeenCalledWith(
+          "sbx_1",
+        );
+      });
+      await waitFor(() => {
+        expect(mocks.toastSuccess).toHaveBeenCalledWith(`Destroyed ${NAME}`);
+      });
     });
   });
 

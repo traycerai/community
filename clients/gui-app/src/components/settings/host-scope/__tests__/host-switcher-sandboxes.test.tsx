@@ -466,6 +466,7 @@ describe("<HostSwitcher /> a sandbox no host row stands for", () => {
           displayName: "Broken box",
           state: "failed",
           failureCode: "PROVIDER_CREATE_FAILED",
+          environmentId: "env_1",
         }),
       ],
       nowMs: 0,

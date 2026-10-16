@@ -147,6 +147,7 @@ function renderCardLikeThis(
         hostName="Host name"
         sandbox={{ ...sandbox, teamOwned }}
         likeThis={likeThis}
+        onDestroyed={null}
       />
       <TeamWakeConfirmDialogHost />
     </QueryClientProvider>,
