@@ -23,6 +23,7 @@ import {
   type WorktreeCleanupOutcome,
 } from "@/lib/epics/run-worktree-cleanup";
 import { toastFromHostError } from "@/lib/host-error-toast";
+import { toastFromOwnerHostWriteError } from "@/lib/owner-host-write-error-toast";
 import { progressToast } from "@/lib/toast/progress-toast";
 import { LANDING_ROUTE } from "@/lib/routes";
 import { navigateToTabIntent } from "@/lib/tab-navigation";
@@ -283,7 +284,7 @@ export function useEpicBatchDelete(): UseMutationResult<
         // silent for an aborted or recoverable-unauthorized request, and a
         // progress toast nothing dismisses would spin forever.
         if (ctx !== undefined) toast.dismiss(ctx.progressToastId);
-        toastFromHostError(error, "Couldn't delete epics.");
+        toastFromOwnerHostWriteError(error, "Couldn't delete epics.");
       },
     },
   });

@@ -3,7 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import type { ExternalToast } from "sonner";
-import { HostRpcError } from "@traycer-clients/shared/host-transport/host-messenger";
+import {
+  HostRpcError,
+  RetryableTransportError,
+} from "@traycer-clients/shared/host-transport/host-messenger";
 import type { BatchDeleteResponse } from "@traycer/protocol/host/epic/unary-schemas";
 import type {
   WorktreeCleanupOutcome,
@@ -562,6 +565,38 @@ describe("the delete's progress toast", () => {
     // `toastFromHostError` stays silent for an aborted or recoverable-
     // unauthorized request. This stand-in is silent for every error, so the
     // dismissal below can only have come from the hook itself.
+    it("says the host is offline, instead of the error toast, when the delete never reached it", async () => {
+      const view = renderBatchDelete();
+      view.dispatch(deleteOf(["epic-a"], null));
+      await waitFor(() => {
+        expect(mocks.toastMessage).toHaveBeenCalledTimes(1);
+      });
+      const id = progressToastId(0);
+
+      await act(async () => {
+        hostRequest(0).reject(
+          new RetryableTransportError({
+            replaySafetyFromKey: false,
+            code: "RPC_ERROR",
+            message: "Remote session is not ready",
+            requestId: "request-1",
+            method: "epic.batchDelete",
+            fatalDetails: null,
+          }),
+        );
+        await Promise.resolve();
+      });
+
+      await waitFor(() => {
+        expect(mocks.toastMessage).toHaveBeenCalledTimes(2);
+      });
+      expect(mocks.toastMessage.mock.calls[1][0]).toBe(
+        "That host is offline, so nothing on it was changed. Try again once it is back.",
+      );
+      expect(mocks.toastFromHostError).not.toHaveBeenCalled();
+      expect(mocks.toastDismiss).toHaveBeenCalledWith(id);
+    });
+
     it("dismisses it even when the error toast says nothing", async () => {
       const view = renderBatchDelete();
       view.dispatch(deleteOf(["epic-a"], null));

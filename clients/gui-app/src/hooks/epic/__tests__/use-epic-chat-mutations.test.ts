@@ -11,7 +11,7 @@ import type { ReactNode } from "react";
 import { createElement } from "react";
 
 vi.mock("sonner", () => ({
-  toast: { error: vi.fn(), success: vi.fn() },
+  toast: { message: vi.fn(), error: vi.fn(), success: vi.fn() },
 }));
 
 vi.mock("@/lib/host/runtime", async () => {
@@ -159,7 +159,10 @@ import {
   useEpicRenameChat,
   useEpicDeleteChat,
 } from "@/hooks/epic/use-epic-chat-mutations";
-import { HostRpcError } from "@traycer-clients/shared/host-transport/host-messenger";
+import {
+  HostRpcError,
+  RetryableTransportError,
+} from "@traycer-clients/shared/host-transport/host-messenger";
 import { hostQueryKeys } from "@/lib/query-keys";
 import type { RpcErrorCode } from "@traycer/protocol/framework/index";
 import type {
@@ -182,6 +185,20 @@ function makeError(code: RpcErrorCode): HostRpcError {
     message: "test",
     requestId: "test",
     method: "test",
+    fatalDetails: null,
+  });
+}
+
+const OFFLINE_NOTICE =
+  "That host is offline, so nothing on it was changed. Try again once it is back.";
+
+function hostOffline(method: string): RetryableTransportError {
+  return new RetryableTransportError({
+    replaySafetyFromKey: false,
+    code: "RPC_ERROR",
+    message: "Remote session is not ready",
+    requestId: "req-offline",
+    method,
     fatalDetails: null,
   });
 }
@@ -625,6 +642,23 @@ describe("useEpicDeleteChat", () => {
     expect(toast.error).toHaveBeenCalledWith("Couldn't delete agent.");
   });
 
+  it("says the owning host is offline when the delete never reached it", () => {
+    renderHook(() => useEpicDeleteChat(), { wrapper: makeWrapper() });
+    const opts = getCapturedMutation("epic.deleteChat").options as {
+      onError: (e: HostRpcError, variables: DeleteChatMutationInput) => void;
+    };
+    opts.onError(hostOffline("epic.deleteChat"), {
+      epicId: "epic-1",
+      chatId: "chat-1",
+      hostId: "host-test",
+    });
+    expect(toast.message).toHaveBeenCalledWith(
+      OFFLINE_NOTICE,
+      expect.anything(),
+    );
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
   it("uses the session client when the named host is the session host", () => {
     renderHook(() => useEpicDeleteChat(), { wrapper: makeWrapper() });
     expect(resolveCapturedClient("epic.deleteChat", "host-test")).toBe(
@@ -810,6 +844,19 @@ describe("useEpicArchiveChat", () => {
     expect(invalidateQueries).toHaveBeenCalledWith({
       queryKey: hostQueryKeys.methodScope("host-test", "epic.listChatRecords"),
     });
+  });
+
+  it("says the owning host is offline, not a generic transport toast, when archive never reached it", () => {
+    renderHook(() => useEpicArchiveChat(), { wrapper: makeWrapper() });
+    const opts = getCapturedMutation("epic.setChatArchived").options as {
+      onError: (e: HostRpcError) => void;
+    };
+    opts.onError(hostOffline("epic.setChatArchived"));
+    expect(toast.message).toHaveBeenCalledWith(
+      OFFLINE_NOTICE,
+      expect.anything(),
+    );
+    expect(toast.error).not.toHaveBeenCalled();
   });
 
   it("toasts a generic fallback on a real failure (B9)", () => {

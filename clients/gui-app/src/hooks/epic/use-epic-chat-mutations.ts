@@ -39,6 +39,7 @@ import {
   toastFromHostError,
   toastFromHostErrorWithDetail,
 } from "@/lib/host-error-toast";
+import { toastFromOwnerHostWriteError } from "@/lib/owner-host-write-error-toast";
 import { invalidateEpicChatRecords } from "@/hooks/chats/use-epic-chat-records";
 import { invalidateChatRunSettings } from "@/hooks/chats/use-chat-run-settings-query";
 import { invalidateEpicTuiAgentRecords } from "@/hooks/chats/use-epic-tui-agent-records";
@@ -731,7 +732,7 @@ function useEpicArchiveChatMutation(
       },
       onError:
         failurePresentation === "individual"
-          ? (error) => toastFromHostError(error, "Couldn't archive agent.")
+          ? (error) => toastFromOwnerHostWriteError(error, "Couldn't archive agent.")
           : undefined,
     },
   });
@@ -783,7 +784,7 @@ export function useEpicArchiveChats(): UseMutationResult<
       );
       if (firstFailure === undefined) return;
       const reason: unknown = firstFailure.reason;
-      toastFromHostError(
+      toastFromOwnerHostWriteError(
         toHostRpcError(reason, "epic.setChatArchived"),
         "Couldn't archive some selected agents.",
       );
@@ -970,7 +971,7 @@ export function useEpicDeleteChat(): UseMutationResult<
         useEpicCanvasStore
           .getState()
           .unmarkArtifactSelfDeleted(variables.chatId);
-        toastFromHostError(error, "Couldn't delete agent.");
+        toastFromOwnerHostWriteError(error, "Couldn't delete agent.");
       },
     },
   });

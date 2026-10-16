@@ -14,6 +14,7 @@ import type { HostRpcRegistry } from "@/lib/host";
 import { useHostMutation } from "@/hooks/host/use-host-query";
 import { useEpicSessionHostClient } from "@/hooks/epic/use-epic-session-host-client";
 import { toastFromHostError } from "@/lib/host-error-toast";
+import { toastFromOwnerHostWriteError } from "@/lib/owner-host-write-error-toast";
 import { invalidateEpicTuiAgentRecords } from "@/hooks/chats/use-epic-tui-agent-records";
 import { Analytics, AnalyticsEvent } from "@/lib/analytics";
 
@@ -123,7 +124,7 @@ export function useEpicDeleteTuiAgent() {
         });
       },
       onError: (error) => {
-        toastFromHostError(error, "Couldn't delete terminal agent.");
+        toastFromOwnerHostWriteError(error, "Couldn't delete terminal agent.");
       },
     },
   });
