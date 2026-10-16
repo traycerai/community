@@ -9,7 +9,10 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
-import { RetryableTransportError } from "@traycer-clients/shared/host-transport/host-messenger";
+import {
+  HostRpcError,
+  RetryableTransportError,
+} from "@traycer-clients/shared/host-transport/host-messenger";
 import { domMax, LazyMotion } from "motion/react";
 import { forwardRef, type ReactNode } from "react";
 import { userEvent } from "@testing-library/user-event";
@@ -1637,6 +1640,58 @@ describe("epic sidebar selection mode", () => {
     });
     expect(toastMessage).toHaveBeenCalledTimes(1);
     toastMessage.mockRestore();
+  });
+
+  // Deletes go out deepest agent first; the notice's advice follows the
+  // selection (traycerai/traycer#2546, round 11, rows 5 and 7).
+  it("lists refusal advice in selection order, not the order the deletes were sent", async () => {
+    seedGuiChatTree();
+    const toastError = vi.spyOn(toast, "error");
+    testState.deleteChatMutateAsync.mockImplementation(
+      (input: { readonly chatId: string }) =>
+        Promise.reject(
+          new HostRpcError({
+            code:
+              input.chatId === "chat-root"
+                ? "FORBIDDEN"
+                : "E_HOST_STORAGE_FULL",
+            message: "refused",
+            requestId: `req-${input.chatId}`,
+            method: "epic.deleteChat",
+            fatalDetails: null,
+          }),
+        ),
+    );
+
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "Select agents" }));
+    fireEvent.click(screen.getByTestId("epic-sidebar-select-chat-root"));
+    fireEvent.click(screen.getByTestId("epic-sidebar-select-chat-child"));
+    fireEvent.click(screen.getByTestId("epic-sidebar-delete-selected-chats"));
+    fireEvent.click(screen.getByTestId("confirm-action"));
+
+    await waitFor(() => {
+      expect(toastError).toHaveBeenCalledTimes(1);
+    });
+    // Sent child first, root second: the child is the deeper agent.
+    expect(testState.deleteChatMutateAsync).toHaveBeenNthCalledWith(1, {
+      epicId: EPIC_ID,
+      chatId: "chat-child",
+      hostId: null,
+    });
+    expect(testState.deleteChatMutateAsync).toHaveBeenNthCalledWith(2, {
+      epicId: EPIC_ID,
+      chatId: "chat-root",
+      hostId: null,
+    });
+    const title = toastError.mock.calls[0][0];
+    const notice = typeof title === "string" ? title : "";
+    const permission = notice.indexOf("You don't have permission to do that.");
+    const diskFull = notice.indexOf("out of disk space");
+    expect(permission).toBeGreaterThan(-1);
+    expect(diskFull).toBeGreaterThan(permission);
+    toastError.mockRestore();
   });
 
   it("reports one notice naming one host when every agent in an unreachable bulk delete runs on it", async () => {
