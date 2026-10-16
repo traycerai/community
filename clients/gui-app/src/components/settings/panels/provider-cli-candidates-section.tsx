@@ -170,10 +170,9 @@ const PROVIDER_INSTALL_GUIDE_URL: Record<ProviderId, string | null> = {
   // appears if the managed binary is missing on this machine. Left null rather
   // than shipping an unverified upstream install page for that edge.
   reasonix: null,
-  // Antigravity is bundled everywhere upstream publishes a build, which is
-  // every target except Intel macOS - upstream ships no `darwin-x64` archive.
-  // That platform is the normal path for this empty state, not an edge, so it
-  // gets the real page: installing the IDE is what puts the server on disk.
+  // Antigravity's empty state is an edge: a missing managed pack or an older
+  // host that still excludes Intel macOS. Keep the install guide for hosts
+  // that cannot offer a managed candidate.
   antigravity: "https://antigravity.google/docs/ide/extensions",
   // Command Code is never bundled: Traycer finds the user's own install on
   // PATH, like Hermes. Not found is therefore this provider's normal first
