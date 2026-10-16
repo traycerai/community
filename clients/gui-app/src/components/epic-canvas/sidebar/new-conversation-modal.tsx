@@ -92,10 +92,8 @@ import { toastRepointedStagingReset } from "@/lib/composer/repointed-staging-toa
 import { subscribeFollowingSurfaceReset } from "@/stores/host/surface-host-selection-store";
 import { ComposerHostNotice } from "@/components/home/composer/composer-host-notice";
 import { useComposerHostNotice } from "@/hooks/composer/use-composer-host-notice";
-import {
-  composerTopNotice,
-  useComposerMirrorLine,
-} from "@/hooks/composer/use-composer-mirror-line";
+import { composerTopNotice } from "@/components/home/composer/composer-mirror-line-model";
+import { useComposerMirrorLine } from "@/hooks/composer/use-composer-mirror-line";
 import { UNKNOWN_HOST_PLACEHOLDER } from "@/lib/host/constants";
 import { readLocalHostIdSnapshot } from "@/lib/host/local-host-id-snapshot";
 import { LEADER_SCOPE_NEW_CONVERSATION_MODAL } from "@/lib/keybindings/leader-scope";

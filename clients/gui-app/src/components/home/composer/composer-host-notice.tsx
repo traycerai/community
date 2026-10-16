@@ -43,7 +43,7 @@ export function ComposerHostNotice(props: ComposerHostNoticeProps): ReactNode {
       className={
         refused
           ? "relative flex w-full max-w-full min-w-0 items-start gap-2 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-ui-sm"
-          : "relative flex w-full max-w-full min-w-0 items-start gap-2 rounded-md border border-border bg-muted/40 px-3 py-2 text-ui-sm"
+          : "relative flex w-full max-w-full min-w-0 items-start gap-2 rounded-md border border-border bg-foreground/5 px-3 py-2 text-ui-sm"
       }
     >
       <Icon

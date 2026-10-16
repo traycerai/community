@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { basePersistOptions, persistKey, STORE_KEYS } from "@/lib/persist";
+import { installCrossWindowRehydrate } from "@/lib/persist/cross-window-rehydrate";
 
 /**
  * The tasks whose mirror line each person has seen (ticket E17 checkpoint 5:
@@ -10,6 +11,10 @@ import { basePersistOptions, persistKey, STORE_KEYS } from "@/lib/persist";
  * who works in many tasks does not grow it without bound.
  */
 export const COMPOSER_MIRROR_LINE_SEEN_CAP = 500;
+
+const COMPOSER_MIRROR_LINE_SEEN_PERSIST_KEY = persistKey(
+  STORE_KEYS.composerMirrorLineSeen,
+);
 
 type SeenRecord = Readonly<Record<string, number>>;
 
@@ -60,21 +65,26 @@ function persistedSeen(persistedState: unknown): SeenRecord {
 export const useComposerMirrorLineSeenStore =
   create<ComposerMirrorLineSeenState>()(
     persist(
-      (set) => ({
+      (set, get) => ({
         seen: {},
         markSeen: (viewerUserId, epicId) => {
-          set((state) => {
-            const seen = markInto(
-              state.seen,
-              seenKey(viewerUserId, epicId),
-              Date.now(),
-            );
-            return seen === state.seen ? state : { seen };
-          });
+          // The record is localStorage, shared by every window, and each
+          // window's store is its own copy: re-read it first, so this write
+          // keeps what another window marked since this one hydrated. A
+          // synchronous storage rehydrates inline (the same reasoning as
+          // `feature-announcements-store`'s `claim`).
+          void useComposerMirrorLineSeenStore.persist.rehydrate();
+          const current = get().seen;
+          const seen = markInto(
+            current,
+            seenKey(viewerUserId, epicId),
+            Date.now(),
+          );
+          if (seen !== current) set({ seen });
         },
       }),
       {
-        ...basePersistOptions(persistKey(STORE_KEYS.composerMirrorLineSeen)),
+        ...basePersistOptions(COMPOSER_MIRROR_LINE_SEEN_PERSIST_KEY),
         storage: createJSONStorage(() => localStorage),
         merge: (persistedState, currentState) => ({
           ...currentState,
@@ -84,3 +94,10 @@ export const useComposerMirrorLineSeenStore =
       },
     ),
   );
+
+// Another window marked a task seen: follow it, so this window stops showing
+// a line the person already dismissed there.
+installCrossWindowRehydrate(
+  useComposerMirrorLineSeenStore,
+  COMPOSER_MIRROR_LINE_SEEN_PERSIST_KEY,
+);

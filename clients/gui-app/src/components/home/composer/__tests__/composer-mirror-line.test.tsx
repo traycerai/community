@@ -29,10 +29,17 @@ import type {
   TaskHostPrincipal,
   TaskHostRow,
 } from "@traycer/protocol/host/task-host-summary";
-import { TASK_HOST_UNNAMED_LABEL } from "@/components/epic-canvas/sidebar/task-host-groups-model";
+import {
+  TASK_HOST_UNNAMED_LABEL,
+  type TaskHostDirectoryFact,
+  type TaskHostGroup,
+  type TaskHostGroupRow,
+} from "@/components/epic-canvas/sidebar/task-host-groups-model";
 import {
   composerMirrorLineText,
-  mirrorLineOtherHostLabel,
+  composerTopNotice,
+  mirrorLineOtherHostName,
+  type ComposerMirrorLine,
 } from "@/components/home/composer/composer-mirror-line-model";
 import {
   ComposerHostNotice,
@@ -46,16 +53,65 @@ import {
   useComposerMirrorLineSeenStore,
 } from "@/stores/epics/composer-mirror-line-seen-store";
 
-/** What the hook reads, driven per test. */
-const inputs = vi.hoisted(() => ({
-  view: { current: { kind: "none" } },
-  viewerId: { current: "user-1" },
-  registry: { current: null as { hosts: HostListItem[] } | null },
-}));
+/**
+ * What the hook reads, driven per test. Each holder is annotated INSIDE the
+ * hoisted factory: an inferred `{ current: { kind: "none" } }` widens `kind` to
+ * `string` and the view could then never be assigned a hosts or error view.
+ */
+const inputs = vi.hoisted(() => {
+  const view: { current: TaskHostsView } = { current: { kind: "none" } };
+  const viewerId: { current: string } = { current: "user-1" };
+  const registry: { current: { hosts: HostListItem[] } | null } = {
+    current: null,
+  };
+  // What the Hosts section composes its groups from, beside the task's rows.
+  const teams: {
+    current: readonly { readonly teamId: string; readonly name: string }[];
+  } = { current: [] };
+  const collaboratorNames: { current: ReadonlyMap<string, string> } = {
+    current: new Map(),
+  };
+  const directory: { current: ReadonlyMap<string, TaskHostDirectoryFact> } = {
+    current: new Map(),
+  };
+  return {
+    view,
+    viewerId,
+    registry,
+    teams,
+    collaboratorNames,
+    directory,
+    groupViewerId: "user-1",
+  };
+});
 
 vi.mock("@/hooks/epic/use-task-hosts-view", () => ({
   useTaskHostsView: (): TaskHostsView => inputs.view.current,
 }));
+
+// The groups are composed by the REAL model from the task's rows, as the Hosts
+// section composes them, so a person host (`label: null` on the wire) takes its
+// display label from the directory and a collaborator's from the group title.
+vi.mock("@/hooks/epic/use-task-host-groups", async () => {
+  const model =
+    await import("@/components/epic-canvas/sidebar/task-host-groups-model");
+  return {
+    useTaskHostGroups: (
+      _epicId: string,
+      hosts: readonly TaskHostRow[] | null,
+    ): readonly TaskHostGroup[] =>
+      hosts === null
+        ? []
+        : model.taskHostGroups({
+            hosts,
+            viewerUserId: inputs.groupViewerId,
+            teams: inputs.teams.current,
+            collaboratorNames: inputs.collaboratorNames.current,
+            directory: inputs.directory.current,
+            agentCountByHostId: new Map(),
+          }),
+  };
+});
 
 vi.mock("@/hooks/chats/use-cloud-chat-queries", () => ({
   useCloudChatViewerId: (): string => inputs.viewerId.current,
@@ -107,16 +163,32 @@ function registryItem(
   };
 }
 
+const SEEN_KEY = "traycer-gui-app:composer-mirror-line-seen";
+
+function defaultDirectory(): ReadonlyMap<string, TaskHostDirectoryFact> {
+  return new Map<string, TaskHostDirectoryFact>([
+    ["h-laptop", { label: "My laptop", state: "online" }],
+    ["h-laptop-2", { label: "My other laptop", state: "online" }],
+  ]);
+}
+
 beforeEach(() => {
   useComposerMirrorLineSeenStore.setState({ seen: {} });
+  inputs.teams.current = [{ teamId: ACME.id, name: "acme" }];
+  inputs.collaboratorNames.current = new Map();
+  inputs.directory.current = defaultDirectory();
 });
 
 afterEach(() => {
   cleanup();
   useComposerMirrorLineSeenStore.setState({ seen: {} });
+  window.localStorage.removeItem(SEEN_KEY);
   inputs.view.current = { kind: "none" };
   inputs.viewerId.current = VIEWER_ID;
   inputs.registry.current = null;
+  inputs.teams.current = [];
+  inputs.collaboratorNames.current = new Map();
+  inputs.directory.current = new Map();
   vi.useRealTimers();
 });
 
@@ -128,96 +200,111 @@ describe("composerMirrorLineText", () => {
   });
 });
 
-describe("mirrorLineOtherHostLabel", () => {
+function groupRow(hostId: string, label: string): TaskHostGroupRow {
+  return {
+    hostId,
+    label,
+    agentsLine: null,
+    unreachable: false,
+    state: null,
+    openable: false,
+  };
+}
+
+function group(
+  key: string,
+  title: string,
+  rows: readonly TaskHostGroupRow[],
+): TaskHostGroup {
+  return { key, title, rows };
+}
+
+describe("mirrorLineOtherHostName", () => {
   const START = "h-start";
 
-  it("names the viewer's own host first, then a team's, then another user's", () => {
+  it("walks the groups in order and names the first row whose principal differs", () => {
     const hosts = [
-      row(START, "Start box", ACME),
-      row("h-user-2", "Collaborator laptop", COLLABORATOR),
+      row(START, null, ACME),
+      row("h-viewer", null, VIEWER),
       row("h-globex", "Globex sandbox", GLOBEX),
-      row("h-viewer", "My laptop", VIEWER),
+      row("h-user-2", null, COLLABORATOR),
+    ];
+    // Groups in the Hosts section's order: Personal, teams, collaborators. The
+    // order of `hosts` (the wire order) is deliberately different.
+    const groups = [
+      group("personal", "Personal", [groupRow("h-viewer", "My laptop")]),
+      group("team:team-globex", "globex", [
+        groupRow("h-globex", "Globex sandbox"),
+      ]),
+      group("user:user-2", "Alice's", [
+        groupRow("h-user-2", "Collaborator laptop"),
+      ]),
     ];
     expect(
-      mirrorLineOtherHostLabel({
+      mirrorLineOtherHostName({
+        groups,
         hosts,
         startHostId: START,
         startPrincipalFallback: ACME,
-        viewerUserId: VIEWER_ID,
       }),
     ).toBe("My laptop");
   });
 
-  it("falls to a team's host when the viewer has no differing host", () => {
+  it("walks each group's rows in order", () => {
     const hosts = [
-      row(START, "My laptop", VIEWER),
-      row("h-user-2", "Collaborator laptop", COLLABORATOR),
-      row("h-globex", "Globex sandbox", GLOBEX),
-    ];
-    expect(
-      mirrorLineOtherHostLabel({
-        hosts,
-        startHostId: START,
-        startPrincipalFallback: VIEWER,
-        viewerUserId: VIEWER_ID,
-      }),
-    ).toBe("Globex sandbox");
-  });
-
-  it("falls to another user's host when only that differs", () => {
-    const hosts = [
-      row(START, "My laptop", VIEWER),
-      row("h-user-2", "Collaborator laptop", COLLABORATOR),
-    ];
-    expect(
-      mirrorLineOtherHostLabel({
-        hosts,
-        startHostId: START,
-        startPrincipalFallback: VIEWER,
-        viewerUserId: VIEWER_ID,
-      }),
-    ).toBe("Collaborator laptop");
-  });
-
-  it("keeps wire order within a tier", () => {
-    const hosts = [
-      row(START, "My laptop", VIEWER),
+      row(START, null, VIEWER),
       row("h-globex", "Globex sandbox", GLOBEX),
       row("h-acme", "Acme sandbox", ACME),
     ];
+    const groups = [
+      group("personal", "Personal", [groupRow(START, "Start box")]),
+      group("team:mixed", "teams", [
+        groupRow("h-acme", "Acme sandbox"),
+        groupRow("h-globex", "Globex sandbox"),
+      ]),
+    ];
     expect(
-      mirrorLineOtherHostLabel({
+      mirrorLineOtherHostName({
+        groups,
         hosts,
         startHostId: START,
         startPrincipalFallback: VIEWER,
-        viewerUserId: VIEWER_ID,
       }),
-    ).toBe("Globex sandbox");
+    ).toBe("Acme sandbox");
   });
 
   it("never counts the start host itself", () => {
     expect(
-      mirrorLineOtherHostLabel({
+      mirrorLineOtherHostName({
+        groups: [
+          group("team:team-acme", "acme", [groupRow(START, "Start box")]),
+        ],
         hosts: [row(START, "Start box", ACME)],
         startHostId: START,
         startPrincipalFallback: VIEWER,
-        viewerUserId: VIEWER_ID,
       }),
     ).toBeNull();
   });
 
-  it("is null when every other host has the start host's principal", () => {
+  it("is null when every other row has the start host's principal", () => {
     const hosts = [
       row(START, "Acme one", ACME),
       row("h-acme-2", "Acme two", ACME),
       row("h-acme-3", "Acme three", ACME),
     ];
+    const groups = [
+      group("team:team-acme", "acme", [
+        groupRow(START, "Acme one"),
+        groupRow("h-acme-2", "Acme two"),
+        groupRow("h-acme-3", "Acme three"),
+      ]),
+    ];
     expect(
-      mirrorLineOtherHostLabel({
+      mirrorLineOtherHostName({
+        groups,
         hosts,
         startHostId: START,
         startPrincipalFallback: ACME,
-        viewerUserId: VIEWER_ID,
       }),
     ).toBeNull();
   });
@@ -227,12 +314,16 @@ describe("mirrorLineOtherHostLabel", () => {
       row(START, "Acme one", ACME),
       row("h-globex", "Globex", GLOBEX),
     ];
+    const groups = [
+      group("team:team-acme", "acme", [groupRow(START, "Acme one")]),
+      group("team:team-globex", "globex", [groupRow("h-globex", "Globex")]),
+    ];
     expect(
-      mirrorLineOtherHostLabel({
+      mirrorLineOtherHostName({
+        groups,
         hosts,
         startHostId: START,
         startPrincipalFallback: ACME,
-        viewerUserId: VIEWER_ID,
       }),
     ).toBe("Globex");
   });
@@ -240,81 +331,162 @@ describe("mirrorLineOtherHostLabel", () => {
   it("tells a user from a team that shares its id", () => {
     const sameId = "shared-id";
     const hosts = [
-      row(START, "A user's host", { kind: "user", id: sameId }),
+      row(START, null, { kind: "user", id: sameId }),
       row("h-team", "A team's host", { kind: "team", id: sameId }),
     ];
+    const groups = [
+      group("user:shared-id", "Alice's", [groupRow(START, "A user's host")]),
+      group("team:shared-id", "acme", [groupRow("h-team", "A team's host")]),
+    ];
     expect(
-      mirrorLineOtherHostLabel({
+      mirrorLineOtherHostName({
+        groups,
         hosts,
         startHostId: START,
         startPrincipalFallback: { kind: "user", id: sameId },
-        viewerUserId: VIEWER_ID,
       }),
     ).toBe("A team's host");
   });
 
-  it("names a host with no label as an unnamed host", () => {
-    const hosts = [
-      row(START, "Acme one", ACME),
-      row("h-unnamed", null, VIEWER),
+  it("takes a row's principal from the hosts row with its id, and skips a group row that has none", () => {
+    const hosts = [row(START, null, VIEWER), row("h-real", "Real", ACME)];
+    const groups = [
+      group("personal", "Personal", [
+        groupRow(START, "Start box"),
+        // Not a task row: nothing says whose it is, so it cannot be named.
+        groupRow("h-ghost", "Ghost"),
+      ]),
+      group("team:team-acme", "acme", [groupRow("h-real", "Real")]),
     ];
     expect(
-      mirrorLineOtherHostLabel({
+      mirrorLineOtherHostName({
+        groups,
         hosts,
         startHostId: START,
-        startPrincipalFallback: ACME,
-        viewerUserId: VIEWER_ID,
+        startPrincipalFallback: VIEWER,
       }),
-    ).toBe(TASK_HOST_UNNAMED_LABEL);
-    expect(TASK_HOST_UNNAMED_LABEL).toBe("Unnamed host");
+    ).toBe("Real");
   });
 
   it("uses the fallback principal when the start host is not a task row", () => {
-    const hosts = [row("h-viewer", "My laptop", VIEWER)];
+    const hosts = [row("h-viewer", null, VIEWER)];
+    const groups = [
+      group("personal", "Personal", [groupRow("h-viewer", "My laptop")]),
+    ];
     expect(
-      mirrorLineOtherHostLabel({
+      mirrorLineOtherHostName({
+        groups,
         hosts,
         startHostId: START,
         startPrincipalFallback: ACME,
-        viewerUserId: VIEWER_ID,
       }),
     ).toBe("My laptop");
     expect(
-      mirrorLineOtherHostLabel({
+      mirrorLineOtherHostName({
+        groups,
         hosts,
         startHostId: START,
         startPrincipalFallback: VIEWER,
-        viewerUserId: VIEWER_ID,
       }),
     ).toBeNull();
   });
 
-  it("prefers the start host's own row over the fallback when the row exists", () => {
+  it("prefers the start host's own hosts row over the fallback when the row exists", () => {
     // Were the fallback (a team) used, the second row (the viewer's) would
     // differ from it; the row's own principal is the viewer, so it does not.
-    const hosts = [
-      row(START, "My laptop", VIEWER),
-      row("h-viewer-2", "My other laptop", VIEWER),
+    const hosts = [row(START, null, VIEWER), row("h-viewer-2", null, VIEWER)];
+    const groups = [
+      group("personal", "Personal", [
+        groupRow(START, "My laptop"),
+        groupRow("h-viewer-2", "My other laptop"),
+      ]),
     ];
     expect(
-      mirrorLineOtherHostLabel({
+      mirrorLineOtherHostName({
+        groups,
         hosts,
         startHostId: START,
         startPrincipalFallback: ACME,
-        viewerUserId: VIEWER_ID,
       }),
     ).toBeNull();
   });
 
-  it("is null for no hosts", () => {
+  it("is null for no groups", () => {
     expect(
-      mirrorLineOtherHostLabel({
+      mirrorLineOtherHostName({
+        groups: [],
         hosts: [],
         startHostId: START,
         startPrincipalFallback: VIEWER,
-        viewerUserId: VIEWER_ID,
       }),
     ).toBeNull();
+  });
+
+  describe("an unnamed host", () => {
+    function unnamedIn(
+      groupKey: string,
+      groupTitle: string,
+      principal: TaskHostPrincipal,
+    ): string | null {
+      return mirrorLineOtherHostName({
+        groups: [
+          group(groupKey, groupTitle, [
+            groupRow("h-unnamed", TASK_HOST_UNNAMED_LABEL),
+          ]),
+        ],
+        hosts: [
+          row(START, "Start box", ACME),
+          row("h-unnamed", null, principal),
+        ],
+        startHostId: START,
+        startPrincipalFallback: ACME,
+      });
+    }
+
+    it("has the label the Hosts section gives unnamed hosts", () => {
+      expect(TASK_HOST_UNNAMED_LABEL).toBe("Unnamed host");
+    });
+
+    it("is one of your hosts in the Personal group", () => {
+      expect(unnamedIn("personal", "Personal", VIEWER)).toBe(
+        "one of your hosts",
+      );
+    });
+
+    it("is the collaborator's host when the collaborator is named", () => {
+      expect(unnamedIn("user:user-2", "Alice's", COLLABORATOR)).toBe(
+        "Alice's host",
+      );
+    });
+
+    it("lower-cases the A of an anonymous collaborator's group title", () => {
+      expect(unnamedIn("user:user-2", "A collaborator's", COLLABORATOR)).toBe(
+        "a collaborator's host",
+      );
+    });
+
+    it("lower-cases the A of an unnamed team's group title", () => {
+      expect(unnamedIn("team:team-globex", "A team", GLOBEX)).toBe(
+        "a team host",
+      );
+    });
+
+    it("keeps a team's own name, as the group titles it", () => {
+      expect(unnamedIn("team:team-globex", "acme", GLOBEX)).toBe("acme host");
+    });
+
+    it("leaves a named host's label alone, even in the Personal group", () => {
+      expect(
+        mirrorLineOtherHostName({
+          groups: [
+            group("personal", "Personal", [groupRow("h-named", "MacBook Pro")]),
+          ],
+          hosts: [row(START, "Start box", ACME), row("h-named", null, VIEWER)],
+          startHostId: START,
+          startPrincipalFallback: ACME,
+        }),
+      ).toBe("MacBook Pro");
+    });
   });
 });
 
@@ -374,6 +546,77 @@ describe("the composer mirror line seen store", () => {
     expect(composerMirrorLineSeen(after, "user-1", "epic-0")).toBe(true);
     expect(composerMirrorLineSeen(after, "user-1", "epic-5")).toBe(true);
   });
+
+  describe("across windows", () => {
+    function seenBlob(pairs: readonly (readonly [string, string])[]): string {
+      const seen: Record<string, number> = {};
+      for (const [viewer, epic] of pairs) {
+        seen[`${viewer}\u0000${epic}`] = 5_000;
+      }
+      return JSON.stringify({ state: { seen }, version: 1 });
+    }
+
+    function persistedPairCount(): number {
+      const raw = window.localStorage.getItem(SEEN_KEY);
+      if (raw === null) return 0;
+      const parsed: unknown = JSON.parse(raw);
+      if (typeof parsed !== "object" || parsed === null) return 0;
+      if (!("state" in parsed)) return 0;
+      const state = parsed.state;
+      if (typeof state !== "object" || state === null) return 0;
+      if (!("seen" in state)) return 0;
+      const seen = state.seen;
+      if (typeof seen !== "object" || seen === null) return 0;
+      return Object.keys(seen).length;
+    }
+
+    it("keeps a pair another window wrote after this store hydrated when it marks its own", async () => {
+      // Another window marked pair A; this window's store has not heard (the
+      // `storage` event is not in play), so its memory still lacks A.
+      window.localStorage.setItem(SEEN_KEY, seenBlob([["user-1", "epic-a"]]));
+      expect(
+        composerMirrorLineSeen(
+          useComposerMirrorLineSeenStore.getState().seen,
+          "user-1",
+          "epic-a",
+        ),
+      ).toBe(false);
+
+      useComposerMirrorLineSeenStore.getState().markSeen("user-1", "epic-b");
+
+      // `markSeen` rehydrates before it writes, so neither pair is lost, in
+      // memory or on disk. (Written blind it would persist {B} over {A}.)
+      await vi.waitFor(() => {
+        const { seen } = useComposerMirrorLineSeenStore.getState();
+        expect(composerMirrorLineSeen(seen, "user-1", "epic-a")).toBe(true);
+        expect(composerMirrorLineSeen(seen, "user-1", "epic-b")).toBe(true);
+        expect(persistedPairCount()).toBe(2);
+      });
+    });
+
+    it("picks up another window's write when the storage event fires", async () => {
+      expect(
+        composerMirrorLineSeen(
+          useComposerMirrorLineSeenStore.getState().seen,
+          "user-1",
+          "epic-c",
+        ),
+      ).toBe(false);
+
+      window.localStorage.setItem(SEEN_KEY, seenBlob([["user-1", "epic-c"]]));
+      window.dispatchEvent(new StorageEvent("storage", { key: SEEN_KEY }));
+
+      await vi.waitFor(() => {
+        expect(
+          composerMirrorLineSeen(
+            useComposerMirrorLineSeenStore.getState().seen,
+            "user-1",
+            "epic-c",
+          ),
+        ).toBe(true);
+      });
+    });
+  });
 });
 
 describe("ComposerHostNotice", () => {
@@ -409,8 +652,55 @@ describe("ComposerHostNotice", () => {
   });
 });
 
+describe("composerTopNotice", () => {
+  const MIRROR: ComposerHostNoticeState = {
+    kind: "mirror",
+    message: composerMirrorLineText("Acme sandbox"),
+  };
+  const REFUSED: ComposerHostNoticeState = {
+    kind: "refused",
+    message: "Could not start on that host.",
+  };
+
+  it("lets a refusal outrank the mirror line, with the refusal's own dismiss", () => {
+    const dismissRefused = vi.fn();
+    const markSeen = vi.fn();
+    const mirror: ComposerMirrorLine = { notice: MIRROR, markSeen };
+
+    const top = composerTopNotice(REFUSED, dismissRefused, mirror);
+
+    expect(top.notice).toBe(REFUSED);
+    expect(top.dismiss).toBe(dismissRefused);
+    top.dismiss();
+    expect(dismissRefused).toHaveBeenCalledTimes(1);
+    expect(markSeen).not.toHaveBeenCalled();
+  });
+
+  it("shows the mirror line when nothing was refused, and its dismiss marks it seen", () => {
+    const dismissRefused = vi.fn();
+    const markSeen = vi.fn();
+    const mirror: ComposerMirrorLine = { notice: MIRROR, markSeen };
+
+    const top = composerTopNotice(null, dismissRefused, mirror);
+
+    expect(top.notice).toBe(MIRROR);
+    expect(top.dismiss).toBe(markSeen);
+    top.dismiss();
+    expect(markSeen).toHaveBeenCalledTimes(1);
+    expect(dismissRefused).not.toHaveBeenCalled();
+  });
+
+  it("shows nothing when there is neither a refusal nor a mirror line", () => {
+    const markSeen = vi.fn();
+    const top = composerTopNotice(null, vi.fn(), { notice: null, markSeen });
+
+    expect(top.notice).toBeNull();
+    expect(top.dismiss).toBe(markSeen);
+  });
+});
+
 describe("useComposerMirrorLine", () => {
-  const LAPTOP = row("h-laptop", "My laptop", VIEWER);
+  const LAPTOP = row("h-laptop", null, VIEWER);
   const SANDBOX = row("h-sandbox", "Acme sandbox", ACME);
 
   function hostsView(hosts: readonly TaskHostRow[]): TaskHostsView {
@@ -476,11 +766,85 @@ describe("useComposerMirrorLine", () => {
     });
   });
 
-  it("shows nothing when every host in the task is the start host's principal", () => {
+  it("names the label the Hosts section shows for the viewer's own host, from the directory", () => {
+    inputs.directory.current = new Map<string, TaskHostDirectoryFact>([
+      ["h-laptop", { label: "MacBook Pro", state: "online" }],
+    ]);
+    inputs.view.current = hostsView([LAPTOP, SANDBOX]);
+    const { result } = renderHook(() =>
+      useComposerMirrorLine("epic-1", "h-sandbox"),
+    );
+
+    expect(result.current.notice).toEqual({
+      kind: "mirror",
+      message: composerMirrorLineText("MacBook Pro"),
+    });
+  });
+
+  it("names a collaborator's unnamed host after the collaborator", () => {
+    inputs.collaboratorNames.current = new Map([[COLLABORATOR.id, "Alice"]]);
     inputs.view.current = hostsView([
       LAPTOP,
-      row("h-laptop-2", "My other laptop", VIEWER),
+      row("h-alice", null, COLLABORATOR),
     ]);
+    const { result } = renderHook(() =>
+      useComposerMirrorLine("epic-1", "h-laptop"),
+    );
+
+    expect(result.current.notice).toEqual({
+      kind: "mirror",
+      message: composerMirrorLineText("Alice's host"),
+    });
+  });
+
+  it("names a collaborator nobody knows the name of as a collaborator's host", () => {
+    inputs.view.current = hostsView([
+      LAPTOP,
+      row("h-alice", null, COLLABORATOR),
+    ]);
+    const { result } = renderHook(() =>
+      useComposerMirrorLine("epic-1", "h-laptop"),
+    );
+
+    expect(result.current.notice).toEqual({
+      kind: "mirror",
+      message: composerMirrorLineText("a collaborator's host"),
+    });
+  });
+
+  it("names a team's unnamed host after the team, and one of an unknown team as a team host", () => {
+    inputs.view.current = hostsView([LAPTOP, row("h-acme", null, ACME)]);
+    const known = renderHook(() => useComposerMirrorLine("epic-1", "h-laptop"));
+    expect(known.result.current.notice).toEqual({
+      kind: "mirror",
+      message: composerMirrorLineText("acme host"),
+    });
+
+    inputs.teams.current = [];
+    const unknown = renderHook(() =>
+      useComposerMirrorLine("epic-2", "h-laptop"),
+    );
+    expect(unknown.result.current.notice).toEqual({
+      kind: "mirror",
+      message: composerMirrorLineText("a team host"),
+    });
+  });
+
+  it("names the viewer's own unnamed host as one of your hosts", () => {
+    inputs.directory.current = new Map();
+    inputs.view.current = hostsView([LAPTOP, SANDBOX]);
+    const { result } = renderHook(() =>
+      useComposerMirrorLine("epic-1", "h-sandbox"),
+    );
+
+    expect(result.current.notice).toEqual({
+      kind: "mirror",
+      message: composerMirrorLineText("one of your hosts"),
+    });
+  });
+
+  it("shows nothing when every host in the task is the start host's principal", () => {
+    inputs.view.current = hostsView([LAPTOP, row("h-laptop-2", null, VIEWER)]);
     const { result } = renderHook(() =>
       useComposerMirrorLine("epic-1", "h-laptop"),
     );

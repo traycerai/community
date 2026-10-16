@@ -2,7 +2,11 @@ import type {
   TaskHostPrincipal,
   TaskHostRow,
 } from "@traycer/protocol/host/task-host-summary";
-import { TASK_HOST_UNNAMED_LABEL } from "@/components/epic-canvas/sidebar/task-host-groups-model";
+import type { ComposerHostNoticeState } from "@/components/home/composer/composer-host-notice";
+import {
+  TASK_HOST_UNNAMED_LABEL,
+  type TaskHostGroup,
+} from "@/components/epic-canvas/sidebar/task-host-groups-model";
 
 /** The mirror line (core flows, flow 5), verbatim. */
 export function composerMirrorLineText(otherHostLabel: string): string {
@@ -13,43 +17,69 @@ function samePrincipal(a: TaskHostPrincipal, b: TaskHostPrincipal): boolean {
   return a.kind === b.kind && a.id === b.id;
 }
 
-/** The Hosts section's group order: the viewer's own, teams, then others. */
-function principalRank(
-  principal: TaskHostPrincipal,
-  viewerUserId: string,
-): number {
-  if (principal.kind === "team") return 1;
-  return principal.id === viewerUserId ? 0 : 2;
+/**
+ * A host's name in the line: the label the Hosts section shows, or, when the
+ * section can only say "Unnamed host", its owner group ("Alice's host"), so a
+ * person's laptop the wire sends without a label is still told apart.
+ */
+function mirrorHostName(group: TaskHostGroup, label: string): string {
+  if (label !== TASK_HOST_UNNAMED_LABEL) return label;
+  if (group.key === "personal") return "one of your hosts";
+  const title = group.title.startsWith("A ")
+    ? `a ${group.title.slice(2)}`
+    : group.title;
+  return `${title} host`;
 }
 
 /**
- * The host the mirror line names: the first host already in the task whose
- * owner differs from the start host's, in the Hosts section's order, or `null`
- * when every host there shares the start host's owner. The start host's owner
- * is its own task row's when it already serves the task, else the caller's
- * fallback (its registry owner, or the viewer).
+ * The host the mirror line names: the first host already in the task, in the
+ * Hosts section's order, whose owner differs from the start host's; `null`
+ * when every one shares it. The start host's owner is its own task row's when
+ * it already serves the task, else the caller's fallback (its registry owner,
+ * or the viewer).
  */
-export function mirrorLineOtherHostLabel(input: {
+export function mirrorLineOtherHostName(input: {
+  readonly groups: readonly TaskHostGroup[];
   readonly hosts: readonly TaskHostRow[];
   readonly startHostId: string;
   readonly startPrincipalFallback: TaskHostPrincipal;
-  readonly viewerUserId: string;
 }): string | null {
-  const startRow = input.hosts.find((row) => row.hostId === input.startHostId);
-  const startPrincipal = startRow?.principal ?? input.startPrincipalFallback;
-  const differing = input.hosts
-    .filter(
-      (row) =>
-        row.hostId !== input.startHostId &&
-        !samePrincipal(row.principal, startPrincipal),
-    )
-    // A stable sort: wire order within a rank.
-    .toSorted(
-      (a, b) =>
-        principalRank(a.principal, input.viewerUserId) -
-        principalRank(b.principal, input.viewerUserId),
-    );
-  const first = differing.at(0);
-  if (first === undefined) return null;
-  return first.label ?? TASK_HOST_UNNAMED_LABEL;
+  const principals = new Map(
+    input.hosts.map((row) => [row.hostId, row.principal] as const),
+  );
+  const startPrincipal =
+    principals.get(input.startHostId) ?? input.startPrincipalFallback;
+  for (const group of input.groups) {
+    for (const row of group.rows) {
+      if (row.hostId === input.startHostId) continue;
+      const principal = principals.get(row.hostId);
+      if (principal === undefined) continue;
+      if (samePrincipal(principal, startPrincipal)) continue;
+      return mirrorHostName(group, row.label);
+    }
+  }
+  return null;
+}
+
+export interface ComposerMirrorLine {
+  /** The line, or `null` when no host here has another owner, or it was seen. */
+  readonly notice: ComposerHostNoticeState | null;
+  /** Record the line as seen in this task: on dismiss, and on start. */
+  readonly markSeen: () => void;
+}
+
+/**
+ * The composer's one notice slot: a refusal outranks the mirror line, and
+ * dismissing the mirror line marks it seen.
+ */
+export function composerTopNotice(
+  refused: ComposerHostNoticeState | null,
+  dismissRefused: () => void,
+  mirror: ComposerMirrorLine,
+): {
+  readonly notice: ComposerHostNoticeState | null;
+  readonly dismiss: () => void;
+} {
+  if (refused !== null) return { notice: refused, dismiss: dismissRefused };
+  return { notice: mirror.notice, dismiss: mirror.markSeen };
 }

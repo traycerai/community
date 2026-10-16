@@ -66,10 +66,15 @@ import {
 } from "@/stores/epics/open-epic/test-support/open-store-for-test";
 
 /** What the test says about each host the rows live on. */
-const hostState = vi.hoisted(() => ({
-  reachability: new Map<string, "reachable" | "unreachable">(),
-  view: { current: { kind: "none" } },
-}));
+const hostState = vi.hoisted(() => {
+  // Annotated, not inferred: an inferred `{ kind: "none" }` widens `kind` to
+  // `string`, which no `TaskHostsView` arm accepts.
+  const view: { current: TaskHostsView } = { current: { kind: "none" } };
+  return {
+    reachability: new Map<string, "reachable" | "unreachable">(),
+    view,
+  };
+});
 
 vi.mock("@/hooks/agent/use-host-reachability", async (importOriginal) => {
   const actual =

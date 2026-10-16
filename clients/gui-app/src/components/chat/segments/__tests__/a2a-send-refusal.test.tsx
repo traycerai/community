@@ -228,6 +228,9 @@ describe("<ToolSegment /> A2A send refusals", () => {
       expect(screen.queryByRole("button", { name: "Copy message" })).toBeNull();
       expect(screen.getByTestId("a2a-send-refusal").textContent).toBe(sentence);
       expect(screen.queryByText("Error")).toBeNull();
+      // The tool badge reads "error" in the DOM (CSS uppercases it), so the
+      // exact-case "Error" above cannot see it: a refusal is not a fault.
+      expect(screen.queryByText(/^error$/i)).toBeNull();
     },
   );
 
@@ -241,6 +244,9 @@ describe("<ToolSegment /> A2A send refusals", () => {
       TEAM_SENTENCE,
     );
     expect(screen.queryByText("Error")).toBeNull();
+    // The tool badge reads "error" in the DOM (CSS uppercases it), so the
+    // exact-case "Error" above cannot see it: a refusal is not a fault.
+    expect(screen.queryByText(/^error$/i)).toBeNull();
   });
 
   it.each([
@@ -257,6 +263,9 @@ describe("<ToolSegment /> A2A send refusals", () => {
 
       expect(screen.getByTestId("a2a-send-refusal").textContent).toBe(sentence);
       expect(screen.queryByText("Error")).toBeNull();
+      // The tool badge reads "error" in the DOM (CSS uppercases it), so the
+      // exact-case "Error" above cannot see it: a refusal is not a fault.
+      expect(screen.queryByText(/^error$/i)).toBeNull();
     },
   );
 
@@ -267,6 +276,9 @@ describe("<ToolSegment /> A2A send refusals", () => {
       TEAM_SENTENCE,
     );
     expect(screen.queryByText("Error")).toBeNull();
+    // The tool badge reads "error" in the DOM (CSS uppercases it), so the
+    // exact-case "Error" above cannot see it: a refusal is not a fault.
+    expect(screen.queryByText(/^error$/i)).toBeNull();
   });
 
   it.each([
@@ -291,4 +303,15 @@ describe("<ToolSegment /> A2A send refusals", () => {
     expect(screen.getByText("Error")).toBeTruthy();
     expect(screen.getByText(MISMATCH_ERROR)).toBeTruthy();
   });
+
+  it.each([["card" as const], ["row" as const]])(
+    "keeps the error badge in the %s header for a non-refusal error, closed",
+    (variant) => {
+      renderSend(MISMATCH_ERROR, variant);
+
+      // Closed: the body (and its "Error" panel) is not mounted, so the badge
+      // is the only match.
+      expect(screen.getByText(/^error$/i)).toBeTruthy();
+    },
+  );
 });

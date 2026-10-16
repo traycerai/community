@@ -704,8 +704,10 @@ function A2ASendToolSegment(
   // target, and it shows as written instead of as a raw error dump.
   const refusal = a2aSendRefusalSentence(error);
   const showsFault = hasError && refusal === null;
+  // A refusal gets the ordinary end-state badge, not the error one: the send
+  // was answered with a sentence, not broken.
   const badgeState = resolveToolBadgeState({
-    hasError,
+    hasError: showsFault,
     isBackgroundComplete: false,
     isStreaming,
     isStopped: false,
