@@ -202,7 +202,7 @@ function deleteOf(
   ids: ReadonlyArray<string>,
   worktreeCleanup: BatchDeleteEpicVariables["worktreeCleanup"],
 ): BatchDeleteEpicVariables {
-  return { ids, worktreeCleanup };
+  return { ids, localHomeIds: [], worktreeCleanup };
 }
 
 function cleanupOf(...worktreePaths: ReadonlyArray<string>) {

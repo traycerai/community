@@ -86,7 +86,7 @@ function renderInFlightReaders(queryClient: QueryClient) {
 }
 
 function deleteOf(ids: ReadonlyArray<string>): BatchDeleteEpicVariables {
-  return { ids, worktreeCleanup: null };
+  return { ids, localHomeIds: [], worktreeCleanup: null };
 }
 
 function heldAt(

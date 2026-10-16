@@ -12,7 +12,18 @@ import type {
   ResponseOfMethod,
 } from "@traycer-clients/shared/host-transport/host-messenger";
 import type { BatchDeleteItemResult } from "@traycer/protocol/host/epic/unary-schemas";
-import { useHostClient, type HostRpcRegistry } from "@/lib/host";
+import {
+  useHostBinding,
+  useHostClient,
+  type HostRpcRegistry,
+} from "@/lib/host";
+import { resolveNamedHostClient } from "@/lib/host/binding-host-client";
+import { readLocalHostIdSnapshot } from "@/lib/host/local-host-id-snapshot";
+import {
+  readSelectionFleetSnapshot,
+  routeOwnerGoneWrite,
+} from "@/lib/host/owner-gone-write-routing";
+import type { SurfacePinFleetView } from "@/stores/host/surface-host-selection-store";
 import { useHostMutation } from "@/hooks/host/use-host-query";
 import { hostQueryKeys, epicMutationKeys } from "@/lib/query-keys";
 import { invalidateWorktreeListingAndBindingCaches } from "@/hooks/worktree/invalidations";
@@ -45,7 +56,10 @@ import {
 import { Analytics, AnalyticsEvent } from "@/lib/analytics";
 
 interface BatchDeleteEpicMutationContext {
+  /** The active host: the scope the person deleted from. */
   readonly hostId: string | null;
+  /** Where the call went - the active host, or a live host standing in for it. */
+  readonly route: EpicBatchDeleteRoute;
   readonly userId: string | null;
   readonly epicTitlesById: Readonly<Record<string, string>>;
   /**
@@ -82,9 +96,108 @@ export interface BatchDeleteWorktreeCandidate {
  */
 export interface BatchDeleteEpicVariables {
   readonly ids: ReadonlyArray<string>;
+  /**
+   * The ids whose row says the Task is local-homed on the active host - a
+   * dispatch-side fact, like `SetEpicPinnedVariables.isLocalHome`, never sent
+   * on the wire. Read only when the active host is down: those Tasks exist on
+   * that machine alone, so no other host can delete them.
+   */
+  readonly localHomeIds: ReadonlyArray<string>;
   readonly worktreeCleanup: {
     readonly candidates: ReadonlyArray<BatchDeleteWorktreeCandidate>;
   } | null;
+}
+
+/**
+ * Where one `epic.batchDelete` dispatch goes.
+ *
+ * - `direct`: the active host, every id - what this hook always did, and still
+ *   does while the active host can serve, or when no other host is live.
+ * - `fallback`: the active host is down and another host is live. That host
+ *   deletes the cloud-homed ids from the account; the local-homed ids exist
+ *   only on the down host and are refused (`refusedIds`).
+ * - `refused`: as `fallback`, but every id is local-homed, so nothing is sent.
+ */
+export type EpicBatchDeleteRoute =
+  | {
+      readonly kind: "direct";
+      readonly hostId: string | null;
+      readonly sentIds: ReadonlyArray<string>;
+      readonly refusedIds: ReadonlyArray<string>;
+    }
+  | {
+      readonly kind: "fallback";
+      readonly hostId: string;
+      readonly sentIds: ReadonlyArray<string>;
+      readonly refusedIds: ReadonlyArray<string>;
+    }
+  | {
+      readonly kind: "refused";
+      readonly hostId: null;
+      readonly sentIds: ReadonlyArray<string>;
+      readonly refusedIds: ReadonlyArray<string>;
+    };
+
+/**
+ * {@link EpicBatchDeleteRoute} for one dispatch. The active host keeps the call
+ * while its session can serve; when it cannot, this machine's host is tried
+ * first and then any other live host of the account
+ * (`routeOwnerGoneWrite`), and the ids split on the row's home.
+ */
+export function routeEpicBatchDelete(args: {
+  readonly activeHostId: string | null;
+  readonly ids: ReadonlyArray<string>;
+  readonly localHomeIds: ReadonlyArray<string>;
+  readonly fleet: SurfacePinFleetView;
+  readonly localHostId: () => string | null;
+}): EpicBatchDeleteRoute {
+  const { activeHostId, ids } = args;
+  const direct: EpicBatchDeleteRoute = {
+    kind: "direct",
+    hostId: activeHostId,
+    sentIds: ids,
+    refusedIds: [],
+  };
+  if (activeHostId === null) return direct;
+  const route = routeOwnerGoneWrite({
+    ownerHostId: activeHostId,
+    fleet: args.fleet,
+    preferredHostIds: () => [args.localHostId()],
+  });
+  if (!route.fellBack) return direct;
+  const localHome = new Set(args.localHomeIds);
+  const sentIds = ids.filter((id) => !localHome.has(id));
+  const refusedIds = ids.filter((id) => localHome.has(id));
+  if (sentIds.length === 0) {
+    return { kind: "refused", hostId: null, sentIds, refusedIds };
+  }
+  return { kind: "fallback", hostId: route.hostId, sentIds, refusedIds };
+}
+
+/**
+ * Said when Tasks are not deleted because the host they live on cannot be
+ * reached. Same sentence and id as the owner-host offline notice, so a person
+ * who also hit it on an agent write reads one line.
+ */
+const OWNER_HOST_OFFLINE_TOAST_ID = "owner-host-offline-notice";
+export const OWNER_HOST_UNREACHABLE_NOTICE =
+  "Traycer can't reach that host right now, so nothing on it was changed. Try again once it is reachable.";
+
+/**
+ * Each dispatch's route, decided ONCE and shared by the client choice, the
+ * payload and every lifecycle callback: TanStack hands all of them the same
+ * variables object, and two reads of the fleet could disagree about where the
+ * call went. Weakly keyed, so a settled dispatch's entry goes with it.
+ */
+const batchDeleteRoutes = new WeakMap<
+  BatchDeleteEpicVariables,
+  EpicBatchDeleteRoute
+>();
+
+function toastRefusedLocalHomeDeletes(): void {
+  toast.message(OWNER_HOST_UNREACHABLE_NOTICE, {
+    id: OWNER_HOST_OFFLINE_TOAST_ID,
+  });
 }
 
 type DeleteNavigationTarget = HeaderTab | null | undefined;
@@ -95,10 +208,26 @@ export function useEpicBatchDelete(): UseMutationResult<
   BatchDeleteEpicVariables,
   BatchDeleteEpicMutationContext
 > {
-  const client = useHostClient();
+  const activeClient = useHostClient();
+  const binding = useHostBinding();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const openStreamTransport = useWorktreeDeleteStreamTransportFactory();
+  const routeFor = (
+    variables: BatchDeleteEpicVariables,
+  ): EpicBatchDeleteRoute => {
+    const known = batchDeleteRoutes.get(variables);
+    if (known !== undefined) return known;
+    const route = routeEpicBatchDelete({
+      activeHostId: activeClient.getActiveHostId(),
+      ids: variables.ids,
+      localHomeIds: variables.localHomeIds,
+      fleet: readSelectionFleetSnapshot(),
+      localHostId: readLocalHostIdSnapshot,
+    });
+    batchDeleteRoutes.set(variables, route);
+    return route;
+  };
   const activePathname = useRouterState({
     select: (state) => state.location.pathname,
   });
@@ -108,14 +237,26 @@ export function useEpicBatchDelete(): UseMutationResult<
     BatchDeleteEpicMutationContext,
     BatchDeleteEpicVariables
   >({
-    client,
+    client: (variables) => {
+      const route = routeFor(variables);
+      switch (route.kind) {
+        case "direct":
+          return activeClient;
+        case "fallback":
+          return resolveNamedHostClient(binding, route.hostId);
+        case "refused":
+          // Nothing to send: `onError` says why (the preflight rejects).
+          return null;
+      }
+    },
     method: "epic.batchDelete",
-    mapVariables: (variables) => ({ ids: [...variables.ids] }),
+    mapVariables: (variables) => ({ ids: [...routeFor(variables).sentIds] }),
     options: {
       mutationKey: epicMutationKeys.batchDelete(),
       onMutate: (variables) => {
-        const hostId = client.getActiveHostId();
-        const userId = client.getRequestContextUserId();
+        const hostId = activeClient.getActiveHostId();
+        const route = routeFor(variables);
+        const userId = activeClient.getRequestContextUserId();
         const epicTitlesById = collectDeletedEpicTitles(
           variables.ids,
           getHeaderTabs(),
@@ -127,7 +268,7 @@ export function useEpicBatchDelete(): UseMutationResult<
           epicDeleteProgressToastMessage(variables.ids, epicTitlesById),
           { id: progressToastId, duration: Infinity },
         );
-        return { hostId, userId, epicTitlesById, progressToastId };
+        return { hostId, route, userId, epicTitlesById, progressToastId };
       },
       onSuccess: (data, variables, ctx) => {
         const failures = data.results.filter((r) => !r.success);
@@ -204,11 +345,13 @@ export function useEpicBatchDelete(): UseMutationResult<
           deletedIds,
           epicTitlesById: ctx.epicTitlesById,
         });
-        const eligibleWorktreePaths = eligibleWorktreeCleanupPaths(
+        const eligibleWorktreePaths = routedWorktreeCleanupPaths(
+          ctx.route,
           variables.worktreeCleanup,
           deletedIds,
           successes,
         );
+        if (ctx.route.refusedIds.length > 0) toastRefusedLocalHomeDeletes();
         // The outcome toast takes the progress toast's place. Dismiss-then-emit
         // rather than an update by id: Sonner MERGES updates that reuse an id,
         // so the outcome would inherit the progress toast's infinite lifetime
@@ -273,16 +416,20 @@ export function useEpicBatchDelete(): UseMutationResult<
             epicTitlesById: ctx.epicTitlesById,
           });
         }
-        if (ctx.hostId === null) return;
-        void queryClient.invalidateQueries({
-          queryKey: hostQueryKeys.scope(ctx.hostId),
-        });
+        invalidateBatchDeleteHostScopes(queryClient, [
+          ctx.hostId,
+          ctx.route.hostId,
+        ]);
       },
       onError: (error, _variables, ctx) => {
         // Explicit, never left to the error toast: `toastFromHostError` stays
         // silent for an aborted or recoverable-unauthorized request, and a
         // progress toast nothing dismisses would spin forever.
         if (ctx !== undefined) toast.dismiss(ctx.progressToastId);
+        if (ctx?.route.kind === "refused") {
+          toastRefusedLocalHomeDeletes();
+          return;
+        }
         toastFromHostError(error, "Couldn't delete epics.");
       },
     },
@@ -601,6 +748,33 @@ export function emitEpicDeleteToast(
     code: null,
     source: "Epic deletion",
   });
+}
+
+/**
+ * The approved worktrees are on the active host. When another host stood in
+ * for it, that machine is down and nothing there can be removed now.
+ */
+function routedWorktreeCleanupPaths(
+  route: EpicBatchDeleteRoute,
+  cleanup: BatchDeleteEpicVariables["worktreeCleanup"],
+  deletedIds: ReadonlyArray<string>,
+  successes: number,
+): ReadonlyArray<string> {
+  if (route.kind !== "direct") return [];
+  return eligibleWorktreeCleanupPaths(cleanup, deletedIds, successes);
+}
+
+/** The active host's scope, and the stand-in's when one took the call. */
+function invalidateBatchDeleteHostScopes(
+  queryClient: QueryClient,
+  hostIds: ReadonlyArray<string | null>,
+): void {
+  for (const hostId of new Set(hostIds)) {
+    if (hostId === null) continue;
+    void queryClient.invalidateQueries({
+      queryKey: hostQueryKeys.scope(hostId),
+    });
+  }
 }
 
 // A worktree is safe to remove only when EVERY owning Task actually succeeded -

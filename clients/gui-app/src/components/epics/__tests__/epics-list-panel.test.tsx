@@ -725,6 +725,7 @@ describe("<EpicsListPanel />", () => {
     }
     expect(deleteCall[0]).toEqual({
       ids: ["epic-two"],
+      localHomeIds: [],
       worktreeCleanup: null,
     });
   });
@@ -3267,6 +3268,7 @@ describe("<EpicsListPanel />", () => {
     const [variables] = deleteCall;
     expect(variables).toEqual({
       ids: ["epic-from-history"],
+      localHomeIds: [],
       worktreeCleanup: null,
     });
   });
@@ -3315,6 +3317,7 @@ describe("<EpicsListPanel />", () => {
     const [variables] = deleteCall;
     expect(variables).toEqual({
       ids: ["epic-two", "epic-from-history"],
+      localHomeIds: [],
       worktreeCleanup: null,
     });
     // Deletion runs in the background off the mutation cache, like a Sweep:
@@ -3363,6 +3366,7 @@ describe("<EpicsListPanel />", () => {
     // row STILL was.
     expect(variables).toEqual({
       ids: ["epic-local"],
+      localHomeIds: ["epic-local"],
       worktreeCleanup: null,
     });
   });
@@ -3419,6 +3423,7 @@ describe("<EpicsListPanel />", () => {
     }
     expect(deleteCall[0]).toEqual({
       ids: ["epic-from-history"],
+      localHomeIds: [],
       worktreeCleanup: {
         candidates: [
           { worktreePath: "/wt/proven", ownerEpicIds: ["epic-from-history"] },

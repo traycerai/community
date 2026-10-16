@@ -3,6 +3,7 @@ import type {
   RenameTuiAgentRequest,
 } from "@traycer/protocol/host/epic/unary-schemas";
 import {
+  useEpicRecordLifecycleMutationClient,
   useEpicRecordMutationClient,
   type EpicRecordMutationContext,
   type EpicRecordMutationTarget,
@@ -10,7 +11,11 @@ import {
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
 import { useQueryClient } from "@tanstack/react-query";
 import type { HostClient } from "@traycer-clients/shared/host-client/host-client";
-import type { HostRpcRegistry } from "@/lib/host";
+import { useHostBinding, type HostRpcRegistry } from "@/lib/host";
+import {
+  recordOwnerHostLabel,
+  toastRequestedRecordWrite,
+} from "@/lib/epics/record-write-outcome-toast";
 import { useHostMutation } from "@/hooks/host/use-host-query";
 import { useEpicSessionHostClient } from "@/hooks/epic/use-epic-session-host-client";
 import { toastFromHostError } from "@/lib/host-error-toast";
@@ -82,10 +87,15 @@ export type DeleteTuiAgentMutationInput = DeleteTuiAgentRequest &
 export type RenameTuiAgentMutationInput = RenameTuiAgentRequest &
   EpicRecordMutationTarget;
 
-/** Delete on the owning host, which also tears down its runtime and worktree binding. */
+/**
+ * Delete on the owning host, which also tears down its runtime and worktree
+ * binding. When the owner is down the call goes to a live host, which deletes
+ * the cloud row (`outcome: "requested"`); the owner tears down when it is back.
+ */
 export function useEpicDeleteTuiAgent() {
-  const client = useEpicRecordMutationClient();
+  const client = useEpicRecordLifecycleMutationClient();
   const sessionClient = useEpicSessionHostClient();
+  const binding = useHostBinding();
   const queryClient = useQueryClient();
   return useHostMutation<
     HostRpcRegistry,
@@ -101,7 +111,7 @@ export function useEpicDeleteTuiAgent() {
         hostId,
         viewerHostId: sessionClient?.getActiveHostId() ?? null,
       }),
-      onSuccess: (_data, variables, ctx) => {
+      onSuccess: (data, variables, ctx) => {
         // Hook callbacks survive the row unmounting before the response arrives.
         if (ctx.hostId !== null) {
           useEpicCanvasStore
@@ -121,6 +131,13 @@ export function useEpicDeleteTuiAgent() {
         Analytics.getInstance().track(AnalyticsEvent.TerminalAgentStopped, {
           source: "direct_ui",
         });
+        if (data.outcome === "requested" && ctx.hostId !== null) {
+          toastRequestedRecordWrite({
+            write: "remove",
+            ownerHostId: ctx.hostId,
+            hostLabel: recordOwnerHostLabel(binding, ctx.hostId),
+          });
+        }
       },
       onError: (error) => {
         toastFromHostError(error, "Couldn't delete terminal agent.");

@@ -682,6 +682,11 @@ function EpicsListPanelBody(props: EpicsListPanelBodyProps): ReactNode {
       }));
     deleteMutation.mutate({
       ids: [...ids],
+      // Read only if this host is down when the delete is sent: a local-homed
+      // Task exists on this host alone, so no other host can delete it.
+      localHomeIds: ids.filter(
+        (id) => itemsByEpicId.get(id)?.isLocalHome === true,
+      ),
       worktreeCleanup:
         approvedWorktrees.length > 0 ? { candidates: approvedWorktrees } : null,
     });

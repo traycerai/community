@@ -28,9 +28,15 @@ import { useHostMutation } from "@/hooks/host/use-host-query";
 import { useTabHostClient } from "@/hooks/host/use-tab-host-client";
 import { useEpicSessionHostClient } from "@/hooks/epic/use-epic-session-host-client";
 import {
+  useEpicRecordLifecycleMutationClient,
   useEpicRecordMutationClient,
   type EpicRecordMutationContext,
 } from "@/hooks/epic/use-epic-record-mutation-client";
+import { useHostBinding } from "@/lib/host";
+import {
+  recordOwnerHostLabel,
+  toastRequestedRecordWrite,
+} from "@/lib/epics/record-write-outcome-toast";
 import { getOpenEpicRegistry } from "@/lib/registries/epic-session-registry";
 import type { OpenEpicStoreHandle } from "@/stores/epics/open-epic/store";
 import type { HostRpcRegistry } from "@traycer/protocol/host/index";
@@ -608,7 +614,10 @@ export function useEpicRenameChat() {
 
 /**
  * Chats and terminal agents share the archive RPC. The caller names the
- * record's owning host; the viewing epic may only hold a replica.
+ * record's owning host; the viewing epic may only hold a replica. When that
+ * host is down the call goes to a live host instead (see
+ * `useEpicRecordLifecycleMutationClient`), and an `outcome: "requested"`
+ * answer is told to the person: the owner finishes the archive when it is back.
  * `updated: false` is an idempotent success, not a missing record.
  */
 export function useEpicArchiveChat(): UseMutationResult<
@@ -626,8 +635,9 @@ function useEpicArchiveChatMutation(
   HostRpcError,
   ArchiveChatMutationInput
 > {
-  const client = useEpicRecordMutationClient();
+  const client = useEpicRecordLifecycleMutationClient();
   const sessionClient = useEpicSessionHostClient();
+  const binding = useHostBinding();
   const queryClient = useQueryClient();
   // An imperative post-write read: the viewer's cloud replica can lag the
   // owner's response. Reuse the record revision instead of inventing an overlay.
@@ -669,7 +679,7 @@ function useEpicArchiveChatMutation(
         viewerHostId: sessionClient?.getActiveHostId() ?? null,
         viewerUserId: currentProfileUserId(),
       }),
-      onSuccess: async (_data, variables, ctx) => {
+      onSuccess: async (data, variables, ctx) => {
         const handle = getOpenEpicRegistry().peek(variables.epicId);
         // The visible session may have been replaced while the write travelled.
         for (const hostId of new Set([
@@ -679,6 +689,18 @@ function useEpicArchiveChatMutation(
         ])) {
           invalidateEpicChatRecords(queryClient, hostId);
           invalidateEpicTuiAgentRecords(queryClient, hostId);
+        }
+        if (data.outcome === "requested") {
+          // The owner did not enact it: there is no owner record to read back,
+          // and viewers already see the cloud's value.
+          if (ctx.hostId !== null) {
+            toastRequestedRecordWrite({
+              write: variables.archived ? "archive" : "unarchive",
+              ownerHostId: ctx.hostId,
+              hostLabel: recordOwnerHostLabel(binding, ctx.hostId),
+            });
+          }
+          return;
         }
         if (
           (ctx.hostId === ctx.viewerHostId && handle?.hostId === ctx.hostId) ||
@@ -791,15 +813,21 @@ export function useEpicArchiveChats(): UseMutationResult<
   });
 }
 
-/** Deletes on the owning host and retires the viewer's confirmed replica. */
+/**
+ * Deletes on the owning host and retires the viewer's confirmed replica. When
+ * the owner is down the call goes to a live host, which deletes the cloud row
+ * (`outcome: "requested"`): the agent leaves every list at once and the files
+ * on the owner are untouched.
+ */
 export function useEpicDeleteChat(): UseMutationResult<
   DeleteChatResponse,
   HostRpcError,
   DeleteChatMutationInput,
   DeleteChatMutationContext
 > {
-  const client = useEpicRecordMutationClient();
+  const client = useEpicRecordLifecycleMutationClient();
   const sessionClient = useEpicSessionHostClient();
+  const binding = useHostBinding();
   const queryClient = useQueryClient();
   return useHostMutation<
     HostRpcRegistry,
@@ -941,6 +969,13 @@ export function useEpicDeleteChat(): UseMutationResult<
               }),
             });
           }
+        }
+        if (data.outcome === "requested" && ctx.hostId !== null) {
+          toastRequestedRecordWrite({
+            write: "remove",
+            ownerHostId: ctx.hostId,
+            hostLabel: recordOwnerHostLabel(binding, ctx.hostId),
+          });
         }
       },
       onError: (error, variables, ctx) => {

@@ -156,6 +156,7 @@ function holdCleanup(): {
 
 const ONE_WORKTREE: BatchDeleteEpicVariables = {
   ids: ["epic-a"],
+  localHomeIds: [],
   worktreeCleanup: {
     candidates: [{ worktreePath: "/wt/a", ownerEpicIds: ["epic-a"] }],
   },
@@ -185,7 +186,7 @@ describe("the delete's progress toast, as the person sees it", () => {
   it("shows one progress toast at kickoff and replaces it with the outcome", async () => {
     const view = renderBatchDelete();
 
-    view.dispatch({ ids: ["epic-a"], worktreeCleanup: null });
+    view.dispatch({ ids: ["epic-a"], localHomeIds: [], worktreeCleanup: null });
 
     expect(await screen.findByText("Deleting epic…")).not.toBeNull();
     expect(toastElements()).toHaveLength(1);
