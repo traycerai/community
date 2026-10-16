@@ -146,6 +146,21 @@ function transportCodeOf(error: unknown): DeviceTransportCode {
 }
 
 /**
+ * The cause of a 200 whose body read failed before a whole body arrived. The
+ * body timeout is a `timeout`; anything else is `transport` and its closed
+ * word, read exactly as a thrown fetch is ({@link transportCodeOf}).
+ */
+function bodyReadFailureCause(error: unknown): DeviceRequestFailureCause {
+  const cause: unknown =
+    typeof error === "object" && error !== null
+      ? Reflect.get(error, "cause")
+      : null;
+  const code = readThrownCode(cause) ?? readThrownCode(error);
+  if (code === "UND_ERR_BODY_TIMEOUT") return { kind: "timeout" };
+  return { kind: "transport", code: transportCodeOf(error) };
+}
+
+/**
  * Why a device request (`POST /device/authorize` or one `POST /device/token`
  * poll) came back as `network-error`: a closed set of words and one number, so
  * a caller can put it in a log line (the desktop log travels in feedback
@@ -317,14 +332,20 @@ export async function pollDeviceToken(
     // A 200 whose body fails validation OR whose read aborts/times out is
     // treated as transient: the loop re-polls (and, since the server consumed
     // the code on mint, will then see a terminal `invalid`). This never silently
-    // drops a real success on a momentary parse hiccup. The two are named
-    // apart: an interrupted read is a `timeout`, only a body that arrived and
-    // is not a token pair is `bad-body`.
+    // drops a real success on a momentary parse hiccup. The causes are named
+    // apart: a read cut off mid-body is a `timeout` or a `transport` word, and
+    // only a body that arrived and is not a token pair is `bad-body`.
     if (tokens.kind === "transient") {
       return { kind: "network-error", cause: { kind: "timeout" } };
     }
     if (tokens.kind === "invalid") {
-      return { kind: "network-error", cause: { kind: "bad-body" } };
+      return {
+        kind: "network-error",
+        cause:
+          tokens.readFailure === null
+            ? { kind: "bad-body" }
+            : bodyReadFailureCause(tokens.readFailure.error),
+      };
     }
     return {
       kind: "authorized",

@@ -473,6 +473,64 @@ describe("pollDeviceToken - the cause of a network-error", () => {
   });
 });
 
+describe("pollDeviceToken - a 200 whose body is cut off mid-read", () => {
+  // A real `Response` over a stream that delivers part of a token pair and
+  // then fails the way undici fails a socket that closed mid-body.
+  function responseCutOffWith(error: Error): Response {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"token":"abc'));
+        controller.error(error);
+      },
+    });
+    return new Response(stream, { status: 200 });
+  }
+
+  it("names the transport word when the socket closes mid-body", async () => {
+    const response = responseCutOffWith(
+      new TypeError("terminated", {
+        cause: Object.assign(new Error("other side closed"), {
+          code: "UND_ERR_SOCKET",
+        }),
+      }),
+    );
+    globalThis.fetch = (async (): Promise<Response> =>
+      response) as typeof fetch;
+    const result = await pollDeviceToken(
+      AUTHN_BASE_URL,
+      "dev-code",
+      "desktop",
+      REQUEST_OPTIONS,
+    );
+    expect(result).toEqual({
+      kind: "network-error",
+      cause: { kind: "transport", code: "UND_ERR_SOCKET" },
+    });
+  });
+
+  it("names timeout when the body read times out in undici", async () => {
+    const response = responseCutOffWith(
+      new TypeError("terminated", {
+        cause: Object.assign(new Error("Body Timeout Error"), {
+          code: "UND_ERR_BODY_TIMEOUT",
+        }),
+      }),
+    );
+    globalThis.fetch = (async (): Promise<Response> =>
+      response) as typeof fetch;
+    const result = await pollDeviceToken(
+      AUTHN_BASE_URL,
+      "dev-code",
+      "desktop",
+      REQUEST_OPTIONS,
+    );
+    expect(result).toEqual({
+      kind: "network-error",
+      cause: { kind: "timeout" },
+    });
+  });
+});
+
 describe("transport words for connect and TLS failures", () => {
   it.each([
     ["UND_ERR_CONNECT_TIMEOUT", "UND_ERR_CONNECT_TIMEOUT"],
