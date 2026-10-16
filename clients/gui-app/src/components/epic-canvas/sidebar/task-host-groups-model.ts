@@ -110,6 +110,19 @@ function groupHead(row: TaskHostRow, input: TaskHostGroupsInput): GroupHead {
   };
 }
 
+/**
+ * The directory's name for a host, or `null`: a host the registry never named
+ * reaches the directory labelled with its own id, which names nothing a person
+ * would recognise, so it reads as unnamed.
+ */
+function directoryName(
+  hostId: string,
+  fact: TaskHostDirectoryFact | null,
+): string | null {
+  if (fact === null || fact.label === hostId) return null;
+  return fact.label;
+}
+
 function groupRow(
   row: TaskHostRow,
   head: GroupHead,
@@ -123,7 +136,8 @@ function groupRow(
       : (input.directory.get(row.hostId) ?? null);
   return {
     hostId: row.hostId,
-    label: row.label ?? fact?.label ?? TASK_HOST_UNNAMED_LABEL,
+    label:
+      row.label ?? directoryName(row.hostId, fact) ?? TASK_HOST_UNNAMED_LABEL,
     agentsLine: taskHostAgentsLine(
       input.agentCountByHostId.get(row.hostId) ?? 0,
     ),

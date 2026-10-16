@@ -34,6 +34,7 @@ import {
   type TaskHostDirectoryFact,
   type TaskHostGroup,
   type TaskHostGroupRow,
+  taskHostGroups,
 } from "@/components/epic-canvas/sidebar/task-host-groups-model";
 import {
   composerMirrorLineText,
@@ -496,6 +497,31 @@ describe("mirrorLineOtherHostName", () => {
   });
 });
 
+describe("taskHostGroups, a personal host the registry never named", () => {
+  it("labels it Unnamed host when the directory only echoes its host id", () => {
+    // A registry host with no display name reaches the directory with
+    // `label === hostId` (the remote fetcher falls back to the id), so the id
+    // is not a name and must not become the row's label.
+    const hostId = "h-raw-laptop";
+    const groups = taskHostGroups({
+      hosts: [row(hostId, null, VIEWER)],
+      viewerUserId: VIEWER_ID,
+      teams: [],
+      collaboratorNames: new Map(),
+      directory: new Map<string, TaskHostDirectoryFact>([
+        [hostId, { label: hostId, state: "online" }],
+      ]),
+      agentCountByHostId: new Map(),
+    });
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.key).toBe("personal");
+    expect(groups[0]?.rows.map((groupedRow) => groupedRow.label)).toEqual([
+      "Unnamed host",
+    ]);
+  });
+});
+
 describe("the composer mirror line seen store", () => {
   it("starts empty and has seen nothing", () => {
     const { seen } = useComposerMirrorLineSeenStore.getState();
@@ -847,6 +873,24 @@ describe("useComposerMirrorLine", () => {
       kind: "mirror",
       message: composerMirrorLineText("one of your hosts"),
     });
+  });
+
+  it("calls the viewer's own host one of your hosts when the directory only echoes its host id", () => {
+    const rawHostId = "h-raw-laptop";
+    inputs.directory.current = new Map<string, TaskHostDirectoryFact>([
+      [rawHostId, { label: rawHostId, state: "online" }],
+    ]);
+    inputs.view.current = hostsView([row(rawHostId, null, VIEWER), SANDBOX]);
+    const { result } = renderHook(() =>
+      useComposerMirrorLine("epic-1", "h-sandbox"),
+    );
+
+    expect(result.current.notice).toEqual({
+      kind: "mirror",
+      message:
+        "Agents here cannot work with the agents on one of your hosts; the task still shares its files and chats.",
+    });
+    expect(result.current.notice?.message).not.toContain(rawHostId);
   });
 
   it("shows nothing when every host in the task is the start host's principal", () => {
