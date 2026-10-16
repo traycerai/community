@@ -266,7 +266,7 @@ describe("<SandboxCreateDialog />", () => {
     expect(mocks.binding?.auth.createSandbox).not.toHaveBeenCalled();
   });
 
-  it("keeps the dialog open and toasts the typed copy when the control plane refuses", async () => {
+  it("keeps the dialog open and says the typed copy in the form when the control plane refuses", async () => {
     mocks.binding?.auth.createSandbox.mockResolvedValue(
       refusal(503, "provider_unavailable"),
     );
@@ -275,14 +275,11 @@ describe("<SandboxCreateDialog />", () => {
     type("sandbox-create-name", "build-box");
     fireEvent.click(submit());
 
-    await waitFor(() => {
-      expect(mocks.toastFromAuthError).toHaveBeenCalledTimes(1);
-    });
-    const [error, title] = mocks.toastFromAuthError.mock.calls[0];
-    expect(title).toBe("Couldn't create the sandbox.");
-    expect(error.message).toBe(
+    const line = await screen.findByTestId("sandbox-create-failure");
+    expect(line.textContent).toBe(
       "Sandboxes aren't available right now. Try again later.",
     );
+    expect(mocks.toastFromAuthError).not.toHaveBeenCalled();
     expect(mocks.toastSuccess).not.toHaveBeenCalled();
     expect(useSandboxCreateDialogStore.getState().open).toBe(true);
   });

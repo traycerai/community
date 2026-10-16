@@ -1,4 +1,4 @@
-import { useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useState, type ReactNode } from "react";
 import { useIsMutating } from "@tanstack/react-query";
 import type { AuthenticatedUser } from "@traycer/protocol/auth";
 import {
@@ -68,7 +68,10 @@ import {
 } from "@/lib/sandboxes/sandbox-pricing";
 import { sandboxMutationKeys } from "@/lib/query-keys";
 import { useAuthStore } from "@/stores/auth/auth-store";
-import { useSandboxCreateDialogStore } from "@/stores/settings/sandbox-create-dialog-store";
+import {
+  useSandboxCreateDialogStore,
+  type SandboxCreateDraft,
+} from "@/stores/settings/sandbox-create-dialog-store";
 
 const MB_PER_GIB = 1024;
 const NAME_MAX_LENGTH = 191;
@@ -241,6 +244,72 @@ function initialFormState(
   };
 }
 
+/**
+ * The form's starting values: the draft a remount left behind when its OS is
+ * still offered, else the catalogue's defaults.
+ */
+function draftFormState(
+  draft: SandboxCreateDraft | null,
+  catalogue: SandboxCatalogue,
+  initialOs: SandboxOs,
+): SandboxFormState {
+  if (draft !== null && offeredOses(catalogue).includes(draft.os)) {
+    return {
+      name: draft.name,
+      os: draft.os,
+      cpus: draft.cpus,
+      memoryGb: draft.memoryGb,
+      region: draft.region,
+      idleMinutes: draft.idleMinutes,
+    };
+  }
+  return initialFormState(providerFor(catalogue, initialOs), initialOs);
+}
+
+/**
+ * The form's values, kept in the dialog store as they change so a remount
+ * while the dialog is open starts from them rather than the defaults (F46).
+ * The draft is read once, at mount.
+ */
+function useSandboxCreateDraft(
+  catalogue: SandboxCatalogue,
+  initialOs: SandboxOs,
+  initialBelongsTo: SandboxCreateBelongsTo,
+): {
+  readonly belongsTo: SandboxCreateBelongsTo;
+  readonly setBelongsTo: (belongsTo: SandboxCreateBelongsTo) => void;
+  readonly form: SandboxFormState;
+  readonly setForm: (form: SandboxFormState) => void;
+} {
+  const [draft] = useState(() => useSandboxCreateDialogStore.getState().draft);
+  const setDraft = useSandboxCreateDialogStore((s) => s.setDraft);
+  const [belongsTo, setBelongsTo] = useState<SandboxCreateBelongsTo>(
+    draft === null ? initialBelongsTo : draft.belongsTo,
+  );
+  const [form, setForm] = useState<SandboxFormState>(() =>
+    draftFormState(draft, catalogue, initialOs),
+  );
+  useEffect(() => {
+    setDraft({ ...form, belongsTo });
+  }, [belongsTo, form, setDraft]);
+  return { belongsTo, setBelongsTo, form, setForm };
+}
+
+/** The last create's failure, said beside the values that were sent. */
+function SandboxCreateFailure(props: { readonly shown: boolean }): ReactNode {
+  const failure = useSandboxCreateDialogStore((s) => s.failure);
+  if (!props.shown || failure === null) return null;
+  return (
+    <p
+      className="text-ui-sm text-destructive"
+      role="alert"
+      data-testid="sandbox-create-failure"
+    >
+      {failure.message}
+    </p>
+  );
+}
+
 /** A read the form needs failed: say so, with a retry. */
 function SandboxCreateRetry(props: {
   readonly message: string;
@@ -265,17 +334,14 @@ function SandboxCreateForm(props: {
   readonly onDone: () => void;
 }): ReactNode {
   const ids = useId();
-  const [belongsTo, setBelongsTo] = useState<SandboxCreateBelongsTo>(
+  const { belongsTo, setBelongsTo, form, setForm } = useSandboxCreateDraft(
+    props.catalogue,
+    props.initialOs,
     props.initialBelongsTo,
   );
+  const setFailure = useSandboxCreateDialogStore((s) => s.setFailure);
   const team = pickedTeam(belongsTo, props.teams);
   const firstTeamTask = useFirstTeamTaskOffer(team);
-  const [form, setForm] = useState<SandboxFormState>(() =>
-    initialFormState(
-      providerFor(props.catalogue, props.initialOs),
-      props.initialOs,
-    ),
-  );
   const create = useSandboxCreate();
   // A create outlives this form: closing the dialog unmounts it, and a
   // reopened form's own mutation is idle. Any create in flight for this
@@ -329,6 +395,7 @@ function SandboxCreateForm(props: {
       onSubmit={(event) => {
         event.preventDefault();
         if (!canSubmit) return;
+        setFailure(null);
         create.mutate(
           {
             request: {
@@ -461,6 +528,8 @@ function SandboxCreateForm(props: {
           A sandbox is being created…
         </p>
       ) : null}
+      {/* A team's own refusal line already says it under Belongs to. */}
+      <SandboxCreateFailure shown={target.refusalLine === null} />
       <SandboxCreateFooter
         askAdmin={target.askAdmin}
         canSubmit={canSubmit}

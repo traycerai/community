@@ -17,6 +17,7 @@ import {
   signedInUserId,
 } from "@/lib/sandboxes/sandbox-account-fence";
 import { useAuthStore } from "@/stores/auth/auth-store";
+import { useSandboxCreateDialogStore } from "@/stores/settings/sandbox-create-dialog-store";
 
 /**
  * What the form submits: the request, and the team's name when it belongs to
@@ -80,7 +81,11 @@ export function useSandboxCreate(): UseMutationResult<
       teamName,
     }): Promise<SandboxCreateAccepted> => {
       if (binding === null) {
-        throw new Error("Sign in to create a sandbox.");
+        throw new SandboxCreateError(
+          "Sign in to create a sandbox.",
+          null,
+          null,
+        );
       }
       const result = await binding.auth.createSandbox(request);
       if (result.kind === "ok") {
@@ -108,8 +113,21 @@ export function useSandboxCreate(): UseMutationResult<
         queryKey: authQueryKeys.registeredHostsAll(),
       });
     },
+    // With the dialog open the form says it, beside the values that were
+    // sent (F46); a toast is for a create that outlived its dialog.
     onError: (error, _variables, context) => {
       if (!settledForStartingAccount(context)) return;
+      const dialog = useSandboxCreateDialogStore.getState();
+      if (dialog.open) {
+        dialog.setFailure({
+          message:
+            error instanceof SandboxCreateError
+              ? error.message
+              : "Couldn't create the sandbox. Try again.",
+          code: error instanceof SandboxCreateError ? error.code : null,
+        });
+        return;
+      }
       toastFromAuthError(error, "Couldn't create the sandbox.");
     },
   });
