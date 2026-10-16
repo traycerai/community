@@ -12,6 +12,7 @@ import type {
   RequiredHostMethodVersion,
   ResponseOfMethod,
 } from "@traycer-clients/shared/host-transport/host-messenger";
+import { RetryEpisodeOutcomeUnknownError } from "@traycer-clients/shared/host-transport/retrying-messenger";
 import type { HostClient } from "@traycer-clients/shared/host-client/host-client";
 import type {
   ListTasksFacets,
@@ -289,8 +290,20 @@ export function useEpicCreateForClient(
             // create did not land, the second says the poll could not tell -
             // and a poll that could not tell leaves the outcome exactly as
             // ambiguous as it was, which is what this notice describes.
+            //
+            // One exception: a retry episode a refusal ended. Its error is
+            // unknown only because an earlier send may have created the epic;
+            // `absent` settles that, so the refusal speaks for the whole
+            // gesture and its guidance (update the host, view-only access) is
+            // what the person needs.
             if (verdict === "exists") return;
-            toastFromHostError(error, "Couldn't create epic.");
+            toastFromHostError(
+              verdict === "absent" &&
+                error instanceof RetryEpisodeOutcomeUnknownError
+                ? error.finalRefusal
+                : error,
+              "Couldn't create epic.",
+            );
           },
           () => {
             toastFromHostError(error, "Couldn't create epic.");
