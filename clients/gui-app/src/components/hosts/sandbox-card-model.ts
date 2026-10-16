@@ -30,7 +30,11 @@ const FROZEN_ACTIONS: readonly SandboxCardAction[] = ["destroy"];
 /**
  * What the card offers from each state. Transitional states offer nothing:
  * the control plane refuses a verb on a row that is moving, and the card
- * re-reads the row as it lands. A frozen row offers only destroy, from every
+ * re-reads the row as it lands. Except Destroy from `suspending` and
+ * `stopping`: a vendor that keeps refusing leaves the row there, and the
+ * control plane takes a destroy once one attempt's time is up
+ * (`mayEnterDestroying`); before then it answers that the sandbox is
+ * changing state. A frozen row offers only destroy, from every
  * state whose own row includes it - a wake would answer `sandbox_frozen`
  * until credits are added, and deleting a frozen sandbox is allowed at any
  * time. That includes `awake`: the meter sets `frozen` first and drives the
@@ -41,10 +45,10 @@ const ACTIONS_BY_STATE: Record<HostSandboxState, readonly SandboxCardAction[]> =
   {
     creating: NO_ACTIONS,
     awake: ["suspend", "stop", "destroy"],
-    suspending: NO_ACTIONS,
+    suspending: ["destroy"],
     suspended: ["resume", "destroy"],
     resuming: NO_ACTIONS,
-    stopping: NO_ACTIONS,
+    stopping: ["destroy"],
     stopped: ["start", "destroy"],
     starting: NO_ACTIONS,
     destroying: NO_ACTIONS,

@@ -232,10 +232,10 @@ describe("<SandboxCard /> per state", () => {
   const ACTIONS: Record<string, readonly string[]> = {
     creating: [],
     awake: ["suspend", "stop", "destroy"],
-    suspending: [],
+    suspending: ["destroy"],
     suspended: ["resume", "destroy"],
     resuming: [],
-    stopping: [],
+    stopping: ["destroy"],
     stopped: ["start", "destroy"],
     starting: [],
     destroying: [],
