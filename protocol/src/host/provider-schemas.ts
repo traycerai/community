@@ -4828,6 +4828,8 @@ export type DowngradableToV10ProviderState = (
   // (v9.1) the auto-mode judge. Optional here for the same reason as the rest:
   // a caller may hold a row from any released line, and only a 9.1 row has it.
   autoJudge?: ProviderCliState["autoJudge"];
+  // (v10.2) list-only host facts, absent from every earlier released carrier.
+  macosRequirement?: ProviderCliState["macosRequirement"];
   // `V70` is named explicitly rather than left to ride the `V10` arm on the
   // strength of structural width: the v7.0 and v8.0 list lines are pinned to
   // `providerLoginCapabilitySchemaV70`, so that is the concrete shape those
@@ -4858,6 +4860,7 @@ export function downgradeProviderCliStateToV10(
   // - `managedInstallState` / `versionVisibility` / `advisory` — the
   //   provider-pack-registry fields.
   // - `cliBinaryResolved` — the binary-absent explanation field.
+  // - `macosRequirement` (v10.2) — list-only host macOS requirements.
   // - `packId` / `managedVersions` / `managedVersionsUnavailable` /
   //   `nextRunBinary` (v7.0) — the version manager. Same trap, and it is worth
   //   restating rather than assuming the list above covers it: this parse is
@@ -4895,6 +4898,7 @@ export function downgradeProviderCliStateToV10(
     // the obligation out of the two schemas' key sets instead of a list a human
     // maintains. ADD THE FIELD HERE; do not weaken that test.
     autoJudge: _autoJudge,
+    macosRequirement: _macosRequirement,
     ...rest
   } = state;
   const parsed = providerCliStateSchemaV10.safeParse({
