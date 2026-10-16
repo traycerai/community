@@ -152,7 +152,7 @@ beforeEach(() => {
 afterEach(() => {
   vi.restoreAllMocks();
   cleanup();
-  artifactEditor.destroy();
+  if (!artifactEditor.isDestroyed) artifactEditor.destroy();
   artifactElement.remove();
   epicHandle.dispose();
   queryClient.clear();
@@ -406,5 +406,62 @@ describe("<FloatingDraftPopover /> duplicate submit", () => {
       useCommentThreadsStore.getState().draftByEpicId[EPIC_ID],
     ).toMatchObject({ quotedText: "world" });
     expect(newEditor.getText()).toBe("new comment");
+  });
+
+  it("retires the saved draft without anchoring when the artifact editor is destroyed before the ack", async () => {
+    await renderPopover();
+    typeIntoEditor(composerEditorAt(0), "looks good");
+    fireEvent.click(submitButton());
+    await waitFor(() => {
+      expect(creates).toHaveLength(1);
+    });
+
+    act(() => {
+      artifactEditor.destroy();
+    });
+    createAt(0).answer.resolve({ threadId: "thread-1" });
+
+    // The thread is saved, so the draft must not stay open to be resubmitted.
+    await waitFor(() => {
+      expect(
+        useCommentThreadsStore.getState().draftByEpicId[EPIC_ID],
+      ).toBeNull();
+    });
+    expect(onCreated).not.toHaveBeenCalled();
+  });
+
+  it("keeps a newer draft when the artifact editor is destroyed before an earlier create's ack", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    await renderPopover();
+    typeIntoEditor(composerEditorAt(0), "old comment");
+    fireEvent.click(submitButton());
+    await waitFor(() => {
+      expect(creates).toHaveLength(1);
+    });
+    fireEvent.click(screen.getByRole("button", { name: /^Cancel/ }));
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "New comment" })).toBeNull();
+    });
+    act(() => {
+      useCommentThreadsStore.getState().setDraft(EPIC_ID, {
+        draftId: "draft-2",
+        tileId: TILE_ID,
+        artifactId: ARTIFACT_ID,
+        from: 19,
+        to: 24,
+        quotedText: "world",
+      });
+    });
+
+    act(() => {
+      artifactEditor.destroy();
+    });
+    createAt(0).answer.resolve({ threadId: "thread-1" });
+    await settle();
+
+    expect(
+      useCommentThreadsStore.getState().draftByEpicId[EPIC_ID],
+    ).toMatchObject({ draftId: "draft-2" });
+    expect(onCreated).not.toHaveBeenCalled();
   });
 });

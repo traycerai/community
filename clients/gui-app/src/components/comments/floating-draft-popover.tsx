@@ -217,7 +217,6 @@ export function FloatingDraftPopover(props: FloatingDraftPopoverProps) {
           quotedText: ownedDraft.quotedText,
         })
         .finally(() => editor.off("transaction", mapSubmittedRange));
-      if (editor.isDestroyed) return;
       // The thread is saved even if decorating the document fails. Retiring
       // this draft first prevents an attachment failure from offering a retry
       // that would create another thread.
@@ -227,6 +226,7 @@ export function FloatingDraftPopover(props: FloatingDraftPopoverProps) {
         isDirtyRef.current = false;
         setDraft(epicId, null);
       }
+      if (editor.isDestroyed) return;
       applyThreadAnchorMark(editor, from, to, data.threadId);
       onCreated(data.threadId);
     },
