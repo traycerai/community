@@ -1496,7 +1496,7 @@ describe("epic sidebar selection mode", () => {
     });
   });
 
-  it("selects chat rows explicitly and bulk-deletes topmost selected chat roots", async () => {
+  it("selects chat rows explicitly and bulk-deletes every selected agent, nested ones included", async () => {
     seedChatTree();
 
     render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
@@ -1541,15 +1541,55 @@ describe("epic sidebar selection mode", () => {
         hostId: null,
       });
     });
-    expect(testState.deleteChatMutateAsync).not.toHaveBeenCalledWith({
-      epicId: EPIC_ID,
-      chatId: "chat-child",
-      hostId: null,
+    // Deleting an agent keeps the agents nested under it, so a selected
+    // child is a row the user asked for and nothing else would delete.
+    await waitFor(() => {
+      expect(testState.deleteChatMutateAsync).toHaveBeenCalledWith({
+        epicId: EPIC_ID,
+        chatId: "chat-child",
+        hostId: null,
+      });
     });
+    expect(testState.deleteChatMutateAsync).toHaveBeenCalledTimes(2);
     expect(testState.deleteTuiAgentMutateAsync).toHaveBeenCalledWith({
       epicId: EPIC_ID,
       tuiAgentId: "agent-root",
       hostId: "host-1",
+    });
+  });
+
+  it("keeps deleting the other selected agents when one delete fails", async () => {
+    seedChatTree();
+    testState.deleteChatMutateAsync.mockImplementation(
+      (input: { readonly chatId: string }) =>
+        input.chatId === "chat-child"
+          ? Promise.reject(new Error("host refused"))
+          : Promise.resolve({}),
+    );
+
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "Select agents" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+    fireEvent.click(screen.getByTestId("epic-sidebar-delete-selected-chats"));
+    fireEvent.click(screen.getByTestId("confirm-action"));
+
+    await waitFor(() => {
+      expect(testState.deleteTuiAgentMutateAsync).toHaveBeenCalledWith({
+        epicId: EPIC_ID,
+        tuiAgentId: "agent-root",
+        hostId: "host-1",
+      });
+    });
+    expect(testState.deleteChatMutateAsync).toHaveBeenCalledWith({
+      epicId: EPIC_ID,
+      chatId: "chat-root",
+      hostId: null,
+    });
+    expect(testState.deleteChatMutateAsync).toHaveBeenCalledWith({
+      epicId: EPIC_ID,
+      chatId: "chat-child",
+      hostId: null,
     });
   });
 
@@ -2239,6 +2279,141 @@ describe("epic sidebar selection mode", () => {
       tabId: TAB_ID,
       parentId: "chat-root",
     });
+  });
+
+  it("does not say deleting an agent deletes the agents nested under it", async () => {
+    // Deleting an agent removes that one record; its nested agents are kept
+    // and drawn at the top level (orphan promotion in `projectTreeSlice`), so
+    // the confirm dialog must not claim otherwise.
+    seedChatTree();
+
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
+
+    fireEvent.click(dropdownItem("delete-chat-root"));
+    const dialog = await screen.findByTestId("confirm-destructive-dialog");
+
+    expect(within(dialog).queryByTestId("confirm-cascade-meta")).toBeNull();
+    expect(dialog.textContent).not.toContain("also delete");
+    expect(dialog.textContent).toContain(
+      "1 agent nested under it will be kept and moved to the top level.",
+    );
+  });
+
+  it("counts only the agents directly under a deleted agent", async () => {
+    // A grandchild stays under its own (kept) parent, so it does not move to
+    // the top level and is not part of the sentence.
+    seedChatTree();
+    const grandchild = treeNode(
+      "chat-grandchild",
+      "chat-child",
+      "Grandchild chat",
+      "chat",
+    );
+    testState.tree = {
+      ...testState.tree,
+      childrenByParent: {
+        ...testState.tree.childrenByParent,
+        "chat-child": ["chat-grandchild"],
+      },
+      nodeById: { ...testState.tree.nodeById, "chat-grandchild": grandchild },
+    };
+    testState.records = [...testState.records, recordFromNode(grandchild)];
+
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
+
+    fireEvent.click(dropdownItem("delete-chat-root"));
+    const dialog = await screen.findByTestId("confirm-destructive-dialog");
+
+    expect(dialog.textContent).toContain(
+      "1 agent nested under it will be kept and moved to the top level.",
+    );
+    expect(dialog.textContent).not.toContain("2 agents");
+  });
+
+  it("says a deleted terminal agent's nested agents are kept and moved to the top level", async () => {
+    seedChatTree();
+    const agentChild = treeNode(
+      "agent-child",
+      "agent-root",
+      "Nested terminal agent",
+      "terminal-agent",
+    );
+    testState.tree = {
+      ...testState.tree,
+      childrenByParent: {
+        ...testState.tree.childrenByParent,
+        "agent-root": ["agent-child"],
+      },
+      nodeById: { ...testState.tree.nodeById, "agent-child": agentChild },
+    };
+    testState.records = [...testState.records, recordFromNode(agentChild)];
+
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
+
+    fireEvent.click(dropdownItem("delete-agent-root"));
+    const dialog = await screen.findByTestId("confirm-destructive-dialog");
+
+    expect(within(dialog).queryByTestId("confirm-cascade-meta")).toBeNull();
+    expect(dialog.textContent).toContain(
+      "1 agent nested under it will be kept and moved to the top level.",
+    );
+  });
+
+  it("does not warn that nested items may also be deleted when bulk-deleting agents", async () => {
+    seedChatTree();
+
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "Select agents" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+    fireEvent.click(screen.getByTestId("epic-sidebar-delete-selected-chats"));
+    const dialog = await screen.findByTestId("confirm-destructive-dialog");
+
+    expect(dialog.textContent).not.toContain("may also be deleted");
+  });
+
+  it("still warns that nested items may also be deleted when bulk-deleting artifacts", async () => {
+    seedArtifactTree();
+    testState.activePanelId = "artifacts";
+
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "Select artifacts" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+    fireEvent.click(
+      screen.getByTestId("epic-sidebar-delete-selected-artifacts"),
+    );
+    const dialog = await screen.findByTestId("confirm-destructive-dialog");
+
+    expect(dialog.textContent).toContain(
+      "Nested items under selected rows may also be deleted.",
+    );
+  });
+
+  it("says nothing about nested agents when a deleted agent has none", async () => {
+    seedChatTree();
+
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
+
+    fireEvent.click(dropdownItem("delete-agent-root"));
+    const dialog = await screen.findByTestId("confirm-destructive-dialog");
+
+    expect(within(dialog).queryByTestId("confirm-cascade-meta")).toBeNull();
+    expect(dialog.textContent).not.toContain("nested under it");
+  });
+
+  it("still says deleting an artifact deletes the artifacts nested under it", async () => {
+    seedArtifactTree();
+    testState.activePanelId = "artifacts";
+
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
+
+    fireEvent.click(dropdownItem("delete-spec-root"));
+    const dialog = await screen.findByTestId("confirm-destructive-dialog");
+
+    expect(within(dialog).getByTestId("confirm-cascade-meta").textContent).toBe(
+      "This will also delete 1 ticket nested under it.",
+    );
   });
 
   it("keeps artifact add inline and exposes ellipsis actions on right-click", async () => {

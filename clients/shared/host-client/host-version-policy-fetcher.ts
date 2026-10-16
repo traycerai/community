@@ -2,6 +2,7 @@ import {
   hostVersionPolicyResponseSchema,
   type HostUpdatePolicy,
 } from "@traycer/protocol/host/host-status";
+import { timeoutSignal } from "./timeout-signal";
 
 /**
  * "Update now" / auto-policy toggle / "Apply now — ends N sessions"
@@ -108,7 +109,7 @@ export async function updateHostVersionPolicyViaHttp(
         desiredVersion: input.desiredVersion,
         force: input.force,
       }),
-      signal: AbortSignal.timeout(HOST_VERSION_POLICY_FETCH_TIMEOUT_MS),
+      signal: timeoutSignal(HOST_VERSION_POLICY_FETCH_TIMEOUT_MS),
     });
   } catch {
     // A thrown `fetch` — transport failure or the per-attempt timeout — is

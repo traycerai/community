@@ -241,6 +241,7 @@ import { SplitResizeHandle } from "@/components/epic-canvas/canvas/resize-handle
 import {
   isSidebarBulkSelectionPanelId,
   rootmostSelectedSidebarIds,
+  sidebarBulkDeleteIds,
   sidebarIdsWithinRoots,
   SidebarBulkSelectionProvider,
   useSidebarBulkSelection,
@@ -1555,9 +1556,10 @@ function SidebarBulkDeleteController(props: {
   // the one row that silently remained.
   const blockedDeleteReason = useMemo(() => {
     if (pendingDeleteIds === null) return null;
-    const blockedTitles = rootmostSelectedSidebarIds({
+    const blockedTitles = sidebarBulkDeleteIds({
       ids: pendingDeleteIds,
       tree,
+      isAgentId: (id) => isAgentRecord(recordById.get(id)),
     }).flatMap((id) => {
       const record = recordById.get(id);
       if (record === undefined || record.type !== "chat") return [];
@@ -1577,11 +1579,12 @@ function SidebarBulkDeleteController(props: {
     // The dialog's confirm is already disabled while this is non-null; the
     // check is here too because a keyboard submit is not the button.
     if (blockedDeleteReason !== null) return;
-    const rootmostIds = rootmostSelectedSidebarIds({
+    const deleteIds = sidebarBulkDeleteIds({
       ids: pendingDeleteIds,
       tree,
+      isAgentId: (id) => isAgentRecord(recordById.get(id)),
     });
-    const targets = rootmostIds.flatMap((id) => {
+    const targets = deleteIds.flatMap((id) => {
       const target = sidebarDeleteTargetForRecord(recordById.get(id));
       return target === null ? [] : [target];
     });
@@ -1710,12 +1713,22 @@ function SidebarBulkDeleteController(props: {
         pendingDeleteIds,
         recordById,
       )}
-      description={describeSidebarBulkDeleteDescription(pendingDeleteIds)}
+      description={describeSidebarBulkDeleteDescription(
+        panelId,
+        pendingDeleteIds,
+      )}
       cascadeSummary={null}
       actionLabel="Delete"
       isPending={deletePending}
       onConfirm={handleConfirmDelete}
     />
+  );
+}
+
+function isAgentRecord(record: EpicTreeRecord | undefined): boolean {
+  return (
+    record !== undefined &&
+    (record.type === "chat" || record.type === "terminal-agent")
   );
 }
 
@@ -1879,9 +1892,13 @@ function panelRowNoun(panelId: LeftPanelId, count: number): string {
 }
 
 function describeSidebarBulkDeleteDescription(
+  panelId: LeftPanelId,
   ids: readonly string[] | null,
 ): string {
   if (ids === null || ids.length < 2) return "This action cannot be undone.";
+  // Deleting an agent keeps the agents nested under it, so only artifacts
+  // carry the warning.
+  if (panelId === "chats") return "This action cannot be undone.";
   return "This action cannot be undone. Nested items under selected rows may also be deleted.";
 }
 

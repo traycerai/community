@@ -14,6 +14,7 @@ import {
   chatSubscribeV121,
   chatSubscribeV122,
   chatSubscribeV123,
+  chatSubscribeV124,
   chatSubscribeWindowedClientFrameSchema,
   chatSubscribeWindowedServerFrameSchema,
   openChatSubscribeWindowedServerFrameSchema,
@@ -48,9 +49,9 @@ const PRE_KEY_LINES = [
 ] as const;
 
 describe("chat.subscribe registry: 1.17 installed below the 1.18 through 1.22 lines, 1.16 still installed", () => {
-  it("binds 1.17 and 1.16 to their own contracts - the head has since moved to 1.23", () => {
+  it("binds 1.17 and 1.16 to their own contracts - the head has since moved to 1.24", () => {
     const line = hostStreamRpcRegistry["chat.subscribe"][1];
-    expect(line.latestMinor).toBe(23);
+    expect(line.latestMinor).toBe(24);
     expect(line.versions[23].contract).toBe(chatSubscribeV123);
     expect(line.versions[22].contract).toBe(chatSubscribeV122);
     expect(line.versions[21].contract).toBe(chatSubscribeV121);
@@ -89,7 +90,8 @@ describe("chat.subscribe registry: 1.17 installed below the 1.18 through 1.22 li
     );
     // 1.20 froze when 1.21 opened above it; 1.21 and 1.22 froze when 1.23
     // opened above them, with pre-page bodies (1.22 keeps its open harness
-    // leaves); 1.23 binds the open twin a client parses.
+    // leaves); 1.23 froze when 1.24 added the cron next-run key, and 1.24
+    // binds the open twin a client parses.
     expect(chatSubscribeV120.serverFrameSchema).not.toBe(
       chatSubscribeWindowedServerFrameSchema,
     );
@@ -99,7 +101,10 @@ describe("chat.subscribe registry: 1.17 installed below the 1.18 through 1.22 li
     expect(chatSubscribeV122.serverFrameSchema).not.toBe(
       chatSubscribeWindowedServerFrameSchema,
     );
-    expect(chatSubscribeV123.serverFrameSchema).toBe(
+    expect(chatSubscribeV123.serverFrameSchema).not.toBe(
+      openChatSubscribeWindowedServerFrameSchema,
+    );
+    expect(chatSubscribeV124.serverFrameSchema).toBe(
       openChatSubscribeWindowedServerFrameSchema,
     );
   });

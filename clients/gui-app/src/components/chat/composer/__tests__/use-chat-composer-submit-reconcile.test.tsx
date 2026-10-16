@@ -153,6 +153,7 @@ function mountSubmit(
       getActiveTurnForSteer: () => null,
       hasPendingApprovals: false,
       sendDisabled: false,
+      sendDisabledHint: null,
       workspaceBlocked: false,
       imagesUnsupported: false,
       attachmentPreparationPending: false,
