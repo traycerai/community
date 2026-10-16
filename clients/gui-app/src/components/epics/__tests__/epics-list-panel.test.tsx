@@ -4185,6 +4185,111 @@ describe("<EpicsListPanel />", () => {
       },
     );
 
+    // Select all over unloaded pages awaits a walk. The selection it lands was
+    // started by whoever pressed Select all, so the account is read at the
+    // click, not when the walk comes back.
+    async function pressSelectAllAndHoldWalk(): Promise<{
+      readonly landWalk: () => Promise<void>;
+    }> {
+      testState.hasNextPage = true;
+      let complete: ((items: readonly HistoryItem[]) => void) | undefined;
+      testState.fetchAllItems.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            complete = resolve;
+          }),
+      );
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Select history items" }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+      await waitFor(() => {
+        expect(testState.fetchAllItems).toHaveBeenCalledTimes(1);
+      });
+      return {
+        landWalk: async () => {
+          await act(async () => {
+            complete?.(testState.items);
+            await Promise.resolve();
+          });
+          await waitFor(() => {
+            expect(
+              screen
+                .getAllByTestId("epics-list-row-select")
+                .every(
+                  (checkbox) =>
+                    checkbox.getAttribute("aria-checked") === "true",
+                ),
+            ).toBe(true);
+          });
+        },
+      };
+    }
+
+    it("binds a Select all that walks unloaded pages to the account signed in when it was pressed, not when the walk lands", async () => {
+      testState.requestUserId = "user-a";
+      renderPanel("page", "/");
+      const walk = await pressSelectAllAndHoldWalk();
+
+      // Only the client's identity moves, while the walk is still pending.
+      // History's `currentUserId` stays, so the selection is not reset.
+      testState.requestUserId = "user-b";
+      expect(testState.currentUserId).toBe("user-test");
+      await walk.landWalk();
+      fireEvent.click(screen.getByTestId("epics-list-delete-selected"));
+      fireEvent.click(await screen.findByTestId("delete-tasks-confirm"));
+
+      expect(testState.mutate).toHaveBeenCalledTimes(1);
+      expect(sentVariables().boundUserId).toBe("user-a");
+    });
+
+    it("sends nothing and says why when the account changed while Select all was walking unloaded pages", async () => {
+      testState.useRealBatchDelete = true;
+      testState.requestUserId = "user-a";
+      renderPanel("page", "/");
+      const walk = await pressSelectAllAndHoldWalk();
+
+      testState.requestUserId = "user-b";
+      await walk.landWalk();
+      fireEvent.click(screen.getByTestId("epics-list-delete-selected"));
+      fireEvent.click(await screen.findByTestId("delete-tasks-confirm"));
+
+      expect(
+        await screen.findByText(EPIC_DELETE_ACCOUNT_CHANGED_MESSAGE),
+      ).not.toBeNull();
+      expect(testState.hostRequests).toEqual([]);
+    });
+
+    it("keeps a row-by-row selection bound to the account its first row was chosen under", async () => {
+      testState.items = [
+        historyItem({}),
+        historyItem({
+          id: "history-epic-2",
+          epicId: "epic-two",
+          title: "Second history item",
+        }),
+      ];
+      testState.requestUserId = "user-a";
+      renderPanel("page", "/");
+
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Select history items" }),
+      );
+      const rows = screen.getAllByTestId("epics-list-row-select");
+      expect(rows).toHaveLength(2);
+      const [firstRow, secondRow] = rows;
+      fireEvent.click(firstRow);
+
+      testState.requestUserId = "user-b";
+      fireEvent.click(secondRow);
+      fireEvent.click(screen.getByTestId("epics-list-delete-selected"));
+      fireEvent.click(await screen.findByTestId("delete-tasks-confirm"));
+
+      expect(testState.mutate).toHaveBeenCalledTimes(1);
+      expect(sentVariables().ids).toHaveLength(2);
+      expect(sentVariables().boundUserId).toBe("user-a");
+    });
+
     it("sends the delete when the account at confirm is the one the selection was made under", async () => {
       testState.useRealBatchDelete = true;
       testState.requestUserId = "user-a";

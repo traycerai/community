@@ -510,10 +510,12 @@ function EpicsListPanelBody(props: EpicsListPanelBodyProps): ReactNode {
   // The account the delete would be sent as, read from the client
   // `useEpicBatchDelete` sends through.
   const readDeleteRequestUserId = useEpicDeleteRequestUserId();
-  // The account a selection was started under, held for as long as anything
-  // is selected. A delete of the selection is bound to it, not to whoever is
-  // signed in when the dialog opens: a selection made as one account and
-  // confirmed as another is refused at send (`admitEpicDeleteRequest`).
+  // The account a selection was started under, read at the click that starts
+  // it (`bindSelectionAccountIfStarting`). A delete of the selection is bound
+  // to it, not to whoever is signed in when the dialog opens: a selection made
+  // as one account and confirmed as another is refused at send
+  // (`admitEpicDeleteRequest`). Stale once the selection empties, and unread
+  // then: only a delete of selected ids takes it.
   const selectionUserIdRef = useRef<string | null>(null);
   // The account the open delete dialog is bound to.
   const pendingDeleteUserIdRef = useRef<string | null>(null);
@@ -695,25 +697,31 @@ function EpicsListPanelBody(props: EpicsListPanelBodyProps): ReactNode {
   const selectAllPending = selectAllMutation.isPending;
   const selectAll = selectAllMutation.mutate;
 
+  // Binds a selection that is starting now to the account signed in now: at
+  // the click, before anything the selection awaits. Select all's page walk
+  // can take long enough for the account to change under it, and the
+  // selection it lands was still chosen by whoever pressed Select all.
+  const bindSelectionAccountIfStarting = useCallback(() => {
+    if (selectedIds.size === 0) {
+      selectionUserIdRef.current = readDeleteRequestUserId();
+    }
+  }, [readDeleteRequestUserId, selectedIds]);
+
   const toggleSelection = useCallback(
     (id: string) => {
       if (!selectionEnabled || !selectableIdSet.has(id)) return;
       abortSelectAll();
+      bindSelectionAccountIfStarting();
       setSelectedIds((prev) => withMemberToggled(prev, id));
       setSelectionMode(true);
     },
-    [abortSelectAll, selectableIdSet, selectionEnabled],
+    [
+      abortSelectAll,
+      bindSelectionAccountIfStarting,
+      selectableIdSet,
+      selectionEnabled,
+    ],
   );
-
-  useEffect(() => {
-    if (selectedIds.size === 0) {
-      selectionUserIdRef.current = null;
-      return;
-    }
-    if (selectionUserIdRef.current === null) {
-      selectionUserIdRef.current = readDeleteRequestUserId();
-    }
-  }, [readDeleteRequestUserId, selectedIds]);
 
   const requestDelete = useCallback(
     (ids: ReadonlyArray<string>) => {
@@ -781,6 +789,7 @@ function EpicsListPanelBody(props: EpicsListPanelBodyProps): ReactNode {
     // Bulk selection requires every retained page to be fetchable.
     // Individual loaded rows remain selectable when paging is blocked.
     if (hasUnloadedItems && !hasNextPage) return;
+    bindSelectionAccountIfStarting();
     if (!hasUnloadedItems) {
       setSelectedIds(new Set(selectableItemIds));
       return;
@@ -789,6 +798,7 @@ function EpicsListPanelBody(props: EpicsListPanelBodyProps): ReactNode {
     setSelectAllController(selectAllController, controller);
     selectAll(controller);
   }, [
+    bindSelectionAccountIfStarting,
     selectAll,
     chatHostFilterUnsupported,
     hasUnloadedItems,

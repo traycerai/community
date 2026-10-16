@@ -174,9 +174,14 @@ function admitEpicDeleteRequest(
     variables.boundUserId === null ||
     requestUserId !== variables.boundUserId
   ) {
+    // No identity to send as is a sign-in problem, not an account switch:
+    // choosing the tasks again cannot help until someone is signed in.
     epicDeleteRefusals.set(variables, {
       ids: [...variables.ids],
-      message: EPIC_DELETE_ACCOUNT_CHANGED_MESSAGE,
+      message:
+        requestUserId === null
+          ? EPIC_DELETE_SIGNED_OUT_MESSAGE
+          : EPIC_DELETE_ACCOUNT_CHANGED_MESSAGE,
     });
     throw new Error(
       "epic.batchDelete: the account changed after the tasks were chosen",

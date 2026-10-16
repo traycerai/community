@@ -1020,7 +1020,12 @@ describe("the delete's progress toast", () => {
       expect(mocks.publishDeletedEpicNotification).not.toHaveBeenCalled();
     });
 
-    it("sends nothing when the client has no signed-in identity at send", async () => {
+    // `EPIC_DELETE_SIGNED_OUT_MESSAGE` is not exported; the literal is the
+    // sentence a person reads.
+    const SIGNED_OUT_SENTENCE =
+      "This task was not deleted because Traycer couldn't confirm your sign-in. Try again once you're signed in.";
+
+    it("says the sign-in could not be confirmed, not that the account changed, when the client has no signed-in identity at send", async () => {
       host.state.userId = null;
       const view = renderBatchDelete();
 
@@ -1030,6 +1035,25 @@ describe("the delete's progress toast", () => {
         expect(mocks.toastError).toHaveBeenCalledTimes(1);
       });
       expect(host.state.requests).toHaveLength(0);
+      const options = JSON.stringify(refusalToastOptions());
+      expect(options).toContain(SIGNED_OUT_SENTENCE);
+      expect(options).not.toContain(EPIC_DELETE_ACCOUNT_CHANGED_MESSAGE);
+    });
+
+    it("says the sign-in could not be confirmed when the delete was bound to no account and the client has no identity either", async () => {
+      host.state.userId = null;
+      const view = renderBatchDelete();
+
+      view.dispatch({ ...deleteOf(["epic-a"], null), boundUserId: null });
+
+      await waitFor(() => {
+        expect(mocks.toastError).toHaveBeenCalledTimes(1);
+      });
+      expect(host.state.requests).toHaveLength(0);
+      const options = JSON.stringify(refusalToastOptions());
+      expect(options).toContain(SIGNED_OUT_SENTENCE);
+      expect(options).not.toContain(EPIC_DELETE_ACCOUNT_CHANGED_MESSAGE);
+      expect(mocks.publishDeletedEpicNotification).not.toHaveBeenCalled();
     });
   });
 });
