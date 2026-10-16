@@ -463,6 +463,11 @@ export function hostOptionPickerGroup(
   offersAutomations: boolean,
 ): HostPickerGroup {
   if (host.sandbox === null) return "personal";
+  // A sandbox no host row stands for yet (finding F15): listed for
+  // management, never offered as a host.
+  if (host.entry === null && host.item === null) {
+    return listsAgentSandboxes ? "sandbox" : "hidden";
+  }
   const summary = host.sandbox.summary;
   if (summary === null) return listsAgentSandboxes ? "sandbox" : "hidden";
   if (summary.kind === "automation") {

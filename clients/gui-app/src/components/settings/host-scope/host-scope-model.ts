@@ -185,8 +185,58 @@ export function buildHostScopeOptions(
       ...sandboxFactsOf(entry, item, sandboxes?.get(hostId) ?? null),
     };
   });
+  const listed = new Set(hostIds);
+  const unenrolled = (input.sandboxes ?? [])
+    .filter((summary) => !listed.has(summary.hostId))
+    .map((summary) => unenrolledSandboxOption(summary, input));
 
-  return options.sort(compareHostOptions);
+  return [...options, ...unenrolled].sort(compareHostOptions);
+}
+
+/**
+ * A sandbox the control plane lists before any host row exists for it: its
+ * guest has not enrolled yet (`creating`), or never will (`failed`, `lost`),
+ * so authn has nothing to list (finding F15). The host list shows it so the
+ * person can see it and destroy it; with no entry and no registry row it is
+ * management-only (see `hostOptionPickerGroup`), and once the guest enrols the
+ * registry row takes this `hostId` over.
+ */
+function unenrolledSandboxOption(
+  summary: SandboxSummary,
+  input: BuildHostScopeOptionsInput,
+): HostScopeOption {
+  return {
+    hostId: summary.hostId,
+    name: summary.displayName.length > 0 ? summary.displayName : summary.hostId,
+    isLocalMachine: false,
+    isActive: summary.hostId === input.activeHostId,
+    connectable: false,
+    settingUp: false,
+    registered: false,
+    platform: null,
+    version: null,
+    health: deriveHostHealth({
+      item: null,
+      isLocalMachine: false,
+      hasLiveSession: false,
+      service: undefined,
+      lease: null,
+      authorityAttached: input.authorityAttached,
+      nowMs: input.nowMs,
+    }),
+    updateState: null,
+    entry: null,
+    item: null,
+    kind: "sandbox",
+    sandbox: {
+      state: summary.state,
+      frozen: isSandboxFrozenInEffect(summary.state, summary.frozen),
+      summary,
+      // The summary names an environment, not a team: a team's sandbox lists
+      // in the top-level group until its registry row names the team.
+      teamOwned: summary.environmentId !== null,
+    },
+  };
 }
 
 /**
