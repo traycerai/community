@@ -236,7 +236,7 @@ interface WorktreeCleanupCandidateStub {
 
 interface DeleteEpicsVariables {
   readonly ids: string[];
-  readonly localHomedIds: ReadonlyArray<string>;
+  readonly isLocalHomedNow: (epicId: string) => boolean;
   readonly worktreeCleanup: {
     readonly candidates: ReadonlyArray<{
       readonly worktreePath: string;
@@ -259,6 +259,7 @@ const testState = vi.hoisted(() => ({
   },
   isFetching: false,
   isCountPending: false,
+  chatHostFilterUnsupported: false,
   mobileViewport: false,
   cloudPagePending: false,
   completeness: null as ListTasksCompleteness | null,
@@ -343,6 +344,7 @@ vi.mock("@/hooks/home/use-history-query", () => ({
       facets: testState.facets,
       worktreesByEpicId: testState.worktreesByEpicId,
       completeness: testState.completeness,
+      chatHostFilterUnsupported: testState.chatHostFilterUnsupported,
     },
     isPending: false,
     isFetching: testState.isFetching,
@@ -417,6 +419,17 @@ vi.mock("@/hooks/epic/use-epic-activity-status", () => ({
       ? "idle"
       : (testState.activityByEpicId.get(epicId) ?? "idle"),
 }));
+
+/** A delete's variables without the live home reader, for exact matching. */
+function deleteRequestShape(variables: DeleteEpicsVariables | undefined): {
+  readonly ids: readonly string[] | undefined;
+  readonly worktreeCleanup: DeleteEpicsVariables["worktreeCleanup"] | undefined;
+} {
+  return {
+    ids: variables?.ids,
+    worktreeCleanup: variables?.worktreeCleanup,
+  };
+}
 
 function historyItem(overrides: Partial<HistoryItem>): HistoryItem {
   return {
@@ -679,6 +692,7 @@ describe("<EpicsListPanel />", () => {
     };
     testState.isFetching = false;
     testState.isCountPending = false;
+    testState.chatHostFilterUnsupported = false;
     testState.cloudPagePending = false;
     testState.mobileViewport = false;
     testState.completeness = null;
@@ -794,9 +808,8 @@ describe("<EpicsListPanel />", () => {
     if (deleteCall === undefined) {
       throw new Error("expected selected epic delete mutation call");
     }
-    expect(deleteCall[0]).toEqual({
+    expect(deleteRequestShape(deleteCall[0])).toEqual({
       ids: ["epic-two"],
-      localHomedIds: [],
       worktreeCleanup: null,
     });
   });
@@ -3365,9 +3378,9 @@ describe("<EpicsListPanel />", () => {
     });
     fireEvent.click(screen.getByTestId("epics-list-delete-selected"));
     fireEvent.click(screen.getByTestId("delete-tasks-confirm"));
-    expect(testState.mutate).toHaveBeenCalledWith({
+    expect(testState.mutate).toHaveBeenCalledTimes(1);
+    expect(deleteRequestShape(testState.mutate.mock.calls[0]?.[0])).toEqual({
       ids: ["epic-from-history", "epic-two"],
-      localHomedIds: [],
       worktreeCleanup: null,
     });
   });
@@ -3796,6 +3809,23 @@ describe("<EpicsListPanel />", () => {
     });
   });
 
+  it("offers no selection while an unsupported chat-host filter withholds its rows", async () => {
+    // What the hook answers for that filter: no rows, the unfiltered listing's
+    // pagination still reported.
+    testState.items = [];
+    testState.hasNextPage = true;
+    testState.chatHostFilterUnsupported = true;
+    renderPanel("page", "/");
+
+    const select = await screen.findByRole("button", {
+      name: "Select history items",
+    });
+    expect(select.matches(":disabled")).toBe(true);
+    fireEvent.click(select);
+    expect(screen.queryByRole("button", { name: "Select all" })).toBeNull();
+    expect(testState.fetchAllItems).not.toHaveBeenCalled();
+  });
+
   it("names the task count and the rows off screen when deleting a bulk selection", async () => {
     testState.items = [
       historyItem({}),
@@ -3888,9 +3918,8 @@ describe("<EpicsListPanel />", () => {
       throw new Error("expected selected epic delete mutation call");
     }
     const [variables] = deleteCall;
-    expect(variables).toEqual({
+    expect(deleteRequestShape(variables)).toEqual({
       ids: ["epic-from-history"],
-      localHomedIds: [],
       worktreeCleanup: null,
     });
   });
@@ -4066,9 +4095,8 @@ describe("<EpicsListPanel />", () => {
       throw new Error("expected selected epic delete mutation call");
     }
     const [variables] = deleteCall;
-    expect(variables).toEqual({
+    expect(deleteRequestShape(variables)).toEqual({
       ids: ["epic-two", "epic-from-history"],
-      localHomedIds: [],
       worktreeCleanup: null,
     });
     // Deletion runs in the background off the mutation cache, like a Sweep:
@@ -4115,9 +4143,8 @@ describe("<EpicsListPanel />", () => {
     const [variables] = deleteCall;
     // The cloud row ("epic-from-history") was NOT dispatched; the local-home
     // row STILL was.
-    expect(variables).toEqual({
+    expect(deleteRequestShape(variables)).toEqual({
       ids: ["epic-local"],
-      localHomedIds: ["epic-local"],
       worktreeCleanup: null,
     });
   });
@@ -4172,9 +4199,8 @@ describe("<EpicsListPanel />", () => {
     if (deleteCall === undefined) {
       throw new Error("expected epic delete mutation call");
     }
-    expect(deleteCall[0]).toEqual({
+    expect(deleteRequestShape(deleteCall[0])).toEqual({
       ids: ["epic-from-history"],
-      localHomedIds: [],
       worktreeCleanup: {
         candidates: [
           { worktreePath: "/wt/proven", ownerEpicIds: ["epic-from-history"] },

@@ -746,6 +746,9 @@ function EpicsListPanelBody(props: EpicsListPanelBodyProps): ReactNode {
     )
       return;
     if (selectAllController.current !== null) return;
+    // An unsupported chat-host filter withholds its rows: there is no
+    // matching set on screen to walk or select.
+    if (chatHostFilterUnsupported) return;
     // Bulk selection requires every retained page to be fetchable.
     // Individual loaded rows remain selectable when paging is blocked.
     if (hasUnloadedItems && !hasNextPage) return;
@@ -758,6 +761,7 @@ function EpicsListPanelBody(props: EpicsListPanelBodyProps): ReactNode {
     selectAll(controller);
   }, [
     selectAll,
+    chatHostFilterUnsupported,
     hasUnloadedItems,
     hasNextPage,
     isFetchingNextPage,
@@ -823,11 +827,11 @@ function EpicsListPanelBody(props: EpicsListPanelBodyProps): ReactNode {
       }));
     deleteMutation.mutate({
       ids: [...ids],
-      // Recorded now, with the verdict above: the hook admits each chunk by
-      // the live verdict or by this evidence, never by a verdict read later.
-      localHomedIds: ids.filter(
-        (id) => itemsByEpicId.get(id)?.isLocalHome === true,
-      ),
+      // Asked when the request is built, from the rows on screen then: a row
+      // that was local here can finish promotion to cloud before it is sent.
+      isLocalHomedNow: (epicId) =>
+        visibleItemsRef.current.find((item) => item.epicId === epicId)
+          ?.isLocalHome === true,
       worktreeCleanup:
         approvedWorktrees.length > 0 ? { candidates: approvedWorktrees } : null,
     });
@@ -912,6 +916,7 @@ function EpicsListPanelBody(props: EpicsListPanelBodyProps): ReactNode {
             selectableCount: selectableItemIds.length,
             hasUnloadedItems,
             hasNextPage,
+            rowsWithheld: chatHostFilterUnsupported,
             isBusy: [
               isFetching,
               isCountPending,
@@ -948,6 +953,7 @@ function EpicsListPanelBody(props: EpicsListPanelBodyProps): ReactNode {
             selectableCount: selectableItemIds.length,
             hasUnloadedItems,
             hasNextPage,
+            rowsWithheld: chatHostFilterUnsupported,
             isFetching,
           }),
           onStart: enterSelectionMode,
@@ -1123,9 +1129,11 @@ function canSelectAllHistory(args: {
   readonly selectableCount: number;
   readonly hasUnloadedItems: boolean;
   readonly hasNextPage: boolean;
+  /** The filter's rows are withheld (an unsupported chat-host filter). */
+  readonly rowsWithheld: boolean;
   readonly isBusy: boolean;
 }): boolean {
-  if (args.isBusy) return false;
+  if (args.isBusy || args.rowsWithheld) return false;
   if (args.hasUnloadedItems) return args.hasNextPage;
   return args.selectableCount > 0;
 }
@@ -1147,9 +1155,11 @@ function canEnterHistorySelection(args: {
   readonly selectableCount: number;
   readonly hasUnloadedItems: boolean;
   readonly hasNextPage: boolean;
+  /** The filter's rows are withheld (an unsupported chat-host filter). */
+  readonly rowsWithheld: boolean;
   readonly isFetching: boolean;
 }): boolean {
-  if (args.isFetching) return false;
+  if (args.isFetching || args.rowsWithheld) return false;
   return (
     args.selectableCount > 0 || (args.hasUnloadedItems && args.hasNextPage)
   );

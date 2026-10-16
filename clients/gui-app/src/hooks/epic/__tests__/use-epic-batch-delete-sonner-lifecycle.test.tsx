@@ -157,7 +157,7 @@ function holdCleanup(): {
 const ONE_WORKTREE: BatchDeleteEpicVariables = {
   ids: ["epic-a"],
   // Local-homed, so admission does not depend on the auth store here.
-  localHomedIds: ["epic-a"],
+  isLocalHomedNow: () => true,
   worktreeCleanup: {
     candidates: [{ worktreePath: "/wt/a", ownerEpicIds: ["epic-a"] }],
   },
@@ -189,7 +189,7 @@ describe("the delete's progress toast, as the person sees it", () => {
 
     view.dispatch({
       ids: ["epic-a"],
-      localHomedIds: ["epic-a"],
+      isLocalHomedNow: () => true,
       worktreeCleanup: null,
     });
 
