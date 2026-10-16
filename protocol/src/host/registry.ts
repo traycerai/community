@@ -116,7 +116,11 @@ import {
   agentStopV10,
   agentForkV10,
 } from "@traycer/protocol/host/agent/contracts";
-import { agentArchiveV10 } from "@traycer/protocol/host/agent/archive";
+import {
+  agentArchiveUpgradeV10ToV11,
+  agentArchiveV10,
+  agentArchiveV11,
+} from "@traycer/protocol/host/agent/archive";
 import { agentResolveMessagePeerV10 } from "@traycer/protocol/host/agent/message-peer";
 import {
   agentConfigureDowngradeV20ToV10,
@@ -7419,11 +7423,15 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   "agent.archive": {
     degrade: { kind: "unsupported" },
     1: {
-      latestMinor: 0,
+      latestMinor: 1,
       versions: {
         0: {
           contract: agentArchiveV10,
           upgradeFromPreviousVersion: null,
+        },
+        1: {
+          contract: agentArchiveV11,
+          upgradeFromPreviousVersion: agentArchiveUpgradeV10ToV11,
         },
       },
       downgradePathsFromLatest: {},

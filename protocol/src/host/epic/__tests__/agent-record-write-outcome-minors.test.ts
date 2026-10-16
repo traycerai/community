@@ -15,6 +15,11 @@ import {
   setChatArchivedResponseSchemaV10,
 } from "@traycer/protocol/host/epic/unary-schemas";
 import {
+  agentArchiveResponseSchema,
+  agentArchiveResponseSchemaV10,
+  agentArchiveUpgradeV10ToV11,
+} from "@traycer/protocol/host/agent/archive";
+import {
   epicDeleteChatUpgradeV11ToV12,
   epicDeleteTuiAgentUpgradeV10ToV11,
   epicSetChatArchivedUpgradeV10ToV11,
@@ -174,6 +179,57 @@ describe("agent-record write outcome minors", () => {
     expect(
       epicDeleteTuiAgentUpgradeV10ToV11.upgradeResponse({ deleted: false }),
     ).toEqual({ deleted: false, outcome: "applied" });
+  });
+
+  // Added during build (#1628 F7): the A2A archive tool dials this method on
+  // the agent's host, and only that host knows whether it applied the archive
+  // or, not running the agent, wrote it to the cloud row.
+  it("registers agent.archive@1.1 above the frozen 1.0 line, still optional", () => {
+    const line = hostRpcRegistry["agent.archive"][1];
+    expect(line.latestMinor).toBe(1);
+    expect(line.versions[0].contract.responseSchema).toBe(
+      agentArchiveResponseSchemaV10,
+    );
+    expect(line.versions[1].contract.responseSchema).toBe(
+      agentArchiveResponseSchema,
+    );
+    expect(line.downgradePathsFromLatest).toEqual({});
+    expect(RELEASED_FLOOR_METHOD_NAMES).not.toContain("agent.archive");
+    expect(hostRpcRegistry["agent.archive"].degrade).toEqual({
+      kind: "unsupported",
+    });
+  });
+
+  it("agent.archive: the frozen 1.0 strips `outcome`, the live line requires it, and 1.0 upgrades to `applied`", () => {
+    const answer = { agentId: "agent-1", archived: true, updated: true };
+    expect(
+      agentArchiveResponseSchemaV10.parse({ ...answer, outcome: "requested" }),
+    ).toEqual(answer);
+    expect(agentArchiveResponseSchema.safeParse(answer).success).toBe(false);
+    for (const outcome of ["applied", "requested"] as const) {
+      expect(
+        agentArchiveResponseSchema.parse({ ...answer, outcome }).outcome,
+      ).toBe(outcome);
+    }
+    const request = {
+      epicId: "epic-1",
+      agentId: "agent-1",
+      senderAgentId: "agent-0",
+    };
+    expect(agentArchiveUpgradeV10ToV11.upgradeRequest(request)).toBe(request);
+    expect(
+      upgradeResponseToVersion(
+        hostRpcRegistry["agent.archive"],
+        { major: 1, minor: 0 },
+        { major: 1, minor: 1 },
+        { agentId: "agent-1", archived: true, updated: false },
+      ),
+    ).toEqual({
+      agentId: "agent-1",
+      archived: true,
+      updated: false,
+      outcome: "applied",
+    });
   });
 
   it("a 1.0 deleteChat answer chains through both upgrades to `applied` at 1.2", () => {
