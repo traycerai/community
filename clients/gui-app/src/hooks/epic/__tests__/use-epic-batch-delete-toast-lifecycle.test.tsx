@@ -3,7 +3,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import type { ExternalToast } from "sonner";
-import { HostRpcError } from "@traycer-clients/shared/host-transport/host-messenger";
+import {
+  HostRpcError,
+  RetryableTransportError,
+} from "@traycer-clients/shared/host-transport/host-messenger";
 import type { BatchDeleteResponse } from "@traycer/protocol/host/epic/unary-schemas";
 import type {
   WorktreeCleanupOutcome,
@@ -560,6 +563,105 @@ describe("the delete's progress toast", () => {
       // No outcome toast on a failure that never reached a result.
       expect(mocks.toastSuccess).not.toHaveBeenCalled();
       expect(mocks.runWorktreeCleanup).not.toHaveBeenCalled();
+    });
+
+    it("says the host is offline, instead of the error toast, when the delete never reached it", async () => {
+      const view = renderBatchDelete();
+      view.dispatch(deleteOf(["epic-a"], null));
+      await waitFor(() => {
+        expect(mocks.toastMessage).toHaveBeenCalledTimes(1);
+      });
+      const id = progressToastId(0);
+
+      await act(async () => {
+        hostRequest(0).reject(
+          new RetryableTransportError({
+            replaySafetyFromKey: false,
+            code: "RPC_ERROR",
+            message: "Remote session is not ready",
+            requestId: "request-1",
+            method: "epic.batchDelete",
+            fatalDetails: null,
+          }),
+        );
+        await Promise.resolve();
+      });
+
+      await waitFor(() => {
+        expect(mocks.toastMessage).toHaveBeenCalledTimes(2);
+      });
+      expect(mocks.toastMessage.mock.calls[1][0]).toBe(
+        "Traycer can't reach that host right now, so nothing on it was changed. Try again once it is reachable.",
+      );
+      expect(mocks.toastFromHostError).not.toHaveBeenCalled();
+      expect(mocks.toastDismiss).toHaveBeenCalledWith(id);
+    });
+
+    function neverSent(): RetryableTransportError {
+      return new RetryableTransportError({
+        replaySafetyFromKey: false,
+        code: "RPC_ERROR",
+        message: "Remote session is not ready",
+        requestId: "request-1",
+        method: "epic.batchDelete",
+        fatalDetails: null,
+      });
+    }
+
+    // #2546 composed with #2555: a batch of Tasks is ONE `epic.batchDelete`,
+    // so the unreachable host is answered once, for the whole batch.
+    it("says the host is offline once when the one request for several Tasks never reached it", async () => {
+      const view = renderBatchDelete();
+      view.dispatch(deleteOf(["epic-a", "epic-b", "epic-c"], null));
+      await waitFor(() => {
+        expect(host.state.requests).toHaveLength(1);
+      });
+
+      await act(async () => {
+        hostRequest(0).reject(neverSent());
+        await Promise.resolve();
+      });
+
+      await waitFor(() => {
+        expect(mocks.toastMessage).toHaveBeenCalledTimes(2);
+      });
+      expect(host.state.requests).toHaveLength(1);
+      expect(mocks.toastMessage.mock.calls[1][0]).toBe(
+        "Traycer can't reach that host right now, so nothing on it was changed. Try again once it is reachable.",
+      );
+      expect(mocks.toastFromHostError).not.toHaveBeenCalled();
+      expect(mocks.toastError).not.toHaveBeenCalled();
+      expect(mocks.toastWarning).not.toHaveBeenCalled();
+    });
+
+    it("says only that the host is offline when some Tasks were refused for sign-in and the rest never reached it", async () => {
+      // Nothing was deleted either way, so the one notice is true for the
+      // refused Tasks too, and no second toast contradicts it.
+      useAuthStore.setState({ status: "unverified" });
+      const view = renderBatchDelete();
+      view.dispatch({
+        ids: ["epic-local", "epic-cloud"],
+        isLocalHomedNow: (epicId) => epicId === "epic-local",
+        worktreeCleanup: null,
+      });
+      await waitFor(() => {
+        expect(host.state.requests).toHaveLength(1);
+      });
+
+      await act(async () => {
+        hostRequest(0).reject(neverSent());
+        await Promise.resolve();
+      });
+
+      await waitFor(() => {
+        expect(mocks.toastMessage).toHaveBeenCalledTimes(2);
+      });
+      expect(mocks.toastMessage.mock.calls[1][0]).toBe(
+        "Traycer can't reach that host right now, so nothing on it was changed. Try again once it is reachable.",
+      );
+      expect(mocks.toastError).not.toHaveBeenCalled();
+      expect(mocks.toastWarning).not.toHaveBeenCalled();
+      expect(mocks.toastFromHostError).not.toHaveBeenCalled();
     });
 
     // `toastFromHostError` stays silent for an aborted or recoverable-
