@@ -6,18 +6,20 @@ import { mockLocalHostEntry } from "@traycer-clients/shared/host-client/mock/moc
 import {
   HostRpcError,
   HostTransportFailureError,
+  isTransientHostRpcFailure,
 } from "@traycer-clients/shared/host-transport/host-messenger";
 import { hostRpcRegistry, type HostRpcRegistry } from "@/lib/host";
 import { createHostQueryInvalidator } from "@/lib/host/query-invalidator";
 import { hostRpcSchedulingPolicy } from "@/lib/host-rpc-policy/host-method-policy-table";
 import { createAppQueryClient } from "@/lib/query-client";
+import { useAuthStore } from "@/stores/auth/auth-store";
 
 interface HostQueryCall {
   readonly method: string;
   readonly params: { readonly taskId: string };
   readonly client: object | null;
   readonly cacheKeyIdentity: readonly string[];
-  readonly preflight: unknown;
+  readonly preflight: () => void;
   readonly options: {
     readonly enabled: boolean;
     readonly staleTime: number;
@@ -94,6 +96,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  useAuthStore.setState({ status: "signed-out" });
 });
 
 describe("useTaskHosts", () => {
@@ -117,6 +120,46 @@ describe("useTaskHosts", () => {
     renderHook(() => useTaskHosts(null, "epic-1"));
 
     expect(typeof lastCall().preflight).toBe("function");
+  });
+
+  it("refuses to dispatch when the session holds no cloud verdict, naming epic.listTaskHosts", () => {
+    renderHook(() => useTaskHosts(null, "epic-1"));
+    const { preflight } = lastCall();
+
+    for (const status of ["signed-out", "signing-in", "unverified"] as const) {
+      useAuthStore.setState({ status });
+      let refusal: unknown = null;
+      try {
+        preflight();
+      } catch (error) {
+        refusal = error;
+      }
+      expect(refusal, status).toBeInstanceOf(HostRpcError);
+      if (!(refusal instanceof HostRpcError)) {
+        throw new Error("expected a HostRpcError");
+      }
+      expect(refusal.method, status).toBe("epic.listTaskHosts");
+      expect(refusal.message, status).toContain("cloud verdict");
+      expect(isTransientHostRpcFailure(refusal), status).toBe(false);
+    }
+  });
+
+  it("lets the dispatch through while the session holds a cloud verdict", () => {
+    renderHook(() => useTaskHosts(null, "epic-1"));
+    useAuthStore.setState({ status: "signed-in" });
+
+    expect(() => lastCall().preflight()).not.toThrow();
+  });
+
+  it("reads the verdict live, at each call, not when the hook rendered", () => {
+    useAuthStore.setState({ status: "signed-in" });
+    renderHook(() => useTaskHosts(null, "epic-1"));
+    const { preflight } = lastCall();
+    expect(() => preflight()).not.toThrow();
+
+    useAuthStore.setState({ status: "unverified" });
+
+    expect(() => preflight()).toThrow(HostRpcError);
   });
 
   it("is enabled when cloud is authorized and the task id and viewer id are present", () => {

@@ -1474,6 +1474,53 @@ describe("sidebar row first-use overlays", () => {
   });
 });
 
+const ONE_HOST_VIEW: TaskHostsView = {
+  kind: "hosts",
+  hosts: [
+    {
+      hostId: "host-a",
+      label: "This machine",
+      principal: { kind: "user", id: USER_ID },
+      reach: "same_principal",
+    },
+  ],
+};
+
+/** Mounts the tree on a session whose store the case has already set up. */
+function renderTreeOn(handle: OpenedStoreForTest): void {
+  opened.push(handle);
+  render(
+    <QueryClientProvider client={new QueryClient()}>
+      <EpicSessionContext.Provider value={handle}>
+        <DndContext>
+          <ChatTreePanelBody
+            epicId={EPIC_ID}
+            tabId={TAB_ID}
+            messageHits={CHAT_TREE_MESSAGE_HITS_NONE}
+          />
+        </DndContext>
+      </EpicSessionContext.Provider>
+    </QueryClientProvider>,
+  );
+}
+
+function lastSectionProps(): {
+  epicId: string;
+  tabId: string;
+  canMutate: boolean;
+} {
+  const props = taskHostsMount.sectionProps.at(-1);
+  if (props === undefined) throw new Error("the section was not mounted");
+  return props;
+}
+
+/** The tree's own container: the parent of `role="tree"`. */
+function treeContainerClasses(): readonly string[] {
+  const container = screen.getByRole("tree").parentElement;
+  if (container === null) throw new Error("the tree has no container");
+  return [...container.classList];
+}
+
 describe("chat tree Hosts section mount", () => {
   it("mounts the section inside the chat tree region with the epic id, the tab id and a boolean canMutate", () => {
     taskHostsMount.view = {
@@ -1516,6 +1563,72 @@ describe("chat tree Hosts section mount", () => {
     expect(screen.getAllByTestId("task-host-groups-probe")).toHaveLength(1);
     expect(screen.getByTestId(`epic-sidebar-item-${ROW_A}`)).toBeTruthy();
     expect(screen.getByTestId(`epic-sidebar-item-${ROW_B}`)).toBeTruthy();
+  });
+
+  it("lets the rows shrink to their own height when the section follows them", () => {
+    taskHostsMount.view = ONE_HOST_VIEW;
+    renderTree();
+
+    const classes = treeContainerClasses();
+    expect(classes).toContain("shrink-0");
+    expect(classes).not.toContain("flex-1");
+  });
+
+  it("lets the tree fill the panel when there is no section and no message hits", () => {
+    taskHostsMount.view = { kind: "none" };
+    renderTree();
+
+    const classes = treeContainerClasses();
+    expect(classes).toContain("flex-1");
+    expect(classes).not.toContain("shrink-0");
+  });
+
+  it("hands the section canMutate true for an editor on a live connection", () => {
+    taskHostsMount.view = ONE_HOST_VIEW;
+    const handle = createSession();
+    handle.store.setState({
+      permissionRole: "editor",
+      connectionStatus: "open",
+    });
+    renderTreeOn(handle);
+
+    expect(lastSectionProps().canMutate).toBe(true);
+  });
+
+  it("hands the section canMutate true for an owner on a live connection", () => {
+    taskHostsMount.view = ONE_HOST_VIEW;
+    const handle = createSession();
+    handle.store.setState({
+      permissionRole: "owner",
+      connectionStatus: "open",
+    });
+    renderTreeOn(handle);
+
+    expect(lastSectionProps().canMutate).toBe(true);
+  });
+
+  it("hands the section canMutate false for a viewer on a live connection", () => {
+    taskHostsMount.view = ONE_HOST_VIEW;
+    const handle = createSession();
+    handle.store.setState({
+      permissionRole: "viewer",
+      connectionStatus: "open",
+    });
+    renderTreeOn(handle);
+
+    expect(lastSectionProps().canMutate).toBe(false);
+  });
+
+  it("hands the section canMutate false for an editor whose connection is closed", () => {
+    taskHostsMount.view = ONE_HOST_VIEW;
+    const handle = createSession();
+    handle.store.setState({
+      permissionRole: "editor",
+      connectionStatus: "closed",
+    });
+    renderTreeOn(handle);
+
+    expect(lastSectionProps().canMutate).toBe(false);
   });
 
   it("does not mount the section when the view is none", () => {
