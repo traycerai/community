@@ -459,6 +459,12 @@ describe("mirrorLineOtherHostName", () => {
       );
     });
 
+    it("keeps the case of a collaborator named A Kumar", () => {
+      expect(unnamedIn("user:user-kumar", "A Kumar's", COLLABORATOR)).toBe(
+        "A Kumar's host",
+      );
+    });
+
     it("lower-cases the A of an anonymous collaborator's group title", () => {
       expect(unnamedIn("user:user-2", "A collaborator's", COLLABORATOR)).toBe(
         "a collaborator's host",

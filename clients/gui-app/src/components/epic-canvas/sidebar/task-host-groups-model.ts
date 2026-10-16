@@ -61,7 +61,14 @@ export interface TaskHostGroup {
   readonly rows: readonly TaskHostGroupRow[];
 }
 
-const PERSONAL_KEY = "personal";
+/** The viewer's own group's key. */
+export const TASK_HOST_PERSONAL_GROUP_KEY = "personal";
+/** A team group's title when the person is not in the team. */
+export const TASK_HOST_UNKNOWN_TEAM_TITLE = "A team";
+/** A collaborator group's title when the collaborator has no display name. */
+export const TASK_HOST_UNKNOWN_COLLABORATOR_TITLE = "A collaborator's";
+
+const PERSONAL_KEY = TASK_HOST_PERSONAL_GROUP_KEY;
 
 type GroupRank = 0 | 1 | 2;
 
@@ -86,7 +93,7 @@ function groupHead(row: TaskHostRow, input: TaskHostGroupsInput): GroupHead {
     const team = input.teams.find((t) => t.teamId === principal.id) ?? null;
     return {
       key: `team:${principal.id}`,
-      title: team === null ? "A team" : team.name,
+      title: team === null ? TASK_HOST_UNKNOWN_TEAM_TITLE : team.name,
       rank: 1,
       id: principal.id,
     };
@@ -97,7 +104,7 @@ function groupHead(row: TaskHostRow, input: TaskHostGroupsInput): GroupHead {
   const name = input.collaboratorNames.get(principal.id) ?? null;
   return {
     key: `user:${principal.id}`,
-    title: name === null ? "A collaborator's" : `${name}'s`,
+    title: name === null ? TASK_HOST_UNKNOWN_COLLABORATOR_TITLE : `${name}'s`,
     rank: COLLABORATOR_RANK,
     id: principal.id,
   };

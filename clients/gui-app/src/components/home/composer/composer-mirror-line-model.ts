@@ -4,6 +4,9 @@ import type {
 } from "@traycer/protocol/host/task-host-summary";
 import type { ComposerHostNoticeState } from "@/components/home/composer/composer-host-notice";
 import {
+  TASK_HOST_PERSONAL_GROUP_KEY,
+  TASK_HOST_UNKNOWN_COLLABORATOR_TITLE,
+  TASK_HOST_UNKNOWN_TEAM_TITLE,
   TASK_HOST_UNNAMED_LABEL,
   type TaskHostGroup,
 } from "@/components/epic-canvas/sidebar/task-host-groups-model";
@@ -24,11 +27,14 @@ function samePrincipal(a: TaskHostPrincipal, b: TaskHostPrincipal): boolean {
  */
 function mirrorHostName(group: TaskHostGroup, label: string): string {
   if (label !== TASK_HOST_UNNAMED_LABEL) return label;
-  if (group.key === "personal") return "one of your hosts";
-  const title = group.title.startsWith("A ")
-    ? `a ${group.title.slice(2)}`
-    : group.title;
-  return `${title} host`;
+  if (group.key === TASK_HOST_PERSONAL_GROUP_KEY) return "one of your hosts";
+  // Only the two generic titles read mid-sentence in lower case; a name is
+  // kept as written, including one that starts with "A ".
+  if (group.title === TASK_HOST_UNKNOWN_TEAM_TITLE) return "a team host";
+  if (group.title === TASK_HOST_UNKNOWN_COLLABORATOR_TITLE) {
+    return "a collaborator's host";
+  }
+  return `${group.title} host`;
 }
 
 /**
