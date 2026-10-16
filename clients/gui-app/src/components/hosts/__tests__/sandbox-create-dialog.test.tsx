@@ -802,4 +802,65 @@ describe("a provider the account's plan cannot create (F45)", () => {
     expect(screen.getByTestId("sandbox-create-price")).toBeDefined();
     expect(submit()).toBeDefined();
   });
+
+  it("still says a sandbox is being created when the OS is switched to the not-creatable provider while a create runs", async () => {
+    let resolveCreate: (result: SandboxCreateFetchResult) => void = () =>
+      undefined;
+    mocks.binding?.auth.createSandbox.mockImplementation(
+      () =>
+        new Promise<SandboxCreateFetchResult>((resolve) => {
+          resolveCreate = resolve;
+        }),
+    );
+    await openWith([
+      provider(
+        ["linux"],
+        false,
+        SANDBOX_NOT_CREATABLE_REASON_PLAN_MEMORY,
+        1024,
+      ),
+      provider(["windows"], true, null, 65536),
+    ]);
+
+    const user = userEvent.setup();
+    await user.click(
+      screen.getByRole("combobox", { name: "Operating system" }),
+    );
+    await user.click(await screen.findByRole("option", { name: "Windows" }));
+    await waitFor(() => {
+      expect(screen.queryByTestId("sandbox-create-not-creatable")).toBeNull();
+    });
+    type("sandbox-create-name", "win-box");
+    fireEvent.click(submit());
+    await waitFor(() => {
+      expect(mocks.binding?.auth.createSandbox).toHaveBeenCalledTimes(1);
+    });
+
+    // The create is still running; the person flips back to the provider the
+    // plan cannot create.
+    await user.click(
+      screen.getByRole("combobox", { name: "Operating system" }),
+    );
+    await user.click(await screen.findByRole("option", { name: "Linux" }));
+    await screen.findByTestId("sandbox-create-not-creatable");
+
+    expect(screen.getByTestId("sandbox-create-in-flight").textContent).toBe(
+      "A sandbox is being created…",
+    );
+
+    await act(async () => {
+      resolveCreate({
+        kind: "ok",
+        accepted: {
+          sandboxId: "sbx_1",
+          hostId: "host-1",
+          sandbox: sandboxSummaryFixture({ state: "creating" }),
+        },
+      });
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(mocks.toastSuccess).toHaveBeenCalledTimes(1);
+    });
+  });
 });
