@@ -650,6 +650,9 @@ function hostRpcToCliError(err: unknown): unknown {
  *     the internal term "task" (epic), neither actionable for a CLI user.
  *   - `UNAUTHORIZED` → `AUTH_REJECTED`: bearer rejected even after the
  *     auth-aware wrapper's refresh-and-retry.
+ *   - `WORKTREE_MISSING` / `WORKSPACE_BINDING_REQUIRED` / `E_HOST_STORAGE_FULL`
+ *     → the CLI code of the same name: the person's own folder, workspace
+ *     choice or disk stops the request, and the host's message names the fix.
  *   - `E_HOST_UNSUPPORTED` → `HOST_UNSUPPORTED`: per-feature unsupported on
  *     this host, actionable by updating the host.
  *   - `INCOMPATIBLE` / `DOWNGRADE_UNSUPPORTED` → `HOST_INCOMPATIBLE`: host/CLI
@@ -708,6 +711,35 @@ function mapHostRpcError(err: HostRpcError): CliError {
   if (err.code === "E_ROLE_FORBIDDEN") {
     return cliError({
       code: CLI_ERROR_CODES.ROLE_FORBIDDEN,
+      message: `traycer: ${err.message}`,
+      details: null,
+      exitCode: 1,
+    });
+  }
+  // The host answers these three with a typed code for a state of the
+  // person's own machine or workspace, and the message already names the
+  // remedy (restore or re-bind the folder, choose a workspace, free disk
+  // space on the host). Left to the fall-through below they became
+  // `UNEXPECTED` and were captured as CLI defects.
+  if (err.code === "WORKTREE_MISSING") {
+    return cliError({
+      code: CLI_ERROR_CODES.WORKTREE_MISSING,
+      message: `traycer: ${err.message}`,
+      details: null,
+      exitCode: 1,
+    });
+  }
+  if (err.code === "WORKSPACE_BINDING_REQUIRED") {
+    return cliError({
+      code: CLI_ERROR_CODES.WORKSPACE_BINDING_REQUIRED,
+      message: `traycer: ${err.message}`,
+      details: null,
+      exitCode: 1,
+    });
+  }
+  if (err.code === "E_HOST_STORAGE_FULL") {
+    return cliError({
+      code: CLI_ERROR_CODES.HOST_STORAGE_FULL,
       message: `traycer: ${err.message}`,
       details: null,
       exitCode: 1,

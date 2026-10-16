@@ -112,16 +112,19 @@ const KEYBOARD_KEY_READS: Readonly<Record<string, number>> = {
   // navigation/acceptance key, not a registered physical chord.
   "gui-app/src/components/chat/composer/chat-composer-editor-slot.tsx": 1,
   "gui-app/src/components/chat/composer/menu/github-mention-filter-popover.tsx": 3,
-  "gui-app/src/components/chat/composer/picker/suggestion-render.ts": 5,
+  "gui-app/src/components/chat/composer/picker/suggestion-render.ts": 3,
   "gui-app/src/components/chat/composer/profile-rate-limit-switch-banner.tsx": 3,
   "gui-app/src/components/chat/composer/prompt-suggestion.ts": 1,
+  // Enter and Space activate a folded agent row's `role="button"` text (#2441):
+  // a button's own activation keys, named, not a registered chord.
+  "gui-app/src/components/chat/queued-message-surface.tsx": 2,
   "gui-app/src/components/chat/segments/pending-interview/use-interview-card.ts": 5,
   "gui-app/src/components/chat/segments/revert-on-edit-dialog.tsx": 1,
   "gui-app/src/components/chat/segments/steer-settings-conflict-dialog.tsx": 1,
   // Escape steps the open-as-chat view back one breadcrumb level; a named
   // non-printable key, not a registered shortcut.
   "gui-app/src/components/chat/subagent-chat-view.tsx": 1,
-  "gui-app/src/components/composer/drafts/composer-drafts-control.tsx": 8,
+  "gui-app/src/components/composer/drafts/composer-drafts-control.tsx": 5,
   "gui-app/src/components/comments/comment-composer.tsx": 2,
   "gui-app/src/components/diff/use-diff-click-to-edit.ts": 1,
   "gui-app/src/components/epic-canvas/canvas/pane-opener.tsx": 1,
@@ -133,7 +136,7 @@ const KEYBOARD_KEY_READS: Readonly<Record<string, number>> = {
   "gui-app/src/components/epic-canvas/renderers/terminal-tile-xterm.tsx": 5,
   "gui-app/src/components/epic-canvas/sidebar/epic-browser-sidebar-row.tsx": 1,
   "gui-app/src/components/epic-canvas/sidebar/epic-sidebar-artifact-tree.tsx": 2,
-  "gui-app/src/components/epic-canvas/sidebar/epic-sidebar-artifact-search.tsx": 9,
+  "gui-app/src/components/epic-canvas/sidebar/epic-sidebar-artifact-search.tsx": 7,
   "gui-app/src/components/epic-canvas/sidebar/epic-sidebar-chat-tree.tsx": 3,
   "gui-app/src/components/epic-canvas/sidebar/epic-sidebar-filter.ts": 2,
   // First-use dropdown mounting: Enter/Space/ArrowDown open a row dropdown on
@@ -166,12 +169,13 @@ const KEYBOARD_KEY_READS: Readonly<Record<string, number>> = {
   // a registered chord.
   // Arrows, Home and End walking the minimap's own list - named keys inside an
   // open card, not chords.
-  "gui-app/src/components/minimap/minimap-list-card.tsx": 4,
+  "gui-app/src/components/minimap/minimap-list-card.tsx": 2,
   "gui-app/src/components/onboarding/onboarding-coachmark.tsx": 4,
   "gui-app/src/components/onboarding/onboarding-page.tsx": 4,
   "gui-app/src/components/providers/profile-dropdown.tsx": 4,
-  "gui-app/src/components/remote-folder-picker-dialog.tsx": 4,
-  "gui-app/src/components/resources/resource-monitor-popover.tsx": 9,
+  "gui-app/src/components/remote-folder-picker-dialog.tsx": 2,
+  "gui-app/src/components/resources/resource-monitor-popover.tsx": 6,
+  "gui-app/src/components/sandbox/sandbox-frame.tsx": 1,
   "gui-app/src/components/settings/controls/chord-capture-core.tsx": 2,
   "gui-app/src/components/worktree/worktree-pr-state-icons.tsx": 2,
   "gui-app/src/editor-core/links/artifact-link-popover.tsx": 3,
@@ -180,7 +184,12 @@ const KEYBOARD_KEY_READS: Readonly<Record<string, number>> = {
   "gui-app/src/lib/browser-view/sessions/screencast-input-encoding.ts": 4,
   "gui-app/src/lib/keybindings/bare-key-owner.ts": 1,
   "gui-app/src/lib/keybindings/chord.ts": 4,
+  // The macOS Ctrl+N/P/J/K list aliases are a platform text-editing
+  // convention, so they follow the letter the layout produces, the same way
+  // the system text bindings they stand in for do.
+  "gui-app/src/lib/keybindings/list-navigation-key.ts": 3,
   "gui-app/src/lib/notifications/notification-feed-keyboard-navigation.ts": 1,
+  "gui-app/src/lib/sandbox/sandbox-loader.ts": 1,
   "gui-app/src/lib/terminal-line-edit.ts": 6,
   "gui-app/src/providers/keybinding-provider.tsx": 2,
   // The mac/non-mac history-modifier check, kept separate from every

@@ -397,14 +397,16 @@ export type SupportCapturedField<T> =
 
 /**
  * Last-known session state (ticket 05's support-context registry). Every
- * field is opaque (ids, not full URLs/paths); `hostId` here is the tab-bound
- * host, which is not necessarily the same host `submitReport` attaches logs
- * from (see the "local host" labeling in `support.ts` - D10).
+ * field is opaque (ids, not full URLs/paths); `hostId` here is the app-wide
+ * effective host and `tabHostId` the host the active chat tab is bound to -
+ * neither is necessarily the host `submitReport` attaches logs from (see the
+ * "local host" labeling in `support.ts` - D10).
  * Field-for-field match with ticket 05's `SupportContextSnapshot`.
  */
 export interface SupportContextRegistrySnapshot {
   readonly routeTemplate: SupportCapturedField<string>;
   readonly hostId: SupportCapturedField<string>;
+  readonly tabHostId: SupportCapturedField<string>;
   readonly epicId: SupportCapturedField<string>;
   readonly tabId: SupportCapturedField<string>;
   readonly artifactId: SupportCapturedField<string>;
