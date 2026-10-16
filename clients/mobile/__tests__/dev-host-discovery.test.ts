@@ -73,7 +73,6 @@ const DEV_ENTRY: HostDirectoryEntry = {
   kind: "local",
   websocketUrl: "ws://127.0.0.1:41234/ws",
   version: "dev",
-  status: "available",
   transportDialability: "dialable",
 };
 
