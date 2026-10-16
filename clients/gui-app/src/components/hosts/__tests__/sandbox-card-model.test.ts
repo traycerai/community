@@ -16,7 +16,16 @@ import {
   sandboxTileOverlay,
   type SandboxCardAction,
 } from "@/components/hosts/sandbox-card-model";
+import {
+  HOST_HEALTH_TONE,
+  type HostHealthState,
+} from "@/components/settings/host-scope/host-health";
 import { frozenDestroyAt } from "@/lib/sandboxes/sandbox-balance";
+
+/** Every host health state, read off the exhaustive tone table. */
+const HOST_HEALTH_STATES: readonly HostHealthState[] = Object.keys(
+  HOST_HEALTH_TONE,
+).filter((key): key is HostHealthState => key in HOST_HEALTH_TONE);
 
 function summaryOf(overrides: Partial<SandboxSummary>): SandboxSummary {
   return {
@@ -366,7 +375,7 @@ describe("sandboxTileOverlay", () => {
 describe("sandboxSecretsReadiness", () => {
   it("is null when the summary reports no phase", () => {
     expect(
-      sandboxSecretsReadiness("awake", false, summaryOf({ phase: null })),
+      sandboxSecretsReadiness("awake", false, summaryOf({ phase: null }), "online"),
     ).toBeNull();
   });
 
@@ -374,14 +383,36 @@ describe("sandboxSecretsReadiness", () => {
     const summary = summaryOf({ phase: "ready" });
     for (const state of HOST_SANDBOX_STATES) {
       if (state === "awake") continue;
-      expect(sandboxSecretsReadiness(state, false, summary)).toBeNull();
+      expect(sandboxSecretsReadiness(state, false, summary, "online")).toBeNull();
     }
-    expect(sandboxSecretsReadiness(null, false, summary)).toBeNull();
+    expect(sandboxSecretsReadiness(null, false, summary, "online")).toBeNull();
+  });
+
+  it("is null once the host is not reachable, whatever it last reported", () => {
+    const summary = summaryOf({ phase: "ready" });
+    expect(HOST_HEALTH_STATES).toContain("offline");
+    for (const hostState of HOST_HEALTH_STATES) {
+      if (hostState === "online" || hostState === "reported-reachable") {
+        continue;
+      }
+      expect(sandboxSecretsReadiness("awake", false, summary, hostState)).toBeNull();
+    }
+  });
+
+  it("keeps the line for a host the account heard from but this window never dialled", () => {
+    expect(
+      sandboxSecretsReadiness(
+        "awake",
+        false,
+        summaryOf({ phase: "ready" }),
+        "reported-reachable",
+      )?.tone,
+    ).toBe("ready");
   });
 
   it("is null while the sandbox is frozen", () => {
     expect(
-      sandboxSecretsReadiness("awake", true, summaryOf({ phase: "ready" })),
+      sandboxSecretsReadiness("awake", true, summaryOf({ phase: "ready" }), "online"),
     ).toBeNull();
   });
 
@@ -391,13 +422,14 @@ describe("sandboxSecretsReadiness", () => {
         "awake",
         false,
         summaryOf({ phase: "teleporting" }),
+        "online",
       ),
     ).toBeNull();
   });
 
   it.each(["proxy-reachable", "ready"])("reads %s as ready", (phase) => {
     expect(
-      sandboxSecretsReadiness("awake", false, summaryOf({ phase }))?.tone,
+      sandboxSecretsReadiness("awake", false, summaryOf({ phase }), "online")?.tone,
     ).toBe("ready");
   });
 
@@ -405,7 +437,7 @@ describe("sandboxSecretsReadiness", () => {
     "reads %s as pending",
     (phase) => {
       expect(
-        sandboxSecretsReadiness("awake", false, summaryOf({ phase }))?.tone,
+        sandboxSecretsReadiness("awake", false, summaryOf({ phase }), "online")?.tone,
       ).toBe("pending");
     },
   );
@@ -415,6 +447,7 @@ describe("sandboxSecretsReadiness", () => {
       "awake",
       false,
       summaryOf({ phase: "degraded(gateway)" }),
+      "online",
     );
     expect(readiness?.tone).toBe("degraded");
     expect(readiness?.text).toContain("gateway");
@@ -425,6 +458,7 @@ describe("sandboxSecretsReadiness", () => {
       "awake",
       false,
       summaryOf({ phase: "degraded()" }),
+      "online",
     );
     expect(readiness?.tone).toBe("degraded");
     expect(readiness?.text).not.toContain("at :");

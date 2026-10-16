@@ -40,6 +40,7 @@ import {
   sandboxWakePayerLine,
   type SandboxCardAction,
 } from "@/components/hosts/sandbox-card-model";
+import type { HostHealthState } from "@/components/settings/host-scope/host-health";
 import type { HostScopeSandbox } from "@/components/settings/host-scope/host-scope-model";
 import { sandboxStateWord } from "@/components/settings/host-scope/host-option-model";
 import { useAuthUser } from "@/hooks/auth/use-auth-user-query";
@@ -104,6 +105,8 @@ import {
  */
 export function SandboxCard(props: {
   readonly hostName: string;
+  /** The sandbox host's own health, which gates the secrets readiness line. */
+  readonly hostState: HostHealthState;
   readonly sandbox: HostScopeSandbox;
   /**
    * What "New sandbox like this" preselects: this sandbox's owner, or `null`
@@ -166,6 +169,7 @@ export function SandboxCard(props: {
               summary={summary}
               state={state}
               frozen={frozen}
+              hostState={props.hostState}
             />
             {sandboxCardShowsCostView(teamOwned) ? (
               <SandboxCostView sandboxId={summary.id} frozen={frozen} />
@@ -404,11 +408,13 @@ function SandboxSecretsReadinessLine(props: {
   readonly summary: SandboxSummary;
   readonly state: HostSandboxState | null;
   readonly frozen: boolean;
+  readonly hostState: HostHealthState;
 }): ReactNode {
   const readiness = sandboxSecretsReadiness(
     props.state,
     props.frozen,
     props.summary,
+    props.hostState,
   );
   if (readiness === null) return null;
   return (
@@ -532,6 +538,7 @@ function SandboxSecretsSection(props: {
   readonly summary: SandboxSummary;
   readonly state: HostSandboxState | null;
   readonly frozen: boolean;
+  readonly hostState: HostHealthState;
 }): ReactNode {
   const { summary } = props;
   const grants = useSandboxGrants(summary.environmentId, summary.hostId);
@@ -551,6 +558,7 @@ function SandboxSecretsSection(props: {
         summary={summary}
         state={props.state}
         frozen={props.frozen}
+        hostState={props.hostState}
       />
       <SandboxGrantsList
         summary={grantsSummary}

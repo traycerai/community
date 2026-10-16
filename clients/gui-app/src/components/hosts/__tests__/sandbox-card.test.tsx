@@ -126,6 +126,7 @@ vi.mock("@/hooks/auth/use-auth-user-query", () => ({
 }));
 
 import { SandboxCard } from "@/components/hosts/sandbox-card";
+import type { HostHealthState } from "@/components/settings/host-scope/host-health";
 import { SANDBOX_STAND_IN_CLAUSE } from "@/lib/sandboxes/sandbox-grants-view";
 import {
   buildHostScopeOptions,
@@ -135,12 +136,20 @@ import {
 const NAME = "build-box";
 
 function renderCard(sandbox: HostScopeSandbox): void {
-  renderCardDestroyed(sandbox, null);
+  renderCardOnHost(sandbox, null, "online");
 }
 
 function renderCardDestroyed(
   sandbox: HostScopeSandbox,
   onDestroyed: (() => void) | null,
+): void {
+  renderCardOnHost(sandbox, onDestroyed, "online");
+}
+
+function renderCardOnHost(
+  sandbox: HostScopeSandbox,
+  onDestroyed: (() => void) | null,
+  hostState: HostHealthState,
 ): void {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
@@ -149,6 +158,7 @@ function renderCardDestroyed(
     <QueryClientProvider client={queryClient}>
       <SandboxCard
         hostName="Host name"
+        hostState={hostState}
         sandbox={sandbox}
         likeThis={{ kind: "personal" }}
         onDestroyed={onDestroyed}
@@ -961,6 +971,16 @@ describe("<SandboxCard /> secrets readiness", () => {
 
     const line = screen.getByTestId("sandbox-card-secrets-readiness");
     expect(line.getAttribute("data-tone")).toBe("pending");
+  });
+
+  it("shows no readiness line once the sandbox's host is offline", () => {
+    renderCardOnHost(
+      sandboxOf("awake", false, { phase: "ready" }),
+      null,
+      "offline",
+    );
+
+    expect(screen.queryByTestId("sandbox-card-secrets-readiness")).toBeNull();
   });
 });
 
