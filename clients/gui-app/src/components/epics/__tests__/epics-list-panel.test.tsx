@@ -236,6 +236,7 @@ interface WorktreeCleanupCandidateStub {
 
 interface DeleteEpicsVariables {
   readonly ids: string[];
+  readonly localHomedIds: ReadonlyArray<string>;
   readonly worktreeCleanup: {
     readonly candidates: ReadonlyArray<{
       readonly worktreePath: string;
@@ -795,6 +796,7 @@ describe("<EpicsListPanel />", () => {
     }
     expect(deleteCall[0]).toEqual({
       ids: ["epic-two"],
+      localHomedIds: [],
       worktreeCleanup: null,
     });
   });
@@ -3365,6 +3367,7 @@ describe("<EpicsListPanel />", () => {
     fireEvent.click(screen.getByTestId("delete-tasks-confirm"));
     expect(testState.mutate).toHaveBeenCalledWith({
       ids: ["epic-from-history", "epic-two"],
+      localHomedIds: [],
       worktreeCleanup: null,
     });
   });
@@ -3887,6 +3890,7 @@ describe("<EpicsListPanel />", () => {
     const [variables] = deleteCall;
     expect(variables).toEqual({
       ids: ["epic-from-history"],
+      localHomedIds: [],
       worktreeCleanup: null,
     });
   });
@@ -4064,6 +4068,7 @@ describe("<EpicsListPanel />", () => {
     const [variables] = deleteCall;
     expect(variables).toEqual({
       ids: ["epic-two", "epic-from-history"],
+      localHomedIds: [],
       worktreeCleanup: null,
     });
     // Deletion runs in the background off the mutation cache, like a Sweep:
@@ -4112,6 +4117,7 @@ describe("<EpicsListPanel />", () => {
     // row STILL was.
     expect(variables).toEqual({
       ids: ["epic-local"],
+      localHomedIds: ["epic-local"],
       worktreeCleanup: null,
     });
   });
@@ -4168,6 +4174,7 @@ describe("<EpicsListPanel />", () => {
     }
     expect(deleteCall[0]).toEqual({
       ids: ["epic-from-history"],
+      localHomedIds: [],
       worktreeCleanup: {
         candidates: [
           { worktreePath: "/wt/proven", ownerEpicIds: ["epic-from-history"] },

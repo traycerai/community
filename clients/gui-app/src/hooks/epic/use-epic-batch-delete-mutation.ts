@@ -61,11 +61,81 @@ interface BatchDeleteEpicMutationContext {
   readonly progressToastId: string;
 }
 
-/** The cloud verdict each dispatch's first request went out under. */
-const cloudVerdictAtDispatch = new WeakMap<BatchDeleteEpicVariables, boolean>();
-
 function readsCloudAuthorized(): boolean {
   return authorizesCloudCapability(useAuthStore.getState().status);
+}
+
+/** Which of a chunk's ids may go out now, and which are refused. */
+export interface EpicDeleteChunkAdmission {
+  readonly sendIds: string[];
+  readonly refusedIds: string[];
+}
+
+/**
+ * Admits one chunk at the moment it would be sent. While the session is
+ * signed in every id goes. Otherwise only the ids the caller proved
+ * local-homed at confirm go: deleting those spends nothing on the account.
+ * Every other id is refused, never sent on a bearer the cloud stopped
+ * vouching for (a demotion to `unverified` keeps the same bearer).
+ */
+function admitEpicDeleteChunk(
+  ids: ReadonlyArray<string>,
+  localHomedIds: ReadonlySet<string>,
+): EpicDeleteChunkAdmission {
+  if (readsCloudAuthorized()) return { sendIds: [...ids], refusedIds: [] };
+  return {
+    sendIds: ids.filter((id) => localHomedIds.has(id)),
+    refusedIds: ids.filter((id) => !localHomedIds.has(id)),
+  };
+}
+
+/**
+ * What the first request of a dispatch left for `resolveResponse`: the ids it
+ * refused before it, and where the rest of the run starts.
+ */
+interface EpicDeleteRunStart {
+  readonly refusedIds: ReadonlyArray<string>;
+  readonly nextIndex: number;
+}
+
+const epicDeleteRunStarts = new WeakMap<
+  BatchDeleteEpicVariables,
+  EpicDeleteRunStart
+>();
+
+/** Dispatches refused whole before any request, read by `onError`. */
+const epicDeleteRunsRefused = new WeakSet<BatchDeleteEpicVariables>();
+
+/**
+ * The first request of a dispatch: the first chunk with anything admitted,
+ * after refusing the chunks before it. A run with nothing admitted at all is
+ * refused here, before any request goes out.
+ */
+function firstEpicDeleteRequest(variables: BatchDeleteEpicVariables): {
+  ids: string[];
+} {
+  const localHomedIds = new Set(variables.localHomedIds);
+  const refusedIds: string[] = [];
+  for (
+    let start = 0;
+    start < variables.ids.length;
+    start += EPIC_BATCH_DELETE_REQUEST_SIZE
+  ) {
+    const admission = admitEpicDeleteChunk(
+      variables.ids.slice(start, start + EPIC_BATCH_DELETE_REQUEST_SIZE),
+      localHomedIds,
+    );
+    refusedIds.push(...admission.refusedIds);
+    if (admission.sendIds.length > 0) {
+      epicDeleteRunStarts.set(variables, {
+        refusedIds,
+        nextIndex: start + EPIC_BATCH_DELETE_REQUEST_SIZE,
+      });
+      return { ids: admission.sendIds };
+    }
+  }
+  epicDeleteRunsRefused.add(variables);
+  throw new Error("epic.batchDelete: no task admitted without a cloud verdict");
 }
 
 let epicDeleteProgressToastSequence = 0;
@@ -93,6 +163,13 @@ export interface BatchDeleteWorktreeCandidate {
  */
 export interface BatchDeleteEpicVariables {
   readonly ids: ReadonlyArray<string>;
+  /**
+   * The ids the caller proved local-homed when the person confirmed, recorded
+   * then because a verdict read later cannot tell a local-only run from a
+   * cloud run whose session was demoted since. Only these may be sent while
+   * the session is not signed in.
+   */
+  readonly localHomedIds: ReadonlyArray<string>;
   readonly worktreeCleanup: {
     readonly candidates: ReadonlyArray<BatchDeleteWorktreeCandidate>;
   } | null;
@@ -120,6 +197,16 @@ const EPIC_BATCH_DELETE_UNCONFIRMED_MESSAGE =
 const EPIC_BATCH_DELETE_SIGNED_OUT_MESSAGE =
   "This task was not deleted because Traycer couldn't confirm your sign-in. Try again once you're signed in.";
 
+function refusedEpicDeleteResults(
+  taskIds: ReadonlyArray<string>,
+): BatchDeleteItemResult[] {
+  return taskIds.map((taskId) => ({
+    taskId,
+    success: false,
+    errorMessage: EPIC_BATCH_DELETE_SIGNED_OUT_MESSAGE,
+  }));
+}
+
 /**
  * Sends the ids after the first request in sequential chunks and merges every
  * answer into one response. A chunk that throws stops the run: its ids and
@@ -128,43 +215,45 @@ const EPIC_BATCH_DELETE_SIGNED_OUT_MESSAGE =
  * path is what removes them from the caches and tabs. Retrying is safe: the
  * cloud reports an already-deleted Task as deleted.
  *
- * `stillAdmitted` is asked again before EVERY later chunk. A run of many
- * chunks can outlast the verdict the first request went out under, and a
- * demotion to `unverified` keeps the same bearer, so nothing below this check
- * would stop the next chunk from spending it. When it fails, the run stops
- * and the rest are answered "not deleted".
+ * `admit` is asked before EVERY chunk, at the moment it would be sent: a run
+ * of many chunks can outlast the verdict the person confirmed under. Refused
+ * ids are answered "not deleted"; the rest of the chunk still goes.
  */
 export async function deleteRemainingEpicChunks(
   firstResponse: BatchDeleteEpicResponse,
-  remainingIds: ReadonlyArray<string>,
+  rest: {
+    /** Ids the first request's admission refused before it went out. */
+    readonly refusedIds: ReadonlyArray<string>;
+    /** Ids after the first request's chunk, still to be admitted. */
+    readonly remainingIds: ReadonlyArray<string>;
+  },
   dispatch: (ids: string[]) => Promise<BatchDeleteEpicResponse>,
-  stillAdmitted: () => boolean,
+  admit: (ids: ReadonlyArray<string>) => EpicDeleteChunkAdmission,
 ): Promise<BatchDeleteEpicResponse> {
-  const results = [...firstResponse.results];
+  const remainingIds = rest.remainingIds;
+  const results = [
+    ...firstResponse.results,
+    ...refusedEpicDeleteResults(rest.refusedIds),
+  ];
   for (
     let start = 0;
     start < remainingIds.length;
     start += EPIC_BATCH_DELETE_REQUEST_SIZE
   ) {
-    if (!stillAdmitted()) {
-      for (const taskId of remainingIds.slice(start)) {
-        results.push({
-          taskId,
-          success: false,
-          errorMessage: EPIC_BATCH_DELETE_SIGNED_OUT_MESSAGE,
-        });
-      }
-      break;
-    }
-    const chunk = remainingIds.slice(
-      start,
-      start + EPIC_BATCH_DELETE_REQUEST_SIZE,
+    const admission = admit(
+      remainingIds.slice(start, start + EPIC_BATCH_DELETE_REQUEST_SIZE),
     );
+    results.push(...refusedEpicDeleteResults(admission.refusedIds));
+    if (admission.sendIds.length === 0) continue;
     try {
-      const response = await dispatch(chunk);
+      const response = await dispatch(admission.sendIds);
       results.push(...response.results);
     } catch {
-      for (const taskId of remainingIds.slice(start)) {
+      const unconfirmed = [
+        ...admission.sendIds,
+        ...remainingIds.slice(start + EPIC_BATCH_DELETE_REQUEST_SIZE),
+      ];
+      for (const taskId of unconfirmed) {
         results.push({
           taskId,
           success: false,
@@ -198,27 +287,27 @@ export function useEpicBatchDelete(): UseMutationResult<
   >({
     client,
     method: "epic.batchDelete",
-    // Sent EPIC_BATCH_DELETE_REQUEST_SIZE ids at a time: the first slice here,
-    // the rest in `resolveResponse`, so every lifecycle arm below sees one
-    // merged answer for the whole selection.
-    mapVariables: (variables) => {
-      cloudVerdictAtDispatch.set(variables, readsCloudAuthorized());
-      return { ids: variables.ids.slice(0, EPIC_BATCH_DELETE_REQUEST_SIZE) };
-    },
-    resolveResponse: (firstResponse, variables) =>
-      deleteRemainingEpicChunks(
+    // Sent EPIC_BATCH_DELETE_REQUEST_SIZE ids at a time, each chunk admitted
+    // when it would go out: the first here, the rest in `resolveResponse`, so
+    // every lifecycle arm below sees one merged answer for the whole
+    // selection.
+    mapVariables: firstEpicDeleteRequest,
+    resolveResponse: (firstResponse, variables) => {
+      const runStart = epicDeleteRunStarts.get(variables) ?? {
+        refusedIds: [],
+        nextIndex: EPIC_BATCH_DELETE_REQUEST_SIZE,
+      };
+      const localHomedIds = new Set(variables.localHomedIds);
+      return deleteRemainingEpicChunks(
         firstResponse,
-        variables.ids.slice(EPIC_BATCH_DELETE_REQUEST_SIZE),
+        {
+          refusedIds: runStart.refusedIds,
+          remainingIds: variables.ids.slice(runStart.nextIndex),
+        },
         (ids) => client.request("epic.batchDelete", { ids }),
-        // The first request's admission, held for the whole run. Under a
-        // cloud verdict every later chunk needs that verdict still standing.
-        // Without one, the caller admitted only rows that spend nothing on
-        // the account (local-homed Tasks), so later chunks of the same ids
-        // go out exactly as the first did.
-        () =>
-          cloudVerdictAtDispatch.get(variables) !== true ||
-          readsCloudAuthorized(),
-      ),
+        (ids) => admitEpicDeleteChunk(ids, localHomedIds),
+      );
+    },
     options: {
       mutationKey: epicMutationKeys.batchDelete(),
       onMutate: (variables) => {
@@ -386,11 +475,23 @@ export function useEpicBatchDelete(): UseMutationResult<
           queryKey: hostQueryKeys.scope(ctx.hostId),
         });
       },
-      onError: (error, _variables, ctx) => {
+      onError: (error, variables, ctx) => {
         // Explicit, never left to the error toast: `toastFromHostError` stays
         // silent for an aborted or recoverable-unauthorized request, and a
         // progress toast nothing dismisses would spin forever.
         if (ctx !== undefined) toast.dismiss(ctx.progressToastId);
+        if (epicDeleteRunsRefused.has(variables)) {
+          // Refused before any request: nothing was sent, so say why.
+          const refused = epicDeleteToastParts({
+            failures: refusedEpicDeleteResults(variables.ids),
+            successes: 0,
+            total: variables.ids.length,
+            deletedIds: [],
+            epicTitlesById: ctx?.epicTitlesById ?? {},
+          });
+          emitEpicDeleteToast(refused.level, refused.message, refused.detail);
+          return;
+        }
         toastFromHostError(error, "Couldn't delete epics.");
       },
     },

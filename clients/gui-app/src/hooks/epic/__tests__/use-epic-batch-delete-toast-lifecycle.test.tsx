@@ -203,7 +203,8 @@ function deleteOf(
   ids: ReadonlyArray<string>,
   worktreeCleanup: BatchDeleteEpicVariables["worktreeCleanup"],
 ): BatchDeleteEpicVariables {
-  return { ids, worktreeCleanup };
+  // Cloud rows: admitted only while the session is signed in.
+  return { ids, localHomedIds: [], worktreeCleanup };
 }
 
 function cleanupOf(...worktreePaths: ReadonlyArray<string>) {
@@ -281,7 +282,7 @@ describe("the delete's progress toast", () => {
     host.state.activeHostId = "host-1";
     host.state.userId = "user-1";
     host.state.requests.length = 0;
-    useAuthStore.setState({ status: "signed-out" });
+    useAuthStore.setState({ status: "signed-in" });
     toastScreen.stillShown = true;
     toastScreen.shownId = null;
     mocks.toastMessage.mockImplementation((_message, options) => {
@@ -846,14 +847,14 @@ describe("the delete's progress toast", () => {
       );
     });
 
-    it("keeps sending a run that started without a cloud verdict", async () => {
-      // Without a verdict the caller admitted only local-homed rows, which
-      // spend nothing on the account, so every chunk goes out as the first.
+    it("keeps sending a local-only run of more than one chunk while unverified", async () => {
+      // Local-homed rows spend nothing on the account, so every chunk of them
+      // goes out without a cloud verdict.
       const ids = epicIds(13);
       useAuthStore.setState({ status: "unverified" });
       const view = renderBatchDelete();
 
-      view.dispatch(deleteOf(ids, null));
+      view.dispatch({ ids, localHomedIds: ids, worktreeCleanup: null });
 
       await waitFor(() => {
         expect(host.state.requests).toHaveLength(1);
@@ -863,6 +864,50 @@ describe("the delete's progress toast", () => {
         expect(host.state.requests).toHaveLength(2);
       });
       await answer(1, deleted(...ids.slice(10)));
+
+      await waitFor(() => {
+        expect(mocks.toastSuccess).toHaveBeenCalledTimes(1);
+      });
+    });
+
+    it("sends no cloud chunk when the session is demoted before the first request goes out", async () => {
+      // The reviewer's sequence: confirmed signed in, demoted while the
+      // mutation is still starting, before its first request is built.
+      const ids = epicIds(23);
+      const view = renderBatchDelete();
+
+      view.dispatch(deleteOf(ids, null));
+      useAuthStore.setState({ status: "unverified" });
+
+      await waitFor(() => {
+        expect(mocks.toastError).toHaveBeenCalledTimes(1);
+      });
+      expect(host.state.requests).toHaveLength(0);
+      expect(mocks.toastError.mock.calls[0]?.[0]).toBe(
+        "Couldn't delete 23 epics.",
+      );
+      expect(mocks.toastFromHostError).not.toHaveBeenCalled();
+    });
+
+    it("still sends the local-homed ids of a later chunk after a demotion, and only those", async () => {
+      const ids = epicIds(13);
+      const localIds = ids.slice(10);
+      const view = renderBatchDelete();
+
+      view.dispatch({ ids, localHomedIds: localIds, worktreeCleanup: null });
+
+      await waitFor(() => {
+        expect(host.state.requests).toHaveLength(1);
+      });
+      act(() => {
+        useAuthStore.setState({ status: "unverified" });
+      });
+      await answer(0, deleted(...ids.slice(0, 10)));
+      await waitFor(() => {
+        expect(host.state.requests).toHaveLength(2);
+      });
+      expect(requestedIds(1)).toEqual(localIds);
+      await answer(1, deleted(...localIds));
 
       await waitFor(() => {
         expect(mocks.toastSuccess).toHaveBeenCalledTimes(1);

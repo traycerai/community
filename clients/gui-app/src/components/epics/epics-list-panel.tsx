@@ -823,6 +823,11 @@ function EpicsListPanelBody(props: EpicsListPanelBodyProps): ReactNode {
       }));
     deleteMutation.mutate({
       ids: [...ids],
+      // Recorded now, with the verdict above: the hook admits each chunk by
+      // the live verdict or by this evidence, never by a verdict read later.
+      localHomedIds: ids.filter(
+        (id) => itemsByEpicId.get(id)?.isLocalHome === true,
+      ),
       worktreeCleanup:
         approvedWorktrees.length > 0 ? { candidates: approvedWorktrees } : null,
     });
