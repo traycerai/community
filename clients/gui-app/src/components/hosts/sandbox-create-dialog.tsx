@@ -173,9 +173,11 @@ function SandboxCreateDialogBody(props: {
       />
     );
   }
-  // Without the person's teams the form could only be Personal, whatever
-  // the opener preselected.
-  if (userQuery.isError) {
+  // Settled with no user is a failed first read. Without the person's teams
+  // the form could only be Personal: say so when the opener named a team. A
+  // failed refetch keeps the teams it had, and a Personal create needs none.
+  const opensOnTeam = preselect?.kind === "team" || workingHostTeamId !== null;
+  if (userQuery.data === undefined && opensOnTeam) {
     return (
       <SandboxCreateRetry
         message="Traycer couldn't load your teams."
@@ -335,7 +337,6 @@ function SandboxCreateForm(props: {
       <SandboxBelongsToField
         id={`${ids}-belongs-to`}
         teams={props.teams}
-        belongsTo={belongsTo}
         team={team}
         target={target}
         onChange={setBelongsTo}
@@ -682,7 +683,6 @@ function teamRefusalLine(
 function SandboxBelongsToField(props: {
   readonly id: string;
   readonly teams: readonly SandboxCreateTeam[];
-  readonly belongsTo: SandboxCreateBelongsTo;
   readonly team: SandboxCreateTeam | null;
   readonly target: TeamTarget;
   readonly onChange: (next: SandboxCreateBelongsTo) => void;

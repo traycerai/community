@@ -47,6 +47,8 @@ const mocks = vi.hoisted(() => ({
   userPending: false,
   /** The user query failed: no data, no longer pending. */
   userFailed: false,
+  /** A refetch failed: still the earlier data, and in error. */
+  userRefetchFailed: false,
   userRefetch: vi.fn<() => Promise<void>>(),
   environments: new Map<string, TeamEnvironmentFetchResult>(),
   providers: new Map<string, EnvironmentProvidersFetchResult>(),
@@ -67,7 +69,7 @@ vi.mock("@/hooks/auth/use-auth-user-query", () => ({
   useAuthUser: () => ({
     data: mocks.userPending || mocks.userFailed ? undefined : mocks.user,
     isPending: mocks.userPending,
-    isError: mocks.userFailed,
+    isError: mocks.userFailed || mocks.userRefetchFailed,
     refetch: mocks.userRefetch,
   }),
 }));
@@ -281,6 +283,7 @@ beforeEach(() => {
   mocks.user = userInAcmeAndZeta();
   mocks.userPending = false;
   mocks.userFailed = false;
+  mocks.userRefetchFailed = false;
   mocks.userRefetch.mockReset();
   mocks.userRefetch.mockResolvedValue(undefined);
   mocks.environments.clear();
@@ -470,6 +473,22 @@ describe("<SandboxCreateDialog /> belongs to", () => {
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
 
     expect(mocks.userRefetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the form, and the teams it has, when only a refetch of the user failed", async () => {
+    mocks.userRefetchFailed = true;
+    await renderDialog(teamPreselect(ACME_ID));
+
+    expect(screen.queryByText("Traycer couldn't load your teams.")).toBeNull();
+    expect(screen.getByTestId("sandbox-create-team-lines")).toBeDefined();
+  });
+
+  it("opens the Personal form when the user read failed and nothing named a team", async () => {
+    mocks.userFailed = true;
+    await renderDialog(null);
+
+    expect(screen.queryByText("Traycer couldn't load your teams.")).toBeNull();
+    expect(screen.queryByTestId("sandbox-create-belongs-to")).toBeNull();
   });
 
   it("reads Personal in Belongs to when the preselected team is not one of the person's", async () => {
