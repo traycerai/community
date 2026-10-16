@@ -807,6 +807,7 @@ export function useEpicArchiveChats(): UseMutationResult<
         results.map((result, index) => ({
           kind: "agent",
           hostId: variables.chats[index]?.hostId ?? null,
+          selectedRows: 1,
           error:
             result.status === "rejected"
               ? toHostRpcError(result.reason, "epic.setChatArchived")

@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { sidebarBulkDeleteIds } from "../epic-sidebar-selection";
+import {
+  sidebarBulkDeleteIds,
+  sidebarBulkDeleteSelectedRows,
+} from "../epic-sidebar-selection";
 import type {
   EpicTreeNodeType,
   TreeNode,
@@ -74,5 +77,54 @@ describe("sidebarBulkDeleteIds", () => {
         isAgentId,
       }),
     ).toEqual(["chat-child", "chat-root", "spec-root"]);
+  });
+});
+
+describe("sidebarBulkDeleteSelectedRows", () => {
+  const tree = treeOf([
+    node("chat-root", null, "chat"),
+    node("chat-child", "chat-root", "chat"),
+    node("spec-root", null, "spec"),
+    node("ticket-child", "spec-root", "ticket"),
+    node("ticket-grandchild", "ticket-child", "ticket"),
+    node("ticket-orphan-sibling", null, "ticket"),
+  ]);
+  const types = new Map(
+    Object.values(tree.nodeById).map((n) => [n.id, n.type]),
+  );
+  const isAgentId = (id: string): boolean =>
+    types.get(id) === "chat" || types.get(id) === "terminal-agent";
+
+  // The notice counts what the user selected, so an artifact whose delete
+  // cascades to selected descendants stands for every one of those rows
+  // (traycerai/traycer#2546, round 10, finding 6).
+  it("counts each selected descendant against the topmost selected artifact its delete cascades from", () => {
+    const rows = sidebarBulkDeleteSelectedRows({
+      ids: [
+        "ticket-grandchild",
+        "spec-root",
+        "ticket-child",
+        "ticket-orphan-sibling",
+      ],
+      tree,
+      isAgentId,
+    });
+    expect(Object.fromEntries(rows)).toEqual({
+      "spec-root": 3,
+      "ticket-orphan-sibling": 1,
+    });
+  });
+
+  it("counts every selected agent as its own row, since an agent delete removes only itself", () => {
+    const rows = sidebarBulkDeleteSelectedRows({
+      ids: ["chat-root", "chat-child", "ticket-child"],
+      tree,
+      isAgentId,
+    });
+    expect(Object.fromEntries(rows)).toEqual({
+      "chat-root": 1,
+      "chat-child": 1,
+      "ticket-child": 1,
+    });
   });
 });

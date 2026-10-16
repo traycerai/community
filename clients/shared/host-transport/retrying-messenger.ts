@@ -87,17 +87,18 @@ export function createRetryingMessenger<Registry extends VersionedRpcRegistry>(
     // fail pre-dispatch. Recomputing it per attempt would forget that.
     let replayMustBeKeyed = false;
     for (let attempt = 0; attempt < policy.maxRetries; attempt += 1) {
-      throwIfAuthorityAborted(authority, method);
+      throwIfAuthorityAborted(authority, method, replayMustBeKeyed);
       try {
         return await attemptCall(replayMustBeKeyed);
       } catch (cause) {
         if (!(cause instanceof RetryableTransportError)) {
-          throw cause;
+          throw withEpisodeDispatch(cause, replayMustBeKeyed);
         }
         replayMustBeKeyed = replayMustBeKeyed || cause.replaySafetyFromKey;
         await waitForRetryDelay(
           authority,
           method,
+          replayMustBeKeyed,
           policy.sleep(
             jitteredBackoffFor(
               attempt,
@@ -113,7 +114,7 @@ export function createRetryingMessenger<Registry extends VersionedRpcRegistry>(
     // retryable or not - propagate to the caller. It is handed on as thrown,
     // except for the one restoration below. Still carries the requirement: being the last attempt does not make an unkeyed replay any
     // safer.
-    throwIfAuthorityAborted(authority, method);
+    throwIfAuthorityAborted(authority, method, replayMustBeKeyed);
     try {
       return await attemptCall(replayMustBeKeyed);
     } catch (cause) {
@@ -135,7 +136,7 @@ export function createRetryingMessenger<Registry extends VersionedRpcRegistry>(
           replaySafetyFromKey: true,
         });
       }
-      throw cause;
+      throw withEpisodeDispatch(cause, replayMustBeKeyed);
     }
   };
 
@@ -165,9 +166,35 @@ export function createRetryingMessenger<Registry extends VersionedRpcRegistry>(
   };
 }
 
+/**
+ * An abort of a later attempt, after an earlier one was sent and its answer
+ * lost, carries the episode's possible dispatch: the host may be running the
+ * earlier send whatever this attempt did.
+ */
+function withEpisodeDispatch(cause: unknown, sentEarlier: boolean): unknown {
+  if (
+    sentEarlier &&
+    cause instanceof HostRequestAbortedError &&
+    !cause.mayHaveDispatched
+  ) {
+    return new HostRequestAbortedError({
+      message: cause.message,
+      requestId: cause.requestId,
+      method: cause.method,
+      mayHaveDispatched: true,
+    });
+  }
+  return cause;
+}
+
+/**
+ * `sentEarlier` is the episode's latch: an earlier attempt was sent and its
+ * answer lost, so an abort now still leaves a request the host may be running.
+ */
 function throwIfAuthorityAborted(
   authority: HostRequestAuthority,
   method: string,
+  sentEarlier: boolean,
 ): void {
   if (!authority.abortSignal.aborted) {
     return;
@@ -176,12 +203,14 @@ function throwIfAuthorityAborted(
     message: "Host request authority was aborted before transport dispatch",
     requestId: "authority-aborted",
     method,
+    mayHaveDispatched: sentEarlier,
   });
 }
 
 function waitForRetryDelay(
   authority: HostRequestAuthority,
   method: string,
+  sentEarlier: boolean,
   delay: Promise<void>,
 ): Promise<void> {
   return new Promise<void>((resolve, reject) => {
@@ -193,6 +222,7 @@ function waitForRetryDelay(
             "Host request authority was aborted during transport retry backoff",
           requestId: "authority-aborted",
           method,
+          mayHaveDispatched: sentEarlier,
         }),
       );
     };
