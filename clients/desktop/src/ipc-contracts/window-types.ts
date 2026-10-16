@@ -146,6 +146,18 @@ export interface DesktopAuthSessionSnapshot {
 }
 
 /**
+ * The payload of the verdict-loss fan-out (`authVerificationRevoked`): the
+ * bearer the cloud refused, and whether the refusal was the user's own "sign
+ * out everywhere" (`user-epoch`). A host refuses a revoked bearer at once,
+ * not at its expiry, so every window holding it needs the scope, not only the
+ * one that saw the refusal.
+ */
+export interface DesktopAuthVerificationRevoked {
+  readonly token: string;
+  readonly revocation: "user-epoch" | null;
+}
+
+/**
  * Why main refused to adopt a renderer-pushed auth session. Every value is a
  * statement about the TOKEN, never about who sent it, so it is safe to log and
  * safe to show. See `electron-main/auth/bearer-verifier.ts`.
