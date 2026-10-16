@@ -1154,7 +1154,10 @@ function HarnessModelPickerImpl(props: HarnessModelPickerProps) {
 
   const composerFace = (
     <TooltipWrapper
-      label={tooltipLabel}
+      // Closing the picker can leave its trigger's hover tooltip open over the
+      // composer. Unmount the tooltip while the picker is open so it starts
+      // closed when focus returns to the editor.
+      label={tooltipLabelWhenPickerClosed(visibleOpen, tooltipLabel)}
       side="top"
       sideOffset={undefined}
       align={undefined}
@@ -1429,6 +1432,13 @@ function PresentationHarnessModelPicker(props: HarnessModelPickerProps) {
       labelDisplay={props.labelDisplay}
     />
   );
+}
+
+function tooltipLabelWhenPickerClosed(
+  pickerOpen: boolean,
+  label: ReactNode,
+): ReactNode {
+  return pickerOpen ? null : label;
 }
 
 function HarnessModelPickerTooltip({
