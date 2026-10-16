@@ -13,23 +13,29 @@ export const UNKNOWN_TEAM_LABEL = "A team";
  * `null` for any other row, or none.
  */
 export function taskOwningTeamId(
-  _permission: PermissionDto | null | undefined,
+  permission: PermissionDto | null | undefined,
 ): string | null {
-  return null;
+  if (permission?.accessType !== "organization") return null;
+  const teamId = permission.organizationId ?? "";
+  return teamId.length === 0 ? null : teamId;
 }
 
 /** The team's slug among the person's teams, else "A team". */
 export function teamTaskLabel(
-  _teamId: string,
-  _teams: ReadonlyArray<EpicShareableTeam>,
+  teamId: string,
+  teams: ReadonlyArray<EpicShareableTeam>,
 ): string {
-  return "";
+  return (
+    teams.find((team) => team.teamId === teamId)?.slug ?? UNKNOWN_TEAM_LABEL
+  );
 }
 
 /** Whether any listed task is owned by `teamId` (A4). */
 export function tasksIncludeTeamTask(
-  _tasks: ReadonlyArray<ListTaskLight>,
-  _teamId: string,
+  tasks: ReadonlyArray<ListTaskLight>,
+  teamId: string,
 ): boolean {
-  return false;
+  return tasks.some(
+    (task) => taskOwningTeamId(task.epic?.permission) === teamId,
+  );
 }

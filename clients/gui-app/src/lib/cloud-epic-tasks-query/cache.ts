@@ -22,6 +22,10 @@ import {
   setEpicLocalHomeInCloudTasksResponse,
   setEpicPinnedInCloudTasksResponse,
 } from "@/lib/cloud-epic-tasks-query/response-patches";
+import {
+  taskOwningTeamId,
+  tasksIncludeTeamTask,
+} from "@/lib/epics/team-task-owner";
 
 export {
   removeDeletedEpicsFromCloudTasksResponse,
@@ -149,11 +153,45 @@ export function readEpicTitlesFromCloudTaskCaches(
  * cached row names the epic, or the row names no team.
  */
 export function readEpicOwningTeamIdFromCloudTaskCaches(
-  _queryClient: QueryClient,
-  _scope: CloudEpicTasksCacheScope,
-  _epicId: string,
+  queryClient: QueryClient,
+  scope: CloudEpicTasksCacheScope,
+  epicId: string,
 ): string | null {
+  for (const [, response] of queryClient.getQueriesData<ListTasksResponse>({
+    predicate: (query) =>
+      cloudEpicTasksQueryKeyMatchesScope(query.queryKey, scope) ||
+      epicPinReadingQueryKeyMatchesScope(query.queryKey, scope) ||
+      currentTasksPinTailQueryKeyMatchesScope(query.queryKey, scope),
+  })) {
+    if (response === undefined) continue;
+    const task = response.tasks.find(
+      (candidate) => candidate.epic?.light?.id === epicId,
+    );
+    if (task !== undefined) return taskOwningTeamId(task.epic?.permission);
+  }
   return null;
+}
+
+/**
+ * Whether any cached task row for the person is owned by `teamId` (ticket E17
+ * checkpoint 6, A4). `false` when nothing cached says so.
+ */
+export function cloudTaskCachesIncludeTeamTask(
+  queryClient: QueryClient,
+  scope: CloudEpicTasksCacheScope,
+  teamId: string,
+): boolean {
+  return queryClient
+    .getQueriesData<ListTasksResponse>({
+      predicate: (query) =>
+        cloudEpicTasksQueryKeyMatchesScope(query.queryKey, scope) ||
+        epicPinReadingQueryKeyMatchesScope(query.queryKey, scope) ||
+        currentTasksPinTailQueryKeyMatchesScope(query.queryKey, scope),
+    })
+    .some(
+      ([, response]) =>
+        response !== undefined && tasksIncludeTeamTask(response.tasks, teamId),
+    );
 }
 
 export function updateEpicTitleInCloudTaskCaches(

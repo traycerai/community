@@ -1,4 +1,8 @@
 import type { EpicCreateOwner } from "@traycer/protocol/host/epic/unary-schemas";
+import {
+  EPIC_CREATE_TEAM_OWNER_MINOR,
+  TEAM_CREATE_HOST_TOO_OLD,
+} from "@/lib/epic-create-admission";
 import type { NegotiatedMethodVersion } from "@/lib/host/read-negotiated-method-version";
 import type { EpicShareableTeam } from "@/stores/auth/auth-store";
 
@@ -22,12 +26,17 @@ export interface LandingOwnerTeam {
  * owns the resolved host when it is one of the person's teams, else Personal.
  * A team the person is no longer in is Personal.
  */
-export function resolveLandingOwner(_input: {
+export function resolveLandingOwner(input: {
   readonly choice: LandingOwnerChoice | null;
   readonly resolvedHostTeamId: string | null;
   readonly teams: ReadonlyArray<EpicShareableTeam>;
 }): LandingOwnerTeam | null {
-  return null;
+  if (input.choice?.kind === "personal") return null;
+  const teamId =
+    input.choice === null ? input.resolvedHostTeamId : input.choice.teamId;
+  if (teamId === null) return null;
+  const team = input.teams.find((candidate) => candidate.teamId === teamId);
+  return team === undefined ? null : { teamId, slug: team.slug };
 }
 
 /**
@@ -36,27 +45,37 @@ export function resolveLandingOwner(_input: {
  * the cloud authorization. An unknown version is not refused here: the
  * transport's `epic.create@1.3` floor refuses it before the frame.
  */
-export function landingOwnerRefusal(_input: {
+export function landingOwnerRefusal(input: {
   readonly owner: LandingOwnerTeam;
   readonly hostEpicCreateVersion: NegotiatedMethodVersion;
   readonly cloudAuthorized: boolean;
 }): string | null {
+  const version = input.hostEpicCreateVersion;
+  if (
+    version === false ||
+    (version !== null &&
+      version.major === 1 &&
+      version.minor < EPIC_CREATE_TEAM_OWNER_MINOR)
+  ) {
+    return TEAM_CREATE_HOST_TOO_OLD;
+  }
+  if (!input.cloudAuthorized) return teamCreateSignInLine(input.owner.slug);
   return null;
 }
 
 /** A2, verbatim: the person is signed out of the cloud. */
-export function teamCreateSignInLine(_slug: string): string {
-  return "";
+export function teamCreateSignInLine(slug: string): string {
+  return `Sign in to create a task for ${slug}.`;
 }
 
 /** A3, verbatim: the first-chat line under a team pick. */
-export function teamFirstChatLine(_slug: string): string {
-  return "";
+export function teamFirstChatLine(slug: string): string {
+  return `Chats here are visible to everyone in ${slug}`;
 }
 
 /** The `epic.create@1.3` `owner` for a pick: `null` is the person. */
 export function epicCreateOwnerFor(
-  _owner: LandingOwnerTeam | null,
+  owner: LandingOwnerTeam | null,
 ): EpicCreateOwner | null {
-  return null;
+  return owner === null ? null : { kind: "team", teamId: owner.teamId };
 }

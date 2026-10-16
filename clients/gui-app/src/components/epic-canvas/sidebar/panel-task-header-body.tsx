@@ -36,6 +36,7 @@ export function PanelTaskHeaderBody(props: {
           >
             {props.title}
           </span>
+          {props.teamChip}
           {props.titleAction === null ? null : (
             <span className="flex shrink-0 opacity-0 transition-opacity group-hover/task-header:opacity-100 focus-within:opacity-100">
               {props.titleAction}

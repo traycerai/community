@@ -1,6 +1,10 @@
 import type { SchemaVersion } from "@traycer/protocol/framework/index";
 import type { EpicCreateOwner } from "@traycer/protocol/host/epic/unary-schemas";
-import type { RequiredHostMethodVersion } from "@traycer-clients/shared/host-transport/host-messenger";
+import {
+  HostMethodVersionUnsatisfiedError,
+  HostRpcError,
+  type RequiredHostMethodVersion,
+} from "@traycer-clients/shared/host-transport/host-messenger";
 
 /**
  * The `epic.create` minor from which the create is known to be LOCAL-FIRST -
@@ -59,8 +63,8 @@ export const TEAM_CREATE_HOST_TOO_OLD =
   "This host can't create team tasks yet. Update the host, or choose Personal.";
 
 /** A2, verbatim: the cloud refused a team create (`FORBIDDEN`). */
-export function teamCreateForbiddenLine(_slug: string): string {
-  return "";
+export function teamCreateForbiddenLine(slug: string): string {
+  return `You're not a member of ${slug}.`;
 }
 
 /**
@@ -69,11 +73,21 @@ export function teamCreateForbiddenLine(_slug: string): string {
  * floor; otherwise the local-first floor for a session with no cloud verdict,
  * and none for a signed-in one.
  */
-export function epicCreateFloor(_input: {
+export function epicCreateFloor(input: {
   readonly owner: EpicCreateOwner | null;
   readonly cloudAuthorized: boolean;
 }): RequiredHostMethodVersion | null {
-  return null;
+  if (input.owner?.kind === "team") {
+    return {
+      method: "epic.create",
+      version: { major: 1, minor: EPIC_CREATE_TEAM_OWNER_MINOR },
+    };
+  }
+  if (input.cloudAuthorized) return null;
+  return {
+    method: "epic.create",
+    version: { major: 1, minor: EPIC_CREATE_LOCAL_FIRST_MINOR },
+  };
 }
 
 /**
@@ -82,8 +96,21 @@ export function epicCreateFloor(_input: {
  * `FORBIDDEN` keyed on the code alone, never on the message.
  */
 export function teamCreateRejectionMessage(
-  _error: unknown,
-  _teamSlug: string | null,
+  error: unknown,
+  teamSlug: string | null,
 ): string | null {
+  if (error instanceof HostMethodVersionUnsatisfiedError) {
+    return error.requirement.method === "epic.create" &&
+      error.requirement.version.minor >= EPIC_CREATE_TEAM_OWNER_MINOR
+      ? TEAM_CREATE_HOST_TOO_OLD
+      : null;
+  }
+  if (
+    error instanceof HostRpcError &&
+    error.code === "FORBIDDEN" &&
+    teamSlug !== null
+  ) {
+    return teamCreateForbiddenLine(teamSlug);
+  }
   return null;
 }

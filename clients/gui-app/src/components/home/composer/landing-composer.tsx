@@ -85,6 +85,12 @@ import { ComposerModeSwitcher } from "@/components/home/composer/composer-mode-s
 import { useComposerPlacement } from "@/hooks/host/use-composer-placement";
 import { subscribeFollowingSurfaceReset } from "@/stores/host/surface-host-selection-store";
 import { ComposerHostNotice } from "@/components/home/composer/composer-host-notice";
+import { LandingTeamChatLine } from "@/components/home/composer/landing-owner-chip";
+import { useLandingOwner } from "@/hooks/home/use-landing-owner";
+import {
+  NO_DRAFT_OWNER_KEY,
+  useLandingOwnerStore,
+} from "@/stores/home/landing-owner-store";
 import { ComposerUploadProgressNotice } from "@/components/home/composer/composer-upload-progress-notice";
 import { toggleActiveModelPicker } from "@/lib/commands/active-model-picker-registry";
 import { useComposerHostNotice } from "@/hooks/composer/use-composer-host-notice";
@@ -148,6 +154,8 @@ export function LandingComposer(props: LandingComposerProps) {
   const composerFollowsEffective = placement.followsEffective;
   const hostLabelFromDirectory = placement.hostLabelFor;
   const resolvedHostId = placementTarget.resolvedHostId;
+  // Who the task belongs to (ticket E17 checkpoint 6, A1), read at submit.
+  const owner = useLandingOwner(props.draftId, resolvedHostId);
   const hostClient = placementTarget.client;
   const activityEnabled = useSurfaceActivity();
   const runtime = draftRuntimeRegistry.getOrHydrate(props.draftId);
@@ -567,6 +575,10 @@ export function LandingComposer(props: LandingComposerProps) {
         { surface: "landing", hostId: activeHostId, draftId: null },
         { surface: "landing", hostId: activeHostId, draftId: createdDraftId },
       );
+    // The Belongs to pick made before the draft existed moves with it.
+    useLandingOwnerStore
+      .getState()
+      .migrateChoice(NO_DRAFT_OWNER_KEY, createdDraftId);
     return createdDraftId;
   }, [activeHostId, draftId, props.pendingCreateId]);
 
@@ -643,6 +655,7 @@ export function LandingComposer(props: LandingComposerProps) {
         serviceTier: toolbar.serviceTier,
         permission: toolbar.permission,
       },
+      owner,
     });
     // Nothing was created when a refusal comes back - the draft, its content
     // and its staged workspace are exactly as the user left them, and the
@@ -656,6 +669,7 @@ export function LandingComposer(props: LandingComposerProps) {
     actions,
     canSubmit,
     draftId,
+    owner,
     pickerStore,
     raiseHostNotice,
     setComposerExpanded,
@@ -664,13 +678,13 @@ export function LandingComposer(props: LandingComposerProps) {
 
   const dispatchStartTerminal = useCallback(
     (launch: TerminalAgentLaunch): boolean => {
-      const refusal = actions.selectTerminalAgent(launch, draftId);
+      const refusal = actions.selectTerminalAgent(launch, draftId, owner);
       raiseHostNotice(
         refusal === null ? null : { kind: "refused", message: refusal.message },
       );
       return refusal === null;
     },
-    [actions, draftId, raiseHostNotice],
+    [actions, draftId, owner, raiseHostNotice],
   );
   const handleStartTerminal = useCallback(
     (launch: TerminalAgentLaunch, assembledFor: string | null): boolean => {
@@ -739,6 +753,10 @@ export function LandingComposer(props: LandingComposerProps) {
           <ComposerHostNotice
             notice={hostNotice}
             onDismiss={dismissHostNotice}
+          />
+          <LandingTeamChatLine
+            draftId={draftId}
+            resolvedHostId={resolvedHostId}
           />
           <ComposerUploadProgressNotice progress={actions.attachmentUpload} />
           {profileEligibility.disabled ? (

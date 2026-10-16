@@ -11,6 +11,7 @@ import type {
 import type { WorktreeHostEntryV12 } from "@traycer/protocol/host/worktree-schemas";
 import { formatDistanceToNow } from "date-fns";
 import { displayTitle } from "@/lib/display-title";
+import { taskOwningTeamId } from "@/lib/epics/team-task-owner";
 import { isEditableRole } from "@/lib/epic-permissions";
 
 export type HistoryRecencyBucket = "today" | "yesterday" | "earlier";
@@ -275,7 +276,8 @@ function buildHistoryItem(args: {
     linkedRepos: readTaskRepos(task),
     linkedWorkspaces: readTaskWorkspaces(task),
     chatHostIds: task.chatHostIds ?? null,
-    teamId: null,
+    teamId:
+      taskType === "epic" ? taskOwningTeamId(task.epic?.permission) : null,
     pullRequestNumbers: [],
     worktreeBranches: [],
     worktreePaths: [],

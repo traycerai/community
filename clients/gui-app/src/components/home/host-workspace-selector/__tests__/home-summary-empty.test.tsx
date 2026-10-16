@@ -523,6 +523,7 @@ function DelayedBranchValidationHarness() {
             draftId: null,
             editor: editorHandleForPrompt("Investigate the worktree race"),
             slashCatalog: null,
+            owner: null,
             toolbar: {
               selection: {
                 harnessId: "codex",

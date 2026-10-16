@@ -117,8 +117,15 @@ export function hostPickerOptionsForScope(
     if (selectedHostOption === null) return [];
     return [selectedHostOption];
   }
-  if (selectedHostOption !== null && listedHostOption === null) {
-    return [selectedHostOption, ...hosts];
-  }
-  return hosts;
+  const listed =
+    selectedHostOption !== null && listedHostOption === null
+      ? [selectedHostOption, ...hosts]
+      : hosts;
+  const onlyHostIds = scope.kind === "selected" ? scope.onlyHostIds : null;
+  if (onlyHostIds === null) return listed;
+  return listed.filter(
+    (host) =>
+      onlyHostIds.has(host.hostId) ||
+      host.hostId === selectedHostOption?.hostId,
+  );
 }

@@ -26,6 +26,12 @@ import {
 } from "@/components/hosts/sandbox-create-model";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
 import { Button } from "@/components/ui/button";
+import { useNavigate } from "@tanstack/react-router";
+import { SandboxCreateStartTeamTask } from "@/components/hosts/sandbox-create-start-team-task";
+import { usePersonHasTeamTask } from "@/hooks/epics/use-epic-owning-team";
+import { openNewEpicIntent } from "@/lib/commands/actions/new-epic";
+import { pinComposerHost } from "@/lib/composer/start-task-on-host";
+import { navigateToTabIntent } from "@/lib/tab-navigation";
 import {
   Dialog,
   DialogContent,
@@ -263,6 +269,7 @@ function SandboxCreateForm(props: {
     props.initialBelongsTo,
   );
   const team = pickedTeam(belongsTo, props.teams);
+  const firstTeamTask = useFirstTeamTaskOffer(team);
   const [form, setForm] = useState<SandboxFormState>(() =>
     initialFormState(
       providerFor(props.catalogue, props.initialOs),
@@ -300,6 +307,16 @@ function SandboxCreateForm(props: {
     !creating &&
     target.ready;
 
+  if (firstTeamTask.offer !== null) {
+    return (
+      <StartTeamTaskSuccess
+        teamSlug={firstTeamTask.offer.teamSlug}
+        hostId={firstTeamTask.offer.hostId}
+        onDone={props.onDone}
+      />
+    );
+  }
+
   return (
     // `noValidate`: the number inputs carry the catalogue's min / max / step
     // for their spinners, and native validation would refuse an off-step
@@ -330,7 +347,11 @@ function SandboxCreateForm(props: {
             },
             teamName: target.teamName,
           },
-          { onSuccess: () => props.onDone() },
+          {
+            onSuccess: (accepted) => {
+              firstTeamTask.afterCreate(accepted.hostId, props.onDone);
+            },
+          },
         );
       }}
     >
@@ -823,4 +844,55 @@ function providerFor(
     throw new Error(`No provider offers ${os}`);
   }
   return provider;
+}
+
+/**
+ * A4's success state. Mounted only after a team create succeeds, so the
+ * router it navigates with is read only there.
+ */
+function StartTeamTaskSuccess(props: {
+  readonly teamSlug: string;
+  readonly hostId: string;
+  readonly onDone: () => void;
+}): ReactNode {
+  const navigate = useNavigate();
+  return (
+    <SandboxCreateStartTeamTask
+      teamSlug={props.teamSlug}
+      onStart={() => {
+        pinComposerHost(props.hostId);
+        navigateToTabIntent(navigate, openNewEpicIntent(), undefined);
+        props.onDone();
+      }}
+      onDone={props.onDone}
+    />
+  );
+}
+
+interface FirstTeamTaskOffer {
+  readonly teamSlug: string;
+  readonly hostId: string;
+}
+
+/**
+ * A4: a team sandbox created by someone with no task in that team yet ends on
+ * "Start a <team> task" instead of closing. `afterCreate` either holds the
+ * offer or closes.
+ */
+function useFirstTeamTaskOffer(team: SandboxCreateTeam | null): {
+  readonly offer: FirstTeamTaskOffer | null;
+  readonly afterCreate: (hostId: string, close: () => void) => void;
+} {
+  const hasTeamTask = usePersonHasTeamTask(team?.teamId ?? null);
+  const [offer, setOffer] = useState<FirstTeamTaskOffer | null>(null);
+  return {
+    offer,
+    afterCreate: (hostId, close) => {
+      if (team === null || hasTeamTask) {
+        close();
+        return;
+      }
+      setOffer({ teamSlug: team.name, hostId });
+    },
+  };
 }
