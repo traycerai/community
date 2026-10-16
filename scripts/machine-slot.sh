@@ -21,14 +21,14 @@
 #   ADMISSION: on Linux, a caller only takes a free slot file in one of two
 #   cases. Either no slot file is held at all, so a lone caller is never
 #   starved; or MemAvailable (re-read on every poll while it waits) is at least
-#   16 GiB plus 8 GiB (one tsgo peak) for EVERY held slot file. MemAvailable
+#   16 GiB plus 12 GiB (above one tsgo peak) for EVERY held slot file. MemAvailable
 #   already leaves out what the holders use, but only once they have reached
 #   their peak: a holder just admitted is still in format or nx startup, long
-#   before its type-check takes its ~8 GB, and how long that takes varies
+#   before its type-check takes its memory, and how long that takes varies
 #   with the hook. So every live holder is assumed not to have peaked yet, for
 #   as long as it holds its slot. That double-counts a holder already at its
 #   peak, on purpose: the reservation can never expire early, and it needs no
-#   clock or timestamps (nothing to age across a suspend or a clock step).
+#   clock (nothing to age across a suspend or a clock step).
 #   MemAvailable gates a newcomer rather than sizing the pool because sizing
 #   from it would count the holders twice. Memory in a tmpfs /tmp and other
 #   resident sets show up in it, MemTotal hides them. A kernel without
@@ -46,14 +46,17 @@
 #   cannot keep overtaking a waiter. A ticket is live while its owner holds a
 #   flock on it, which the kernel drops on any death, so SIGTERM, an OOM kill,
 #   a reboot or a recycled pid cannot keep one alive; whoever can lock a
-#   ticket removes it. A ticket past its deadline is ignored (a stopped
-#   waiter). A clock step only reorders tickets or moves a deadline, it
-#   cannot wedge a caller.
+#   ticket removes it. The owner also rewrites a heartbeat into its ticket on
+#   every poll, and a locked ticket whose heartbeat is more than 5 seconds old
+#   is ignored, so a stopped (Ctrl-Z) waiter stops blocking within seconds,
+#   even a lone caller. A ticket past its owner's deadline is ignored too.
+#   Ticket times are time.monotonic(), one clock for every process, so a clock
+#   step or a suspend cannot reorder or wedge anything.
 #
 #   A caller refused by admission behind a long holder waits up to
 #   TRAYCER_MACHINE_SLOT_TIMEOUT and then runs unserialized with a warning
 #   that names the last reason (memory shortfall, a waiter ahead, no free
-#   file), which is what happened before this lock existed.
+#   file, another caller holding the admission gate), which is what happened before this lock existed.
 #
 # `TRAYCER_MACHINE_SLOTS` (or an explicit count argument) is a pool of exactly
 # that size with no admission check: it turns admission off. Admission also
@@ -259,12 +262,17 @@ for index in range(slots):
         sys.exit(0)
 
 ADMIT_KIB = 16 * 1024 * 1024
-# One type-check peak (tsgo, about 8 GiB). Every live holder is assumed not to
-# have reached its peak yet, however long it has held its slot: a newcomer must
-# leave this much per held slot file on top of ADMIT_KIB. That double-counts a
-# holder already at its peak, on purpose: it can never expire early and needs
-# no clock.
-RAMP_KIB = 8 * 1024 * 1024
+# Above one type-check peak: the internal hook runs nx --parallel=3 and
+# the traycer-host type-check alone is about 6 GiB, so one hook can exceed 8 GiB.
+# Every live holder is assumed not to have reached its peak yet, however long it
+# has held its slot: a newcomer must leave this much per held slot file on top
+# of ADMIT_KIB. That double-counts a holder already at its peak, on purpose: it
+# can never expire early and needs no clock.
+RAMP_KIB = 12 * 1024 * 1024
+# A locked ticket counts only while the heartbeat of its owner is this fresh. The
+# owner beats on every poll (at most about a second apart), so a stopped owner
+# stops blocking others within a few seconds.
+HEARTBEAT_SECONDS = 5.0
 # Admission looks at this many slot files for the name, so a holder from a
 # larger explicit pool than the one this caller sized is seen too.
 PROBE_LIMIT = 16
@@ -343,8 +351,10 @@ def take_gate():
 # wait: the kernel drops that lock on any death (SIGKILL, SIGTERM, OOM, a
 # reboot), so a recycled pid or a zombie cannot keep a ticket alive. A scanner
 # that can take the lock knows the owner is gone and removes the ticket. A
-# ticket past its deadline is ignored, which bounds a stopped (SIGSTOP) owner.
-started = time.time()
+# ticket past its deadline is ignored, and so is one whose owner has not beaten
+# its heartbeat lately (a stopped, SIGSTOP, owner). Every time here is
+# time.monotonic(), one clock for all processes.
+started = time.monotonic()
 me = (started, os.getpid())
 ticket_prefix = "traycer-slot-%s.wait." % name
 my_ticket = os.path.join(directory, ticket_prefix + str(os.getpid()))
@@ -364,20 +374,25 @@ def drop_ticket():
 atexit.register(drop_ticket)
 
 def write_ticket():
+    # Called under the gate on every refusal: creates the ticket the first
+    # time and rewrites its heartbeat every time.
     global ticket_fd
-    if ticket_fd is not None:
-        return
+    fd = ticket_fd
     try:
-        fd = os.open(my_ticket, os.O_CREAT | os.O_RDWR | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        os.write(fd, ("%r %r\n" % (started, started + timeout)).encode())
+        if fd is None:
+            fd = os.open(my_ticket, os.O_CREAT | os.O_RDWR | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        data = ("%r %r %r\n" % (started, started + timeout, time.monotonic())).encode()
+        os.pwrite(fd, data, 0)
+        os.ftruncate(fd, len(data))
         ticket_fd = fd
     except OSError:
-        pass
+        if fd is not None and fd != ticket_fd:
+            os.close(fd)
 
 def live_tickets():
     found = []
-    now = time.time()
+    now = time.monotonic()
     for entry in os.listdir(directory):
         pid = entry[len(ticket_prefix):]
         if not entry.startswith(ticket_prefix) or not pid.isdigit() or len(pid) > 10 or int(pid) == 0:
@@ -395,13 +410,13 @@ def live_tickets():
             except OSError as error:
                 if not busy(error):
                     continue
-                # Locked, so its owner is alive: count it unless unparseable
-                # or past the deadline written in it.
+                # Locked, so its owner is alive: count it unless unparseable,
+                # past the deadline written in it, or not beaten lately.
                 try:
-                    arrival, due = [float(word) for word in os.read(fd, 100).split()[:2]]
+                    arrival, due, beat = [float(word) for word in os.read(fd, 100).split()[:3]]
                 except ValueError:
                     continue
-                if now < due:
+                if now < due and now - beat <= HEARTBEAT_SECONDS:
                     found.append((arrival, int(pid)))
                 continue
             try:
@@ -445,7 +460,7 @@ def admit_one(available):
     else:
         refusal[0] = "every slot file is held"
     if waiting_ahead:
-        refusal[0] = "a waiter ahead of it has been queued for %d s" % (time.time() - waiting_ahead[0][0])
+        refusal[0] = "a waiter ahead of it has been queued for %d s" % (time.monotonic() - min(waiting_ahead)[0])
     if allowed and not waiting_ahead:
         drop_ticket()
         return descriptor
@@ -468,7 +483,7 @@ def try_take():
     finally:
         fcntl.flock(gate, fcntl.LOCK_UN)
 
-deadline = time.monotonic() + timeout
+deadline = started + timeout
 announced = False
 held = None
 while held is None:
@@ -481,9 +496,12 @@ while held is None:
         report("timeout " + refusal[0])
         sys.exit(0)
     if not announced:
-        sys.stderr.write(
-            "machine-slot: waiting for a %r slot (%d slot file(s); a free one is only taken in turn, while memory allows)...\n" % (name, slots)
-        )
+        if available_kib() is None:
+            sys.stderr.write("machine-slot: all %d %r slot(s) are busy on this machine; waiting...\n" % (slots, name))
+        else:
+            sys.stderr.write(
+                "machine-slot: waiting for a %r slot (%d slot file(s); a free one is only taken in turn, while memory allows)...\n" % (name, slots)
+            )
         sys.stderr.flush()
         announced = True
     # Jitter keeps two probing newcomers from lock-stepping.

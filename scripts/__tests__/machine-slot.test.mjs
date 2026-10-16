@@ -518,7 +518,7 @@ describe("machine-slot.sh executable mode", () => {
 
 // `auto` has a pool (one slot file per 16 GiB of MemTotal) and an admission
 // check, first come first served (a free file is only taken while nothing else
-// is held, or while MemAvailable is at least 16 GiB plus 8 GiB for every held
+// is held, or while MemAvailable is at least 16 GiB plus 12 GiB for every held
 // slot file). TRAYCER_MACHINE_SLOT_MEMINFO is a test-only seam
 // that points both at a fake meminfo file, so these cases do not depend on the
 // memory of the machine running them. The fake values are above 32 GiB so the
@@ -783,11 +783,11 @@ describe("machine-slot.sh auto admission", () => {
     expect(started).toHaveLength(1);
   }, 30000);
 
-  it("reserves one peak per held slot file: 26 GiB admits a second holder but not a third until memory rises", async () => {
+  it("reserves one peak per held slot file: 32 GiB admits a second holder but not a third until memory rises", async () => {
     const dir = freshSlotDir();
     const logFile = join(dir, "log.txt");
-    // 16 GiB plus one held file is 24 GiB; two held files, 32 GiB.
-    writeMeminfo(dir, { totalGib: 62, availableGib: 26 });
+    // 16 GiB plus one held file is 28 GiB; two held files, 40 GiB.
+    writeMeminfo(dir, { totalGib: 62, availableGib: 32 });
     const env = admissionEnv(dir);
 
     const a = runSlot(["reserve", "auto", ...markerCommand("A", "12")], env);
@@ -798,7 +798,7 @@ describe("machine-slot.sh auto admission", () => {
     await pause(2000);
     expect(readLogLines(logFile)).toEqual(["start:A", "start:B"]);
 
-    writeMeminfo(dir, { totalGib: 62, availableGib: 40 });
+    writeMeminfo(dir, { totalGib: 62, availableGib: 50 });
     const rc = await c.done;
     expect(rc.code, rc.stderr).toBe(0);
     expect(rc.stderr).not.toMatch(/waited/);
@@ -806,7 +806,7 @@ describe("machine-slot.sh auto admission", () => {
     await Promise.all([a.done, b.done]);
   }, 40000);
 
-  it("never lets the reservation lapse with time: a holder keeps its 8 GiB for as long as it holds", async () => {
+  it("never lets the reservation lapse with time: a holder keeps its 12 GiB for as long as it holds", async () => {
     const dir = freshSlotDir();
     const logFile = join(dir, "log.txt");
     writeMeminfo(dir, { totalGib: 62, availableGib: 20 });
@@ -816,7 +816,7 @@ describe("machine-slot.sh auto admission", () => {
     const a = runSlot(["no-lapse", "auto", ...markerCommand("A", "10")], env);
     await waitForLine(logFile, "start:A");
     const b = runSlot(["no-lapse", "auto", ...markerCommand("B", "0.1")], env);
-    // 20 GiB is under the 24 GiB that one held file needs, however long A
+    // 20 GiB is under the 28 GiB that one held file needs, however long A
     // has been running.
     await pause(4000);
     expect(readLogLines(logFile)).toEqual(["start:A"]);
@@ -835,7 +835,9 @@ describe("machine-slot.sh auto admission", () => {
     // This test process is alive and unrelated to the slot script.
     writeFileSync(
       join(dir, `traycer-slot-impostor.wait.${process.pid}`),
-      "1.0\n",
+      // Valid, older than any caller, far deadline and a fresh heartbeat: only
+      // the missing lock says its owner is gone.
+      "0.5 99999999999.0 99999999999.0\n",
     );
     const startedAt = Date.now();
     const result = await runSlot(
@@ -853,7 +855,7 @@ describe("machine-slot.sh auto admission", () => {
     const logFile = join(dir, "log.txt");
     writeMeminfo(dir, HIGH);
     const ticket = join(dir, `traycer-slot-pastdue.wait.${process.pid}`);
-    writeFileSync(ticket, "1.0 2.0\n");
+    writeFileSync(ticket, "0.5 2.0 99999999999.0\n");
     await holdFile(ticket);
     const startedAt = Date.now();
     const result = await runSlot(
@@ -866,34 +868,58 @@ describe("machine-slot.sh auto admission", () => {
     expect(readLogLines(logFile)).toEqual(["start:A", "end:A"]);
   }, 20000);
 
-  it("waits behind a stopped waiter only until that waiter's own deadline", async () => {
+  it("ignores a locked ticket whose heartbeat is stale", async () => {
+    const dir = freshSlotDir();
+    const logFile = join(dir, "log.txt");
+    writeMeminfo(dir, HIGH);
+    const ticket = join(dir, `traycer-slot-stalebeat.wait.${process.pid}`);
+    // Locked, older than any caller, far deadline, but last beaten long ago.
+    writeFileSync(ticket, "0.5 99999999999.0 3.0\n");
+    await holdFile(ticket);
+    const startedAt = Date.now();
+    const result = await runSlot(
+      ["stalebeat", "auto", ...markerCommand("A", "0.1")],
+      admissionEnv(dir, { TRAYCER_MACHINE_SLOT_TIMEOUT: "8" }),
+    ).done;
+    expect(result.code, result.stderr).toBe(0);
+    expect(result.stderr).not.toMatch(/waited/);
+    expect(Date.now() - startedAt).toBeLessThan(4000);
+    expect(readLogLines(logFile)).toEqual(["start:A", "end:A"]);
+  }, 20000);
+
+  it("stops being blocked by a stopped waiter within seconds, even a caller that would be alone", async () => {
     const dir = freshSlotDir();
     const logFile = join(dir, "log.txt");
     writeMeminfo(dir, LOW);
     const env = admissionEnv(dir);
 
-    const a = runSlot(["stopped", "auto", ...markerCommand("A", "14")], env);
+    const a = runSlot(["stopped", "auto", ...markerCommand("A", "5")], env);
     await waitForLine(logFile, "start:A");
+    // W's own deadline is far away: only the heartbeat can free the queue.
     const w = runSlot(["stopped", "auto", ...markerCommand("W", "0.1")], {
       ...env,
-      TRAYCER_MACHINE_SLOT_TIMEOUT: "5",
+      TRAYCER_MACHINE_SLOT_TIMEOUT: "120",
     });
     await waitForFiles(dir, (names) => names.some(isTicket));
     const waiterPid = Number(
       readdirSync(dir).find(isTicket).split(".wait.")[1],
     );
-    // The waiter is stopped (Ctrl-Z) holding its ticket lock. Memory would now
-    // admit the next caller, but the stopped waiter is ahead of it.
+    // Stop W only while the test holds the admission gate, so W cannot be
+    // stopped inside it (that would wedge every caller, by design).
+    const gateHolder = await holdFile(
+      join(dir, "traycer-slot-stopped.admit.lock"),
+    );
     process.kill(waiterPid, "SIGSTOP");
-    writeMeminfo(dir, HIGH);
+    gateHolder.kill("SIGKILL");
+
+    // A finishes; nothing is held, so N would be a lone caller. W's ticket is
+    // locked and older, but it is not being beaten.
+    await waitForLine(logFile, "end:A");
     const n = runSlot(["stopped", "auto", ...markerCommand("N", "0.1")], env);
-    await pause(2500);
-    expect(readLogLines(logFile)).toEqual(["start:A"]);
-    // Once the waiter's deadline passes its ticket is ignored.
     await waitForLine(logFile, "start:N");
-    expect(readLogLines(logFile)).not.toContain("end:A");
     const rn = await n.done;
     expect(rn.code, rn.stderr).toBe(0);
+    expect(rn.stderr).not.toMatch(/waited/);
     process.kill(waiterPid, "SIGKILL");
     await Promise.all([w.done, a.done]);
   }, 40000);
@@ -933,7 +959,7 @@ describe("machine-slot.sh auto admission", () => {
     const rb = await b.done;
     expect(rb.stderr).toMatch(/waited 2s/);
     expect(rb.stderr).toMatch(
-      /last refused because MemAvailable is 5 GiB and this needs 24 GiB/,
+      /last refused because MemAvailable is 5 GiB and this needs 28 GiB/,
     );
     expect(readdirSync(dir).filter(isTicket)).toEqual([]);
     await a.done;

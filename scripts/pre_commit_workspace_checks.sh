@@ -41,7 +41,7 @@ workspace_check_lane="${WORKSPACE_CHECK_LANE:-all}"
 #      instead of stacking their peaks. `auto` is a pool of one slot file per
 #      16 GB of RAM plus an admission check, first come first served: a
 #      commit takes a free file only when nothing else is held, or while
-#      16 GiB plus 8 GiB per held slot file is available (every holder is
+#      16 GiB plus 12 GiB per held slot file is available (every holder is
 #      assumed not to have peaked yet, however long it has held its slot).
 #      TRAYCER_MACHINE_SLOTS sets a pool of that exact size and turns
 #      admission off.
