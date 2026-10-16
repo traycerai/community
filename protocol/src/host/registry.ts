@@ -649,8 +649,10 @@ import {
   epicCreateV10,
   epicCreateV11,
   epicCreateV12,
+  epicCreateV13,
   epicCreateUpgradeV10ToV11,
   epicCreateUpgradeV11ToV12,
+  epicCreateUpgradeV12ToV13,
   epicDeleteArtifactV10,
   epicDeleteChatV10,
   epicDeleteChatV11,
@@ -7654,7 +7656,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   // place: an unknown `kind` fails that peer's whole response parse.
   "epic.create": {
     1: {
-      latestMinor: 2,
+      latestMinor: 3,
       versions: {
         0: {
           contract: epicCreateV10,
@@ -7676,6 +7678,12 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
           // (`CREATE_ATTACHMENT_REFUSAL_MINOR = 2` for this kind) and throws
           // for every older peer.
           responseGrowthProjectionGated: true,
+        },
+        // `owner` (ticket E13 checkpoint 5): an additive request key a `@1.2`
+        // host strips, so a caller sending a team owner requires `@1.3`.
+        3: {
+          contract: epicCreateV13,
+          upgradeFromPreviousVersion: epicCreateUpgradeV12ToV13,
         },
       },
       downgradePathsFromLatest: {},
