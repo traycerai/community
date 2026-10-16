@@ -1,5 +1,6 @@
 import type { HostClient } from "@traycer-clients/shared/host-client/host-client";
 import { NO_HOST_OPTION_REFUSALS } from "@/components/settings/host-scope/host-option-model";
+import type { HostScopeOption } from "@/components/settings/host-scope/host-scope-model";
 import type { HostRpcRegistry } from "@/lib/host";
 
 /**
@@ -52,6 +53,13 @@ export type HostWorkspaceControlsHostScope =
        * nothing.
        */
       readonly unselectableExceptHostId: string | null;
+      /**
+       * The only hosts the picker lists, or `null` for every host: B1's
+       * "Continue on a <team> host" shows that team's hosts and no other
+       * (ticket E17 checkpoint 6). The selected host is listed whatever this
+       * says, so the picker never hides its own value.
+       */
+      readonly onlyHostIds: ReadonlySet<string> | null;
     };
 
 export const ACTIVE_HOST_WORKSPACE_CONTROLS_SCOPE: HostWorkspaceControlsHostScope =
@@ -92,4 +100,25 @@ export function hostWorkspaceControlsScopeRefusals(
   return scope.kind === "selected"
     ? scope.refusalByHostId
     : NO_HOST_OPTION_REFUSALS;
+}
+
+/**
+ * The host rows a scope lists. `fixed` lists its one host; otherwise every
+ * listed host, with the selected one first when the lists do not carry it,
+ * narrowed to a `selected` scope's `onlyHostIds`.
+ */
+export function hostPickerOptionsForScope(
+  scope: HostWorkspaceControlsHostScope,
+  selectedHostOption: HostScopeOption | null,
+  listedHostOption: HostScopeOption | null,
+  hosts: readonly HostScopeOption[],
+): readonly HostScopeOption[] {
+  if (scope.kind === "fixed") {
+    if (selectedHostOption === null) return [];
+    return [selectedHostOption];
+  }
+  if (selectedHostOption !== null && listedHostOption === null) {
+    return [selectedHostOption, ...hosts];
+  }
+  return hosts;
 }

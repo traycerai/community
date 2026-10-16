@@ -1,4 +1,6 @@
 import type { SchemaVersion } from "@traycer/protocol/framework/index";
+import type { EpicCreateOwner } from "@traycer/protocol/host/epic/unary-schemas";
+import type { RequiredHostMethodVersion } from "@traycer-clients/shared/host-transport/host-messenger";
 
 /**
  * The `epic.create` minor from which the create is known to be LOCAL-FIRST -
@@ -43,4 +45,45 @@ export function negotiatedCreateServesLocalFirst(
 ): boolean {
   if (version === null || version === false) return false;
   return version.major === 1 && version.minor >= EPIC_CREATE_LOCAL_FIRST_MINOR;
+}
+
+/**
+ * The `epic.create` minor that carries `owner` (ticket E13 checkpoint 5). A
+ * `@1.2` host's frozen request strips the key, so a team create sent to it
+ * would land as the person's own epic.
+ */
+export const EPIC_CREATE_TEAM_OWNER_MINOR = 3;
+
+/** A2, verbatim: the host predates `epic.create@1.3`. */
+export const TEAM_CREATE_HOST_TOO_OLD =
+  "This host can't create team tasks yet. Update the host, or choose Personal.";
+
+/** A2, verbatim: the cloud refused a team create (`FORBIDDEN`). */
+export function teamCreateForbiddenLine(_slug: string): string {
+  return "";
+}
+
+/**
+ * The floor a create pays before any frame (ticket E17 checkpoint 6, A1): a
+ * team owner requires `epic.create@1.3`, which is also above the local-first
+ * floor; otherwise the local-first floor for a session with no cloud verdict,
+ * and none for a signed-in one.
+ */
+export function epicCreateFloor(_input: {
+  readonly owner: EpicCreateOwner | null;
+  readonly cloudAuthorized: boolean;
+}): RequiredHostMethodVersion | null {
+  return null;
+}
+
+/**
+ * What a rejected team create says (A2), or `null` to leave the error to the
+ * generic toast: the transport's `@1.3` floor refusal, and the cloud's
+ * `FORBIDDEN` keyed on the code alone, never on the message.
+ */
+export function teamCreateRejectionMessage(
+  _error: unknown,
+  _teamSlug: string | null,
+): string | null {
+  return null;
 }

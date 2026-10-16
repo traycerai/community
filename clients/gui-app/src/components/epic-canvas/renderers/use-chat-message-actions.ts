@@ -936,6 +936,7 @@ export function useChatMessageActions(
         carriedInterviews: mode === "ab-worktree" ? "pending" : "settled",
         forkMode: mode,
         initialHostId,
+        onlyHostIds: null,
       });
     },
     [

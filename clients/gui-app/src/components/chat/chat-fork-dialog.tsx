@@ -148,6 +148,11 @@ export interface ChatForkDialogTarget {
    * version, publication) applies to it exactly as to a hand-picked host.
    */
   readonly initialHostId: string | null;
+  /**
+   * The only hosts the picker lists (B1's "Continue on a <team> host", ticket
+   * E17 checkpoint 6), or `null` for every host.
+   */
+  readonly onlyHostIds: ReadonlySet<string> | null;
 }
 
 interface ChatForkDialogProps {
@@ -786,6 +791,7 @@ function ChatForkDialogBody(props: ChatForkDialogProps) {
       // the picker which row is exempt — a same-host fork needs no publication
       // at all.
       unselectableExceptHostId: remoteRowsUnselectable ? tabHostId : null,
+      onlyHostIds: target?.onlyHostIds ?? null,
     }),
     [
       hostRefusals,
@@ -794,6 +800,7 @@ function ChatForkDialogBody(props: ChatForkDialogProps) {
       selectedHostClient,
       selectedHostId,
       tabHostId,
+      target,
     ],
   );
 

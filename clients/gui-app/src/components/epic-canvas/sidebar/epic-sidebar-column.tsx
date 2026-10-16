@@ -272,6 +272,7 @@ function PanelTaskHeaderRow(props: {
   });
   return (
     <PanelTaskHeaderBody
+      teamChip={null}
       testId="epic-sidebar-task-header"
       chip={
         <MonogramChip

@@ -143,6 +143,19 @@ export function readEpicTitlesFromCloudTaskCaches(
   return titles;
 }
 
+/**
+ * The team that owns `epicId` as the cached task lists read it (ticket E17
+ * checkpoint 6, A3): the first cached row's `taskOwningTeamId`. `null` when no
+ * cached row names the epic, or the row names no team.
+ */
+export function readEpicOwningTeamIdFromCloudTaskCaches(
+  _queryClient: QueryClient,
+  _scope: CloudEpicTasksCacheScope,
+  _epicId: string,
+): string | null {
+  return null;
+}
+
 export function updateEpicTitleInCloudTaskCaches(
   queryClient: QueryClient,
   scope: CloudEpicTasksCacheScope,

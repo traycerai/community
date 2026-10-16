@@ -796,6 +796,7 @@ describe("new-conversation modal shares the composer's placement semantics", () 
         hostId: "host-session",
         onSelect: testState.recordPlacement,
         unselectableExceptHostId: null,
+        onlyHostIds: null,
       });
     }
     expect(testState.latestSeedPins.length).toBeGreaterThan(0);

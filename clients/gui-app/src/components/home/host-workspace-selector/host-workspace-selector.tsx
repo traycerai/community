@@ -21,7 +21,6 @@ import { useHostOptions } from "@/components/settings/host-scope/use-host-option
 import {
   findHostOption,
   unavailableHostOption,
-  type HostScopeOption,
 } from "@/components/settings/host-scope/host-scope-model";
 import { NO_HOST_OPTION_REFUSALS } from "@/components/settings/host-scope/host-option-model";
 import { activeRunNoticeFor } from "./active-run-notice";
@@ -117,6 +116,7 @@ import {
 } from "@/components/home/worktree/worktree-scripts-dialog";
 import {
   hostWorkspaceControlsScopeHostId,
+  hostPickerOptionsForScope,
   hostWorkspaceControlsScopeRefusals,
   type HostWorkspaceControlsHostScope,
 } from "./host-workspace-controls-scope";
@@ -658,22 +658,6 @@ export function ActiveHostWorkspaceControls(
       disabled={disabled}
     />
   );
-}
-
-function hostPickerOptionsForScope(
-  scope: HostWorkspaceControlsHostScope,
-  selectedHostOption: HostScopeOption | null,
-  listedHostOption: HostScopeOption | null,
-  hosts: readonly HostScopeOption[],
-): readonly HostScopeOption[] {
-  if (scope.kind === "fixed") {
-    if (selectedHostOption === null) return [];
-    return [selectedHostOption];
-  }
-  if (selectedHostOption !== null && listedHostOption === null) {
-    return [selectedHostOption, ...hosts];
-  }
-  return hosts;
 }
 
 function HomeWorkspaceRows(props: {
