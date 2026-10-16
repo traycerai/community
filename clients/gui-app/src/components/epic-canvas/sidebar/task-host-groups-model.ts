@@ -7,6 +7,21 @@ export const TASK_HOST_UNNAMED_LABEL = "Unnamed host";
 export type TaskHostState = "online" | "offline";
 
 /**
+ * The task's hosts that this host's principal does not reach, from the
+ * server's `reach` alone (ticket E17 checkpoint 5): the Agents tree marks the
+ * agents on them.
+ */
+export function otherPrincipalHostIds(
+  hosts: readonly TaskHostRow[],
+): ReadonlySet<string> {
+  return new Set(
+    hosts
+      .filter((row) => row.reach === "other_principal")
+      .map((row) => row.hostId),
+  );
+}
+
+/**
  * A host in the person's own host directory: its label, and its state or
  * `null` when the directory cannot say.
  */
@@ -46,7 +61,14 @@ export interface TaskHostGroup {
   readonly rows: readonly TaskHostGroupRow[];
 }
 
-const PERSONAL_KEY = "personal";
+/** The viewer's own group's key. */
+export const TASK_HOST_PERSONAL_GROUP_KEY = "personal";
+/** A team group's title when the person is not in the team. */
+export const TASK_HOST_UNKNOWN_TEAM_TITLE = "A team";
+/** A collaborator group's title when the collaborator has no display name. */
+export const TASK_HOST_UNKNOWN_COLLABORATOR_TITLE = "A collaborator's";
+
+const PERSONAL_KEY = TASK_HOST_PERSONAL_GROUP_KEY;
 
 type GroupRank = 0 | 1 | 2;
 
@@ -71,7 +93,7 @@ function groupHead(row: TaskHostRow, input: TaskHostGroupsInput): GroupHead {
     const team = input.teams.find((t) => t.teamId === principal.id) ?? null;
     return {
       key: `team:${principal.id}`,
-      title: team === null ? "A team" : team.name,
+      title: team === null ? TASK_HOST_UNKNOWN_TEAM_TITLE : team.name,
       rank: 1,
       id: principal.id,
     };
@@ -82,10 +104,23 @@ function groupHead(row: TaskHostRow, input: TaskHostGroupsInput): GroupHead {
   const name = input.collaboratorNames.get(principal.id) ?? null;
   return {
     key: `user:${principal.id}`,
-    title: name === null ? "A collaborator's" : `${name}'s`,
+    title: name === null ? TASK_HOST_UNKNOWN_COLLABORATOR_TITLE : `${name}'s`,
     rank: COLLABORATOR_RANK,
     id: principal.id,
   };
+}
+
+/**
+ * The directory's name for a host, or `null`: a host the registry never named
+ * reaches the directory labelled with its own id, which names nothing a person
+ * would recognise, so it reads as unnamed.
+ */
+function directoryName(
+  hostId: string,
+  fact: TaskHostDirectoryFact | null,
+): string | null {
+  if (fact === null || fact.label === hostId) return null;
+  return fact.label;
 }
 
 function groupRow(
@@ -101,7 +136,8 @@ function groupRow(
       : (input.directory.get(row.hostId) ?? null);
   return {
     hostId: row.hostId,
-    label: row.label ?? fact?.label ?? TASK_HOST_UNNAMED_LABEL,
+    label:
+      row.label ?? directoryName(row.hostId, fact) ?? TASK_HOST_UNNAMED_LABEL,
     agentsLine: taskHostAgentsLine(
       input.agentCountByHostId.get(row.hostId) ?? 0,
     ),

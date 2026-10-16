@@ -92,6 +92,8 @@ import { toastRepointedStagingReset } from "@/lib/composer/repointed-staging-toa
 import { subscribeFollowingSurfaceReset } from "@/stores/host/surface-host-selection-store";
 import { ComposerHostNotice } from "@/components/home/composer/composer-host-notice";
 import { useComposerHostNotice } from "@/hooks/composer/use-composer-host-notice";
+import { composerTopNotice } from "@/components/home/composer/composer-mirror-line-model";
+import { useComposerMirrorLine } from "@/hooks/composer/use-composer-mirror-line";
 import { UNKNOWN_HOST_PLACEHOLDER } from "@/lib/host/constants";
 import { readLocalHostIdSnapshot } from "@/lib/host/local-host-id-snapshot";
 import { LEADER_SCOPE_NEW_CONVERSATION_MODAL } from "@/lib/keybindings/leader-scope";
@@ -973,6 +975,15 @@ export function NewConversationModalBody(props: {
     raise: raiseHostNotice,
     dismiss: dismissHostNotice,
   } = useComposerHostNotice(resolvedHostId);
+  // The mirror line (ticket E17 checkpoint 5), once per task: the start host
+  // has another owner than a host already working here. A refusal outranks it
+  // in the one slot; it is marked seen when dismissed or when the agent starts.
+  const mirrorLine = useComposerMirrorLine(epicId, resolvedHostId);
+  const topNotice = composerTopNotice(
+    hostNotice,
+    dismissHostNotice,
+    mirrorLine,
+  );
   // G4: this modal FOLLOWS the effective host only when nothing else answered
   // its placement - no named host, no per-Epic pin in force, no session host
   // in force - and only then does a derivation move re-point it. Its staged
@@ -996,12 +1007,23 @@ export function NewConversationModalBody(props: {
       }
     });
   }, [clearStagedIntent, composerFollowsEffective, hostLabelFor, stagingKey]);
+  const mirrorLineShown = mirrorLine.notice !== null;
+  const markMirrorLineSeen = mirrorLine.markSeen;
   const cleanupAfterSubmit = useCallback((): void => {
+    if (mirrorLineShown) markMirrorLineSeen();
     clearDraft(epicId);
     clearStagedIntent(stagingKey);
     editorRef.current?.clear();
     onSubmitted();
-  }, [clearDraft, clearStagedIntent, epicId, onSubmitted, stagingKey]);
+  }, [
+    clearDraft,
+    clearStagedIntent,
+    epicId,
+    markMirrorLineSeen,
+    mirrorLineShown,
+    onSubmitted,
+    stagingKey,
+  ]);
   const worktreeIntentForSubmit = useCallback(
     (): WorktreeIntent | null =>
       effectiveWorktreeIntent({
@@ -1801,7 +1823,10 @@ export function NewConversationModalBody(props: {
       workspaceDisabledHint={composerDisabledHint}
       header={header}
       topBanner={
-        <ComposerHostNotice notice={hostNotice} onDismiss={dismissHostNotice} />
+        <ComposerHostNotice
+          notice={topNotice.notice}
+          onDismiss={topNotice.dismiss}
+        />
       }
       // Same rule as the landing composer's row (`landing-composer.tsx`): six
       // pills do not fit a phone-width row, so below `md` the agent-mode pill
