@@ -1,17 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-// The probe is the only part that needs a Windows console; everything else in
+// The probe is the only part that needs Windows; everything else in
 // the decode path is real. `vi.hoisted` because the factory runs before the
 // imports below.
 const probe = vi.hoisted(() => ({
   codePage: null as number | null,
   rejects: false,
 }));
-vi.mock("../console-codepage", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../console-codepage")>();
+vi.mock("../oem-codepage", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../oem-codepage")>();
   return {
     ...actual,
-    consoleOutputCodePage: () =>
+    systemOemCodePage: () =>
       probe.rejects
         ? Promise.reject(new Error("probe failed"))
         : Promise.resolve(probe.codePage),
@@ -22,9 +22,9 @@ import {
   cachedCodePageProbe,
   DECODER_LABEL_BY_CODEPAGE,
   decodeChildOutput,
-  parseChcpOutput,
-  type ChcpExec,
-} from "../console-codepage";
+  parseOemCodePage,
+  type RegQueryExec,
+} from "../oem-codepage";
 import {
   ProcessRunError,
   runCommand,
@@ -90,7 +90,7 @@ describe("the fixture", () => {
   });
 });
 
-describe("runCommand on Windows with a cp866 console", () => {
+describe("runCommand on Windows with a cp866 system", () => {
   it("builds the ProcessRunError message from the decoded stderr", async () => {
     setPlatform("win32");
     probe.codePage = 866;
@@ -162,7 +162,7 @@ describe("runCommand on Windows with a cp866 console", () => {
     expect(result.stderr).toBe(bytes.toString("utf8"));
   });
 
-  it("keeps UTF-8 a child wrote on purpose, whatever the console codepage", async () => {
+  it("keeps UTF-8 a child wrote on purpose, whatever the system codepage", async () => {
     setPlatform("win32");
     probe.codePage = 866;
     const result = await runCommand(
@@ -185,7 +185,7 @@ describe("decodeChildOutput fallbacks", () => {
   });
 
   it.each([65001, null])(
-    "codepage %s (UTF-8 console, or no console / failed probe) decodes as UTF-8",
+    "codepage %s (UTF-8 system page, or failed probe) decodes as UTF-8",
     async (codePage) => {
       expect(
         await decodeChildOutput(bytes, () => Promise.resolve(codePage)),
@@ -252,7 +252,7 @@ describe("decodeChildOutput fallbacks", () => {
 });
 
 describe("non-Windows platforms", () => {
-  it("never consult the console codepage", async () => {
+  it("never consult the OEM codepage", async () => {
     setPlatform("linux");
     probe.codePage = 866;
     const result = await runCommand(
@@ -266,38 +266,72 @@ describe("non-Windows platforms", () => {
   });
 });
 
-describe("parseChcpOutput", () => {
-  it.each([
-    ["Active code page: 437", 437],
-    ["Текущая кодовая страница: 866\r\n", 866],
-    ["Page de codes active : 850.", 850],
-    ["Active code page: 65001\r\n", 65001],
-  ])("%j -> %j", (text, expected) => {
-    expect(parseChcpOutput(Buffer.from(text, "utf8"))).toBe(expected);
-  });
+// The shape `reg query ... /v OEMCP` prints: a blank first line, the key, the
+// value row with its REG_SZ type, a trailing blank line, CRLF throughout.
+const REG_OUTPUT_866 =
+  "\r\nHKEY_LOCAL_MACHINE\\SYSTEM\\CurrentControlSet\\Control\\Nls\\CodePage\r\n    OEMCP    REG_SZ    866\r\n\r\n";
 
-  it("reads the number from a localized sentence in real cp866 bytes", () => {
+describe("parseOemCodePage", () => {
+  it("reads the OEMCP row of real reg query output", () => {
+    expect(parseOemCodePage(Buffer.from(REG_OUTPUT_866, "latin1"))).toBe(866);
     expect(
-      parseChcpOutput(encodeIbm866("Текущая кодовая страница: 866\r\n")),
+      parseOemCodePage(
+        Buffer.from(REG_OUTPUT_866.replace("866", "65001"), "latin1"),
+      ),
+    ).toBe(65001);
+    expect(
+      parseOemCodePage(
+        Buffer.from(REG_OUTPUT_866.replaceAll("\r\n", "\n"), "latin1"),
+      ),
     ).toBe(866);
   });
 
-  it("is null for output with no number", () => {
-    expect(parseChcpOutput(Buffer.from("not recognized"))).toBeNull();
-    expect(parseChcpOutput(Buffer.alloc(0))).toBeNull();
+  it("is null for output with no OEMCP value row", () => {
+    expect(parseOemCodePage(Buffer.alloc(0))).toBeNull();
+    expect(
+      parseOemCodePage(
+        Buffer.from(
+          "\r\nERROR: The system was unable to find the specified registry key or value.\r\n",
+        ),
+      ),
+    ).toBeNull();
+    // A different value, a wrong type and a non-numeric data are not the page.
+    expect(
+      parseOemCodePage(Buffer.from("    ACP    REG_SZ    1251\r\n")),
+    ).toBeNull();
+    expect(
+      parseOemCodePage(Buffer.from("    OEMCP    REG_DWORD    0x362\r\n")),
+    ).toBeNull();
+    expect(
+      parseOemCodePage(Buffer.from("    OEMCP    REG_SZ    abc\r\n")),
+    ).toBeNull();
+  });
+
+  it("reads the value row from a localized reg.exe in cp866 bytes", () => {
+    // reg.exe localizes its header text; the OEMCP row's name and data are not.
+    const localized = encodeIbm866(
+      "\r\nПуть реестра\r\n    OEMCP    REG_SZ    866\r\n",
+    );
+    expect(parseOemCodePage(localized)).toBe(866);
   });
 });
 
 describe("cachedCodePageProbe", () => {
-  type Call = { file: string; windowsHide: true; timeout: number };
+  type Call = {
+    file: string;
+    args: readonly string[];
+    windowsHide: true;
+    timeout: number;
+  };
 
   function probeOf(
     behave: (callback: (err: Error | null, stdout: Buffer) => void) => void,
   ): { run: () => Promise<number | null>; calls: Call[] } {
     const calls: Call[] = [];
-    const exec: ChcpExec = (file, options, callback) => {
+    const exec: RegQueryExec = (file, args, options, callback) => {
       calls.push({
         file,
+        args,
         windowsHide: options.windowsHide,
         timeout: options.timeout,
       });
@@ -306,25 +340,41 @@ describe("cachedCodePageProbe", () => {
     return { run: cachedCodePageProbe(exec), calls };
   }
 
-  it("runs chcp.com hidden with a timeout and parses its number", async () => {
+  it("queries OEMCP with reg.exe, hidden and with a timeout, and parses it", async () => {
     const { run, calls } = probeOf((callback) => {
-      callback(null, Buffer.from("Active code page: 866\r\n"));
+      callback(null, Buffer.from(REG_OUTPUT_866, "latin1"));
     });
     expect(await run()).toBe(866);
     expect(calls).toHaveLength(1);
-    expect(calls[0]?.file).toMatch(/System32\\chcp\.com$/);
+    expect(calls[0]?.file).toMatch(/System32\\reg\.exe$/);
+    expect(calls[0]?.args).toEqual([
+      "query",
+      "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Nls\\CodePage",
+      "/v",
+      "OEMCP",
+    ]);
     expect(calls[0]?.windowsHide).toBe(true);
     expect(calls[0]?.timeout).toBeGreaterThan(0);
   });
 
-  it("is null when chcp fails to spawn", async () => {
+  it("is null when reg.exe fails to spawn", async () => {
     const { run } = probeOf((callback) => {
-      callback(new Error("spawn chcp.com ENOENT"), Buffer.alloc(0));
+      callback(new Error("spawn reg.exe ENOENT"), Buffer.alloc(0));
     });
     expect(await run()).toBeNull();
   });
 
-  it("is null when chcp is killed by the timeout", async () => {
+  it("is null when reg.exe exits non-zero (value missing)", async () => {
+    const { run } = probeOf((callback) => {
+      callback(
+        Object.assign(new Error("Command failed"), { code: 1 }),
+        Buffer.alloc(0),
+      );
+    });
+    expect(await run()).toBeNull();
+  });
+
+  it("is null when reg.exe is killed by the timeout", async () => {
     const { run } = probeOf((callback) => {
       callback(
         Object.assign(new Error("Command failed"), {
@@ -346,11 +396,11 @@ describe("cachedCodePageProbe", () => {
 
   it("runs the child once per process, sharing the result", async () => {
     const { run, calls } = probeOf((callback) => {
-      callback(null, Buffer.from("Active code page: 850"));
+      callback(null, Buffer.from(REG_OUTPUT_866, "latin1"));
     });
     const results = await Promise.all([run(), run()]);
-    expect(await run()).toBe(850);
-    expect(results).toEqual([850, 850]);
+    expect(await run()).toBe(866);
+    expect(results).toEqual([866, 866]);
     expect(calls).toHaveLength(1);
   });
 });

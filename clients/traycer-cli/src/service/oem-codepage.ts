@@ -27,14 +27,21 @@ export const DECODER_LABEL_BY_CODEPAGE: ReadonlyMap<number, string> = new Map([
   [54936, "gb18030"],
 ]);
 
-/** How long the one-time `chcp` probe may run before it is read as "unknown". */
-const CHCP_PROBE_TIMEOUT_MS = 5_000;
+/** How long the one-time `reg query` probe may run before it is read as "unknown". */
+const OEM_PROBE_TIMEOUT_MS = 5_000;
 
-/** The number `chcp` prints, whatever the language of the sentence around it. */
-export function parseChcpOutput(output: Buffer): number | null {
-  // `latin1`: the sentence is localized and in the very codepage being asked
-  // about, but the digits are ASCII in every OEM page.
-  const match = /(\d+)\D*$/.exec(output.toString("latin1").trim());
+const NLS_CODEPAGE_KEY =
+  "HKLM\\SYSTEM\\CurrentControlSet\\Control\\Nls\\CodePage";
+
+/**
+ * The number in the `OEMCP    REG_SZ    866` row of `reg query ... /v OEMCP`,
+ * whatever language `reg.exe` localizes the rest of its output into.
+ */
+export function parseOemCodePage(output: Buffer): number | null {
+  // `latin1`: only the ASCII value row is read.
+  const match = /^\s*OEMCP\s+REG_SZ\s+(\d+)\s*$/m.exec(
+    output.toString("latin1"),
+  );
   if (match === null || match[1] === undefined) return null;
   const codePage = Number.parseInt(match[1], 10);
   return Number.isSafeInteger(codePage) && codePage > 0 ? codePage : null;
@@ -50,8 +57,9 @@ function windowsSystemExecutable(filename: string): string {
  * The slice of `execFile` the probe uses, so a test can stand in for the real
  * child. `callback` receives the error (or `null`) and the captured stdout.
  */
-export type ChcpExec = (
+export type RegQueryExec = (
   file: string,
+  args: readonly string[],
   options: {
     readonly timeout: number;
     readonly windowsHide: true;
@@ -60,37 +68,40 @@ export type ChcpExec = (
   callback: (err: Error | null, stdout: Buffer) => void,
 ) => void;
 
-const execChcp: ChcpExec = (file, options, callback) => {
-  execFile(file, [], { ...options }, (err, stdout) => {
+const execRegQuery: RegQueryExec = (file, args, options, callback) => {
+  execFile(file, [...args], { ...options }, (err, stdout) => {
     callback(err, stdout);
   });
 };
 
 /**
- * A once-per-process probe of the console output codepage that runs `exec`
- * on first use and resolves `null` for every failure (a spawn error, a
- * timeout, unparseable output, `exec` throwing). It never rejects, and what it
- * resolved is what every later call gets.
+ * A once-per-process probe of the system OEM codepage that runs `exec` on
+ * first use and resolves `null` for every failure (a spawn error, a non-zero
+ * exit, a timeout, unparseable output, `exec` throwing). It never rejects, and
+ * what it resolved is what every later call gets.
+ *
+ * It reads the registry rather than asking a console (`chcp`): the runner
+ * spawns with `windowsHide` and piped stdio, which libuv turns into
+ * `CREATE_NO_WINDOW`, so neither the commands nor a `chcp` child have a
+ * console to ask. `reg.exe` needs none.
  */
 export function cachedCodePageProbe(
-  exec: ChcpExec,
+  exec: RegQueryExec,
 ): () => Promise<number | null> {
   let cached: Promise<number | null> | null = null;
   return () => {
     cached ??= new Promise<number | null>((resolve) => {
       try {
-        // Spawned with the flags the runner's own `execFile` calls use
-        // (`windowsHide`, piped stdio), so it runs on the same kind of
-        // console as the commands whose output is being decoded.
         exec(
-          windowsSystemExecutable("chcp.com"),
+          windowsSystemExecutable("reg.exe"),
+          ["query", NLS_CODEPAGE_KEY, "/v", "OEMCP"],
           {
-            timeout: CHCP_PROBE_TIMEOUT_MS,
+            timeout: OEM_PROBE_TIMEOUT_MS,
             windowsHide: true,
             encoding: "buffer",
           },
           (err, stdout) => {
-            resolve(err === null ? parseChcpOutput(stdout) : null);
+            resolve(err === null ? parseOemCodePage(stdout) : null);
           },
         );
       } catch {
@@ -102,11 +113,12 @@ export function cachedCodePageProbe(
 }
 
 /**
- * The console output codepage commands run by this process write in, `null`
- * when it cannot be read. Probed once per process, on first use.
+ * The system OEM codepage a console-less command (which is how the runner
+ * spawns every child) writes its text in, `null` when it cannot be read.
+ * Probed once per process, on first use.
  */
-export const consoleOutputCodePage: () => Promise<number | null> =
-  cachedCodePageProbe(execChcp);
+export const systemOemCodePage: () => Promise<number | null> =
+  cachedCodePageProbe(execRegQuery);
 
 /** `bytes` as text, or `null` when they are not well-formed UTF-8. */
 function strictUtf8(bytes: Buffer): string | null {
@@ -124,14 +136,14 @@ function hasNonAscii(bytes: Buffer): boolean {
 /**
  * Decode a Windows child's captured output.
  *
- * A console program writes in the console's output codepage (cp866 on a
- * Russian install), not UTF-8. The order is:
+ * A console program writes in the system OEM codepage (cp866 on a Russian
+ * install), not UTF-8. The order is:
  * 1. all ASCII: every codepage agrees, so nothing is probed;
  * 2. well-formed UTF-8: a child that chose UTF-8 on purpose keeps it. A
  *    legacy-codepage message is almost never well-formed UTF-8; a bare
  *    lowercase cp866 word of 3, 6 or 9 letters can be by accident, and no
  *    realistic localized sentence is;
- * 3. the console codepage, through the WHATWG decoder for it;
+ * 3. the OEM codepage, through the WHATWG decoder for it;
  * 4. lossy UTF-8 (the behaviour before this existed) when the codepage is
  *    unknown, UTF-8 itself, or has no decoder in this Node build.
  */

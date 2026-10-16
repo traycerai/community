@@ -4,7 +4,7 @@ import {
   type ExecFileException,
 } from "node:child_process";
 
-import { consoleOutputCodePage, decodeChildOutput } from "./console-codepage";
+import { systemOemCodePage, decodeChildOutput } from "./oem-codepage";
 
 /**
  * How long a child that `execFile`'s timeout signalled has to exit before it
@@ -41,14 +41,14 @@ function armTimeoutKillEscalation(
 }
 
 /**
- * A child's captured output as text. On Windows it is read in the console's
- * output codepage (`schtasks` and `sc` localize into cp866, cp1251, ... and a
+ * A child's captured output as text. On Windows it is read in the system OEM
+ * codepage (`schtasks` and `sc` localize into cp866, ... and a
  * UTF-8 decode of that is what reached the log and the host-start dialog);
  * everywhere else it is UTF-8, unchanged.
  */
 function decodeOutput(bytes: Buffer): Promise<string> {
   return process.platform === "win32"
-    ? decodeChildOutput(bytes, consoleOutputCodePage)
+    ? decodeChildOutput(bytes, systemOemCodePage)
     : Promise.resolve(bytes.toString("utf8"));
 }
 
@@ -211,7 +211,7 @@ export function runCommand(
 export interface RunBytesResult {
   readonly stdout: Buffer;
   /**
-   * The child's stderr, decoded in the console codepage on Windows and as
+   * The child's stderr, decoded in the system OEM codepage on Windows and as
    * UTF-8 (lossy) elsewhere: diagnostic text for the
    * caller that must tell one failure from another, never parsed as data.
    */
