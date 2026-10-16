@@ -27,11 +27,6 @@ import {
   isOwnerHostUnreachableFailure,
   toastFromOwnerHostWriteError,
 } from "@/lib/owner-host-write-error-toast";
-import {
-  hostErrorToastMessage,
-  isHostTransportFailure,
-  isSilentHostError,
-} from "@/lib/host-error-toast";
 import { progressToast } from "@/lib/toast/progress-toast";
 import { LANDING_ROUTE } from "@/lib/routes";
 import { navigateToTabIntent } from "@/lib/tab-navigation";
@@ -162,13 +157,12 @@ function admitEpicDeleteRequest(variables: BatchDeleteEpicVariables): {
  * The failure of the one request when part of the selection was refused for
  * the sign-in before it was sent.
  *
- *  - The request never reached the host, or the host refused it: nothing was
- *    deleted, for two reasons, and one notice gives both remedies.
- *  - Otherwise (its answer was lost, it was cancelled, or its `UNAUTHORIZED`
- *    is being recovered): the refused ids' notice says they were never sent,
- *    and the request's own notice says what is known of the rest - an answer
- *    that never came back stays unknown, never "not deleted". Two notices
- *    under their own ids, so neither replaces the other.
+ * A request that never reached the host deleted nothing, for two reasons, and
+ * one notice gives both remedies. Any other failure proves nothing about the
+ * ids it carried - the host can commit a purge and then throw - so the
+ * refused ids' notice says they were never sent, and the request's failure
+ * gets the notice it gets with nothing refused. Two notices under their own
+ * ids, so neither replaces the other.
  */
 function toastDeleteFailureWithSignInRefusals(
   error: HostRpcError,
@@ -176,16 +170,15 @@ function toastDeleteFailureWithSignInRefusals(
   refused: ReadonlyArray<string>,
   epicTitlesById: Readonly<Record<string, string>>,
 ): void {
-  const sentReason = sentIdsNotDeletedReason(error);
-  if (sentReason !== undefined) {
+  if (isOwnerHostUnreachableFailure(error)) {
     const sentIds = ids.filter((id) => !refused.includes(id));
     const parts = epicDeleteToastParts({
       failures: [
-        ...sentIds.map((taskId) =>
-          sentReason === null
-            ? { taskId, success: false }
-            : { taskId, success: false, errorMessage: sentReason },
-        ),
+        ...sentIds.map((taskId) => ({
+          taskId,
+          success: false,
+          errorMessage: OWNER_HOST_UNREACHABLE_NOTICE,
+        })),
         ...refusedEpicDeleteResults(refused),
       ],
       successes: 0,
@@ -205,32 +198,6 @@ function toastDeleteFailureWithSignInRefusals(
   });
   emitEpicDeleteToast(parts.level, parts.message, parts.detail);
   toastFromOwnerHostWriteError(error, "Couldn't delete tasks.");
-}
-
-/**
- * Why the SENT ids were certainly not deleted - the line their notice gives,
- * or `null` for a refusal with no guidance of its own - or `undefined` when
- * the failure does not prove they were not.
- */
-function sentIdsNotDeletedReason(
-  error: HostRpcError,
-): string | null | undefined {
-  // Reachability alone is not the remedy when part of the selection was
-  // refused for the sign-in, so the line rides in the one notice.
-  if (isOwnerHostUnreachableFailure(error)) {
-    return OWNER_HOST_UNREACHABLE_NOTICE;
-  }
-  if (!isHostRefusal(error)) return undefined;
-  const guidance = hostErrorToastMessage(error, "Couldn't delete tasks.");
-  return guidance === "Couldn't delete tasks." ? null : guidance;
-}
-
-/**
- * A reached host refused the request: no transport failure, and none of the
- * quiet ones (an abort, an `UNAUTHORIZED` being recovered).
- */
-function isHostRefusal(error: HostRpcError): boolean {
-  return !isSilentHostError(error) && !isHostTransportFailure(error);
 }
 
 export function useEpicBatchDelete(): UseMutationResult<

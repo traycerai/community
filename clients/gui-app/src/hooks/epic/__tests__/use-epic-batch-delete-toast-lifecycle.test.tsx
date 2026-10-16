@@ -943,6 +943,57 @@ describe("the delete's progress toast", () => {
       expect(mocks.toastFromHostError).not.toHaveBeenCalled();
     });
 
+    // traycerai/traycer thread taE6z, round 7: a generic error after the send
+    // proves nothing about the admitted Task - the host can commit the purge
+    // and then throw. Only the refused Task is said not deleted; the request's
+    // failure gets the notice it gets with nothing refused.
+    it("says only the refused Task was not deleted when the admitted request fails with a generic error", async () => {
+      useAuthStore.setState({ status: "unverified" });
+      const view = renderBatchDelete();
+
+      view.dispatch({
+        ids: ["epic-local", "epic-cloud"],
+        isLocalHomedNow: (epicId) => epicId === "epic-local",
+        worktreeCleanup: null,
+      });
+      await waitFor(() => {
+        expect(host.state.requests).toHaveLength(1);
+      });
+      expect(requestedIds(0)).toEqual(["epic-local"]);
+      const failure = new HostRpcError({
+        code: "RPC_ERROR",
+        message: "cascade cleanup threw after the purge",
+        requestId: "request-1",
+        method: "epic.batchDelete",
+        fatalDetails: null,
+      });
+      await act(async () => {
+        hostRequest(0).reject(failure);
+        await Promise.resolve();
+      });
+
+      await waitFor(() => {
+        expect(mocks.toastFromHostError).toHaveBeenCalledTimes(1);
+      });
+      expect(mocks.toastFromHostError.mock.calls[0]).toEqual([
+        failure,
+        "Couldn't delete tasks.",
+      ]);
+      expect(mocks.toastError).toHaveBeenCalledTimes(1);
+      expect(mocks.toastError.mock.calls[0]?.[0]).toBe("Couldn't delete task.");
+      expect(mocks.toastError.mock.calls[0]?.[1]?.description).toBe(
+        "This task was not deleted because Traycer couldn't confirm your sign-in. Try again once you're signed in.",
+      );
+      expect(
+        JSON.stringify([
+          mocks.toastError.mock.calls,
+          mocks.toastWarning.mock.calls,
+          mocks.toastMessage.mock.calls,
+          mocks.toast.mock.calls,
+        ]),
+      ).not.toContain("Couldn't delete 2 tasks.");
+    });
+
     // traycerai/traycer thread taE6z: the admitted request was sent and its
     // answer lost. The refused ids were never sent, the admitted one may or
     // may not have been deleted: two notices, each true of its own ids, and

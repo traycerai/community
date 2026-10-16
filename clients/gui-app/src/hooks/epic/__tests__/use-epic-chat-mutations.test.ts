@@ -1102,14 +1102,89 @@ describe("useEpicArchiveChats", () => {
   });
 
   // `updated: false` is an already-satisfied no-op, or a chat deleted while
-  // its archive write waited its turn: neither confirms this batch archived
-  // it, so the notice never counts it as archived.
-  it("does not count an agent the host answered `updated: false` for as archived", async () => {
+  // its archive write waited its turn: neither applied nor failed as far as
+  // the batch can tell. It stays in the selection's count, and beside a
+  // failure the notice says the result could not be confirmed.
+  type ArchiveRowOutcome = "updated" | "not-updated" | "forbidden";
+
+  async function archiveBatchNotice(
+    outcomes: readonly ArchiveRowOutcome[],
+    archived: boolean,
+  ): Promise<unknown> {
+    const outcomeByChat = new Map(
+      outcomes.map((outcome, index) => [`chat-${String(index + 1)}`, outcome]),
+    );
+    archiveChatMutateAsync.mockImplementation(
+      (input: ArchiveChatMutationInput) => {
+        const outcome = outcomeByChat.get(input.chatId);
+        return outcome === "forbidden"
+          ? Promise.reject(makeError("FORBIDDEN"))
+          : Promise.resolve({ updated: outcome === "updated" });
+      },
+    );
+    const { result } = renderHook(() => useEpicArchiveChats(), {
+      wrapper: makeWrapper(),
+    });
+
+    act(() => {
+      result.current.mutate({
+        epicId: "epic-1",
+        chats: [...outcomeByChat.keys()].map((chatId) => ({
+          chatId,
+          hostId: "host-test",
+        })),
+        archived,
+      });
+    });
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledTimes(1);
+    });
+    return vi.mocked(toast.error).mock.calls[0]?.[0];
+  }
+
+  it("keeps an archived, a not-updated and a refused agent at 3 selected, unconfirmed", async () => {
+    const notice = await archiveBatchNotice(
+      ["updated", "not-updated", "forbidden"],
+      true,
+    );
+
+    expect(notice).toBe(
+      "Couldn't confirm all 3 selected agents were archived. Check them and archive any that weren't. You don't have permission to do that.",
+    );
+    expect(notice).not.toContain("Archived");
+    expect(notice).not.toContain("couldn't be archived");
+  });
+
+  it("keeps a not-updated agent and two refused ones at 3 selected, unconfirmed", async () => {
+    const notice = await archiveBatchNotice(
+      ["not-updated", "forbidden", "forbidden"],
+      true,
+    );
+
+    expect(notice).toBe(
+      "Couldn't confirm all 3 selected agents were archived. Check them and archive any that weren't. You don't have permission to do that.",
+    );
+    expect(notice).not.toContain("any of the");
+  });
+
+  it("keeps an unarchived, a not-updated and a refused agent at 3 selected, unconfirmed", async () => {
+    const notice = await archiveBatchNotice(
+      ["updated", "not-updated", "forbidden"],
+      false,
+    );
+
+    expect(notice).toBe(
+      "Couldn't confirm all 3 selected agents were unarchived. Check them and unarchive any that weren't. You don't have permission to do that.",
+    );
+    expect(notice).not.toContain("Unarchived");
+    expect(notice).not.toContain("couldn't be unarchived");
+  });
+
+  it("stays quiet when the only agents not updated are no-ops beside applied ones", async () => {
     archiveChatMutateAsync.mockImplementation(
       (input: ArchiveChatMutationInput) =>
-        input.chatId === "chat-1"
-          ? Promise.resolve({ updated: false })
-          : Promise.reject(makeError("RPC_ERROR")),
+        Promise.resolve({ updated: input.chatId === "chat-1" }),
     );
     const { result } = renderHook(() => useEpicArchiveChats(), {
       wrapper: makeWrapper(),
@@ -1120,21 +1195,18 @@ describe("useEpicArchiveChats", () => {
         epicId: "epic-1",
         chats: [
           { chatId: "chat-1", hostId: "host-test" },
-          { chatId: "chat-2", hostId: "remote-host" },
+          { chatId: "chat-2", hostId: "host-test" },
         ],
         archived: true,
       });
     });
 
     await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledTimes(1);
+      expect(result.current.isSuccess).toBe(true);
     });
-    expect(vi.mocked(toast.error).mock.calls[0]?.[0]).toBe(
-      "Couldn't archive agent.",
-    );
-    expect(JSON.stringify(vi.mocked(toast.error).mock.calls)).not.toContain(
-      "Archived",
-    );
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(toast).not.toHaveBeenCalled();
+    expect(toast.message).not.toHaveBeenCalled();
   });
 
   it("reports one plural notice when the unreachable batch spans several hosts", async () => {

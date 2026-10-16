@@ -181,6 +181,22 @@ export function toastFromOwnerHostBatchWriteFailures(
   outcomes: readonly OwnerHostBatchWriteOutcome[],
   copy: OwnerHostBatchWriteCopy,
 ): void {
+  toastFromOwnerHostBatchWriteFailuresWithUnconfirmed(outcomes, 0, copy);
+}
+
+/**
+ * {@link toastFromOwnerHostBatchWriteFailures} for a batch with
+ * `unconfirmedRows` more selected rows whose write the host answered without
+ * confirming it changed them - neither applied nor failed. They stay in the
+ * selection's count, and beside any failure they make the result unknown, so
+ * the notice is the `unconfirmed` summary. With no failure the batch stays
+ * quiet, as an all-applied one does.
+ */
+export function toastFromOwnerHostBatchWriteFailuresWithUnconfirmed(
+  outcomes: readonly OwnerHostBatchWriteOutcome[],
+  unconfirmedRows: number,
+  copy: OwnerHostBatchWriteCopy,
+): void {
   const counted = outcomes.filter(
     (outcome) => outcome.error === null || !isLeftOutOfBatch(outcome.error),
   );
@@ -190,7 +206,7 @@ export function toastFromOwnerHostBatchWriteFailures(
   );
   if (failures.length === 0) return;
   const toastId = nextBatchResultToastId();
-  if (counted.length === 1) {
+  if (counted.length === 1 && unconfirmedRows === 0) {
     if (writeMayHaveApplied(failures[0])) {
       toastHostUnknownOutcome(toastId);
       return;
@@ -198,11 +214,11 @@ export function toastFromOwnerHostBatchWriteFailures(
     toastFromOwnerHostWriteError(failures[0], copy.single);
     return;
   }
-  const attempted = selectedRowsOf(counted);
+  const attempted = selectedRowsOf(counted) + unconfirmedRows;
   const refusals = failures.filter(
     (failure) => !isHostTransportFailure(failure),
   );
-  if (failures.some(writeMayHaveApplied)) {
+  if (unconfirmedRows > 0 || failures.some(writeMayHaveApplied)) {
     const lead = copy.unconfirmed(attempted);
     if (refusals.length > 0) {
       toastFromHostRefusalsInBatch(refusals, copy.single, lead, toastId);
