@@ -1,7 +1,7 @@
 import { useStore } from "zustand";
 
 import { Popover, PopoverTrigger } from "@/components/ui/popover";
-import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
+import { HarnessModelPickerTriggerTooltip } from "@/components/home/pickers/harness-model-picker-trigger-tooltip";
 import { Kbd } from "@/components/ui/kbd";
 import { ShortcutHint } from "@/components/ui/shortcut-hint";
 import { HarnessModelTrigger } from "@/components/home/pickers/harness-model-trigger";
@@ -1153,14 +1153,9 @@ function HarnessModelPickerImpl(props: HarnessModelPickerProps) {
   );
 
   const composerFace = (
-    <TooltipWrapper
-      // Closing the picker can leave its trigger's hover tooltip open over the
-      // composer. Unmount the tooltip while the picker is open so it starts
-      // closed when focus returns to the editor.
-      label={tooltipLabelWhenPickerClosed(visibleOpen, tooltipLabel)}
-      side="top"
-      sideOffset={undefined}
-      align={undefined}
+    <HarnessModelPickerTriggerTooltip
+      pickerOpen={visibleOpen}
+      label={tooltipLabel}
     >
       <HarnessModelTrigger
         {...paneActivationDeferProps}
@@ -1178,7 +1173,7 @@ function HarnessModelPickerImpl(props: HarnessModelPickerProps) {
         disabled={disabled}
         labelDisplay={props.labelDisplay}
       />
-    </TooltipWrapper>
+    </HarnessModelPickerTriggerTooltip>
   );
 
   return (
@@ -1432,13 +1427,6 @@ function PresentationHarnessModelPicker(props: HarnessModelPickerProps) {
       labelDisplay={props.labelDisplay}
     />
   );
-}
-
-function tooltipLabelWhenPickerClosed(
-  pickerOpen: boolean,
-  label: ReactNode,
-): ReactNode {
-  return pickerOpen ? null : label;
 }
 
 function HarnessModelPickerTooltip({

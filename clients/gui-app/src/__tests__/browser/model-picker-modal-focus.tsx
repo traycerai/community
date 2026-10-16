@@ -12,7 +12,7 @@ import { HarnessModelPickerPanel } from "@/components/home/pickers/harness-model
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { Popover, PopoverTrigger } from "@/components/ui/popover";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
+import { HarnessModelPickerTriggerTooltip } from "@/components/home/pickers/harness-model-picker-trigger-tooltip";
 import "@/lib/theme-applier";
 import "@/index.css";
 
@@ -107,22 +107,18 @@ export function ModalFixture() {
           <FixtureEditor placeholder="Ask Traycer anything" />
           <Popover open={open} onOpenChange={setOpen}>
             <PopoverTrigger asChild>
-              <TooltipWrapper
+              <HarnessModelPickerTriggerTooltip
+                pickerOpen={open}
                 label={
-                  open ? null : (
-                    <span>
-                      {selectedModel.label} · Effort {reasoning}
-                    </span>
-                  )
+                  <span>
+                    {selectedModel.label} · Effort {reasoning}
+                  </span>
                 }
-                side="top"
-                sideOffset={undefined}
-                align={undefined}
               >
                 <button type="button">
                   {selectedModel.label} · {reasoning}
                 </button>
-              </TooltipWrapper>
+              </HarnessModelPickerTriggerTooltip>
             </PopoverTrigger>
             <HarnessModelPickerPanel
               trimmedQuery={query.trim()}
