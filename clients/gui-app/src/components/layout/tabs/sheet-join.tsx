@@ -41,12 +41,19 @@ export function SheetJoinScope(props: {
  * modal's backdrop starts under the title band (`window-chrome.css`), and the
  * joined tab is in that band, so it stayed bright over the page it joins.
  * `window-chrome.css` shows this over the tab, anchored like the bridge,
- * while a backdrop is open, and gives it that backdrop's colour.
+ * while a backdrop is open: one layer per backdrop strength, so stacked
+ * modals darken the tab as their backdrops darken the page.
  */
 export function JoinedTabDim(): ReactNode {
   const join = use(JoinContext);
   if (join === null) return null;
-  return <span aria-hidden data-joined-tab-dim="" />;
+  return (
+    <span aria-hidden data-joined-tab-dim="">
+      <span data-dim-layer="10" />
+      <span data-dim-layer="30" />
+      <span data-dim-layer="40" />
+    </span>
+  );
 }
 
 export function SheetJoinBridge(props: {

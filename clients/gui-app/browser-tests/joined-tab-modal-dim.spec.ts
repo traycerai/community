@@ -28,17 +28,23 @@ import {
 // stayed bright over a dimmed page, so the join read as a lit cut-out. The
 // claim: with a modal open, the joined tab's pixels match the dimmed sheet
 // under it, exactly as they match with no modal. The tab takes the colour of
-// the backdrop beside it: the shared dialog's `bg-black/10`, or the modal
-// frame's `bg-black/30` (`data-backdrop="frame"`).
+// the backdrop beside it: the shared dialog's `bg-black/10` (no attribute),
+// the modal frame's `bg-black/30` and the blocking modals' `bg-black/40`
+// (`data-backdrop-dim`), and stacked modals take both, as the page does. The
+// tab's two concave feet, which flare out of its sides into the title band,
+// are dimmed with it, and the bar's own ground is not.
 //
 // What decides this is paint: the dim is an element anchored to the tab with
 // CSS anchor positioning and composited over a tab whose fill is a theme
 // token, so it is read off a screenshot. Which backdrop a surface opens is
 // jsdom's.
 //
-// The modals are the production `Dialog` and `PromotableModalFrame`, opened
-// through the fixture's `openBackdrop`, so the backdrop measured is the one
-// the product draws.
+// The modals are the production `Dialog`, `PromotableModalFrame` and
+// `MigrationBlockingModalHost`, opened through the fixture's `openBackdrop`,
+// so the backdrop measured is the one the product draws. The other /40 modal,
+// `WindowHostModal`, is the same overlay but takes a live host narration
+// (cause, variant, progress, recovery actions), which is machinery the
+// fixture has no use for.
 
 test.use(layoutEditorUse());
 
@@ -53,22 +59,40 @@ const getPage = sharedPage(
 const SAME_FILL_TOLERANCE = 1;
 /** The dimmest backdrop (`bg-black/10`) darkens the darkest theme by at least this, summed over the channels. */
 const MIN_DARKENING = 3;
+/** A dialog's `bg-black/10` over the frame's `bg-black/30` darkens the darkest theme by at least this, summed over the channels. */
+const MIN_STACKED_DARKENING = 2;
 /** The sheet sample's height above the panel's bottom edge, below its rail and task header. */
 const PANEL_FLOOR_OFFSET = 40;
 /** The sample beside the tab's left edge, clear of its corner and its title. */
 const TAB_INSET = 10;
 
 const JOINED_TAB = '[data-testid="tab-chrome-box"][data-sheet-joined]';
-const OVERLAY = {
-  dialog: '[data-slot="dialog-overlay"]:not([data-backdrop])',
-  frame: '[data-slot="dialog-overlay"][data-backdrop="frame"]',
+/** The foot sample sits this far outside the tab's left edge. */
+const FOOT_INSET = 2;
+/** The foot sample sits this far above the title band's bottom edge. */
+const FOOT_RISE = 2;
+/** The ground sample sits this far outside the tab's left edge, clear of its feet. */
+const GROUND_DISTANCE = 30;
+
+const DIALOG_OVERLAY = '[data-slot="dialog-overlay"]:not([data-backdrop-dim])';
+const FRAME_OVERLAY = '[data-slot="dialog-overlay"][data-backdrop-dim="30"]';
+const BLOCKING_OVERLAY = '[data-slot="dialog-overlay"][data-backdrop-dim="40"]';
+
+/** The overlays each probe kind puts on screen. */
+const OVERLAYS = {
+  dialog: [DIALOG_OVERLAY],
+  frame: [FRAME_OVERLAY],
+  blocking: [BLOCKING_OVERLAY],
+  "frame+dialog": [FRAME_OVERLAY, DIALOG_OVERLAY],
 } as const;
 
-type Kind = keyof typeof OVERLAY;
+type Kind = keyof typeof OVERLAYS;
+type SingleKind = "dialog" | "frame" | "blocking";
 
-const KIND_NAME: Readonly<Record<Kind, string>> = {
+const KIND_NAME: Readonly<Record<SingleKind, string>> = {
   dialog: "a dialog",
   frame: "the modal frame",
+  blocking: "a blocking modal",
 };
 
 interface Point {
@@ -79,11 +103,17 @@ interface Point {
 interface Samples {
   readonly tab: Rgb;
   readonly sheet: Rgb;
+  /** Inside the flare of the tab's left foot. */
+  readonly foot: Rgb;
+  /** The header's ground, well clear of the tab. */
+  readonly ground: Rgb;
 }
 
 interface SamplePoints {
   readonly tab: Point;
   readonly sheet: Point;
+  readonly foot: Point;
+  readonly ground: Point;
 }
 
 /**
@@ -98,13 +128,29 @@ interface SamplePoints {
  */
 async function locateSamplePoints(page: Page): Promise<SamplePoints> {
   const located = await page.evaluate(
-    ({ joinedTab, surfaceFrame, inset, floor }) => {
+    ({
+      joinedTab,
+      surfaceFrame,
+      inset,
+      floor,
+      footInset,
+      footRise,
+      groundDistance,
+    }) => {
       const box = document.querySelector(joinedTab)?.getBoundingClientRect();
+      const header = document
+        .querySelector('[data-testid="app-header"]')
+        ?.getBoundingClientRect();
       const frame = document
         .querySelector(surfaceFrame)
         ?.getBoundingClientRect();
       const panel = document.querySelector("[data-epic-sidebar-panel]");
-      if (box === undefined || frame === undefined || panel === null) {
+      if (
+        box === undefined ||
+        frame === undefined ||
+        header === undefined ||
+        panel === null
+      ) {
         return null;
       }
       const panelBox = panel.getBoundingClientRect();
@@ -118,6 +164,14 @@ async function locateSamplePoints(page: Page): Promise<SamplePoints> {
           y: Math.round(box.top + box.height / 2),
         },
         sheet,
+        foot: {
+          x: Math.round(box.left - footInset),
+          y: Math.round(header.bottom - footRise),
+        },
+        ground: {
+          x: Math.round(box.left - groundDistance),
+          y: Math.round(box.top + box.height / 2),
+        },
         sheetIsBarePanel: document.elementFromPoint(sheet.x, sheet.y) === panel,
         sheetInFrame:
           sheet.y >= frame.top &&
@@ -131,6 +185,9 @@ async function locateSamplePoints(page: Page): Promise<SamplePoints> {
       surfaceFrame: SURFACE_FRAME,
       inset: TAB_INSET,
       floor: PANEL_FLOOR_OFFSET,
+      footInset: FOOT_INSET,
+      footRise: FOOT_RISE,
+      groundDistance: GROUND_DISTANCE,
     },
   );
   if (located === null) {
@@ -146,7 +203,12 @@ async function locateSamplePoints(page: Page): Promise<SamplePoints> {
     located.sheetInFrame,
     "the sheet sample lies inside the surface frame",
   ).toBe(true);
-  return { tab: located.tab, sheet: located.sheet };
+  return {
+    tab: located.tab,
+    sheet: located.sheet,
+    foot: located.foot,
+    ground: located.ground,
+  };
 }
 
 /** The joined tab's pixel and the sheet's, as painted. */
@@ -157,21 +219,25 @@ async function sampleTabAndSheet(
   return {
     tab: await samplePixelAt(page, points.tab.x, points.tab.y),
     sheet: await samplePixelAt(page, points.sheet.x, points.sheet.y),
+    foot: await samplePixelAt(page, points.foot.x, points.foot.y),
+    ground: await samplePixelAt(page, points.ground.x, points.ground.y),
   };
 }
 
-/** Opens `kind` and resolves once its backdrop is fully faded in. */
+/** Opens `kind` and resolves once every backdrop it puts up is fully faded in. */
 async function openAndSettle(page: Page, kind: Kind): Promise<void> {
   await probe(page, `openBackdrop(${JSON.stringify(kind)})`);
-  await waitUntil(
-    page,
-    `(() => {
-      const overlay = document.querySelector(${JSON.stringify(OVERLAY[kind])});
-      return overlay !== null
-        && overlay.getAttribute("data-state") === "open"
-        && getComputedStyle(overlay).opacity === "1";
-    })()`,
-  );
+  for (const selector of OVERLAYS[kind]) {
+    await waitUntil(
+      page,
+      `(() => {
+        const overlay = document.querySelector(${JSON.stringify(selector)});
+        return overlay !== null
+          && overlay.getAttribute("data-state") === "open"
+          && getComputedStyle(overlay).opacity === "1";
+      })()`,
+    );
+  }
   await waitForFiniteAnimations(page);
 }
 
@@ -193,7 +259,7 @@ function darkening(before: Rgb, after: Rgb): number {
 }
 
 const THEMES: readonly ThemeName[] = ["dark", "light"];
-const KINDS: readonly Kind[] = ["dialog", "frame"];
+const KINDS: readonly SingleKind[] = ["dialog", "frame", "blocking"];
 
 for (const theme of THEMES) {
   test.describe(`in the ${theme} theme`, () => {
@@ -242,6 +308,17 @@ for (const theme of THEMES) {
           darkening(bare.tab, dimmed.tab),
           `the ${kind} backdrop darkens the joined tab (${rgbText(bare.tab)} to ${rgbText(dimmed.tab)})`,
         ).toBeGreaterThanOrEqual(MIN_DARKENING);
+        // The feet flare out of the tab's sides, so they are part of the tab
+        // the dim covers (anti-aliased, so only "darker" is asked of one); the
+        // bar's ground beyond them is not.
+        expect(
+          darkening(bare.foot, dimmed.foot),
+          `the ${kind} backdrop darkens the tab's foot (${rgbText(bare.foot)} to ${rgbText(dimmed.foot)})`,
+        ).toBeGreaterThanOrEqual(MIN_DARKENING);
+        expect(
+          sameRgb(dimmed.ground, bare.ground, SAME_FILL_TOLERANCE),
+          `the ${kind} backdrop leaves the bar's ground alone (${rgbText(bare.ground)} to ${rgbText(dimmed.ground)})`,
+        ).toBe(true);
 
         await closeAndSettle(page);
         const closed = await sampleTabAndSheet(page, points);
@@ -249,7 +326,44 @@ for (const theme of THEMES) {
           sameRgb(closed.tab, bare.tab, SAME_FILL_TOLERANCE),
           `modal closed: tab ${rgbText(closed.tab)} is back to ${rgbText(bare.tab)}`,
         ).toBe(true);
+        expect(
+          sameRgb(closed.foot, bare.foot, SAME_FILL_TOLERANCE),
+          `modal closed: foot ${rgbText(closed.foot)} is back to ${rgbText(bare.foot)}`,
+        ).toBe(true);
       });
     }
+
+    // Settings opens its add-host and danger-zone dialogs over its frame: the
+    // page is darkened by both backdrops, so the tab is too.
+    test("a dialog over the modal frame dims the joined tab like the sheet under both", async () => {
+      const page = getPage();
+      const points = await locateSamplePoints(page);
+      const bare = await sampleTabAndSheet(page, points);
+
+      await openAndSettle(page, "frame");
+      const frameOnly = await sampleTabAndSheet(page, points);
+
+      await openAndSettle(page, "frame+dialog");
+      const stacked = await sampleTabAndSheet(page, points);
+      expect(
+        darkening(frameOnly.sheet, stacked.sheet),
+        `the dialog darkens the sheet further (${rgbText(frameOnly.sheet)} to ${rgbText(stacked.sheet)})`,
+      ).toBeGreaterThanOrEqual(MIN_STACKED_DARKENING);
+      expect(
+        sameRgb(stacked.tab, stacked.sheet, SAME_FILL_TOLERANCE),
+        `stacked modals open: tab ${rgbText(stacked.tab)} is the dimmed sheet's ${rgbText(stacked.sheet)}`,
+      ).toBe(true);
+      expect(
+        darkening(frameOnly.tab, stacked.tab),
+        `the dialog darkens the joined tab further (${rgbText(frameOnly.tab)} to ${rgbText(stacked.tab)})`,
+      ).toBeGreaterThanOrEqual(MIN_STACKED_DARKENING);
+
+      await closeAndSettle(page);
+      const closed = await sampleTabAndSheet(page, points);
+      expect(
+        sameRgb(closed.tab, bare.tab, SAME_FILL_TOLERANCE),
+        `modals closed: tab ${rgbText(closed.tab)} is back to ${rgbText(bare.tab)}`,
+      ).toBe(true);
+    });
   });
 }

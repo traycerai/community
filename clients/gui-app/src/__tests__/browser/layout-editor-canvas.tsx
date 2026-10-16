@@ -60,6 +60,7 @@ import {
 } from "@/components/layout/tabs/side-strip/side-strip-tokens";
 import { SampleSceneProvider } from "@/components/sample-workspace/sample-scene-provider";
 import { SampleWorkspaceBody } from "@/components/sample-workspace/sample-workspace-body";
+import { MigrationBlockingModalHost } from "@/components/layout/dialogs/migration-blocking-modal-host";
 import { PromotableModalFrame } from "@/components/layout/dialogs/promotable-modal-frame";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -110,6 +111,7 @@ import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
 import type { LeftPanelId } from "@/lib/left-panel-ids";
 import type { EpicCanvasTileRef } from "@/stores/epics/canvas/types";
 import { useAuthStore } from "@/stores/auth/auth-store";
+import { useMigrationRunStore } from "@/stores/migration/migration-run-store";
 import type { EpicStreamClientFactory } from "@/stores/epics/open-epic/store";
 import { openStoreForTest } from "@/stores/epics/open-epic/test-support/open-store-for-test";
 import type { ChatProjection, TreeNode } from "@/stores/epics/open-epic/types";
@@ -403,11 +405,15 @@ interface LayoutCanvasProbe {
   /** The same for any strip item, the split pair included (`fixture-split`). */
   readonly activateStripItem: (itemId: string) => void;
   /**
-   * Opens one of the app's real modals over the window, or closes it (`null`):
+   * Opens the app's real modals over the window, or closes them (`null`):
    * `dialog` is the shared `Dialog`, whose backdrop is `bg-black/10`; `frame`
    * is `PromotableModalFrame`, the Settings and History modal, whose backdrop
-   * is `bg-black/30`. Both are the production components, so the backdrop a
-   * check measures is the one the product draws. `restoreLoadState` closes it.
+   * is `bg-black/30`; `frame+dialog` is that frame with a shared `Dialog`
+   * opened over it, as Settings' add-host and danger-zone dialogs are;
+   * `blocking` is `MigrationBlockingModalHost`, whose backdrop is `bg-black/40`
+   * (the window host modal shares it, but needs a live host narration). All
+   * are the production components, so the backdrop a check measures is the
+   * one the product draws. `restoreLoadState` closes them.
    */
   readonly openBackdrop: (kind: BackdropKind) => void;
   /**
@@ -693,11 +699,14 @@ function applyFixtureIndicators(): void {
 queryClient.getQueryCache().subscribe(applyFixtureIndicators);
 
 /** Which real modal `openBackdrop` has open, if any. */
-type BackdropKind = "dialog" | "frame" | null;
+type BackdropKind = "dialog" | "frame" | "frame+dialog" | "blocking" | null;
 let openBackdropKind: BackdropKind = null;
 const backdropListeners = new Set<() => void>();
 function setOpenBackdrop(kind: BackdropKind): void {
   openBackdropKind = kind;
+  // The blocking modal opens itself from the migration store: another
+  // window's running migration is the one flag that raises it with no host.
+  useMigrationRunStore.getState().setRemoteRunning(kind === "blocking");
   for (const listener of backdropListeners) listener();
 }
 function subscribeBackdrop(listener: () => void): () => void {
@@ -712,24 +721,15 @@ function readOpenBackdrop(): BackdropKind {
 
 /**
  * The modals `openBackdrop` opens. Both roots stay mounted and only `open`
- * changes, so closing plays the modal's own exit, as it does in the app.
+ * changes, so closing plays the modal's own exit, as it does in the app. The
+ * frame comes first in the tree, as Settings does under its own dialogs.
  */
 function ProbeBackdrops(): ReactNode {
   const kind = useSyncExternalStore(subscribeBackdrop, readOpenBackdrop);
   return (
     <>
-      <Dialog
-        open={kind === "dialog"}
-        onOpenChange={(open) => {
-          if (!open) setOpenBackdrop(null);
-        }}
-      >
-        <DialogContent aria-describedby={undefined}>
-          <DialogTitle>Backdrop probe</DialogTitle>
-        </DialogContent>
-      </Dialog>
       <DialogPrimitive.Root
-        open={kind === "frame"}
+        open={kind === "frame" || kind === "frame+dialog"}
         onOpenChange={(open) => {
           if (!open) setOpenBackdrop(null);
         }}
@@ -752,6 +752,17 @@ function ProbeBackdrops(): ReactNode {
           {null}
         </PromotableModalFrame>
       </DialogPrimitive.Root>
+      <Dialog
+        open={kind === "dialog" || kind === "frame+dialog"}
+        onOpenChange={(open) => {
+          if (!open) setOpenBackdrop(null);
+        }}
+      >
+        <DialogContent aria-describedby={undefined}>
+          <DialogTitle>Backdrop probe</DialogTitle>
+        </DialogContent>
+      </Dialog>
+      <MigrationBlockingModalHost />
     </>
   );
 }
