@@ -113,16 +113,18 @@ function isTransportClassFailure(error: HostRpcError): boolean {
  * vague sentence for silence. This is the seam they attach to.
  *
  * An abort is a caller-owned cancellation, not a network condition, so it is
- * never ambiguous. A `RetryableTransportError` is ambiguous only on its keyed
- * sent-and-dropped ground (`replaySafetyFromKey: true`, no `fatalDetails`): an
- * earlier attempt of the same keyed request reached the wire, so the host may
- * have run it. Its pre-send ground and the host's own no-dispatch attestation
- * (`fatalDetails`) both mean the request did not run.
+ * never ambiguous. A `RetryableTransportError` is ambiguous exactly on its
+ * keyed sent-and-dropped ground (`replaySafetyFromKey: true`): an attempt of
+ * the same keyed request reached the wire, so the host may have run it. That
+ * holds even with `fatalDetails` - a raw attestation is minted with the flag
+ * false, so the pair is the retrying messenger restoring an earlier attempt's
+ * ground, and the attestation proves only that the FINAL attempt did not
+ * dispatch. Only the pre-send ground (flag false) means the request did not run.
  */
 export function isUnknownOutcomeTransportFailure(error: HostRpcError): boolean {
   if (error instanceof HostRequestAbortedError) return false;
   if (error instanceof RetryableTransportError) {
-    return error.replaySafetyFromKey && error.fatalDetails === null;
+    return error.replaySafetyFromKey;
   }
   return isTransportClassFailure(error);
 }
