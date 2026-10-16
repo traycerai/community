@@ -15,6 +15,7 @@ import { useChatTranscriptJumpStore } from "@/stores/chats/chat-transcript-jump-
 import type { SegmentEndState } from "@/stores/composer/chat-store";
 import { deriveA2ASendCollapsibleKey } from "@/components/chat/chat-collapsible-key";
 import { chatFindA2ASendBodyUnitId } from "@/components/chat/chat-find";
+import { ChatMessageTimestamp } from "@/components/chat/chat-message-timestamp";
 import { SegmentEndStateBadge } from "./segment-end-state-badge";
 import { LivePulse } from "@/components/ui/live-pulse";
 import { useA2AMessagePeer } from "@/hooks/agent/use-a2a-message-peer";
@@ -771,6 +772,11 @@ function A2ASendToolSegment(
         {send.expectReply ? <ReplyExpectedIcon /> : null}
       </span>
       <ToolBadge state={badgeState} endState={endState} />
+      <ChatMessageTimestamp
+        timestamp={props.startedAt}
+        separated={false}
+        instanceId={id}
+      />
     </>
   );
 
