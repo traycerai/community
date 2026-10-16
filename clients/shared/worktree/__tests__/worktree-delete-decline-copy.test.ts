@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { WorktreeDeleteDeclinedKind } from "@traycer/protocol/host/worktree-delete-batch-stream";
-import { worktreeDeleteDeclineMessage } from "@/components/settings/panels/worktree-delete-decline-copy";
+import { worktreeDeleteDeclineMessage } from "../worktree-delete-decline-copy";
 
 const GENERIC_MESSAGE =
   "Couldn't remove the worktree. It may still be in use - refresh and try again.";

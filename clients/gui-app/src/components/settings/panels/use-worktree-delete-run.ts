@@ -3,7 +3,7 @@ import { create } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 import type { WorktreeBusyHolder } from "@traycer/protocol/framework/worktree-busy-holders";
 import type { WorktreeDeleteDeclinedKind } from "@traycer/protocol/host/worktree-delete-batch-stream";
-import { worktreeDeleteDeclineMessage } from "@/components/settings/panels/worktree-delete-decline-copy";
+import { worktreeDeleteDeclineMessage } from "@traycer-clients/shared/worktree/worktree-delete-decline-copy";
 import type {
   WorktreeDeleteOutputChannel,
   WorktreeDeletePhase,
