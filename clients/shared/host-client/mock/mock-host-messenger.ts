@@ -328,6 +328,7 @@ function awaitAbortableHandler<Response>(
       message: "Mock host request authority was aborted",
       requestId,
       method,
+      mayHaveDispatched: false,
     });
   if (authority.abortSignal.aborted) {
     return Promise.reject(abortError());

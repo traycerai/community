@@ -805,6 +805,49 @@ function idsVisibleIn(
   }, new Set());
 }
 
+/**
+ * How many SELECTED rows each dispatched delete of
+ * {@link sidebarBulkDeleteIds} stands for: 1 for an agent, and for an
+ * artifact itself plus every selected artifact under it, whose rows its
+ * cascade removes with it. A batch notice counts selected rows, so a
+ * cascaded child counts as selected and as deleted (or not) with its root.
+ */
+export function sidebarBulkDeleteSelectedRows(args: {
+  readonly ids: readonly string[];
+  readonly tree: EpicTreeIndex;
+  readonly isAgentId: (id: string) => boolean;
+}): ReadonlyMap<string, number> {
+  const artifactIds = args.ids.filter((id) => !args.isAgentId(id));
+  const selectedArtifacts = new Set(artifactIds);
+  const rows = new Map<string, number>();
+  for (const id of args.ids) {
+    if (args.isAgentId(id)) rows.set(id, 1);
+  }
+  for (const id of artifactIds) {
+    const root = topmostSelectedAncestor(id, selectedArtifacts, args.tree);
+    const target = root ?? id;
+    rows.set(target, (rows.get(target) ?? 0) + 1);
+  }
+  return rows;
+}
+
+/** The highest ancestor of `id` that is in `selectedIds`, or `null`. */
+function topmostSelectedAncestor(
+  id: string,
+  selectedIds: ReadonlySet<string>,
+  tree: EpicTreeIndex,
+): string | null {
+  let topmost: string | null = null;
+  if (!Object.hasOwn(tree.nodeById, id)) return null;
+  let parentId = tree.nodeById[id].parentId;
+  while (parentId !== null) {
+    if (selectedIds.has(parentId)) topmost = parentId;
+    if (!Object.hasOwn(tree.nodeById, parentId)) break;
+    parentId = tree.nodeById[parentId].parentId;
+  }
+  return topmost;
+}
+
 function hasSelectedAncestor(
   id: string,
   selectedIds: ReadonlySet<string>,

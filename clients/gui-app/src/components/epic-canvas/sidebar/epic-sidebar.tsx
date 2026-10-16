@@ -247,6 +247,7 @@ import {
   isSidebarBulkSelectionPanelId,
   rootmostSelectedSidebarIds,
   sidebarBulkDeleteIds,
+  sidebarBulkDeleteSelectedRows,
   sidebarIdsWithinRoots,
   SidebarBulkSelectionProvider,
   useSidebarBulkSelection,
@@ -1591,6 +1592,11 @@ function SidebarBulkDeleteController(props: {
       tree,
       isAgentId: (id) => isAgentRecord(recordById.get(id)),
     });
+    const selectedRows = sidebarBulkDeleteSelectedRows({
+      ids: pendingDeleteIds,
+      tree,
+      isAgentId: (id) => isAgentRecord(recordById.get(id)),
+    });
     const targets = deleteIds.flatMap((id) => {
       const target = sidebarDeleteTargetForRecord(recordById.get(id));
       return target === null ? [] : [target];
@@ -1638,6 +1644,7 @@ function SidebarBulkDeleteController(props: {
             return {
               kind: isArtifact ? "artifact" : "agent",
               hostId: isArtifact ? sessionHostId : agentHostId(target),
+              selectedRows: selectedRows.get(target.id) ?? 1,
               error:
                 result.status === "rejected"
                   ? toHostRpcError(

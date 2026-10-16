@@ -724,6 +724,7 @@ describe("HostCompatibilityProvider startup consumers", () => {
           message: "request aborted by host rebind",
           requestId: "req-status",
           method: "host.status",
+          mayHaveDispatched: false,
         });
       },
       getTaskContexts,

@@ -5980,6 +5980,7 @@ function abortedRequestError(
     message: "Remote unary was aborted before it was sent",
     requestId,
     method,
+    mayHaveDispatched: false,
   });
 }
 

@@ -5,6 +5,7 @@ import {
   defineVersionedRpcRegistry,
 } from "@traycer/protocol/framework/index";
 import {
+  HostRequestAbortedError,
   HostRpcError,
   type HostRequestAuthority,
   type HostRequestOptions,
@@ -355,6 +356,113 @@ describe("createRetryingMessenger", () => {
     expect((failure as RetryableTransportError).message).toBe(
       "WebSocket dial timed out after 10000ms",
     );
+  });
+
+  it("an abort in the backoff after a sent-and-dropped attempt says the request may have reached the host", async () => {
+    // Attempt 1 was sent and its answer lost. Cancelling while waiting to
+    // retry stops the caller from waiting; it does not recall attempt 1.
+    const controller = new AbortController();
+    const { messenger } = fakeInner([keyEarnedRetryableError()]);
+    const policy: TransportRetryPolicy = {
+      maxRetries: 2,
+      initialDelayMs: 100,
+      maxDelayMs: 1_000,
+      sleep: () => {
+        controller.abort();
+        return new Promise<void>(() => undefined);
+      },
+      random: () => 0.5,
+    };
+
+    const failure = await createRetryingMessenger(messenger, policy)
+      .request(
+        "host.echo",
+        { message: "hi" },
+        {
+          idempotencyKey: "k-1",
+          authority: { ...authority(), abortSignal: controller.signal },
+          replayMustBeKeyed: false,
+          requiredHostMethodVersion: null,
+        },
+      )
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+
+    expect(failure).toBeInstanceOf(HostRequestAbortedError);
+    expect(
+      failure instanceof HostRequestAbortedError && failure.mayHaveDispatched,
+    ).toBe(true);
+  });
+
+  it("an abort in the backoff after only pre-send failures says the request never left", async () => {
+    const controller = new AbortController();
+    const { messenger } = fakeInner([retryableError()]);
+    const policy: TransportRetryPolicy = {
+      maxRetries: 2,
+      initialDelayMs: 100,
+      maxDelayMs: 1_000,
+      sleep: () => {
+        controller.abort();
+        return new Promise<void>(() => undefined);
+      },
+      random: () => 0.5,
+    };
+
+    const failure = await createRetryingMessenger(messenger, policy)
+      .request(
+        "host.echo",
+        { message: "hi" },
+        {
+          idempotencyKey: "k-1",
+          authority: { ...authority(), abortSignal: controller.signal },
+          replayMustBeKeyed: false,
+          requiredHostMethodVersion: null,
+        },
+      )
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+
+    expect(failure).toBeInstanceOf(HostRequestAbortedError);
+    expect(
+      failure instanceof HostRequestAbortedError && failure.mayHaveDispatched,
+    ).toBe(false);
+  });
+
+  it("a later attempt's pre-send abort keeps the episode's earlier send", async () => {
+    const { messenger } = fakeInner([
+      keyEarnedRetryableError(),
+      new HostRequestAbortedError({
+        message: "aborted before dispatch",
+        requestId: "req",
+        method: "host.echo",
+        mayHaveDispatched: false,
+      }),
+    ]);
+    const { policy } = makeRecordingPolicy(2, 100, 1_000, () => 0.5);
+
+    const failure = await createRetryingMessenger(messenger, policy)
+      .request(
+        "host.echo",
+        { message: "hi" },
+        {
+          idempotencyKey: "k-1",
+          authority: authority(),
+          replayMustBeKeyed: false,
+          requiredHostMethodVersion: null,
+        },
+      )
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+
+    expect(
+      failure instanceof HostRequestAbortedError && failure.mayHaveDispatched,
+    ).toBe(true);
   });
 
   it("leaves the final error pre-send when no attempt was ever sent", async () => {

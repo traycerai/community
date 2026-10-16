@@ -386,6 +386,7 @@ describe("createOutcomeIsDecidable", () => {
       message: "aborted",
       requestId: "r1",
       method: "epic.create",
+      mayHaveDispatched: false,
     });
     expect(createOutcomeIsDecidable(error)).toBe(false);
   });
