@@ -381,6 +381,38 @@ describe("createOutcomeIsDecidable", () => {
     expect(createOutcomeIsDecidable(error)).toBe(false);
   });
 
+  it("is true for a keyed request whose earlier attempt was sent and dropped - the host may have created it", () => {
+    // The retrying messenger re-throws its final pre-send error with
+    // `replaySafetyFromKey: true` once any attempt in the episode was sent.
+    const error = new RetryableTransportError({
+      code: "RPC_ERROR",
+      message: "Remote session is not ready",
+      requestId: "r1",
+      method: "epic.create",
+      fatalDetails: null,
+      replaySafetyFromKey: true,
+    });
+    expect(createOutcomeIsDecidable(error)).toBe(true);
+  });
+
+  it("is false for a keyed retryable error the host attested it never dispatched", () => {
+    const error = new RetryableTransportError({
+      code: "RPC_ERROR",
+      message: "Host timed out awaiting the request frame",
+      requestId: "r1",
+      method: "epic.create",
+      fatalDetails: {
+        code: "RPC_REQUEST_TIMEOUT",
+        reason: "Host timed out awaiting the request frame",
+        incompatibleMethods: null,
+        upgradeGuidance: null,
+        retryable: true,
+      },
+      replaySafetyFromKey: true,
+    });
+    expect(createOutcomeIsDecidable(error)).toBe(false);
+  });
+
   it("is false for a HostRequestAbortedError - a caller-owned cancellation", () => {
     const error = new HostRequestAbortedError({
       message: "aborted",

@@ -112,13 +112,18 @@ function isTransportClassFailure(error: HostRpcError): boolean {
  * land together, and retiring the notice before the poll exists would trade a
  * vague sentence for silence. This is the seam they attach to.
  *
- * Both exclusions are the cases that are NOT ambiguous: `RetryableTransportError`
- * carries the host's no-dispatch guarantee ("that didn't go through"), and an
- * abort is a caller-owned cancellation, not a network condition.
+ * An abort is a caller-owned cancellation, not a network condition, so it is
+ * never ambiguous. A `RetryableTransportError` is ambiguous only on its keyed
+ * sent-and-dropped ground (`replaySafetyFromKey: true`, no `fatalDetails`): an
+ * earlier attempt of the same keyed request reached the wire, so the host may
+ * have run it. Its pre-send ground and the host's own no-dispatch attestation
+ * (`fatalDetails`) both mean the request did not run.
  */
 export function isUnknownOutcomeTransportFailure(error: HostRpcError): boolean {
   if (error instanceof HostRequestAbortedError) return false;
-  if (error instanceof RetryableTransportError) return false;
+  if (error instanceof RetryableTransportError) {
+    return error.replaySafetyFromKey && error.fatalDetails === null;
+  }
   return isTransportClassFailure(error);
 }
 
@@ -183,10 +188,7 @@ function transportNoticeToast(error: HostRpcError): void {
   // `replaySafetyFromKey` is the other ground for the same class: a keyed
   // request that WAS sent and whose answer was lost, so the host may have run
   // it. Only the pre-send ground earns "never received it".
-  if (
-    error instanceof RetryableTransportError &&
-    !error.replaySafetyFromKey
-  ) {
+  if (error instanceof RetryableTransportError && !error.replaySafetyFromKey) {
     toast("That didn't go through — the Traycer host never received it.", {
       id: TRANSPORT_NOTICE_TOAST_ID,
     });
