@@ -117,6 +117,12 @@ interface UseChatComposerSubmitArgs {
   readonly hasPendingApprovals: boolean;
   readonly sendDisabled: boolean | undefined;
   /**
+   * The composer's own reason for `sendDisabled`, the same text its tooltip
+   * and status line carry. A submit refused because send is disabled says it
+   * once, so Enter is never silent. `null` when there is nothing to say.
+   */
+  readonly sendDisabledHint: string | null;
+  /**
    * True when the bound workspace folder can't back a turn (none linked, or
    * the host resolved no existing folder). The editor's Enter handler calls
    * this directly, bypassing the send button's `canSubmit` gate, so the block
@@ -228,6 +234,7 @@ export function useChatComposerSubmit(
     getActiveTurnForSteer,
     hasPendingApprovals,
     sendDisabled,
+    sendDisabledHint,
     workspaceBlocked,
     imagesUnsupported,
     attachmentPreparationPending,
@@ -243,10 +250,18 @@ export function useChatComposerSubmit(
   // after an awaited read log from a continuation that holds the closure of the
   // render that started it, and the stream going away is exactly what it is
   // there to name.
-  const liveSendBlockRef = useRef({ connectionStatus, sendDisabled });
+  const liveSendBlockRef = useRef({
+    connectionStatus,
+    sendDisabled,
+    sendDisabledHint,
+  });
   useLayoutEffect(() => {
-    liveSendBlockRef.current = { connectionStatus, sendDisabled };
-  }, [connectionStatus, sendDisabled]);
+    liveSendBlockRef.current = {
+      connectionStatus,
+      sendDisabled,
+      sendDisabledHint,
+    };
+  }, [connectionStatus, sendDisabled, sendDisabledHint]);
   // When the last refused-submit line was written, for the window above.
   const lastRefusedSubmitLogAt = useRef<number | null>(null);
   // Whether a refusal now would write a line: send is disabled and the window
@@ -275,6 +290,14 @@ export function useChatComposerSubmit(
             : "stream-not-open",
         stage,
       });
+      // The same refusal, said to the user. Shares the log's window, so a held
+      // Enter raises one notice, and the id makes a repeat replace it in place
+      // instead of stacking. Nothing to say when the composer gave no reason.
+      if (live.sendDisabledHint !== null) {
+        toast.info(live.sendDisabledHint, {
+          id: `chat-composer-send-disabled:${taskId}`,
+        });
+      }
     },
     [refusedSubmitLogDue, targetHostId, taskId],
   );
@@ -468,14 +491,13 @@ export function useChatComposerSubmit(
       // blocked submit runs them too, for the log's sake only: a refusal is
       // worth a line when a sendable message was refused, not when Enter was
       // pressed on an empty composer.
-      const readSendableDraft = (): {
-        readonly toolbar: ComposerToolbarStoreState;
-        readonly editor: ComposerPromptEditorHandle;
-        readonly annotationRecords: ReadonlyArray<BrowserAnnotationRecord>;
-        readonly editorContent: JsonContent;
-      } | null => {
+      //
+      // Split from the model gate below: an unresolved model slug (catalog
+      // not answered yet, which a fresh tab on a reconnecting host is) says
+      // nothing about whether the user typed a message, and a refused send
+      // with a typed message is exactly what the notice is for.
+      const readDraftToSend = (): ReadDraft | null => {
         const toolbar = toolbarStore.getState();
-        if (toolbar.selection.modelSlug.length === 0) return null;
         const editor = editorRef.current;
         // A handle exists from the owner's first commit, before Tiptap's async
         // `useEditor` resolves - `getJSON()`/`clear()` silently no-op until
@@ -499,8 +521,14 @@ export function useChatComposerSubmit(
         }
         return { toolbar, editor, annotationRecords, editorContent };
       };
+      const readSendableDraft = (): ReadDraft | null => {
+        if (toolbarStore.getState().selection.modelSlug.length === 0) {
+          return null;
+        }
+        return readDraftToSend();
+      };
       if (submitBlocked()) {
-        if (refusedSubmitLogDue() && readSendableDraft() !== null) {
+        if (refusedSubmitLogDue() && readDraftToSend() !== null) {
           noteRefusedSubmit("initial");
         }
         return;
@@ -1208,10 +1236,18 @@ export function useChatComposerSubmit(
   };
 }
 
+/** A composer draft with something in it, read for a submit. */
+interface ReadDraft {
+  readonly toolbar: ComposerToolbarStoreState;
+  readonly editor: ComposerPromptEditorHandle;
+  readonly annotationRecords: ReadonlyArray<BrowserAnnotationRecord>;
+  readonly editorContent: JsonContent;
+}
+
 /**
- * At most one refused-submit line per this window, counted from the last line
- * written: a held Enter repeats the refusal every few tens of milliseconds and
- * would otherwise write one line each.
+ * At most one refused-submit line (and notice) per this window, counted from
+ * the last one written: a held Enter repeats the refusal every few tens of
+ * milliseconds and would otherwise write one each.
  */
 const REFUSED_SUBMIT_LOG_WINDOW_MS = 2_000;
 
