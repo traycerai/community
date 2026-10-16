@@ -760,6 +760,11 @@ vi.mock("@/hooks/epic/use-epic-node-mutations", () => ({
     mutateAsync: testState.deleteArtifactMutateAsync,
     isPending: false,
   }),
+  useEpicDeleteArtifactInBatch: () => ({
+    mutate: vi.fn(),
+    mutateAsync: testState.deleteArtifactMutateAsync,
+    isPending: false,
+  }),
   useEpicRenameArtifact: () => ({ mutate: vi.fn(), isPending: false }),
 }));
 
@@ -2768,6 +2773,41 @@ describe("epic sidebar selection mode", () => {
       epicId: EPIC_ID,
       artifactId: "ticket-child",
     });
+  });
+
+  it("reports one notice for a bulk artifact delete in which every delete failed", async () => {
+    const specA = treeNode("spec-a", null, "Spec A", "spec");
+    const specB = treeNode("spec-b", null, "Spec B", "spec");
+    testState.expandedIds = new Set();
+    testState.tree = {
+      rootIds: ["spec-a", "spec-b"],
+      childrenByParent: {},
+      nodeById: { "spec-a": specA, "spec-b": specB },
+    };
+    testState.records = [specA, specB].map(recordFromNode);
+    testState.activePanelId = "artifacts";
+    const toastError = vi.spyOn(toast, "error");
+    testState.deleteArtifactMutateAsync.mockImplementation(() =>
+      Promise.reject(new Error("write rejected")),
+    );
+
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "Select artifacts" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+    fireEvent.click(
+      screen.getByTestId("epic-sidebar-delete-selected-artifacts"),
+    );
+    fireEvent.click(screen.getByTestId("confirm-action"));
+
+    await waitFor(() => {
+      expect(toastError).toHaveBeenCalledWith(
+        "Couldn't delete any of the 2 selected artifacts.",
+        expect.anything(),
+      );
+    });
+    expect(toastError).toHaveBeenCalledTimes(1);
+    toastError.mockRestore();
   });
 
   it("enters artifact selection mode from cmd-click on a row", () => {

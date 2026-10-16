@@ -173,7 +173,10 @@ import {
   useEpicArchiveChats,
   useEpicDeleteChatInBatch,
 } from "@/hooks/epic/use-epic-chat-mutations";
-import { toastFromOwnerHostBatchWriteFailures } from "@/lib/owner-host-write-error-toast";
+import {
+  toastFromOwnerHostBatchWriteFailures,
+  type OwnerHostBatchWriteCopy,
+} from "@/lib/owner-host-write-error-toast";
 import { toHostRpcError } from "@traycer-clients/shared/host-transport/host-messenger";
 import {
   useChatArchiveSupported,
@@ -185,7 +188,7 @@ import {
 } from "@traycer-clients/shared/host-transport/negotiated-manifest-registry";
 import {
   useEpicCreateArtifact,
-  useEpicDeleteArtifact,
+  useEpicDeleteArtifactInBatch,
 } from "@/hooks/epic/use-epic-node-mutations";
 import { useEpicDeleteTuiAgentInBatch } from "@/hooks/epic/use-epic-tui-agent-mutations";
 import {
@@ -1532,7 +1535,7 @@ function SidebarBulkDeleteController(props: {
   // `null`: this controller deletes EVERY selected row, so there is no one
   // artifact it speaks for. It reads its own `deletePending` off the
   // selection store rather than the hook's flag.
-  const deleteArtifact = useEpicDeleteArtifact(null);
+  const deleteArtifact = useEpicDeleteArtifactInBatch();
   // The batch reports its agents' failures once, below, so a selection
   // spanning several unreachable hosts reads as that and not as one host.
   const deleteChat = useEpicDeleteChatInBatch();
@@ -1628,31 +1631,24 @@ function SidebarBulkDeleteController(props: {
       }),
     )
       .then((results) => {
-        const agentOutcomes = targets.flatMap((target, index) => {
-          if (target.kind === "artifact") return [];
-          const result = results[index];
-          return [
-            {
-              hostId: agentHostId(target),
+        toastFromOwnerHostBatchWriteFailures(
+          targets.map((target, index) => {
+            const result = results[index];
+            const isArtifact = target.kind === "artifact";
+            return {
+              kind: isArtifact ? "artifact" : "agent",
+              hostId: isArtifact ? sessionHostId : agentHostId(target),
               error:
                 result.status === "rejected"
                   ? toHostRpcError(
                       result.reason,
-                      target.kind === "chat"
-                        ? "epic.deleteChat"
-                        : "epic.deleteTuiAgent",
+                      sidebarDeleteMethod(target.kind),
                     )
                   : null,
-            },
-          ];
-        });
-        toastFromOwnerHostBatchWriteFailures(agentOutcomes, {
-          single: "Couldn't delete agent.",
-          partial: (applied, failed) =>
-            `Deleted ${applied} of ${applied + failed} selected agents. ${failed} couldn't be deleted.`,
-          none: (attempted) =>
-            `Couldn't delete any of the ${attempted} selected agents.`,
-        });
+            };
+          }),
+          sidebarBulkDeleteCopy(targets),
+        );
         const successfulIds = targets.flatMap((target, index) =>
           results[index].status === "fulfilled" ? [target.id] : [],
         );
@@ -1763,6 +1759,45 @@ function isAgentRecord(record: EpicTreeRecord | undefined): boolean {
     record !== undefined &&
     (record.type === "chat" || record.type === "terminal-agent")
   );
+}
+
+function sidebarDeleteMethod(
+  kind: "artifact" | "chat" | "terminal-agent",
+): "epic.deleteArtifact" | "epic.deleteChat" | "epic.deleteTuiAgent" {
+  switch (kind) {
+    case "artifact":
+      return "epic.deleteArtifact";
+    case "chat":
+      return "epic.deleteChat";
+    case "terminal-agent":
+      return "epic.deleteTuiAgent";
+  }
+}
+
+/** The bulk delete's one notice, named for what the selection holds. */
+function sidebarBulkDeleteCopy(
+  targets: readonly { readonly kind: "artifact" | "chat" | "terminal-agent" }[],
+): OwnerHostBatchWriteCopy {
+  const hasArtifacts = targets.some((target) => target.kind === "artifact");
+  const hasAgents = targets.some((target) => target.kind !== "artifact");
+  let noun = "agents";
+  let single = "Couldn't delete agent.";
+  if (hasArtifacts && hasAgents) {
+    noun = "items";
+    single = "Couldn't delete item.";
+  } else if (hasArtifacts) {
+    noun = "artifacts";
+    single = "Couldn't delete artifact.";
+  }
+  return {
+    single,
+    partial: (applied, failed) =>
+      `Deleted ${applied} of ${applied + failed} selected ${noun}. ${failed} couldn't be deleted.`,
+    none: (attempted) =>
+      `Couldn't delete any of the ${attempted} selected ${noun}.`,
+    unconfirmed: (attempted) =>
+      `Couldn't confirm all ${attempted} selected ${noun} were deleted. Check them and delete any that weren't.`,
+  };
 }
 
 function sidebarDeleteTargetForRecord(
