@@ -2433,8 +2433,14 @@ export class AuthService {
     if (!this.isIdentityCurrent(generation) || outcome === null) {
       return "superseded";
     }
-    if (outcome.kind === "rejected" || outcome.kind === "network-error") {
-      return outcome.kind;
+    if (outcome.kind === "rejected") {
+      // This method's caller is a host that just refused `expected`. On a
+      // session authn has refused, that is the end of the local plane too.
+      useAuthStore.getState().noteHostRefusedHeldBearer();
+      return "rejected";
+    }
+    if (outcome.kind === "network-error") {
+      return "network-error";
     }
     return this.isExpectedBearerLive(expected, generation)
       ? "rotated"
@@ -2921,6 +2927,19 @@ export class AuthService {
       this.currentBearer === null
     ) {
       return null;
+    }
+    // A session authn has already refused, held open for its local plane.
+    // Asking again cannot change the answer: `/api/v3/user` refuses the same
+    // bearer, and the rotate re-spends a refresh token authn has refused and
+    // re-raises "session expired". Every host request that failed on the held
+    // bearer used to run that round trip, so the toast came back after each one
+    // (a refresh every ~3 s, measured). The wake nudge stands down on the same
+    // latch; a successful sign-in clears it.
+    if (
+      this.sessionRecoveryTerminallyRejected &&
+      useAuthStore.getState().status === "unverified"
+    ) {
+      return { kind: "rejected" };
     }
     const currentUserId = ctx.identity.userId;
     const currentToken = this.currentBearer;

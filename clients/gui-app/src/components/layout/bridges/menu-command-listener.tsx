@@ -247,9 +247,11 @@ export function MenuCommandListener() {
           // Admission is read when the command ARRIVES, not when this handler
           // subscribed: a tray "Sign out" followed by "Settings…" can land
           // before React has re-rendered with the new status.
+          const auth = useAuthStore.getState();
           const admission = resolveShellLocalPlaneAdmission(
-            useAuthStore.getState().status,
+            auth.status,
             runnerHost.hasLocalHost,
+            auth.hostRefusedHeldBearer,
           );
           if (!admission.admitted) {
             void navigate({ to: "/when-you-quit" });

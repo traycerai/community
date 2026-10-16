@@ -45,6 +45,8 @@ function resetAuth(
       profile: { userId: "user-1", userName: "user-1", email: "u@e.com" },
       contextMetadata: { userId: "user-1", username: "user-1" },
       subscriptionStatus: status === "signed-in" ? "FREE" : null,
+      cloudVerdictLoss: "unreachable",
+      hostRefusedHeldBearer: false,
     });
     return;
   }
@@ -53,6 +55,8 @@ function resetAuth(
     profile: null,
     contextMetadata: null,
     subscriptionStatus: null,
+    cloudVerdictLoss: "unreachable",
+    hostRefusedHeldBearer: false,
   });
 }
 
@@ -82,6 +86,52 @@ describe("createStreamAuthRevalidator", () => {
     expect(outcome).toBe("local-plane-retained");
   });
 
+  it("records the host refusal when the outcome is rejected, the store is unverified and authn refused the session", async () => {
+    resetAuth("unverified");
+    useAuthStore.setState({ cloudVerdictLoss: "session-rejected" });
+    vi.spyOn(service, "revalidateCurrentContext").mockResolvedValue({
+      kind: "rejected",
+    });
+    const revalidator = createStreamAuthRevalidator(service);
+    expect(useAuthStore.getState().hostRefusedHeldBearer).toBe(false);
+
+    const outcome = await revalidator.revalidateForReconnect();
+
+    expect(outcome).toBe("local-plane-retained");
+    expect(useAuthStore.getState().hostRefusedHeldBearer).toBe(true);
+    // Recorded, not demoted further: the session stays `unverified`.
+    expect(useAuthStore.getState().status).toBe("unverified");
+  });
+
+  it("does not record a host refusal when the outcome is rejected on an unverified session whose authn was only unreachable", async () => {
+    resetAuth("unverified");
+    useAuthStore.setState({ cloudVerdictLoss: "unreachable" });
+    vi.spyOn(service, "revalidateCurrentContext").mockResolvedValue({
+      kind: "rejected",
+    });
+    const revalidator = createStreamAuthRevalidator(service);
+
+    const outcome = await revalidator.revalidateForReconnect();
+
+    expect(outcome).toBe("local-plane-retained");
+    expect(useAuthStore.getState().hostRefusedHeldBearer).toBe(false);
+  });
+
+  it("does not record a host refusal when the outcome is rejected but the session is still signed-in (a store fault, not an authn verdict)", async () => {
+    resetAuth("signed-in");
+    // A stale latched loss must not turn a signed-in session into a refusal.
+    useAuthStore.setState({ cloudVerdictLoss: "session-rejected" });
+    vi.spyOn(service, "revalidateCurrentContext").mockResolvedValue({
+      kind: "rejected",
+    });
+    const revalidator = createStreamAuthRevalidator(service);
+
+    const outcome = await revalidator.revalidateForReconnect();
+
+    expect(outcome).toBe("local-plane-retained");
+    expect(useAuthStore.getState().hostRefusedHeldBearer).toBe(false);
+  });
+
   it('returns "rejected" when the outcome is rejected and the store is signed-out (the revalidator already signed out)', async () => {
     resetAuth("signed-out");
     vi.spyOn(service, "revalidateCurrentContext").mockResolvedValue({
@@ -92,6 +142,7 @@ describe("createStreamAuthRevalidator", () => {
     const outcome = await revalidator.revalidateForReconnect();
 
     expect(outcome).toBe("rejected");
+    expect(useAuthStore.getState().hostRefusedHeldBearer).toBe(false);
   });
 
   it('returns "rotated" when the outcome is valid', async () => {
