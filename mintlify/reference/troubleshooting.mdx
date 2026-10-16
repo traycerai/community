@@ -235,7 +235,7 @@ To fix it:
 2. In [Settings › Shell](/settings/shell#host-environment), under **Host environment**, click **Add environment variable**, enter `NODE_EXTRA_CA_CERTS` as the **Name**, choose **Set**, and enter the full path of the file on the machine the host runs on.
 3. Restart the host: **⋯ › Restart** in [Settings › Host](/settings/host). For a remote host this is the route to use, because **Help › Restart Host** and the tray menu's **Restart Host** restart only this computer's host. If the host is busy, a dialog names the running work and lets you defer the restart.
 
-Traycer keeps trusting its normal certificates. Traycer, and the agents it runs, also trust the certificate you added.
+Traycer keeps trusting its normal certificates. Traycer, and the agents it runs, then also trust every site that certificate's authority vouches for.
 
 ## App Menus
 
