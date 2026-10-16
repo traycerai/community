@@ -505,6 +505,23 @@ export async function pruneCrashReports(
   }
 }
 
+/**
+ * The three numbers a heap-exhaustion report states, in bytes: the V8 heap
+ * limit, the heap in use and the resident set. A value the report does not
+ * carry, or carries as anything but a non-negative whole number, is `null`.
+ */
+export interface CrashReportMemory {
+  readonly heapLimitBytes: number | null;
+  readonly heapUsedBytes: number | null;
+  readonly rssBytes: number | null;
+}
+
+const NO_REPORT_MEMORY: CrashReportMemory = {
+  heapLimitBytes: null,
+  heapUsedBytes: null,
+  rssBytes: null,
+};
+
 export interface CrashReportMatch {
   readonly filename: string;
   /**
@@ -513,6 +530,8 @@ export interface CrashReportMatch {
    * still tells support where to look.
    */
   readonly summary: string | null;
+  /** The report's memory numbers; every field `null` when unreadable. */
+  readonly memory: CrashReportMemory;
 }
 
 /**
@@ -550,10 +569,8 @@ export async function findCrashReportSince(
   if (newest === null) {
     return null;
   }
-  return {
-    filename: newest.name,
-    summary: await summarizeReport(join(dir, newest.name)),
-  };
+  const read = await summarizeReport(join(dir, newest.name));
+  return { filename: newest.name, summary: read.summary, memory: read.memory };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -568,7 +585,18 @@ function asString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
 
-async function summarizeReport(path: string): Promise<string | null> {
+function asByteCount(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : null;
+}
+
+interface ReportReading {
+  readonly summary: string | null;
+  readonly memory: CrashReportMemory;
+}
+
+async function summarizeReport(path: string): Promise<ReportReading> {
   try {
     const parsed = asRecord(JSON.parse(await readFile(path, "utf8")));
     const header = asRecord(parsed?.["header"]);
@@ -576,23 +604,44 @@ async function summarizeReport(path: string): Promise<string | null> {
     const trigger = asString(header?.["trigger"]);
     const stackRecord = asRecord(parsed?.["javascriptStack"]);
     const message = asString(stackRecord?.["message"]);
+    const heap = asRecord(parsed?.["javascriptHeap"]);
+    const usage = asRecord(parsed?.["resourceUsage"]);
+    const memory: CrashReportMemory = {
+      heapLimitBytes: asByteCount(heap?.["memoryLimit"]),
+      heapUsedBytes: asByteCount(heap?.["usedMemory"]),
+      // `rss` is the figure at the report; `maxRss` is the peak, the answer
+      // only when the report has no current reading.
+      rssBytes: asByteCount(usage?.["rss"]) ?? asByteCount(usage?.["maxRss"]),
+    };
     const parts: string[] = [];
     if (event !== null) parts.push(`event=${event}`);
     if (trigger !== null) parts.push(`trigger=${trigger}`);
+    // Before the stack message, which is clamped from the end: a long message
+    // must never be what cuts the numbers off.
+    if (memory.heapLimitBytes !== null) {
+      parts.push(`heapLimitBytes=${memory.heapLimitBytes}`);
+    }
+    if (memory.heapUsedBytes !== null) {
+      parts.push(`heapUsedBytes=${memory.heapUsedBytes}`);
+    }
+    if (memory.rssBytes !== null) parts.push(`rssBytes=${memory.rssBytes}`);
     if (message !== null) parts.push(`js=${message}`);
     if (parts.length === 0) {
-      return null;
+      return { summary: null, memory };
     }
     // ENFORCED, not just documented: these values come verbatim out of the
     // report JSON, and a `javascriptStack.message` carrying a line
     // terminator would break the one-line contract this digest promises -
     // the same hazard `escapedForMarker` exists to prevent for stderr, and
     // `persistChildExit` already passes this straight into a log line.
-    return StderrCaptureBuffer.toSingleLine(
-      parts.join(" "),
-      REPORT_SUMMARY_MAX_CHARS,
-    );
+    return {
+      summary: StderrCaptureBuffer.toSingleLine(
+        parts.join(" "),
+        REPORT_SUMMARY_MAX_CHARS,
+      ),
+      memory,
+    };
   } catch {
-    return null;
+    return { summary: null, memory: NO_REPORT_MEMORY };
   }
 }
