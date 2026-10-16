@@ -384,7 +384,11 @@ function SandboxOsSelect(props: SandboxOsSelectProps): ReactNode {
 function formReplacement(
   offer: FirstTeamTaskOffer | null,
   provider: SandboxCatalogueProvider,
-  osSelect: SandboxOsSelectProps & { readonly onDone: () => void },
+  osSelect: SandboxOsSelectProps & {
+    readonly onDone: () => void;
+    /** A create for this account is in flight, from this open or another. */
+    readonly creating: boolean;
+  },
 ): ReactNode | null {
   if (offer !== null) {
     return (
@@ -410,6 +414,15 @@ function formReplacement(
       >
         {notCreatableLine(provider)}
       </p>
+      {/* A create sent from another OS still runs: say so here too. */}
+      {osSelect.creating ? (
+        <p
+          className="text-ui-sm text-muted-foreground"
+          data-testid="sandbox-create-in-flight"
+        >
+          A sandbox is being created…
+        </p>
+      ) : null}
       <SandboxCreateFailure shown />
     </div>
   );
@@ -500,6 +513,7 @@ function SandboxCreateForm(props: {
     form,
     setForm,
     onDone: props.onDone,
+    creating,
   });
   if (replacement !== null) return replacement;
 
