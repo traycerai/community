@@ -189,6 +189,24 @@ describe("agent archive command function", () => {
     );
   });
 
+  // A requested write was accepted for the record's host to finish: the cloud
+  // row's flag already holding the value does not make that "no change", and
+  // a missing record is RECORD_NOT_FOUND, never `updated: false`.
+  it("says a requested archive is with the agent's host even when the cloud row already held it", async () => {
+    rpcMock.mockResolvedValue({ updated: false, outcome: "requested" });
+
+    const result = await buildAgentArchiveCommand({
+      epicId: "epic_1",
+      agentId: "agent_1",
+      unarchive: true,
+    })(makeCtx());
+
+    expect(result.data).toEqual({ updated: false, outcome: "requested" });
+    expect(result.human).toBe(
+      "agent_1 unarchived; its host will finish when it is back",
+    );
+  });
+
   it("sends archived: false with --unarchive", async () => {
     rpcMock.mockResolvedValue({ updated: true, outcome: "applied" });
 

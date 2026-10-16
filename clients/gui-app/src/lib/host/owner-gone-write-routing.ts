@@ -1,4 +1,10 @@
 import type { HostLeaseSnapshot } from "@traycer-clients/shared/host-selection/selection-authority-contract";
+import { negotiatedVersionMeetsRequirement } from "@traycer-clients/shared/host-transport/host-messenger";
+import {
+  getNegotiatedHostMethodVersion,
+  subscribeNegotiatedManifests,
+} from "@traycer-clients/shared/host-transport/negotiated-manifest-registry";
+import type { SchemaVersion } from "@traycer/protocol/framework/index";
 import {
   isSurfacePinDeposed,
   type SurfacePinFleetView,
@@ -32,7 +38,42 @@ import { useSelectionAuthorityStore } from "@/stores/host/selection-authority-st
  *
  * When the owner is down and no host is live, the answer is the owner again:
  * the write fails as it did before this existed and says so.
+ *
+ * An agent-record write also needs the stand-in to have NEGOTIATED the minor
+ * that taught a host to write another host's record
+ * ({@link OWNER_GONE_RECORD_WRITE_FLOORS}): an older host can only apply the
+ * write to its own copy, so in a mixed-version fleet it is passed over for a
+ * later live host that can. Unknown evidence (no handshake yet) fails closed.
  */
+
+/** The agent-record writes a host other than the owner may make. */
+export type OwnerGoneRecordWriteMethod =
+  | "epic.setChatArchived"
+  | "epic.deleteChat"
+  | "epic.deleteTuiAgent";
+
+/** The minor at which each write gained the non-owner (`requested`) arm. */
+const OWNER_GONE_RECORD_WRITE_FLOORS: Readonly<
+  Record<OwnerGoneRecordWriteMethod, SchemaVersion>
+> = {
+  "epic.setChatArchived": { major: 1, minor: 1 },
+  "epic.deleteChat": { major: 1, minor: 2 },
+  "epic.deleteTuiAgent": { major: 1, minor: 1 },
+};
+
+/**
+ * Whether `hostId`'s last handshake negotiated `method` at or above the minor
+ * that writes a record another host owns. `false` before any handshake.
+ */
+export function hostTakesOwnerGoneRecordWrite(
+  hostId: string,
+  method: OwnerGoneRecordWriteMethod,
+): boolean {
+  return negotiatedVersionMeetsRequirement(
+    getNegotiatedHostMethodVersion(hostId, method) ?? undefined,
+    { method, version: OWNER_GONE_RECORD_WRITE_FLOORS[method] },
+  );
+}
 
 /** The authority's fleet view, read imperatively at the moment of a write. */
 export function readSelectionFleetSnapshot(): SurfacePinFleetView {
@@ -46,14 +87,16 @@ export function isLeaseServing(lease: HostLeaseSnapshot): boolean {
 }
 
 /**
- * The first live host, trying `preferredHostIds` in order and then every other
- * host of the fleet in the authority's order. `excludedHostId` (the host that
- * is down) is never answered. `null` when no host is live.
+ * The first live host that `accepts`, trying `preferredHostIds` in order and
+ * then every other host of the fleet in the authority's order.
+ * `excludedHostId` (the host that is down) is never answered. `null` when no
+ * such host is live.
  */
 export function pickLiveHostId(
   preferredHostIds: readonly (string | null)[],
   fleet: SurfacePinFleetView,
   excludedHostId: string,
+  accepts: (hostId: string) => boolean,
 ): string | null {
   if (!fleet.authorityAttached) return null;
   const servingHostIds = new Set(
@@ -65,7 +108,7 @@ export function pickLiveHostId(
   ];
   for (const hostId of ordered) {
     if (hostId === null || hostId === excludedHostId) continue;
-    if (servingHostIds.has(hostId)) return hostId;
+    if (servingHostIds.has(hostId) && accepts(hostId)) return hostId;
   }
   return null;
 }
@@ -79,8 +122,8 @@ export interface OwnerGoneWriteRoute {
 
 /**
  * The host an owner-routed write is sent to: the owner while it can serve,
- * otherwise the first live host (see {@link pickLiveHostId}), otherwise the
- * owner.
+ * otherwise the first live host `fallbackAccepts` (see {@link pickLiveHostId}),
+ * otherwise the owner.
  *
  * `preferredHostIds` is a thunk because it is only needed on the fallback path,
  * and reading it can touch app-wide state the ordinary path never does.
@@ -89,6 +132,7 @@ export function routeOwnerGoneWrite(args: {
   readonly ownerHostId: string;
   readonly fleet: SurfacePinFleetView;
   readonly preferredHostIds: () => readonly (string | null)[];
+  readonly fallbackAccepts: (hostId: string) => boolean;
 }): OwnerGoneWriteRoute {
   const { ownerHostId, fleet } = args;
   if (!isSurfacePinDeposed(ownerHostId, fleet)) {
@@ -98,7 +142,43 @@ export function routeOwnerGoneWrite(args: {
     args.preferredHostIds(),
     fleet,
     ownerHostId,
+    args.fallbackAccepts,
   );
   if (liveHostId === null) return { hostId: ownerHostId, fellBack: false };
   return { hostId: liveHostId, fellBack: true };
+}
+
+/**
+ * The host an agent-record archive or delete would be sent to right now:
+ * {@link routeOwnerGoneWrite} with the method's floor as the fallback's test.
+ * The send path and every affordance gate read this one answer, so a control
+ * is offered on the evidence of the host that will serve it - not of an owner
+ * that is down and may never have handshaken with this renderer.
+ */
+export function recordWriteServingHostId(args: {
+  readonly ownerHostId: string;
+  readonly method: OwnerGoneRecordWriteMethod;
+  readonly fleet: SurfacePinFleetView;
+  readonly preferredHostIds: () => readonly (string | null)[];
+}): string {
+  return routeOwnerGoneWrite({
+    ownerHostId: args.ownerHostId,
+    fleet: args.fleet,
+    preferredHostIds: args.preferredHostIds,
+    fallbackAccepts: (hostId) =>
+      hostTakesOwnerGoneRecordWrite(hostId, args.method),
+  }).hostId;
+}
+
+/**
+ * Fires when either input of {@link recordWriteServingHostId} can have
+ * changed: the authority's fleet, or any host's negotiated manifest.
+ */
+export function subscribeRecordWriteRouting(listener: () => void): () => void {
+  const unsubscribeFleet = useSelectionAuthorityStore.subscribe(listener);
+  const unsubscribeManifests = subscribeNegotiatedManifests(listener);
+  return () => {
+    unsubscribeFleet();
+    unsubscribeManifests();
+  };
 }

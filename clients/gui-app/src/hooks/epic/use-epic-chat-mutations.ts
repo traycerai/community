@@ -639,7 +639,7 @@ function useEpicArchiveChatMutation(
   HostRpcError,
   ArchiveChatMutationInput
 > {
-  const client = useEpicRecordLifecycleMutationClient();
+  const client = useEpicRecordLifecycleMutationClient("epic.setChatArchived");
   const sessionClient = useEpicSessionHostClient();
   const binding = useHostBinding();
   const queryClient = useQueryClient();
@@ -855,7 +855,7 @@ function useEpicDeleteChatMutation(
   DeleteChatMutationInput,
   DeleteChatMutationContext
 > {
-  const client = useEpicRecordLifecycleMutationClient();
+  const client = useEpicRecordLifecycleMutationClient("epic.deleteChat");
   const sessionClient = useEpicSessionHostClient();
   const binding = useHostBinding();
   const queryClient = useQueryClient();

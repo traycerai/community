@@ -109,7 +109,7 @@ export function useEpicDeleteTuiAgentInBatch() {
 function useEpicDeleteTuiAgentMutation(
   failurePresentation: "individual" | "aggregate",
 ) {
-  const client = useEpicRecordLifecycleMutationClient();
+  const client = useEpicRecordLifecycleMutationClient("epic.deleteTuiAgent");
   const sessionClient = useEpicSessionHostClient();
   const binding = useHostBinding();
   const queryClient = useQueryClient();
@@ -144,9 +144,13 @@ function useEpicDeleteTuiAgentMutation(
         for (const hostId of new Set([ctx.hostId, ctx.viewerHostId])) {
           invalidateEpicTuiAgentRecords(queryClient, hostId);
         }
-        Analytics.getInstance().track(AnalyticsEvent.TerminalAgentStopped, {
-          source: "direct_ui",
-        });
+        // Only an applied delete stopped the agent: a requested one deleted
+        // the cloud row, and the agent runs until its owner is back.
+        if (data.outcome === "applied") {
+          Analytics.getInstance().track(AnalyticsEvent.TerminalAgentStopped, {
+            source: "direct_ui",
+          });
+        }
         if (data.outcome === "requested" && ctx.hostId !== null) {
           toastRequestedRecordWrite({
             write: "remove",

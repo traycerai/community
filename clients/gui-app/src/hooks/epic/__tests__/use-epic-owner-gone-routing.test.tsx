@@ -8,9 +8,13 @@
  * write on a record it owns (`applied`) and writes the cloud row for one it
  * does not (`requested`).
  *
+ * A stand-in is chosen only when its handshake negotiated the minor that
+ * writes another host's record; the live hosts below are seeded with those.
+ *
  * Real: the hooks, `useHostMutation`, a `HostClient` over `MockHostMessenger`,
- * the `QueryClient`, the selection-authority store. Faked: sonner and the
- * binding seam (`useHostBinding`), as the neighbouring routing suites do.
+ * the `QueryClient`, the selection-authority store, the negotiated-manifest
+ * registry. Faked: sonner and the binding seam (`useHostBinding`), as the
+ * neighbouring routing suites do.
  */
 import { type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -39,6 +43,11 @@ import { EpicSessionHostClientContext } from "@/lib/registries/epic-session-regi
 import { createHostQueryInvalidator } from "@/lib/host/query-invalidator";
 import { useSelectionAuthorityStore } from "@/stores/host/selection-authority-store";
 import { useAuthStore } from "@/stores/auth/auth-store";
+import {
+  recordNegotiatedHostManifest,
+  resetNegotiatedManifests,
+} from "@traycer-clients/shared/host-transport/negotiated-manifest-registry";
+import { Analytics, AnalyticsEvent } from "@/lib/analytics";
 
 vi.mock("sonner", () => ({
   toast: {
@@ -203,6 +212,40 @@ function writeCalls(): Call[] {
 
 let fixture: Fixture;
 
+/** A handshake at the given minors of the three owner-gone writes. */
+function negotiate(
+  hostId: string,
+  minors: {
+    readonly setChatArchived: number;
+    readonly deleteChat: number;
+    readonly deleteTuiAgent: number;
+  },
+): void {
+  recordNegotiatedHostManifest(hostId, {
+    "epic.setChatArchived": {
+      major: 1,
+      minor: minors.setChatArchived,
+      supportedMajors: [1],
+    },
+    "epic.deleteChat": {
+      major: 1,
+      minor: minors.deleteChat,
+      supportedMajors: [1],
+    },
+    "epic.deleteTuiAgent": {
+      major: 1,
+      minor: minors.deleteTuiAgent,
+      supportedMajors: [1],
+    },
+  });
+}
+
+const OWNER_GONE_MINORS = {
+  setChatArchived: 1,
+  deleteChat: 2,
+  deleteTuiAgent: 1,
+} as const;
+
 beforeEach(() => {
   vi.mocked(toast.success).mockClear();
   vi.mocked(toast.error).mockClear();
@@ -216,6 +259,8 @@ beforeEach(() => {
     [],
   );
   fixture = createFixture();
+  negotiate(SESSION.hostId, OWNER_GONE_MINORS);
+  negotiate(OTHER.hostId, OWNER_GONE_MINORS);
 });
 
 afterEach(() => {
@@ -223,6 +268,8 @@ afterEach(() => {
   fixture.dispose();
   useSelectionAuthorityStore.getState().reset();
   useAuthStore.getState().setSignedOut();
+  resetNegotiatedManifests();
+  vi.restoreAllMocks();
 });
 
 async function archive(archived: boolean): Promise<void> {
@@ -333,6 +380,38 @@ describe("owner session down -> a live host takes the write", () => {
     ]);
   });
 
+  it("passes over a live session host that negotiated only the owner-only minors, for a later one that can write", async () => {
+    // Mid rolling upgrade: the session host can only apply these to its own
+    // records, so it is skipped rather than sent a write it would miss.
+    negotiate(SESSION.hostId, {
+      setChatArchived: 0,
+      deleteChat: 1,
+      deleteTuiAgent: 0,
+    });
+
+    await archive(true);
+    await deleteChat();
+    await deleteTuiAgent();
+
+    expect(writeCalls().map((call) => call.hostId)).toEqual([
+      OTHER.hostId,
+      OTHER.hostId,
+      OTHER.hostId,
+    ]);
+  });
+
+  it("does not count a requested terminal-agent delete as a stopped agent", async () => {
+    const track = vi.spyOn(Analytics.getInstance(), "track");
+
+    await deleteTuiAgent();
+
+    expect(
+      track.mock.calls.filter(
+        ([event]) => event === AnalyticsEvent.TerminalAgentStopped,
+      ),
+    ).toEqual([]);
+  });
+
   it("reads the host's answer, not its own routing: an `applied` reply says nothing extra", async () => {
     // Authority moved to the session host after the GUI last saw the record:
     // the GUI routed away from a "down owner", but the receiving host found
@@ -364,6 +443,19 @@ describe("unchanged paths", () => {
       OWNER.hostId,
     ]);
     expect(successToasts()).toEqual([]);
+  });
+
+  it("counts an applied terminal-agent delete as a stopped agent", async () => {
+    publishLeases(lease(SESSION.hostId, "ready"), lease(OWNER.hostId, "ready"));
+    const track = vi.spyOn(Analytics.getInstance(), "track");
+
+    await deleteTuiAgent();
+
+    expect(
+      track.mock.calls.filter(
+        ([event]) => event === AnalyticsEvent.TerminalAgentStopped,
+      ),
+    ).toEqual([[AnalyticsEvent.TerminalAgentStopped, { source: "direct_ui" }]]);
   });
 
   it("with no live host the write still goes to the owner", async () => {

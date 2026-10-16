@@ -2291,7 +2291,9 @@ export const setChatArchivedResponseSchema = lazySchema(() =>
   z.object({
     updated: z.boolean(),
     // @1.1: see `agentRecordWriteOutcomeSchema`. On `requested`, `updated`
-    // reports whether the cloud row's archive flag changed.
+    // says the cloud write was accepted, not that the flag moved: the cloud
+    // route is idempotent and does not report it. A missing record is
+    // `RECORD_NOT_FOUND:` on that arm, never `updated: false`.
     outcome: agentRecordWriteOutcomeSchema,
   }),
 );

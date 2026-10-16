@@ -168,6 +168,9 @@ export function routeEpicBatchDelete(args: {
     ownerHostId: activeHostId,
     fleet: args.fleet,
     preferredHostIds: () => [args.localHostId()],
+    // Deleting a cloud-homed Task from the account is what every host's
+    // `epic.batchDelete` already does, so no minor is asked of the stand-in.
+    fallbackAccepts: () => true,
   });
   if (!route.fellBack) return direct;
   const sentIds = ids.filter((id) => !args.isLocalHomedNow(id));

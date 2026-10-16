@@ -74,12 +74,14 @@ function archiveHumanMessage(
   updated: boolean,
   outcome: "applied" | "requested",
 ): string {
-  if (updated) {
-    const done = archived ? `${agentId} archived` : `${agentId} unarchived`;
-    return outcome === "requested"
-      ? `${done}; its host will finish when it is back`
-      : done;
+  const done = archived ? `${agentId} archived` : `${agentId} unarchived`;
+  // A requested write was accepted for the agent's host to finish, whether or
+  // not the cloud row already held the value; a missing record is
+  // `RECORD_NOT_FOUND:`, never `updated: false`, on this arm.
+  if (outcome === "requested") {
+    return `${done}; its host will finish when it is back`;
   }
+  if (updated) return done;
   // Deliberately noncommittal about WHY nothing changed. This host throws
   // `RECORD_NOT_FOUND:` for an absent id, but `epic.setChatArchived@1.0`'s
   // response contract also permits `updated: false` for a record that did not
