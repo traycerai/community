@@ -42,7 +42,7 @@ import {
  * Counting the failures and dropping `errorMessage` was the gap this pins: a
  * batch the host refuses because its local store will not open is exactly the
  * case where the reason is the whole message, and it rendered as a bare
- * "Couldn't delete epic." with nothing to act on. Three of the host's four
+ * "Couldn't delete task." with nothing to act on. Three of the host's four
  * local-store refusal paths already carry their remedy as data; this is the one
  * that carries it per ROW, in `results[].errorMessage`.
  *
@@ -91,7 +91,7 @@ describe("the delete toast's description carries the host's reason", () => {
     const parts = partsFor([failure("epic-1", REFUSAL)], []);
 
     expect(parts.level).toBe("error");
-    expect(parts.message).toBe("Couldn't delete epic.");
+    expect(parts.message).toBe("Couldn't delete task.");
     expect(parts.detail).toBe(REFUSAL);
   });
 
@@ -105,7 +105,7 @@ describe("the delete toast's description carries the host's reason", () => {
       [],
     );
 
-    expect(parts.message).toBe("Couldn't delete 5 epics.");
+    expect(parts.message).toBe("Couldn't delete 5 tasks.");
     expect(parts.detail).toBe(REFUSAL);
   });
 
@@ -134,7 +134,7 @@ describe("the delete toast's description carries the host's reason", () => {
     expect(parts.detail).toBeNull();
     // The count line still explains that something failed; it is the REASON
     // that is withheld, not the failure.
-    expect(parts.message).toBe("Couldn't delete 3 epics.");
+    expect(parts.message).toBe("Couldn't delete 3 tasks.");
   });
 
   it("shows no reason when the host sent none, or sent blank", () => {
