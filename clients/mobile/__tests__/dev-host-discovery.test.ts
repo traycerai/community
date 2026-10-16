@@ -162,7 +162,7 @@ describe("buildDevHostDiscovery", () => {
     ]);
   });
 
-  it("fails when the registry read hits a network error", async () => {
+  it("keeps the dev host when the registry read hits a network error", async () => {
     const { registry, listRegisteredHosts } = registryHarness("bearer-1", {
       kind: "network-error",
     });
@@ -174,10 +174,10 @@ describe("buildDevHostDiscovery", () => {
     const outcome = await fetcher(SIGNED_IN_ERA);
 
     expect(listRegisteredHosts).toHaveBeenCalledTimes(1);
-    expect(outcome).toEqual({ kind: "failed" });
+    expect(outcome).toEqual({ kind: "hosts", entries: [DEV_ENTRY] });
   });
 
-  it("fails when the registry rejects the bearer", async () => {
+  it("keeps the dev host when the registry rejects the bearer", async () => {
     const { registry, listRegisteredHosts } = registryHarness("bearer-1", {
       kind: "unauthorized",
     });
@@ -189,7 +189,57 @@ describe("buildDevHostDiscovery", () => {
     const outcome = await fetcher(SIGNED_IN_ERA);
 
     expect(listRegisteredHosts).toHaveBeenCalledTimes(1);
-    expect(outcome).toEqual({ kind: "failed" });
+    expect(outcome).toEqual({ kind: "hosts", entries: [DEV_ENTRY] });
+  });
+
+  it("retains the last successfully read registry rows when a later read fails", async () => {
+    const { registry, listRegisteredHosts } = registryHarness(
+      "bearer-1",
+      okResult([SANDBOX_ROW]),
+    );
+    const fetcher = buildDevHostDiscovery(
+      () => Promise.resolve(DEV_OUTCOME),
+      registry,
+    );
+
+    await fetcher(SIGNED_IN_ERA);
+    listRegisteredHosts.mockResolvedValue({ kind: "network-error" });
+    const outcome = await fetcher(SIGNED_IN_ERA);
+
+    expect(listRegisteredHosts).toHaveBeenCalledTimes(2);
+    const entries = hostEntriesOf(outcome);
+    expect(entries[0]).toEqual(DEV_ENTRY);
+    expect(entries.map((entry) => entry.hostId)).toEqual([
+      DEV_HOST_ID,
+      SANDBOX_HOST_ID,
+    ]);
+    const sandbox = entries.find((entry) => entry.hostId === SANDBOX_HOST_ID);
+    expect(sandbox?.transportDialability).toBe("dialable");
+  });
+
+  it("re-reads the dev host on a failed registry read", async () => {
+    const movedDevEntry: HostDirectoryEntry = {
+      ...DEV_ENTRY,
+      websocketUrl: "ws://127.0.0.1:52999/ws",
+    };
+    const devHostFetch = vi
+      .fn<() => Promise<RemoteHostFetchOutcome>>()
+      .mockResolvedValueOnce(DEV_OUTCOME)
+      .mockResolvedValueOnce({ kind: "hosts", entries: [movedDevEntry] });
+    const { registry, listRegisteredHosts } = registryHarness(
+      "bearer-1",
+      okResult([SANDBOX_ROW]),
+    );
+    const fetcher = buildDevHostDiscovery(devHostFetch, registry);
+
+    await fetcher(SIGNED_IN_ERA);
+    listRegisteredHosts.mockResolvedValue({ kind: "network-error" });
+    const outcome = await fetcher(SIGNED_IN_ERA);
+
+    expect(devHostFetch).toHaveBeenCalledTimes(2);
+    const entries = hostEntriesOf(outcome);
+    expect(entries[0]).toEqual(movedDevEntry);
+    expect(entries[0]?.websocketUrl).toBe("ws://127.0.0.1:52999/ws");
   });
 
   it("returns the dev host alone, with no registry call, in a signed-out era", async () => {
