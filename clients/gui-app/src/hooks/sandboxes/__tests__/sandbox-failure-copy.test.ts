@@ -136,6 +136,17 @@ describe("sandboxFailureMessage", () => {
     ).toBe("That size is outside what's offered.");
   });
 
+  it("words a plan too small to run a sandbox (F45)", () => {
+    expect(
+      sandboxFailureMessage(
+        refused("shape_not_offered", {
+          reason: "provider-plan-too-small",
+          shortfallMc: null,
+        }),
+      ),
+    ).toBe("This account's sandbox plan can't run a sandbox yet.");
+  });
+
   it("shows a full team's server sentence verbatim, and a fallback when it sends none", () => {
     const sentence = "Every pod of Alpha is full. Ask an admin to add one.";
     expect(

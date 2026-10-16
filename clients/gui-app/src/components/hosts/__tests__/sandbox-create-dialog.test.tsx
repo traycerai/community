@@ -9,7 +9,12 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { SandboxCatalogue } from "@traycer/protocol/host/sandbox-control";
+import userEvent from "@testing-library/user-event";
+import {
+  SANDBOX_NOT_CREATABLE_REASON_PLAN_MEMORY,
+  type SandboxCatalogue,
+  type SandboxCatalogueProvider,
+} from "@traycer/protocol/host/sandbox-control";
 import type { SandboxCreateFetchResult } from "@traycer-clients/shared/host-client/sandbox-control";
 import {
   createFakeSandboxBinding,
@@ -688,5 +693,113 @@ describe("a create's outcome goes to the open that sent it (F46 cold review)", (
     await waitFor(() => {
       expect(screen.getByTestId("sandbox-create-failure")).toBeDefined();
     });
+  });
+});
+
+describe("a provider the account's plan cannot create (F45)", () => {
+  const REGION = {
+    id: "us-east",
+    label: "US East",
+    fromPriceMcPerHour: { awakeMc: 120, suspendedMc: 4, stoppedMc: 2 },
+  };
+
+  function provider(
+    os: SandboxCatalogueProvider["os"],
+    creatable: boolean,
+    notCreatableReason: string | null,
+    memoryMaxMb: number,
+  ): SandboxCatalogueProvider {
+    return {
+      provider: "tensorlake",
+      os,
+      shape: { ...SHAPE, memoryMinMb: 2048, memoryMaxMb },
+      suspendFidelity: "memory",
+      stoppedStorage: "snapshot",
+      wakeClass: "resume",
+      dockerInGuest: true,
+      creatable,
+      notCreatableReason,
+      regions: [REGION],
+    };
+  }
+
+  async function openWith(
+    providers: SandboxCatalogue["providers"],
+  ): Promise<void> {
+    mocks.catalogue = loaded({ providers });
+    renderDialog();
+    await screen.findByTestId("sandbox-create-dialog");
+  }
+
+  function expectFormGone(): void {
+    expect(screen.queryByTestId("sandbox-create-cpus")).toBeNull();
+    expect(screen.queryByTestId("sandbox-create-memory")).toBeNull();
+    expect(screen.queryByTestId("sandbox-create-price")).toBeNull();
+    expect(screen.queryByTestId("sandbox-create-submit")).toBeNull();
+  }
+
+  it("replaces the size inputs, price and Create with one line naming the plan's memory", async () => {
+    await openWith([
+      provider(
+        ["linux"],
+        false,
+        SANDBOX_NOT_CREATABLE_REASON_PLAN_MEMORY,
+        1024,
+      ),
+    ]);
+
+    expect(screen.getByTestId("sandbox-create-not-creatable").textContent).toBe(
+      "This account's sandbox plan allows 1 GB of memory per sandbox; a sandbox needs 2 GB. Sandboxes can be created once the plan allows 2 GB.",
+    );
+    expectFormGone();
+    expect(
+      screen.getByRole("combobox", { name: "Operating system" }),
+    ).toBeDefined();
+  });
+
+  it("says a generic line for a reason this build does not know", async () => {
+    await openWith([provider(["linux"], false, "something-new", 1024)]);
+
+    expect(screen.getByTestId("sandbox-create-not-creatable").textContent).toBe(
+      "Sandboxes can't be created on this account right now.",
+    );
+    expectFormGone();
+  });
+
+  it("says the generic line when no reason came", async () => {
+    await openWith([provider(["linux"], false, null, 1024)]);
+
+    expect(screen.getByTestId("sandbox-create-not-creatable").textContent).toBe(
+      "Sandboxes can't be created on this account right now.",
+    );
+    expectFormGone();
+  });
+
+  it("brings the size inputs and Create back when the OS is switched to a creatable provider", async () => {
+    await openWith([
+      provider(
+        ["linux"],
+        false,
+        SANDBOX_NOT_CREATABLE_REASON_PLAN_MEMORY,
+        1024,
+      ),
+      provider(["windows"], true, null, 65536),
+    ]);
+    expect(screen.getByTestId("sandbox-create-not-creatable")).toBeDefined();
+    expectFormGone();
+
+    const user = userEvent.setup();
+    await user.click(
+      screen.getByRole("combobox", { name: "Operating system" }),
+    );
+    await user.click(await screen.findByRole("option", { name: "Windows" }));
+
+    await waitFor(() => {
+      expect(screen.queryByTestId("sandbox-create-not-creatable")).toBeNull();
+    });
+    expect(screen.getByTestId("sandbox-create-cpus")).toBeDefined();
+    expect(screen.getByTestId("sandbox-create-memory")).toBeDefined();
+    expect(screen.getByTestId("sandbox-create-price")).toBeDefined();
+    expect(submit()).toBeDefined();
   });
 });
