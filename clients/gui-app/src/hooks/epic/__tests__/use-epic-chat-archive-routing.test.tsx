@@ -389,12 +389,15 @@ function createRoutingFixture(): RoutingFixture {
           }
           bumpArchived(remoteRecords, request.chatId, request.archived);
           if (mutable.holdRemoteArchive !== null) {
-            return mutable.holdRemoteArchive.then(() => ({ updated: true }));
+            return mutable.holdRemoteArchive.then(() => ({
+              updated: true,
+              outcome: "applied" as const,
+            }));
           }
-          return { updated: true };
+          return { updated: true, outcome: "applied" as const };
         }
         bumpArchived(localRecords, request.chatId, request.archived);
-        return { updated: true };
+        return { updated: true, outcome: "applied" as const };
       },
       "epic.deleteChat": (request: DeleteChatRequest) => {
         const hostId = lastCallHost(messengerRef.current ?? messenger);
@@ -408,15 +411,24 @@ function createRoutingFixture(): RoutingFixture {
             return mutable.holdRemoteDelete.then(() => ({
               deleted: true,
               publicationChatId: null,
+              outcome: "applied" as const,
             }));
           }
-          return { deleted: true, publicationChatId: null };
+          return {
+            deleted: true,
+            publicationChatId: null,
+            outcome: "applied" as const,
+          };
         }
         const index = localRecords.findIndex(
           (entry) => entry.chatId === request.chatId,
         );
         if (index >= 0) localRecords.splice(index, 1);
-        return { deleted: true, publicationChatId: null };
+        return {
+          deleted: true,
+          publicationChatId: null,
+          outcome: "applied" as const,
+        };
       },
     },
   });
@@ -812,7 +824,7 @@ describe("remote archive and unarchive", () => {
         hostId: REMOTE.hostId,
         archived: true,
       }),
-    ).resolves.toEqual({ updated: true });
+    ).resolves.toEqual({ updated: true, outcome: "applied" });
 
     expect(fixture.archiveCalls).toEqual([
       {

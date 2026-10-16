@@ -537,7 +537,7 @@ describe("useEpicDeleteChat", () => {
     };
 
     opts.onSuccess(
-      { deleted: true, publicationChatId: null },
+      { deleted: true, publicationChatId: null, outcome: "applied" },
       { epicId: "epic-1", chatId: "chat-1", hostId: "host-test" },
       // The host captured at mutate time - `epic.deleteChat` carries no host
       // on the wire, so the teardown is told which machine's session to close.
@@ -586,7 +586,7 @@ describe("useEpicDeleteChat", () => {
     }
 
     opts.onSuccess(
-      { deleted: true, publicationChatId: null },
+      { deleted: true, publicationChatId: null, outcome: "applied" },
       { epicId: "epic-1", chatId: "chat-1", hostId: null },
       {
         hostId: null,
@@ -756,7 +756,7 @@ describe("useEpicArchiveChat", () => {
       viewerHostId: "host-test",
       viewerUserId: null,
     });
-    opts.onSuccess({ updated: false }, variables, ctx, {
+    opts.onSuccess({ updated: false, outcome: "applied" }, variables, ctx, {
       client: queryClient,
       meta: undefined,
     });
@@ -796,7 +796,7 @@ describe("useEpicArchiveChat", () => {
       viewerHostId: "host-test",
       viewerUserId: null,
     });
-    opts.onSuccess({ updated: true }, variables, ctx, {
+    opts.onSuccess({ updated: true, outcome: "applied" }, variables, ctx, {
       client: queryClient,
       meta: undefined,
     });
@@ -884,7 +884,7 @@ describe("useEpicArchiveChats", () => {
       archived: true,
     });
 
-    resolveArchive({ updated: true });
+    resolveArchive({ updated: true, outcome: "applied" });
 
     await waitFor(() => {
       expect(result.current.isPending).toBe(false);

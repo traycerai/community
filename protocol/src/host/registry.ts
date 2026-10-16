@@ -656,9 +656,13 @@ import {
   epicDeleteChatV10,
   epicDeleteChatV11,
   epicDeleteChatUpgradeV10ToV11,
+  epicDeleteChatV12,
+  epicDeleteChatUpgradeV11ToV12,
   epicDeleteCommentThreadV10,
   epicDeleteCommentV10,
   epicDeleteTuiAgentV10,
+  epicDeleteTuiAgentV11,
+  epicDeleteTuiAgentUpgradeV10ToV11,
   epicEditCommentV10,
   epicFinishArtifactImageV10,
   epicGetTaskContextsV10,
@@ -747,6 +751,8 @@ import {
   epicRevokeCollaboratorV10,
   epicChatPublicationStateV10,
   epicSetChatArchivedV10,
+  epicSetChatArchivedV11,
+  epicSetChatArchivedUpgradeV10ToV11,
   epicSetChatSharingDefaultV10,
   epicSetCloudChatVisibilityV10,
   epicSetCommentThreadResolvedV10,
@@ -8102,7 +8108,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   },
   "epic.deleteChat": {
     1: {
-      latestMinor: 1,
+      latestMinor: 2,
       versions: {
         0: {
           contract: epicDeleteChatV10,
@@ -8111,6 +8117,10 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
         1: {
           contract: epicDeleteChatV11,
           upgradeFromPreviousVersion: epicDeleteChatUpgradeV10ToV11,
+        },
+        2: {
+          contract: epicDeleteChatV12,
+          upgradeFromPreviousVersion: epicDeleteChatUpgradeV11ToV12,
         },
       },
       downgradePathsFromLatest: {},
@@ -8165,11 +8175,15 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   // the archive affordance.
   "epic.setChatArchived": {
     1: {
-      latestMinor: 0,
+      latestMinor: 1,
       versions: {
         0: {
           contract: epicSetChatArchivedV10,
           upgradeFromPreviousVersion: null,
+        },
+        1: {
+          contract: epicSetChatArchivedV11,
+          upgradeFromPreviousVersion: epicSetChatArchivedUpgradeV10ToV11,
         },
       },
       downgradePathsFromLatest: {},
@@ -8220,11 +8234,15 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   },
   "epic.deleteTuiAgent": {
     1: {
-      latestMinor: 0,
+      latestMinor: 1,
       versions: {
         0: {
           contract: epicDeleteTuiAgentV10,
           upgradeFromPreviousVersion: null,
+        },
+        1: {
+          contract: epicDeleteTuiAgentV11,
+          upgradeFromPreviousVersion: epicDeleteTuiAgentUpgradeV10ToV11,
         },
       },
       downgradePathsFromLatest: {},

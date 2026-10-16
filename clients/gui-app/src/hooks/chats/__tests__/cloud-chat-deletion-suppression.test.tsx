@@ -314,6 +314,7 @@ function createFixture(
               resolve({
                 deleted: true,
                 publicationChatId: publicationChatId ?? null,
+                outcome: "applied",
               });
             };
             deleteGate.reject = (error) => reject(error);

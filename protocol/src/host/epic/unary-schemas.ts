@@ -2209,12 +2209,51 @@ export const deleteChatResponseSchemaV10 = lazySchema(() =>
   z.object({ deleted: z.boolean() }),
 );
 
+/**
+ * Frozen response for released epic.deleteChat@1.1 peers.
+ *
+ * Hand-pinned field-for-field rather than derived from the live schema via
+ * `.omit()` - a field added to the live shape must not silently leak back into
+ * this contract, which is the failure a freeze exists to prevent.
+ */
+export const deleteChatResponseSchemaV11 = lazySchema(() =>
+  z.object({
+    deleted: z.boolean(),
+    publicationChatId: z.string().nullable(),
+  }),
+);
+
+/**
+ * Which branch the RECEIVING host took for an archive or delete of an agent
+ * record (`epic.deleteChat@1.2`, `epic.setChatArchived@1.1`,
+ * `epic.deleteTuiAgent@1.1`).
+ *
+ * - `applied`: the host that runs the record enacted the change on its own
+ *   record.
+ * - `requested`: this host is not the record's owner. It wrote the change to
+ *   the cloud row, and the owner finishes it when it is back; viewers see the
+ *   cloud value at once.
+ *
+ * Only the receiving host knows which branch it took. A client must read this
+ * field and never infer it from where it routed the call: ownership can move
+ * between what the client last saw and what the host holds. A peer on an
+ * earlier minor only ever enacts locally, so its answer upgrades to `applied`.
+ */
+export const agentRecordWriteOutcomeSchema = lazySchema(() =>
+  z.enum(["applied", "requested"]),
+);
+export type AgentRecordWriteOutcome = z.infer<
+  typeof agentRecordWriteOutcomeSchema
+>;
+
 export const deleteChatResponseSchema = lazySchema(() =>
   z.object({
     deleted: z.boolean(),
     // Captured by the owning host before deletion. Null means the peer cannot
     // report publication identity, not that the local id is the cloud id.
     publicationChatId: z.string().nullable(),
+    // @1.2: see `agentRecordWriteOutcomeSchema`.
+    outcome: agentRecordWriteOutcomeSchema,
   }),
 );
 export type DeleteChatResponse = z.infer<typeof deleteChatResponseSchema>;
@@ -2241,9 +2280,19 @@ export type SetChatArchivedRequest = z.infer<
 // `updated` is true when the record's `archivedAt` actually changed; false when
 // the record was already in the requested state (idempotent no-op) or no record
 // matched the id.
+/** Frozen response for released epic.setChatArchived@1.0 peers. */
+export const setChatArchivedResponseSchemaV10 = lazySchema(() =>
+  z.object({
+    updated: z.boolean(),
+  }),
+);
+
 export const setChatArchivedResponseSchema = lazySchema(() =>
   z.object({
     updated: z.boolean(),
+    // @1.1: see `agentRecordWriteOutcomeSchema`. On `requested`, `updated`
+    // reports whether the cloud row's archive flag changed.
+    outcome: agentRecordWriteOutcomeSchema,
   }),
 );
 export type SetChatArchivedResponse = z.infer<
@@ -2628,9 +2677,18 @@ export const deleteTuiAgentRequestSchema = lazySchema(() =>
 );
 export type DeleteTuiAgentRequest = z.infer<typeof deleteTuiAgentRequestSchema>;
 
+/** Frozen response for released epic.deleteTuiAgent@1.0 peers. */
+export const deleteTuiAgentResponseSchemaV10 = lazySchema(() =>
+  z.object({
+    deleted: z.boolean(),
+  }),
+);
+
 export const deleteTuiAgentResponseSchema = lazySchema(() =>
   z.object({
     deleted: z.boolean(),
+    // @1.1: see `agentRecordWriteOutcomeSchema`.
+    outcome: agentRecordWriteOutcomeSchema,
   }),
 );
 export type DeleteTuiAgentResponse = z.infer<
