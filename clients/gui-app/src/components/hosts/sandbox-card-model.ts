@@ -177,12 +177,15 @@ export function sandboxTeamFrozenLine(
 
 /**
  * A frozen team sandbox's state line: whose bundle is out, then the destroy
- * date when the server sends `frozenAt`, as the personal line has it.
+ * date when the server sends `frozenAt`, as the personal line has it. Before
+ * the sandbox list answers (`summary` null) it names no one, and still never
+ * says "your credits".
  */
 export function sandboxTeamFrozenStateLine(
-  summary: SandboxSummary,
+  summary: SandboxSummary | null,
   viewerUserId: string | null,
 ): string {
+  if (summary === null) return "Frozen: its payer's bundle is out.";
   const line = sandboxTeamFrozenLine(summary, viewerUserId);
   return summary.frozenAt === null
     ? line

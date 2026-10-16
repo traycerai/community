@@ -265,6 +265,19 @@ describe("<SandboxCard /> frozen team destroy date", () => {
     );
   });
 
+  it("names no one, and never 'your credits', before the sandbox list answers", () => {
+    renderCard(
+      { state: "suspended", frozen: true, summary: null, teamOwned: false },
+      true,
+    );
+    expect(text("sandbox-card-state-line")).toBe(
+      "Frozen: its payer's bundle is out.",
+    );
+    expect(sandboxTeamFrozenStateLine(null, VIEWER)).toBe(
+      "Frozen: its payer's bundle is out.",
+    );
+  });
+
   it("adds no date when frozenAt is not sent", () => {
     renderCard(
       sandboxOf("suspended", true, { frozenAt: null, wakePayer: ADA }),

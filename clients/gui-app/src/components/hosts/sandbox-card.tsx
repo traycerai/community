@@ -335,7 +335,7 @@ function cardStateLine(
   viewerUserId: string | null,
 ): string {
   const { summary, state, frozen } = sandbox;
-  return sandbox.teamOwned && frozen && summary !== null
+  return sandbox.teamOwned && frozen
     ? sandboxTeamFrozenStateLine(summary, viewerUserId)
     : sandboxStateLine(state, frozen, summary);
 }

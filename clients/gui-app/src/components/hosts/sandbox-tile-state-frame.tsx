@@ -127,7 +127,7 @@ function SandboxTileOverlayLayer(props: {
       >
         {overlay.kind === "frozen" ? (
           <p className="font-medium text-warning-foreground">
-            {props.teamOwned && summary !== null
+            {props.teamOwned
               ? sandboxTeamFrozenStateLine(summary, viewerUserId)
               : sandboxFrozenLine(summary?.frozenAt ?? null)}
           </p>

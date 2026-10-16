@@ -380,7 +380,7 @@ describe("useSandboxAutomationOpen", () => {
           }),
       );
       signInAs("user-a");
-      const { wrapper } = setup();
+      const { wrapper, queryClient } = setup();
       const { result } = renderHook(() => useSandboxAutomationOpen(), {
         wrapper,
       });
@@ -396,6 +396,8 @@ describe("useSandboxAutomationOpen", () => {
         finish();
         await Promise.resolve();
       });
+      // Settled, so its `onSuccess` has run and chosen silence.
+      await mutationEnded(queryClient);
 
       expect(state.toastSuccess).not.toHaveBeenCalled();
       expect(state.toastInfo).not.toHaveBeenCalled();
