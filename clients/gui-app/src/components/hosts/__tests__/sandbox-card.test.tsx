@@ -373,6 +373,8 @@ describe("<SandboxCard /> per state", () => {
           stoppedStorage: "snapshot",
           wakeClass: "resume",
           dockerInGuest: true,
+          creatable: true,
+          notCreatableReason: null,
           regions: [],
         },
       ],

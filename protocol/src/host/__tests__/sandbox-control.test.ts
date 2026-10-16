@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   SANDBOX_FROZEN_RETENTION_DAYS,
+  SANDBOX_NOT_CREATABLE_REASON_PLAN_MEMORY,
   SANDBOX_REFUSAL_CODE_TEAM_PODS_FULL,
   sandboxAutomationResponseSchema,
   sandboxCatalogueSchema,
@@ -85,6 +86,8 @@ describe("sandbox control plane mirror", () => {
           stoppedStorage: "snapshot",
           wakeClass: "resume",
           dockerInGuest: true,
+          creatable: true,
+          notCreatableReason: null,
           regions: [
             {
               id: "us-east",
@@ -96,6 +99,61 @@ describe("sandbox control plane mirror", () => {
       ],
     });
     expect(parsed.providers[0]?.shape.diskDefaultMb).toBe(20480);
+  });
+
+  describe("creatable and notCreatableReason", () => {
+    // An older server's provider row: neither field.
+    const OLDER_ROW = {
+      provider: "tensorlake",
+      os: ["linux"],
+      shape: {
+        cpuMin: 1,
+        cpuMax: 16,
+        cpuStep: 1,
+        memoryPerCpuMinMb: 1024,
+        memoryPerCpuMaxMb: 8192,
+        memoryMinMb: 1024,
+        memoryMaxMb: 65536,
+        memoryStepMb: 512,
+        diskMinMb: 10240,
+        diskMaxMb: 102400,
+        diskDefaultMb: 10240,
+      },
+      suspendFidelity: "memory",
+      stoppedStorage: "snapshot",
+      wakeClass: "resume",
+      dockerInGuest: true,
+      regions: [
+        {
+          id: "us",
+          label: "US",
+          fromPriceMcPerHour: { awakeMc: 60, suspendedMc: 2, stoppedMc: 1 },
+        },
+      ],
+    };
+
+    // Prevents a client failing on, or hiding, a catalogue from a server that predates the fields.
+    it("reads an older server's row as creatable with no reason", () => {
+      const row = sandboxCatalogueSchema.parse({ providers: [OLDER_ROW] })
+        .providers[0];
+      expect(row?.creatable).toBe(true);
+      expect(row?.notCreatableReason).toBeNull();
+    });
+
+    // Prevents a client dropping the reason a provider offers no shape.
+    it("keeps creatable false and its reason", () => {
+      const row = sandboxCatalogueSchema.parse({
+        providers: [
+          {
+            ...OLDER_ROW,
+            creatable: false,
+            notCreatableReason: SANDBOX_NOT_CREATABLE_REASON_PLAN_MEMORY,
+          },
+        ],
+      }).providers[0];
+      expect(row?.creatable).toBe(false);
+      expect(row?.notCreatableReason).toBe("plan-memory-below-host-minimum");
+    });
   });
 
   it("parses the 202 create answer with its row", () => {
