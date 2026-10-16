@@ -134,8 +134,7 @@ vi.mock("@/lib/epics/run-worktree-cleanup", async (importOriginal) => ({
   runWorktreeCleanup: mocks.runWorktreeCleanup,
 }));
 
-vi.mock("@/lib/host-error-toast", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/host-error-toast")>()),
+vi.mock("@/lib/host-error-toast", () => ({
   toastFromHostError: mocks.toastFromHostError,
 }));
 

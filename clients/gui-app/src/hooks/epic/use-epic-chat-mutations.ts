@@ -42,7 +42,6 @@ import {
 import {
   toastFromOwnerHostBatchWriteFailures,
   toastFromOwnerHostWriteError,
-  type OwnerHostBatchWriteCopy,
 } from "@/lib/owner-host-write-error-toast";
 import { invalidateEpicChatRecords } from "@/hooks/chats/use-epic-chat-records";
 import { invalidateChatRunSettings } from "@/hooks/chats/use-chat-run-settings-query";
@@ -749,26 +748,6 @@ export interface ArchiveChatsMutationInput {
   readonly archived: boolean;
 }
 
-const ARCHIVE_BATCH_COPY: OwnerHostBatchWriteCopy = {
-  single: "Couldn't archive agent.",
-  partial: (applied, failed) =>
-    `Archived ${applied} of ${applied + failed} selected agents. ${failed} couldn't be archived.`,
-  none: (attempted) =>
-    `Couldn't archive any of the ${attempted} selected agents.`,
-  unconfirmed: (attempted) =>
-    `Couldn't confirm all ${attempted} selected agents were archived. Check them and archive any that weren't.`,
-};
-
-const UNARCHIVE_BATCH_COPY: OwnerHostBatchWriteCopy = {
-  single: "Couldn't unarchive agent.",
-  partial: (applied, failed) =>
-    `Unarchived ${applied} of ${applied + failed} selected agents. ${failed} couldn't be unarchived.`,
-  none: (attempted) =>
-    `Couldn't unarchive any of the ${attempted} selected agents.`,
-  unconfirmed: (attempted) =>
-    `Couldn't confirm all ${attempted} selected agents were unarchived. Check them and unarchive any that weren't.`,
-};
-
 export type ArchiveChatsMutationResult =
   readonly PromiseSettledResult<SetChatArchivedResponse>[];
 
@@ -805,15 +784,13 @@ export function useEpicArchiveChats(): UseMutationResult<
     onSuccess: (results, variables) => {
       toastFromOwnerHostBatchWriteFailures(
         results.map((result, index) => ({
-          kind: "agent",
           hostId: variables.chats[index]?.hostId ?? null,
-          selectedRows: 1,
           error:
             result.status === "rejected"
               ? toHostRpcError(result.reason, "epic.setChatArchived")
               : null,
         })),
-        variables.archived ? ARCHIVE_BATCH_COPY : UNARCHIVE_BATCH_COPY,
+        "Couldn't archive some selected agents.",
       );
     },
   });

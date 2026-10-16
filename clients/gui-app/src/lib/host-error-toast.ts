@@ -46,9 +46,6 @@ const TRANSPORT_NOTICE_TOAST_ID = "host-transport-notice";
  */
 const TRANSPORT_UNKNOWN_OUTCOME_TOAST_ID = "host-transport-notice-unknown";
 
-const HOST_UNKNOWN_OUTCOME_NOTICE =
-  "No reply came back from the Traycer host, so this may or may not have gone through.";
-
 /**
  * Whether this failure is the transport itself, and therefore says nothing
  * about the operation the user asked for.
@@ -189,21 +186,9 @@ function transportNoticeToast(error: HostRpcError): void {
     });
     return;
   }
-  toast(HOST_UNKNOWN_OUTCOME_NOTICE, {
-    id: TRANSPORT_UNKNOWN_OUTCOME_TOAST_ID,
-  });
-}
-
-/**
- * Whether {@link toastFromHostError} says nothing for this error: a recoverable
- * `UNAUTHORIZED` the app is already handling, or an aborted request. A caller
- * that reports several failures as one uses it so a silent one is not the one
- * it reports.
- */
-export function isSilentHostError(error: HostRpcError): boolean {
-  return (
-    shouldSuppressRecoverableUnauthorized(error) ||
-    error instanceof HostRequestAbortedError
+  toast(
+    "No reply came back from the Traycer host, so this may or may not have gone through.",
+    { id: TRANSPORT_UNKNOWN_OUTCOME_TOAST_ID },
   );
 }
 
@@ -211,13 +196,13 @@ export function toastFromHostError(
   error: HostRpcError,
   fallback: string,
 ): void {
-  // Silent, and the abort deliberately BEFORE the transport branch: an aborted
-  // request is not a network condition at all - a caller-owned authority was
-  // replaced or disposed (tab closed, host rebound). Saying "reconnecting" for
-  // what was effectively a user navigation would be a NEW false statement, and
-  // saying "couldn't do X" for something they themselves cancelled is no
-  // better.
-  if (isSilentHostError(error)) return;
+  if (shouldSuppressRecoverableUnauthorized(error)) return;
+  // Silent, and deliberately BEFORE the transport branch: an aborted request
+  // is not a network condition at all - a caller-owned authority was replaced
+  // or disposed (tab closed, host rebound). Saying "reconnecting" for what was
+  // effectively a user navigation would be a NEW false statement, and saying
+  // "couldn't do X" for something they themselves cancelled is no better.
+  if (error instanceof HostRequestAbortedError) return;
   if (isTransportClassFailure(error)) {
     transportNoticeToast(error);
     return;
@@ -235,100 +220,6 @@ export function toastFromHostError(
       source: "Host",
     }),
   );
-}
-
-/**
- * The advice a batch notice carries for its refusals: each DISTINCT piece
- * once, in the order it first appears in the batch.
- *
- * Advice about one agent ("This agent is still working …") would have no
- * referent in a plural notice, so those causes are counted and reworded with
- * their own count ("2 are still working: …"). Advice that is not about one
- * agent (view-only access, a newer host, a host's own verdict) reads the same
- * for any number and is kept verbatim. A refusal whose copy is only the
- * write's generic `fallback` adds nothing.
- */
-export function batchRefusalAdvice(
-  refusals: readonly HostRpcError[],
-  fallback: string,
-): readonly string[] {
-  const order: string[] = [];
-  const counts = new Map<string, number>();
-  for (const refusal of refusals) {
-    const message = hostErrorToastMessage(refusal, fallback);
-    if (message === fallback) continue;
-    if (!counts.has(message)) order.push(message);
-    counts.set(message, (counts.get(message) ?? 0) + 1);
-  }
-  return order.map((message) =>
-    pluralAgentAdvice(message, counts.get(message) ?? 1),
-  );
-}
-
-/** One agent's advice, said of `count` agents; other advice unchanged. */
-function pluralAgentAdvice(message: string, count: number): string {
-  const one = count === 1;
-  switch (message) {
-    case AGENT_BUSY_TURN_MESSAGE:
-      return one
-        ? "1 is still working: wait for it to go idle, or stop it, then archive. Stopping ends a turn, not a running subagent or a scheduled wake."
-        : `${count} are still working: wait for them to go idle, or stop them, then archive. Stopping ends a turn, not a running subagent or a scheduled wake.`;
-    case AGENT_BUSY_BACKGROUND_MESSAGE:
-      return one
-        ? "1 has background items still running, which archiving won't stop: wait for them to finish, or stop them from its chat."
-        : `${count} have background items still running, which archiving won't stop: wait for them to finish, or stop them from their chats.`;
-    case AGENT_NOT_LOCAL_MESSAGE:
-      return one
-        ? "1 runs on another host: archive it from that host."
-        : `${count} run on other hosts: archive them from those hosts.`;
-    default:
-      return message;
-  }
-}
-
-/**
- * The one notice for a batch of writes some of which a reached host refused:
- * `lead` (the batch's counts, or that its result could not be confirmed),
- * then {@link batchRefusalAdvice}. It keeps the ordinary host-error
- * notification and Report Issue context, taken from the first refusal that
- * carries advice, under the caller's per-action `toastId`.
- */
-export function toastFromHostRefusalsInBatch(
-  refusals: readonly HostRpcError[],
-  fallback: string,
-  lead: string,
-  toastId: string,
-): void {
-  if (refusals.length === 0) return;
-  const guided =
-    refusals.find(
-      (refusal) => hostErrorToastMessage(refusal, fallback) !== fallback,
-    ) ?? refusals[0];
-  const message = [lead, ...batchRefusalAdvice(refusals, fallback)].join(" ");
-  emitHostFatalErrorNotification(guided, message);
-  reportableErrorToast(
-    message,
-    { id: toastId },
-    createReportIssueContext({
-      title: "Host operation failed",
-      message: null,
-      code: guided.code,
-      source: "Host",
-    }),
-  );
-}
-
-/**
- * Says a write's answer never came back, so it may or may not have applied,
- * under the caller's `toastId`: the same sentence a lost answer gets.
- */
-export function toastHostUnknownOutcome(toastId: string): void {
-  toast(HOST_UNKNOWN_OUTCOME_NOTICE, { id: toastId });
-}
-
-/** Whether `toastFromHostError` would narrate this as a transport failure. */
-export function isHostTransportFailure(error: HostRpcError): boolean {
-  return isTransportClassFailure(error);
 }
 
 /**
@@ -476,13 +367,6 @@ function forbiddenToastMessage(message: string): string {
   return "You don't have permission to do that.";
 }
 
-const AGENT_BUSY_BACKGROUND_MESSAGE =
-  "This agent has background items still running. Archiving won't stop them — wait for them to finish, or stop them from its chat.";
-const AGENT_BUSY_TURN_MESSAGE =
-  "This agent is still working. Stopping it ends a turn, but not a running subagent or a scheduled wake. Wait for it to go idle, or stop it, then archive.";
-const AGENT_NOT_LOCAL_MESSAGE =
-  "This agent runs on another host. Archive it from that host instead.";
-
 function hostErrorToastMessage(error: HostRpcError, fallback: string) {
   const verdict = hostTerminalVerdictMessage(error);
   if (verdict !== null) {
@@ -504,11 +388,11 @@ function hostErrorToastMessage(error: HostRpcError, fallback: string) {
     // the disjointness in its own test). The other arm stays hedged for the
     // same reason the host's does: "stop it" is only sometimes the remedy.
     return error.message.includes("still running in the background")
-      ? AGENT_BUSY_BACKGROUND_MESSAGE
-      : AGENT_BUSY_TURN_MESSAGE;
+      ? "This agent has background items still running. Archiving won't stop them — wait for them to finish, or stop them from its chat."
+      : "This agent is still working. Stopping it ends a turn, but not a running subagent or a scheduled wake. Wait for it to go idle, or stop it, then archive.";
   }
   if (error.message.startsWith("TARGET_NOT_LOCAL:")) {
-    return AGENT_NOT_LOCAL_MESSAGE;
+    return "This agent runs on another host. Archive it from that host instead.";
   }
   // An optional method the active host predates (declared `degrade:
   // unsupported`). This is a version gap, not a failed operation, so the copy

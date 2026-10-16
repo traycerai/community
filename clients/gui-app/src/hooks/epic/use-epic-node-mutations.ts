@@ -118,22 +118,6 @@ export function useEpicCreateArtifact() {
  * pending state; success is silent.
  */
 export function useEpicDeleteArtifact(artifactId: string | null) {
-  return useEpicDeleteArtifactCommand(artifactId, "individual");
-}
-
-/**
- * `useEpicDeleteArtifact` for one delete among several in a batch: the caller
- * reports the batch's failures once (`toastFromOwnerHostBatchWriteFailures`),
- * so a failure here raises no notice of its own.
- */
-export function useEpicDeleteArtifactInBatch() {
-  return useEpicDeleteArtifactCommand(null, "aggregate");
-}
-
-function useEpicDeleteArtifactCommand(
-  artifactId: string | null,
-  failurePresentation: "individual" | "aggregate",
-) {
   const handle = useOpenEpicHandle();
   // The delete itself rides the write-command queue, but the tombstone list is
   // a host QUERY (`epic.deletedArtifacts.list`) rather than a projected slice,
@@ -180,11 +164,9 @@ function useEpicDeleteArtifactCommand(
     } catch (error: unknown) {
       const normalized =
         error instanceof Error ? error : new Error(String(error));
-      if (failurePresentation === "individual") {
-        toast.error("Couldn't delete artifact.", {
-          description: normalized.message,
-        });
-      }
+      toast.error("Couldn't delete artifact.", {
+        description: normalized.message,
+      });
       throw normalized;
     }
   };

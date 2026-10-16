@@ -9,10 +9,7 @@ import {
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
-import {
-  HostRpcError,
-  RetryableTransportError,
-} from "@traycer-clients/shared/host-transport/host-messenger";
+import { RetryableTransportError } from "@traycer-clients/shared/host-transport/host-messenger";
 import { domMax, LazyMotion } from "motion/react";
 import { forwardRef, type ReactNode } from "react";
 import { userEvent } from "@testing-library/user-event";
@@ -759,11 +756,6 @@ vi.mock("@/hooks/epic/use-epic-node-mutations", () => ({
     isPending: false,
   }),
   useEpicDeleteArtifact: () => ({
-    mutate: vi.fn(),
-    mutateAsync: testState.deleteArtifactMutateAsync,
-    isPending: false,
-  }),
-  useEpicDeleteArtifactInBatch: () => ({
     mutate: vi.fn(),
     mutateAsync: testState.deleteArtifactMutateAsync,
     isPending: false,
@@ -1640,58 +1632,6 @@ describe("epic sidebar selection mode", () => {
     });
     expect(toastMessage).toHaveBeenCalledTimes(1);
     toastMessage.mockRestore();
-  });
-
-  // Deletes go out deepest agent first; the notice's advice follows the
-  // selection (traycerai/traycer#2546, round 11, rows 5 and 7).
-  it("lists refusal advice in selection order, not the order the deletes were sent", async () => {
-    seedGuiChatTree();
-    const toastError = vi.spyOn(toast, "error");
-    testState.deleteChatMutateAsync.mockImplementation(
-      (input: { readonly chatId: string }) =>
-        Promise.reject(
-          new HostRpcError({
-            code:
-              input.chatId === "chat-root"
-                ? "FORBIDDEN"
-                : "E_HOST_STORAGE_FULL",
-            message: "refused",
-            requestId: `req-${input.chatId}`,
-            method: "epic.deleteChat",
-            fatalDetails: null,
-          }),
-        ),
-    );
-
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
-
-    fireEvent.click(screen.getByRole("menuitem", { name: "Select agents" }));
-    fireEvent.click(screen.getByTestId("epic-sidebar-select-chat-root"));
-    fireEvent.click(screen.getByTestId("epic-sidebar-select-chat-child"));
-    fireEvent.click(screen.getByTestId("epic-sidebar-delete-selected-chats"));
-    fireEvent.click(screen.getByTestId("confirm-action"));
-
-    await waitFor(() => {
-      expect(toastError).toHaveBeenCalledTimes(1);
-    });
-    // Sent child first, root second: the child is the deeper agent.
-    expect(testState.deleteChatMutateAsync).toHaveBeenNthCalledWith(1, {
-      epicId: EPIC_ID,
-      chatId: "chat-child",
-      hostId: null,
-    });
-    expect(testState.deleteChatMutateAsync).toHaveBeenNthCalledWith(2, {
-      epicId: EPIC_ID,
-      chatId: "chat-root",
-      hostId: null,
-    });
-    const title = toastError.mock.calls[0][0];
-    const notice = typeof title === "string" ? title : "";
-    const permission = notice.indexOf("You don't have permission to do that.");
-    const diskFull = notice.indexOf("out of disk space");
-    expect(permission).toBeGreaterThan(-1);
-    expect(diskFull).toBeGreaterThan(permission);
-    toastError.mockRestore();
   });
 
   it("reports one notice naming one host when every agent in an unreachable bulk delete runs on it", async () => {
@@ -2828,41 +2768,6 @@ describe("epic sidebar selection mode", () => {
       epicId: EPIC_ID,
       artifactId: "ticket-child",
     });
-  });
-
-  it("reports one notice for a bulk artifact delete in which every delete failed", async () => {
-    const specA = treeNode("spec-a", null, "Spec A", "spec");
-    const specB = treeNode("spec-b", null, "Spec B", "spec");
-    testState.expandedIds = new Set();
-    testState.tree = {
-      rootIds: ["spec-a", "spec-b"],
-      childrenByParent: {},
-      nodeById: { "spec-a": specA, "spec-b": specB },
-    };
-    testState.records = [specA, specB].map(recordFromNode);
-    testState.activePanelId = "artifacts";
-    const toastError = vi.spyOn(toast, "error");
-    testState.deleteArtifactMutateAsync.mockImplementation(() =>
-      Promise.reject(new Error("write rejected")),
-    );
-
-    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
-
-    fireEvent.click(screen.getByRole("menuitem", { name: "Select artifacts" }));
-    fireEvent.click(screen.getByRole("button", { name: "Select all" }));
-    fireEvent.click(
-      screen.getByTestId("epic-sidebar-delete-selected-artifacts"),
-    );
-    fireEvent.click(screen.getByTestId("confirm-action"));
-
-    await waitFor(() => {
-      expect(toastError).toHaveBeenCalledWith(
-        "Couldn't delete any of the 2 selected artifacts.",
-        expect.anything(),
-      );
-    });
-    expect(toastError).toHaveBeenCalledTimes(1);
-    toastError.mockRestore();
   });
 
   it("enters artifact selection mode from cmd-click on a row", () => {
