@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   act,
@@ -142,6 +143,15 @@ afterEach(() => {
   cleanup();
   act(() => {
     useSandboxCreateDialogStore.getState().closeDialog();
+  });
+  // `closeDialog` keeps the draft and the failure for the next open to clear;
+  // nothing from one case may reach the next.
+  useSandboxCreateDialogStore.setState({
+    open: false,
+    preselect: null,
+    workingHostTeamId: null,
+    draft: null,
+    failure: null,
   });
   useAuthStore.setState({ status: "signed-out" });
 });
@@ -484,6 +494,197 @@ describe("a failed create (F46)", () => {
     });
     await waitFor(() => {
       expect(mocks.toastFromAuthError).toHaveBeenCalledTimes(1);
+    });
+  });
+});
+
+describe("a create's outcome goes to the open that sent it (F46 cold review)", () => {
+  const CREATED: SandboxCreateFetchResult = {
+    kind: "ok",
+    accepted: {
+      sandboxId: "sbx_1",
+      hostId: "host-1",
+      sandbox: sandboxSummaryFixture({ state: "creating" }),
+    },
+  };
+
+  /** Makes the next create wait until the returned function settles it. */
+  function deferCreate(): (result: SandboxCreateFetchResult) => Promise<void> {
+    let resolveCreate: (result: SandboxCreateFetchResult) => void = () =>
+      undefined;
+    mocks.binding?.auth.createSandbox.mockImplementation(
+      () =>
+        new Promise<SandboxCreateFetchResult>((resolve) => {
+          resolveCreate = resolve;
+        }),
+    );
+    return async (result) => {
+      await act(async () => {
+        resolveCreate(result);
+        await Promise.resolve();
+      });
+    };
+  }
+
+  function dialogOn(queryClient: QueryClient): ReactNode {
+    return (
+      <QueryClientProvider client={queryClient}>
+        <SandboxCreateDialog />
+      </QueryClientProvider>
+    );
+  }
+
+  it("R1: toasts a failure that settles after the dialog was closed and reopened, and keeps it out of the new open", async () => {
+    const settle = deferCreate();
+    renderDialog();
+    await screen.findByTestId("sandbox-create-dialog");
+    type("sandbox-create-name", "build-box");
+    fireEvent.click(submit());
+    await waitFor(() => {
+      expect(mocks.binding?.auth.createSandbox).toHaveBeenCalledTimes(1);
+    });
+
+    act(() => {
+      useSandboxCreateDialogStore.getState().closeDialog();
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("sandbox-create-name")).toBeNull();
+    });
+    act(() => {
+      useSandboxCreateDialogStore.getState().openDialog(null, null);
+    });
+    await screen.findByTestId("sandbox-create-name");
+
+    await settle(refusal(502, "provider_failed"));
+
+    // The create was sent by the first open: its failure is a toast, and the
+    // second open, which sent nothing, shows no failure line.
+    await waitFor(() => {
+      expect(mocks.toastFromAuthError).toHaveBeenCalledTimes(1);
+    });
+    expect(screen.queryByTestId("sandbox-create-failure")).toBeNull();
+  });
+
+  it("R2: closes the dialog for a create that succeeds after the form remounted, rather than leaving Create enabled over the sent values", async () => {
+    const settle = deferCreate();
+    const queryClient = new QueryClient({
+      defaultOptions: { mutations: { retry: false } },
+    });
+    act(() => {
+      useSandboxCreateDialogStore.getState().openDialog(null, null);
+    });
+    render(dialogOn(queryClient));
+    await screen.findByTestId("sandbox-create-dialog");
+    type("sandbox-create-name", "build-box");
+    fireEvent.click(submit());
+    await waitFor(() => {
+      expect(mocks.binding?.auth.createSandbox).toHaveBeenCalledTimes(1);
+    });
+
+    // The store stays open, as for a second dialog copy or a loading gate.
+    cleanup();
+    expect(useSandboxCreateDialogStore.getState().open).toBe(true);
+    render(dialogOn(queryClient));
+    await screen.findByTestId("sandbox-create-dialog");
+    expect(screen.getByTestId("sandbox-create-name")).toHaveProperty(
+      "value",
+      "build-box",
+    );
+
+    await settle(CREATED);
+    await waitFor(() => {
+      expect(mocks.toastSuccess).toHaveBeenCalledWith("Created build-box");
+    });
+
+    // The create the form sent has landed (Personal, so nothing follows it):
+    // no enabled Create may be left over the values that were already sent.
+    expect(useSandboxCreateDialogStore.getState().open).toBe(false);
+  });
+
+  it("R3: a close and a new open brings back empty values and no failure line", async () => {
+    mocks.binding?.auth.createSandbox.mockResolvedValue(
+      refusal(503, "provider_unavailable"),
+    );
+    renderDialog();
+    await screen.findByTestId("sandbox-create-dialog");
+    type("sandbox-create-name", "build-box");
+    fireEvent.click(submit());
+    await screen.findByTestId("sandbox-create-failure");
+
+    act(() => {
+      useSandboxCreateDialogStore.getState().closeDialog();
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("sandbox-create-name")).toBeNull();
+    });
+    act(() => {
+      useSandboxCreateDialogStore.getState().openDialog(null, null);
+    });
+    await screen.findByTestId("sandbox-create-name");
+
+    expect(screen.getByTestId("sandbox-create-name")).toHaveProperty(
+      "value",
+      "",
+    );
+    expect(screen.queryByTestId("sandbox-create-failure")).toBeNull();
+  });
+
+  it("R3: a new open while the dialog is still open brings back empty values and no failure line", async () => {
+    mocks.binding?.auth.createSandbox.mockResolvedValue(
+      refusal(503, "provider_unavailable"),
+    );
+    renderDialog();
+    await screen.findByTestId("sandbox-create-dialog");
+    type("sandbox-create-name", "build-box");
+    fireEvent.click(submit());
+    await screen.findByTestId("sandbox-create-failure");
+
+    act(() => {
+      useSandboxCreateDialogStore.getState().openDialog(null, null);
+    });
+
+    expect(screen.queryByTestId("sandbox-create-failure")).toBeNull();
+    expect(screen.getByTestId("sandbox-create-name")).toHaveProperty(
+      "value",
+      "",
+    );
+  });
+
+  it("R5: still says a failure on screen when the catalogue read failed while the create ran", async () => {
+    const settle = deferCreate();
+    const queryClient = new QueryClient({
+      defaultOptions: { mutations: { retry: false } },
+    });
+    act(() => {
+      useSandboxCreateDialogStore.getState().openDialog(null, null);
+    });
+    const view = render(dialogOn(queryClient));
+    await screen.findByTestId("sandbox-create-dialog");
+    type("sandbox-create-name", "build-box");
+    fireEvent.click(submit());
+    await waitFor(() => {
+      expect(mocks.binding?.auth.createSandbox).toHaveBeenCalledTimes(1);
+    });
+
+    // A background refetch of the catalogue fails: the body swaps the form
+    // for the retry gate while the create is still running.
+    mocks.catalogue = {
+      isPending: false,
+      isError: true,
+      data: undefined,
+      error: new Error("Couldn't reach Traycer. Try again in a moment."),
+      refetch: () => Promise.resolve(),
+    };
+    view.rerender(dialogOn(queryClient));
+    await screen.findByRole("button", { name: "Try again" });
+    expect(screen.queryByTestId("sandbox-create-name")).toBeNull();
+
+    await settle(refusal(502, "provider_failed"));
+
+    // The dialog is open and the create failed: the person must be told
+    // somewhere they can see, even though the form is not on screen.
+    await waitFor(() => {
+      expect(screen.getByTestId("sandbox-create-failure")).toBeDefined();
     });
   });
 });
