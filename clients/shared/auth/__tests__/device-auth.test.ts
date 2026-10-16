@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   applySlowDown,
   createPollSchedule,
-  describeDeviceAuthorizeFailure,
+  describeDeviceRequestFailure,
   isDeviceExpired,
   MAX_POLL_INTERVAL_SECONDS,
   pollDeviceToken,
@@ -401,6 +401,162 @@ describe("pollDeviceToken - HTTP status to variant mapping", () => {
   });
 });
 
+describe("pollDeviceToken - the cause of a network-error", () => {
+  it("names the errno word of a nested cause.code", async () => {
+    globalThis.fetch = (async (): Promise<Response> => {
+      throw Object.assign(new TypeError("fetch failed"), {
+        cause: Object.assign(new Error("authn.example.test unreachable"), {
+          code: "ECONNREFUSED",
+        }),
+      });
+    }) as typeof fetch;
+    const result = await pollDeviceToken(
+      AUTHN_BASE_URL,
+      "dev-code",
+      "desktop",
+      REQUEST_OPTIONS,
+    );
+    expect(result).toEqual({
+      kind: "network-error",
+      cause: { kind: "transport", code: "ECONNREFUSED" },
+    });
+  });
+
+  it("names the status of a 5xx", async () => {
+    installMockFetch([spec(503, { error: "unavailable" }, null)]);
+    const result = await pollDeviceToken(
+      AUTHN_BASE_URL,
+      "dev-code",
+      "desktop",
+      REQUEST_OPTIONS,
+    );
+    expect(result).toEqual({
+      kind: "network-error",
+      cause: { kind: "http-status", status: 503 },
+    });
+  });
+
+  it("names bad-body for a 200 that is not a token pair", async () => {
+    installMockFetch([spec(200, "not json", null)]);
+    const result = await pollDeviceToken(
+      AUTHN_BASE_URL,
+      "dev-code",
+      "desktop",
+      REQUEST_OPTIONS,
+    );
+    expect(result).toEqual({
+      kind: "network-error",
+      cause: { kind: "bad-body" },
+    });
+  });
+
+  it("names timeout, not bad-body, for a 200 whose body read times out", async () => {
+    // A real `Response` whose body read rejects after the headers arrived.
+    const response = new Response("{}", { status: 200 });
+    Object.defineProperty(response, "json", {
+      value: async () => {
+        throw new DOMException("The operation timed out.", "TimeoutError");
+      },
+    });
+    globalThis.fetch = (async (): Promise<Response> =>
+      response) as typeof fetch;
+    const result = await pollDeviceToken(
+      AUTHN_BASE_URL,
+      "dev-code",
+      "desktop",
+      REQUEST_OPTIONS,
+    );
+    expect(result).toEqual({
+      kind: "network-error",
+      cause: { kind: "timeout" },
+    });
+  });
+});
+
+describe("pollDeviceToken - a 200 whose body is cut off mid-read", () => {
+  // A real `Response` over a stream that delivers part of a token pair and
+  // then fails the way undici fails a socket that closed mid-body.
+  function responseCutOffWith(error: Error): Response {
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"token":"abc'));
+        controller.error(error);
+      },
+    });
+    return new Response(stream, { status: 200 });
+  }
+
+  it("names the transport word when the socket closes mid-body", async () => {
+    const response = responseCutOffWith(
+      new TypeError("terminated", {
+        cause: Object.assign(new Error("other side closed"), {
+          code: "UND_ERR_SOCKET",
+        }),
+      }),
+    );
+    globalThis.fetch = (async (): Promise<Response> =>
+      response) as typeof fetch;
+    const result = await pollDeviceToken(
+      AUTHN_BASE_URL,
+      "dev-code",
+      "desktop",
+      REQUEST_OPTIONS,
+    );
+    expect(result).toEqual({
+      kind: "network-error",
+      cause: { kind: "transport", code: "UND_ERR_SOCKET" },
+    });
+  });
+
+  it("names timeout when the body read times out in undici", async () => {
+    const response = responseCutOffWith(
+      new TypeError("terminated", {
+        cause: Object.assign(new Error("Body Timeout Error"), {
+          code: "UND_ERR_BODY_TIMEOUT",
+        }),
+      }),
+    );
+    globalThis.fetch = (async (): Promise<Response> =>
+      response) as typeof fetch;
+    const result = await pollDeviceToken(
+      AUTHN_BASE_URL,
+      "dev-code",
+      "desktop",
+      REQUEST_OPTIONS,
+    );
+    expect(result).toEqual({
+      kind: "network-error",
+      cause: { kind: "timeout" },
+    });
+  });
+});
+
+describe("transport words for connect and TLS failures", () => {
+  it.each([
+    ["UND_ERR_CONNECT_TIMEOUT", "UND_ERR_CONNECT_TIMEOUT"],
+    ["UND_ERR_SOCKET", "UND_ERR_SOCKET"],
+    ["ECONNABORTED", "ECONNABORTED"],
+    ["EPROTO", "EPROTO"],
+    ["ERR_SSL_WRONG_VERSION_NUMBER", "tls"],
+    ["ERR_TLS_HANDSHAKE_TIMEOUT", "tls"],
+  ])("reads cause.code %s as the transport word %s", async (code, word) => {
+    globalThis.fetch = (async (): Promise<Response> => {
+      throw Object.assign(new TypeError("fetch failed"), {
+        cause: Object.assign(new Error("x"), { code }),
+      });
+    }) as typeof fetch;
+    const result = await startDeviceAuthorization(
+      AUTHN_BASE_URL,
+      { clientId: "desktop", hostLabel: "host" },
+      REQUEST_OPTIONS,
+    );
+    expect(result).toEqual({
+      kind: "network-error",
+      cause: { kind: "transport", code: word },
+    });
+  });
+});
+
 describe("cancellation and timeout", () => {
   // A fetch that never resolves on its own and only rejects when its `signal`
   // aborts (mirroring the real abortable fetch), so we can prove a caller abort
@@ -439,7 +595,10 @@ describe("cancellation and timeout", () => {
       signal: undefined,
       timeoutMs: 5,
     });
-    expect(result.kind).toBe("network-error");
+    expect(result).toEqual({
+      kind: "network-error",
+      cause: { kind: "timeout" },
+    });
   });
 
   it("startDeviceAuthorization surfaces a per-request timeout as network-error", async () => {
@@ -470,17 +629,18 @@ describe("cancellation and timeout", () => {
     });
   });
 
-  it("describeDeviceAuthorizeFailure renders fixed words and the status number only", () => {
-    expect(describeDeviceAuthorizeFailure({ kind: "timeout" })).toBe("timeout");
+  it("describeDeviceRequestFailure renders fixed words and the status number only", () => {
+    expect(describeDeviceRequestFailure({ kind: "timeout" })).toBe("timeout");
     expect(
-      describeDeviceAuthorizeFailure({ kind: "transport", code: "ENOTFOUND" }),
+      describeDeviceRequestFailure({ kind: "transport", code: "ENOTFOUND" }),
     ).toBe("transport code=ENOTFOUND");
     expect(
-      describeDeviceAuthorizeFailure({ kind: "http-status", status: 403 }),
+      describeDeviceRequestFailure({ kind: "http-status", status: 403 }),
     ).toBe("http-status status=403");
-    expect(describeDeviceAuthorizeFailure({ kind: "bad-body" })).toBe(
-      "bad-body",
-    );
+    expect(describeDeviceRequestFailure({ kind: "bad-body" })).toBe("bad-body");
+    expect(
+      describeDeviceRequestFailure({ kind: "transport", code: "tls" }),
+    ).toBe("transport code=tls");
   });
 });
 

@@ -30,6 +30,7 @@ import {
   providerPackRetryable,
   type ProviderPackPreparing,
 } from "@/components/providers/provider-pack-readiness";
+import { providerHostBlockLabel } from "@/components/providers/provider-signin-availability";
 import { useOpenLink } from "@/lib/links/open-link";
 import { useDebouncedValue } from "@/hooks/ui/use-debounced-value";
 import { cn } from "@/lib/utils";
@@ -193,6 +194,10 @@ type VersionManagerPanelData =
       readonly managedVersions: NonNullable<
         ProviderCliState["managedVersions"]
       >;
+      readonly refusedVersions: NonNullable<
+        ProviderCliState["macosRequirement"]
+      >["refusedVersions"];
+      readonly runningMacos: string | null;
     }
   | {
       readonly kind: "unavailable";
@@ -233,6 +238,7 @@ function versionManagerPanelDataFor(args: {
   readonly packId: ProviderCliState["packId"];
   readonly managedVersions: ProviderCliState["managedVersions"];
   readonly managedVersionsUnavailable: ProviderCliState["managedVersionsUnavailable"];
+  readonly macosRequirement: ProviderCliState["macosRequirement"];
 }): VersionManagerPanelData | null {
   // No host is the second case that still HIDES rather than explains. Every
   // reason below is a statement about a host; with none bound there is nothing
@@ -271,6 +277,8 @@ function versionManagerPanelDataFor(args: {
     packId: args.packId,
     packDisplayName,
     managedVersions: args.managedVersions,
+    refusedVersions: args.macosRequirement?.refusedVersions ?? [],
+    runningMacos: args.macosRequirement?.runningMacos ?? null,
   };
 }
 
@@ -486,6 +494,7 @@ export function ProviderCliCandidatesSection({
     packId: state.packId,
     managedVersions: state.managedVersions,
     managedVersionsUnavailable: state.managedVersionsUnavailable,
+    macosRequirement: state.macosRequirement,
   });
   // `availabilityPending` means the host's shell/PATH probe is still running,
   // and the protocol is explicit that `candidates` must not be trusted until
@@ -505,6 +514,7 @@ export function ProviderCliCandidatesSection({
       <CandidateAreaContent
         area={candidateArea}
         providerId={providerId}
+        macosRequirement={state.macosRequirement}
         table={{
           candidates: cliConfig.candidates,
           managedInstallState,
@@ -579,16 +589,62 @@ type CandidateTableProps = {
 function CandidateAreaContent({
   area,
   providerId,
+  macosRequirement,
   table,
 }: {
   readonly area: CandidateArea;
   readonly providerId: ProviderId;
+  readonly macosRequirement: ProviderCliState["macosRequirement"];
   readonly table: CandidateTableProps;
 }): ReactNode {
-  if (area !== "table") {
-    return <CandidateEmptyArea area={area} providerId={providerId} />;
+  const content =
+    area === "table" ? (
+      <CandidateTable {...table} />
+    ) : (
+      <CandidateEmptyArea area={area} providerId={providerId} />
+    );
+  const launchBlocked = (macosRequirement?.launch ?? null) !== null;
+  return (
+    <>
+      <MacosRequirementNotice
+        requirement={macosRequirement}
+        providerId={providerId}
+      />
+      {launchBlocked && area !== "table" ? null : content}
+    </>
+  );
+}
+
+function MacosRequirementNotice({
+  requirement,
+  providerId,
+}: {
+  readonly requirement: ProviderCliState["macosRequirement"];
+  readonly providerId: ProviderId;
+}): ReactNode {
+  if (requirement === null || requirement === undefined) return null;
+  const label = PROVIDER_DISPLAY_NAMES[providerId];
+  const launch = requirement.launch;
+  if (launch !== null) {
+    return (
+      <p role="status" className="text-ui-sm text-muted-foreground">
+        {providerHostBlockLabel(
+          {
+            kind: "macos",
+            requiredMacos: launch.requiredMacos,
+            runningMacos: requirement.runningMacos,
+          },
+          label,
+        )}
+      </p>
+    );
   }
-  return <CandidateTable {...table} />;
+  if (requirement.managed === null) return null;
+  return (
+    <p role="status" className="text-ui-sm text-muted-foreground">
+      {`Traycer's managed ${label} needs macOS ${requirement.managed.requiredMacos} or later. This Mac runs macOS ${requirement.runningMacos}.`}
+    </p>
+  );
 }
 
 function CandidateTable({
@@ -1150,6 +1206,8 @@ function VersionMenuTrigger({
             packId={data.packId}
             packDisplayName={data.packDisplayName}
             managedVersions={data.managedVersions}
+            refusedVersions={data.refusedVersions}
+            runningMacos={data.runningMacos}
             hostId={hostId}
           />
         )}
