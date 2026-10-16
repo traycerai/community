@@ -43,6 +43,10 @@ import {
   reportableWarningToast,
 } from "@/lib/reportable-error-toast";
 import { Analytics, AnalyticsEvent } from "@/lib/analytics";
+import {
+  authorizesCloudCapability,
+  useAuthStore,
+} from "@/stores/auth/auth-store";
 
 interface BatchDeleteEpicMutationContext {
   readonly hostId: string | null;
@@ -55,6 +59,13 @@ interface BatchDeleteEpicMutationContext {
    * Per dispatch, because two batches can be in flight at once.
    */
   readonly progressToastId: string;
+}
+
+/** The cloud verdict each dispatch's first request went out under. */
+const cloudVerdictAtDispatch = new WeakMap<BatchDeleteEpicVariables, boolean>();
+
+function readsCloudAuthorized(): boolean {
+  return authorizesCloudCapability(useAuthStore.getState().status);
 }
 
 let epicDeleteProgressToastSequence = 0;
@@ -106,6 +117,9 @@ export const EPIC_BATCH_DELETE_REQUEST_SIZE = 10;
 const EPIC_BATCH_DELETE_UNCONFIRMED_MESSAGE =
   "This task may not have been deleted. Try deleting it again.";
 
+const EPIC_BATCH_DELETE_SIGNED_OUT_MESSAGE =
+  "This task was not deleted because Traycer couldn't confirm your sign-in. Try again once you're signed in.";
+
 /**
  * Sends the ids after the first request in sequential chunks and merges every
  * answer into one response. A chunk that throws stops the run: its ids and
@@ -113,11 +127,18 @@ const EPIC_BATCH_DELETE_UNCONFIRMED_MESSAGE =
  * erroring, because the earlier chunks DID delete their Tasks and the success
  * path is what removes them from the caches and tabs. Retrying is safe: the
  * cloud reports an already-deleted Task as deleted.
+ *
+ * `stillAdmitted` is asked again before EVERY later chunk. A run of many
+ * chunks can outlast the verdict the first request went out under, and a
+ * demotion to `unverified` keeps the same bearer, so nothing below this check
+ * would stop the next chunk from spending it. When it fails, the run stops
+ * and the rest are answered "not deleted".
  */
 export async function deleteRemainingEpicChunks(
   firstResponse: BatchDeleteEpicResponse,
   remainingIds: ReadonlyArray<string>,
   dispatch: (ids: string[]) => Promise<BatchDeleteEpicResponse>,
+  stillAdmitted: () => boolean,
 ): Promise<BatchDeleteEpicResponse> {
   const results = [...firstResponse.results];
   for (
@@ -125,6 +146,16 @@ export async function deleteRemainingEpicChunks(
     start < remainingIds.length;
     start += EPIC_BATCH_DELETE_REQUEST_SIZE
   ) {
+    if (!stillAdmitted()) {
+      for (const taskId of remainingIds.slice(start)) {
+        results.push({
+          taskId,
+          success: false,
+          errorMessage: EPIC_BATCH_DELETE_SIGNED_OUT_MESSAGE,
+        });
+      }
+      break;
+    }
     const chunk = remainingIds.slice(
       start,
       start + EPIC_BATCH_DELETE_REQUEST_SIZE,
@@ -170,14 +201,23 @@ export function useEpicBatchDelete(): UseMutationResult<
     // Sent EPIC_BATCH_DELETE_REQUEST_SIZE ids at a time: the first slice here,
     // the rest in `resolveResponse`, so every lifecycle arm below sees one
     // merged answer for the whole selection.
-    mapVariables: (variables) => ({
-      ids: variables.ids.slice(0, EPIC_BATCH_DELETE_REQUEST_SIZE),
-    }),
+    mapVariables: (variables) => {
+      cloudVerdictAtDispatch.set(variables, readsCloudAuthorized());
+      return { ids: variables.ids.slice(0, EPIC_BATCH_DELETE_REQUEST_SIZE) };
+    },
     resolveResponse: (firstResponse, variables) =>
       deleteRemainingEpicChunks(
         firstResponse,
         variables.ids.slice(EPIC_BATCH_DELETE_REQUEST_SIZE),
         (ids) => client.request("epic.batchDelete", { ids }),
+        // The first request's admission, held for the whole run. Under a
+        // cloud verdict every later chunk needs that verdict still standing.
+        // Without one, the caller admitted only rows that spend nothing on
+        // the account (local-homed Tasks), so later chunks of the same ids
+        // go out exactly as the first did.
+        () =>
+          cloudVerdictAtDispatch.get(variables) !== true ||
+          readsCloudAuthorized(),
       ),
     options: {
       mutationKey: epicMutationKeys.batchDelete(),

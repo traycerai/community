@@ -150,6 +150,7 @@ import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
 import { useDesktopDialogStore } from "@/stores/dialogs/desktop-dialog-store";
 import { emptyTabStripLayout } from "@/stores/tabs/layout";
 import { useTabsStore } from "@/stores/tabs/store";
+import { useAuthStore } from "@/stores/auth/auth-store";
 
 /**
  * What the test says about the sonner toast the user could close: whether a
@@ -280,6 +281,7 @@ describe("the delete's progress toast", () => {
     host.state.activeHostId = "host-1";
     host.state.userId = "user-1";
     host.state.requests.length = 0;
+    useAuthStore.setState({ status: "signed-out" });
     toastScreen.stillShown = true;
     toastScreen.shownId = null;
     mocks.toastMessage.mockImplementation((_message, options) => {
@@ -815,6 +817,56 @@ describe("the delete's progress toast", () => {
       expect(mocks.publishDeletedEpicNotification).toHaveBeenCalledWith(
         expect.objectContaining({ epicIds: ids }),
       );
+    });
+
+    it("sends no later request once the session is demoted to unverified mid-run", async () => {
+      const ids = epicIds(23);
+      useAuthStore.setState({ status: "signed-in" });
+      const view = renderBatchDelete();
+
+      view.dispatch(deleteOf(ids, null));
+
+      await waitFor(() => {
+        expect(host.state.requests).toHaveLength(1);
+      });
+      act(() => {
+        useAuthStore.setState({ status: "unverified" });
+      });
+      await answer(0, deleted(...ids.slice(0, 10)));
+
+      await waitFor(() => {
+        expect(mocks.toastWarning).toHaveBeenCalledTimes(1);
+      });
+      expect(host.state.requests).toHaveLength(1);
+      expect(mocks.toastWarning.mock.calls[0]?.[0]).toBe(
+        "Deleted 10 of 23; 13 failed.",
+      );
+      expect(mocks.publishDeletedEpicNotification).toHaveBeenCalledWith(
+        expect.objectContaining({ epicIds: ids.slice(0, 10) }),
+      );
+    });
+
+    it("keeps sending a run that started without a cloud verdict", async () => {
+      // Without a verdict the caller admitted only local-homed rows, which
+      // spend nothing on the account, so every chunk goes out as the first.
+      const ids = epicIds(13);
+      useAuthStore.setState({ status: "unverified" });
+      const view = renderBatchDelete();
+
+      view.dispatch(deleteOf(ids, null));
+
+      await waitFor(() => {
+        expect(host.state.requests).toHaveLength(1);
+      });
+      await answer(0, deleted(...ids.slice(0, 10)));
+      await waitFor(() => {
+        expect(host.state.requests).toHaveLength(2);
+      });
+      await answer(1, deleted(...ids.slice(10)));
+
+      await waitFor(() => {
+        expect(mocks.toastSuccess).toHaveBeenCalledTimes(1);
+      });
     });
 
     it("keeps what earlier requests deleted when a later one fails, and stops sending", async () => {

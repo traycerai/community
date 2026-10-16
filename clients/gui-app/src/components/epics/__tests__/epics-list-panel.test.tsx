@@ -246,6 +246,8 @@ interface DeleteEpicsVariables {
 
 const testState = vi.hoisted(() => ({
   items: [] as HistoryItem[],
+  /** Rows the active-Task backfill adds on top of the durable pages. */
+  backfillItems: [] as HistoryItem[],
   availableRepos: [] as string[],
   availableWorkspaces: [] as HistoryItem["linkedWorkspaces"],
   activityByEpicId: new Map<string, "idle" | "turn" | "background">(),
@@ -308,6 +310,27 @@ vi.mock("@/hooks/chats/use-chat-search-task-titles", () => ({
 vi.mock("@/hooks/host/use-host-directory-entry", () => ({
   useHostDirectoryEntry: () => null,
 }));
+
+vi.mock(
+  "@/hooks/home/use-optimistic-activity-history-items",
+  async (importOriginal) => {
+    const actual =
+      await importOriginal<
+        typeof import("@/hooks/home/use-optimistic-activity-history-items")
+      >();
+    return {
+      ...actual,
+      useOptimisticActivityHistoryItems: (
+        input: Parameters<typeof actual.useOptimisticActivityHistoryItems>[0],
+      ) => {
+        const items = actual.useOptimisticActivityHistoryItems(input);
+        return testState.backfillItems.length === 0
+          ? items
+          : [...testState.backfillItems, ...items];
+      },
+    };
+  },
+);
 
 vi.mock("@/hooks/home/use-history-query", () => ({
   useHistoryQuery: () => ({
@@ -679,6 +702,7 @@ describe("<EpicsListPanel />", () => {
     testState.chatSearchClient = null;
     testState.chatSearchHits = { kind: "absent" };
     testState.activityByEpicId.clear();
+    testState.backfillItems = [];
     organizationState.value = null;
     organizationState.openDialog.mockReset();
     useLandingDraftStore.setState({ drafts: [], activeDraftId: null });
@@ -3696,6 +3720,77 @@ describe("<EpicsListPanel />", () => {
         .every((checkbox) => checkbox.getAttribute("aria-checked") === "true"),
     ).toBe(true);
     expect(screen.getByTestId("epics-list-delete-selected")).toBeTruthy();
+  });
+
+  it("aborts Select all when the same request's search contexts refetch", async () => {
+    testState.hasNextPage = true;
+    testState.fetchAllItems.mockImplementation(
+      () => new Promise<readonly HistoryItem[] | null>(() => undefined),
+    );
+    renderPanelView("page", "/");
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Select history items" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+    await waitFor(() =>
+      expect(testState.fetchAllItems).toHaveBeenCalledTimes(1),
+    );
+
+    // What the hook reports for a context or PR-activity refetch: fetching,
+    // count provisional, the request (sort included) unchanged.
+    testState.isFetching = true;
+    testState.isCountPending = true;
+    // Same search values, new object: re-renders the panel without changing
+    // the request.
+    await act(async () => {
+      useHistorySearchStore.setState({ search: { ...DEFAULT_HISTORY_SEARCH } });
+      await Promise.resolve();
+    });
+
+    expect(testState.fetchAllItems.mock.calls[0]?.[0].aborted).toBe(true);
+  });
+
+  it("selects the visible active-Task backfill rows when Select all lands", async () => {
+    testState.hasNextPage = true;
+    testState.backfillItems = [
+      historyItem({
+        id: "history-backfill",
+        epicId: "epic-backfill",
+        title: "Active, not yet listed",
+      }),
+    ];
+    let complete: ((items: readonly HistoryItem[]) => void) | undefined;
+    testState.fetchAllItems.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          complete = resolve;
+        }),
+    );
+    const view = renderPanelView("page", "/");
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Select history items" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+    await waitFor(() =>
+      expect(testState.fetchAllItems).toHaveBeenCalledTimes(1),
+    );
+
+    testState.hasNextPage = false;
+    view.rerender(<RouterProvider router={view.router} />);
+    await act(async () => {
+      complete?.(testState.items);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      const checkboxes = screen.getAllByTestId("epics-list-row-select");
+      expect(checkboxes).toHaveLength(2);
+      expect(
+        checkboxes.every(
+          (checkbox) => checkbox.getAttribute("aria-checked") === "true",
+        ),
+      ).toBe(true);
+    });
   });
 
   it("names the task count and the rows off screen when deleting a bulk selection", async () => {

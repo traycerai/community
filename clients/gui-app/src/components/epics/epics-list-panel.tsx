@@ -484,12 +484,17 @@ function EpicsListPanelBody(props: EpicsListPanelBodyProps): ReactNode {
       localContextMatchKey,
     ],
   );
-  // A refresh of the same request re-reads the set the walk is collecting, so
-  // it cancels the walk. A fetch for a new request key (a re-sort, which keeps
-  // the matching set) arrives with `isCountPending` and is left alone.
+  // A fetch that starts for the same request (a refetch of the first page,
+  // the search contexts or PR activity) can change what the walk is
+  // collecting, so it cancels the walk. The one exemption is the run where
+  // the sort itself just changed: a re-sort keeps the matching set, and any
+  // fetch it starts is for the re-sorted request.
+  const sortRef = useRef(search.sort);
   useEffect(() => {
-    if (isFetching && !isCountPending) abortSelectAll();
-  }, [abortSelectAll, isCountPending, isFetching]);
+    const resorted = sortRef.current !== search.sort;
+    sortRef.current = search.sort;
+    if (isFetching && !resorted) abortSelectAll();
+  }, [abortSelectAll, isFetching, search.sort]);
   const [pendingDeleteIds, setPendingDeleteIds] =
     useState<ReadonlyArray<string> | null>(null);
   // Explicit user overrides of the per-worktree checkbox. Absent entries fall
@@ -647,6 +652,13 @@ function EpicsListPanelBody(props: EpicsListPanelBodyProps): ReactNode {
     () => new Set(selectableItemIds),
     [selectableItemIds],
   );
+  // The rows on screen when the walk lands, read then rather than from the
+  // render that started it. They include the active-Task backfill the
+  // durable pages may not list yet, which the walk itself never reads.
+  const visibleItemsRef = useRef(items);
+  useEffect(() => {
+    visibleItemsRef.current = items;
+  });
   const selectAllMutation = useMutation({
     mutationFn: (controller: AbortController) =>
       fetchAllItems(controller.signal),
@@ -655,7 +667,7 @@ function EpicsListPanelBody(props: EpicsListPanelBodyProps): ReactNode {
       const currentPendingDeleteEpicIds = readPendingDeleteEpicIds(queryClient);
       setSelectedIds(
         new Set(
-          loadedItems
+          [...loadedItems, ...visibleItemsRef.current]
             .filter(
               (item) =>
                 canDeleteHistoryItem(item, cloudAuthorized) &&
