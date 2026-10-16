@@ -714,6 +714,9 @@ export class AuthService {
    */
   private setSessionRecoveryTerminallyRejected(loss: CloudVerdictLoss): void {
     this.sessionRecoveryTerminallyRejected = loss !== "unreachable";
+    if (loss === "unreachable") {
+      this.revokedHeldBearer = null;
+    }
     useAuthStore.getState().setCloudVerdictLoss(loss);
     // The stored-session arms latch AFTER projecting `unverified`, so this is
     // their moment to notice a held bearer that has already expired.
@@ -721,34 +724,37 @@ export class AuthService {
   }
 
   /**
+   * The bearer held when authn's refusal was a user-epoch revocation ("sign
+   * out everywhere"). The host refuses a revoked bearer as soon as the
+   * account's token floor reaches it, not at the bearer's expiry, so it counts
+   * as refused straight away. Cleared with the latch.
+   */
+  private revokedHeldBearer: string | null = null;
+
+  /**
    * A host refused the bearer this session holds - or would, because it has
-   * expired. On a session authn has refused (the terminal latch) no fresh
-   * bearer can arrive, so the local plane `unverified` holds the app open for
-   * is gone too, and the shell sends the person to sign in
+   * expired or been revoked. On a session authn has refused (the terminal
+   * latch) no fresh bearer can arrive, so the local plane `unverified` holds
+   * the app open for is gone too, and the shell sends the person to sign in
    * (`hostRefusedHeldBearer`).
    *
-   * Gated on the held access token having EXPIRED, not on a refusal alone: a
-   * host also answers UNAUTHORIZED to requests that need the cloud verdict this
-   * session no longer has, while it keeps serving the local plane on the same
-   * bearer until that bearer's own expiry. A token whose expiry cannot be read
-   * is not treated as expired, as in `applyProvisionalSession`.
+   * Gated on the held bearer being EXPIRED or REVOKED, not on a refusal alone:
+   * a host also answers UNAUTHORIZED to requests that need the cloud verdict
+   * this session no longer has, while it keeps serving the local plane on the
+   * same bearer until then. A token whose expiry cannot be read is not treated
+   * as expired, as in `applyProvisionalSession`.
    *
    * Called wherever that can change: on a host refusal (unary and stream), when
    * the latch is set, and on every `unverified` projection.
    */
   noteHostRefusedHeldBearer(): void {
-    if (!this.sessionRecoveryTerminallyRejected) {
-      return;
-    }
     const bearer = this.currentBearer;
-    if (bearer === null) {
+    if (!this.sessionRecoveryTerminallyRejected || bearer === null) {
       return;
     }
-    const expiresAtMs = readAccessTokenExpiryMs(bearer);
-    if (expiresAtMs === null || expiresAtMs > Date.now()) {
-      return;
+    if (bearer === this.revokedHeldBearer || hasExpired(bearer)) {
+      useAuthStore.getState().noteHostRefusedHeldBearer();
     }
-    useAuthStore.getState().noteHostRefusedHeldBearer();
   }
   // Superseded-save undos whose conditional deletes have not LANDED yet
   // (in flight or failed): each stale pair may still be durable. Every
@@ -1471,6 +1477,10 @@ export class AuthService {
           revocation: refreshRejectionRevocation(rejection),
         });
         this.setLastError(refreshRejectedCredentialError(rejection));
+        this.revokedHeldBearer =
+          refreshRejectionRevocation(rejection) === "user-epoch"
+            ? stored.token
+            : null;
         this.applyUnverifiedSession(stored);
         this.setSessionRecoveryTerminallyRejected("session-rejected");
         this.settleSessionRecovery("refresh-rejected-credential");
@@ -3217,66 +3227,82 @@ export class AuthService {
         this.clearUiSession();
         return { status: "signed-out" };
       case "refresh-rejected-account":
-      case "refresh-rejected-credential": {
-        // The ordinary mid-session expiry: a signed-in user editing local work
-        // whose refresh authn rejects with a verdict about the TOKEN. This arm
-        // used to `clearUiSession()`, which is cold-review P1-4 - it produced a
-        // real `signed-out`, redirecting the shell out from under the work and
-        // firing `useAuthIdentityTransition`'s destructive arm (which PURGES
-        // account-scoped persisted state; reading positions are deleted from
-        // disk). The stored-session path has always treated the identical
-        // verdict as credential-scoped and held the plane, so the two disagreed
-        // about the same outcome.
-        //
-        // The bearer in hand is the right one to hold on: the REFRESH token is
-        // what was rejected, the access token keeps its own TTL, and it is the
-        // credential the host is already serving local epics on. Identity comes
-        // from the live profile rather than the file, because this path never
-        // re-reads the file and `rotated.pair` is `null` on every rejection.
-        // Same demotion, DIFFERENT copy. Both hold the plane, but one is an
-        // expiry the user can clear by signing in again and the other is
-        // terminal for this account - telling the second group to "sign in
-        // again" sends them round a loop with no exit. Within the credential
-        // arm the copy splits once more, exactly as the stored-session path
-        // splits it: a user-epoch revoke is the user's own "sign out
-        // everywhere" landing on this live session, and it is told so rather
-        // than "expired" - `rotated.rejection` carries the scope here for that
-        // purpose, and reading only the outcome string would drop it on the
-        // path a signed-in user actually takes.
-        if (rotated.outcome === "refresh-rejected-credential") {
-          appLogger.info("[auth] live session refresh rejected", {
-            trigger,
-            scope: "credential",
-            revocation: refreshRejectionRevocation(rotated.rejection),
-          });
-        }
-        this.setLastError(
-          rotated.outcome === "refresh-rejected-account"
-            ? AUTH_ERROR_ACCOUNT_UNAVAILABLE
-            : refreshRejectedCredentialError(rotated.rejection),
+      case "refresh-rejected-credential":
+        return this.applyLiveRefreshRejection(
+          rotated.outcome,
+          rotated.rejection,
+          trigger,
         );
-        if (
-          !this.demoteLiveSessionOnTerminalVerdict(
-            this.currentBearer,
-            refreshRejectedLoss(rotated.outcome),
-          )
-        ) {
-          // No live identity to hold a plane FOR. Nothing to demote, so take
-          // the old behaviour rather than inventing a session.
-          this.clearUiSession();
-          return { status: "signed-out" };
-        }
-        // NOT `signed-out` (the session was demoted, not cleared) and NOT
-        // `transient` (callers read that as retriable, and re-driving a dead
-        // refresh is the spend this whole path avoids).
-        return { status: "credential-dead" };
-      }
       case "lock-busy":
       case "spend-pending":
       case "refresh-network":
         // Transient; the access token in hand stays valid for its TTL.
         return { status: "transient" };
     }
+  }
+
+  /**
+   * The ordinary mid-session expiry: a signed-in user editing local work whose
+   * refresh authn rejects with a verdict about the TOKEN. This arm used to
+   * `clearUiSession()`, which is cold-review P1-4 - it produced a real
+   * `signed-out`, redirecting the shell out from under the work and firing
+   * `useAuthIdentityTransition`'s destructive arm (which PURGES account-scoped
+   * persisted state; reading positions are deleted from disk). The
+   * stored-session path has always treated the identical verdict as
+   * credential-scoped and held the plane, so the two disagreed about the same
+   * outcome.
+   *
+   * The bearer in hand is the right one to hold on: the REFRESH token is what
+   * was rejected, the access token keeps its own TTL, and it is the credential
+   * the host is already serving local epics on. Identity comes from the live
+   * profile rather than the file, because this path never re-reads the file
+   * and the rotate's `pair` is `null` on every rejection.
+   * Same demotion, DIFFERENT copy. Both hold the plane, but one is an expiry
+   * the user can clear by signing in again and the other is terminal for this
+   * account - telling the second group to "sign in again" sends them round a
+   * loop with no exit. Within the credential arm the copy splits once more,
+   * exactly as the stored-session path splits it: a user-epoch revoke is the
+   * user's own "sign out everywhere" landing on this live session, and it is
+   * told so rather than "expired" - `rejection` carries the scope here for
+   * that purpose, and reading only the outcome string would drop it on the
+   * path a signed-in user actually takes.
+   */
+  private applyLiveRefreshRejection(
+    outcome: "refresh-rejected-account" | "refresh-rejected-credential",
+    rejection: AuthRefreshRejection | null,
+    trigger: string,
+  ): SameUserRotateResult {
+    if (outcome === "refresh-rejected-credential") {
+      appLogger.info("[auth] live session refresh rejected", {
+        trigger,
+        scope: "credential",
+        revocation: refreshRejectionRevocation(rejection),
+      });
+    }
+    this.setLastError(
+      outcome === "refresh-rejected-account"
+        ? AUTH_ERROR_ACCOUNT_UNAVAILABLE
+        : refreshRejectedCredentialError(rejection),
+    );
+    this.revokedHeldBearer =
+      refreshRejectionRevocation(rejection) === "user-epoch"
+        ? this.currentBearer
+        : null;
+    if (
+      !this.demoteLiveSessionOnTerminalVerdict(
+        this.currentBearer,
+        refreshRejectedLoss(outcome),
+      )
+    ) {
+      // No live identity to hold a plane FOR. Nothing to demote, so take the
+      // old behaviour rather than inventing a session.
+      this.clearUiSession();
+      return { status: "signed-out" };
+    }
+    // NOT `signed-out` (the session was demoted, not cleared) and NOT
+    // `transient` (callers read that as retriable, and re-driving a dead
+    // refresh is the spend this whole path avoids).
+    return { status: "credential-dead" };
   }
 
   /**
@@ -5367,6 +5393,15 @@ function refreshRejectionRevocation(
   rejection: AuthRefreshRejection | null,
 ): "user-epoch" | null {
   return rejection?.kind === "credential" ? rejection.revocation : null;
+}
+
+/**
+ * Whether an access token's `exp` has passed on this machine's clock - the
+ * clock the local host checks it against. An unreadable expiry is not expired.
+ */
+function hasExpired(token: string): boolean {
+  const expiresAtMs = readAccessTokenExpiryMs(token);
+  return expiresAtMs !== null && expiresAtMs <= Date.now();
 }
 
 /**

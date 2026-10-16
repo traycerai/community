@@ -301,8 +301,9 @@ export interface AuthState {
    */
   readonly cloudVerdictLoss: CloudVerdictLoss;
   /**
-   * The bearer this `unverified` session holds has expired, so the host
-   * refuses it, AFTER authn refused the session, i.e. while `cloudVerdictLoss`
+   * The bearer this `unverified` session holds has expired or been revoked
+   * ("sign out everywhere"), so the host refuses it, AFTER authn refused the
+   * session, i.e. while `cloudVerdictLoss`
    * is not `unreachable`. No fresh bearer can arrive in that state, so the
    * local plane `unverified` holds the app open for is gone too and
    * {@link admitsLocalPlaneOnShell} sends the person to sign in. The status

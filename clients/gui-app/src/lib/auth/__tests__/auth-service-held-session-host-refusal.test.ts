@@ -8,6 +8,7 @@ import {
 import {
   AuthService,
   AUTH_ERROR_SESSION_EXPIRED,
+  AUTH_ERROR_SIGNED_OUT_EVERYWHERE,
 } from "@/lib/auth/auth-service";
 import { createStreamAuthRevalidator } from "@/lib/auth/stream-auth-revalidator";
 import { resolveShellLocalPlaneAdmission } from "@/hooks/auth/use-shell-local-plane-admission";
@@ -45,6 +46,14 @@ import { useAuthStore } from "@/stores/auth/auth-store";
  * string like `"dead-token"` has no readable expiry and would never trip it.
  * The status stays `unverified` throughout: the identity is kept and nothing
  * account-scoped is purged.
+ *
+ * One refusal does not wait for `exp`: authn's user-epoch revocation ("sign out
+ * everywhere", a refresh 401 stamped `revocation_scope: user_epoch`). The host
+ * refuses a revoked bearer as soon as the account's token floor reaches it, so
+ * the service remembers the bearer it held at that refusal
+ * (`revokedHeldBearer`) and flags it at once, however far off its `exp` is.
+ * Only that bearer: a plain credential refusal still waits for `exp`, and the
+ * mark clears with the latch, so it never rides onto a later session.
  *
  * Fixtures follow `auth-service-session-recovery-wake.test.ts`: a
  * `MockRunnerHost`, a `fetch` double keyed on the two authn routes (counted,
@@ -93,6 +102,14 @@ const EXPIRES_AT_MS = NOW_MS + 5 * MINUTE_MS;
 const SOON_EXPIRING_TOKEN = jwtExpiringAt(EXPIRES_AT_MS);
 /** A fake time at which `SOON_EXPIRING_TOKEN` has expired. */
 const PAST_EXPIRY_MS = EXPIRES_AT_MS + MINUTE_MS;
+/**
+ * Still valid at `NOW_MS` for half an hour: the bearer a person signs in on
+ * after a refusal, long-lived enough that the refresh scheduler leaves it be.
+ */
+const LONG_LIVED_EXPIRES_AT_MS = NOW_MS + 30 * MINUTE_MS;
+const LONG_LIVED_TOKEN = jwtExpiringAt(LONG_LIVED_EXPIRES_AT_MS);
+/** A fake time at which `LONG_LIVED_TOKEN` has expired. */
+const LONG_LIVED_PAST_EXPIRY_MS = LONG_LIVED_EXPIRES_AT_MS + MINUTE_MS;
 
 type FetchHandler = (
   input: unknown,
@@ -127,6 +144,20 @@ function status(code: number): Promise<Response> {
 
 function unreachable(): Promise<Response> {
   return Promise.reject(new TypeError("Failed to fetch"));
+}
+
+/**
+ * authn's refresh refusal for the user's own "sign out everywhere": a 401
+ * stamped with the user-epoch revocation scope (the shape `auth-service.test.ts`
+ * pins for the same copy). A fresh `Response` per call, since a body reads once.
+ */
+function revokedEverywhere(): Promise<Response> {
+  return Promise.resolve(
+    new Response(
+      JSON.stringify({ error: "needs_reauth", revocation_scope: "user_epoch" }),
+      { status: 401, headers: { "content-type": "application/json" } },
+    ),
+  );
 }
 
 function createAuthnDouble(): AuthnDouble {
@@ -254,9 +285,10 @@ async function advancePastAuthRetries(): Promise<void> {
 }
 
 /**
- * Counts how many times the "session expired" error is DELIVERED, the way
- * `AuthSessionExpiredToastBridge` consumes it: it toasts the expiry and then
- * clears the durable error so an inline surface never renders stale copy.
+ * Counts how many times one auth error (the "session expired" one, unless a
+ * test names another) is DELIVERED, the way `AuthSessionExpiredToastBridge`
+ * consumes it: it toasts the error and then clears the durable one so an inline
+ * surface never renders stale copy.
  *
  * The acknowledgement is the point. `setLastError` de-duplicates, so without
  * it a second "session expired" would be swallowed as "no change" and the
@@ -264,20 +296,27 @@ async function advancePastAuthRetries(): Promise<void> {
  * it, every re-raise is a fresh delivery - which is the toast the person saw
  * come back.
  */
-interface ExpiryDeliveries {
+interface ErrorDeliveries {
   count(): number;
 }
 
-function watchExpiryDeliveries(service: AuthService): ExpiryDeliveries {
+function watchDeliveries(
+  service: AuthService,
+  wanted: string,
+): ErrorDeliveries {
   let delivered = 0;
   service.onErrorChange((error) => {
-    if (error !== AUTH_ERROR_SESSION_EXPIRED) {
+    if (error !== wanted) {
       return;
     }
     delivered += 1;
     service.clearLastError();
   });
   return { count: () => delivered };
+}
+
+function watchExpiryDeliveries(service: AuthService): ErrorDeliveries {
+  return watchDeliveries(service, AUTH_ERROR_SESSION_EXPIRED);
 }
 
 /** The credentials object a host transport would hand back as `expected`. */
@@ -307,10 +346,36 @@ async function refuseUnary(
 }
 
 /**
- * Boots a stored session whose access token AND refresh token authn refuses
- * (401 on both routes). Startup validates, rotates, and lands the session
- * `unverified` on a `session-rejected` verdict, raising "session expired"
- * once.
+ * Boots a stored session whose access token authn refuses (401) and whose
+ * refresh spend is answered by `answerRefresh`. Startup validates, rotates, and
+ * lands the session `unverified` on a `session-rejected` verdict, raising one
+ * auth error, counted under `deliveries` as `deliveredError`.
+ */
+async function startStoredSessionRefusedBy(
+  authn: AuthnDouble,
+  accessToken: string,
+  answerRefresh: AuthnAnswer,
+  deliveredError: string,
+): Promise<{
+  service: AuthService;
+  host: MockRunnerHost;
+  deliveries: ErrorDeliveries;
+}> {
+  authn.answerValidation = () => status(401);
+  authn.answerRefresh = answerRefresh;
+  const { service, host } = makeService();
+  const deliveries = watchDeliveries(service, deliveredError);
+  await host.tokenStore.signIn(
+    { token: accessToken, refreshToken: "dead-refresh" },
+    { ...DEFAULT_IDENTITY },
+  );
+  await service.start();
+  return { service, host, deliveries };
+}
+
+/**
+ * A stored session whose access token AND refresh token authn refuses (401 on
+ * both routes), raising "session expired" once.
  */
 async function startRefusedSession(
   authn: AuthnDouble,
@@ -318,18 +383,59 @@ async function startRefusedSession(
 ): Promise<{
   service: AuthService;
   host: MockRunnerHost;
-  expiry: ExpiryDeliveries;
+  expiry: ErrorDeliveries;
 }> {
-  authn.answerValidation = () => status(401);
-  authn.answerRefresh = () => status(401);
-  const { service, host } = makeService();
-  const expiry = watchExpiryDeliveries(service);
-  await host.tokenStore.signIn(
-    { token: accessToken, refreshToken: "dead-refresh" },
-    { ...DEFAULT_IDENTITY },
+  const { service, host, deliveries } = await startStoredSessionRefusedBy(
+    authn,
+    accessToken,
+    () => status(401),
+    AUTH_ERROR_SESSION_EXPIRED,
   );
-  await service.start();
-  return { service, host, expiry };
+  return { service, host, expiry: deliveries };
+}
+
+/**
+ * A stored session authn refuses as the user's own "sign out everywhere": the
+ * refresh 401 carries the user-epoch revocation scope, so the one error raised
+ * is the signed-out-everywhere copy.
+ */
+async function startRevokedSession(
+  authn: AuthnDouble,
+  accessToken: string,
+): Promise<{
+  service: AuthService;
+  host: MockRunnerHost;
+  signedOutEverywhere: ErrorDeliveries;
+}> {
+  const { service, host, deliveries } = await startStoredSessionRefusedBy(
+    authn,
+    accessToken,
+    revokedEverywhere,
+    AUTH_ERROR_SIGNED_OUT_EVERYWHERE,
+  );
+  return { service, host, signedOutEverywhere: deliveries };
+}
+
+/**
+ * The interactive sign-in the person does after a refusal: authn accepts the
+ * freshly authorized token, and the session lands `signed-in`.
+ */
+async function signInInteractively(
+  service: AuthService,
+  host: MockRunnerHost,
+  authn: AuthnDouble,
+  token: string,
+): Promise<void> {
+  authn.answerValidation = okUser;
+  await service.signIn();
+  host.deviceFlow.emitResult({
+    kind: "authorized",
+    token,
+    refreshToken: "fresh-refresh",
+  });
+  await vi.waitFor(() => {
+    expect(useAuthStore.getState().status).toBe("signed-in");
+  });
 }
 
 describe("AuthService - a host refusing the bearer of a session authn refused", () => {
@@ -766,5 +872,161 @@ describe("AuthService - a host refusing the bearer of a session authn refused", 
     expect(authn.validationCalls).toBe(validationBefore + 1);
     expect(outcome).toBe("rotated");
     expect(useAuthStore.getState().hostRefusedHeldBearer).toBe(false);
+  });
+
+  it("flags the held bearer at once, before its exp, when authn's refusal of a LIVE session is a user-epoch revocation, then asks authn nothing across repeated refusals", async () => {
+    useFakeClock();
+    const { service, host } = makeService();
+    const signedOutEverywhere = watchDeliveries(
+      service,
+      AUTH_ERROR_SIGNED_OUT_EVERYWHERE,
+    );
+    const expiry = watchExpiryDeliveries(service);
+    authn.answerValidation = okUser;
+    await host.tokenStore.signIn(
+      { token: SOON_EXPIRING_TOKEN, refreshToken: "live-refresh" },
+      { ...DEFAULT_IDENTITY },
+    );
+    await service.start();
+    expect(useAuthStore.getState().status).toBe("signed-in");
+    expect(useAuthStore.getState().hostRefusedHeldBearer).toBe(false);
+
+    // The user signs out everywhere: validation refuses the bearer and the
+    // refresh spend answers with the user-epoch scope.
+    authn.answerValidation = () => status(401);
+    authn.answerRefresh = revokedEverywhere;
+    const verdict = await service.revalidateCurrentContext();
+    expect(verdict?.kind).toBe("rejected");
+
+    const atVerdict = useAuthStore.getState();
+    expect(atVerdict.status).toBe("unverified");
+    expect(atVerdict.cloudVerdictLoss).toBe("session-rejected");
+    // The bearer is the unexpired one and its `exp` is still ahead of the
+    // clock - and the host is nonetheless known to refuse it, with no host
+    // having refused anything yet.
+    expect(service.getCurrentSessionSnapshot().token).toBe(SOON_EXPIRING_TOKEN);
+    expect(Date.now()).toBeLessThan(EXPIRES_AT_MS);
+    expect(atVerdict.hostRefusedHeldBearer).toBe(true);
+    // The person is told the true thing, once - not "expired".
+    expect(signedOutEverywhere.count()).toBe(1);
+    expect(expiry.count()).toBe(0);
+    expect(
+      resolveShellLocalPlaneAdmission(
+        atVerdict.status,
+        true,
+        atVerdict.hostRefusedHeldBearer,
+      ),
+    ).toEqual({ admitted: false, refusal: "unverified-host-refused" });
+    const validationAtVerdict = authn.validationCalls;
+    const refreshAtVerdict = authn.refreshCalls;
+    // Not vacuous: the verdict itself cost a round trip to each route.
+    expect(validationAtVerdict).toBeGreaterThan(0);
+    expect(refreshAtVerdict).toBeGreaterThan(0);
+
+    const credentials = liveCredentials(service);
+    const outcomes: string[] = [];
+    for (let refusal = 0; refusal < 5; refusal += 1) {
+      outcomes.push(await service.revalidateExpectedBearer(credentials));
+    }
+
+    expect(authn.validationCalls).toBe(validationAtVerdict);
+    expect(authn.refreshCalls).toBe(refreshAtVerdict);
+    expect(outcomes).toEqual(repeated(5, "rejected"));
+    expect(signedOutEverywhere.count()).toBe(1);
+    expect(expiry.count()).toBe(0);
+    expect(service.getLastError()).toBeNull();
+    const after = useAuthStore.getState();
+    expect(after.status).toBe("unverified");
+    expect(after.hostRefusedHeldBearer).toBe(true);
+  });
+
+  it("flags a stored unexpired bearer at startup when authn's refusal is a user-epoch revocation", async () => {
+    useFakeClock();
+    const { service, signedOutEverywhere } = await startRevokedSession(
+      authn,
+      SOON_EXPIRING_TOKEN,
+    );
+
+    const atVerdict = useAuthStore.getState();
+    expect(atVerdict.status).toBe("unverified");
+    expect(atVerdict.cloudVerdictLoss).toBe("session-rejected");
+    // Held for the local plane, `exp` still ahead - and flagged all the same.
+    expect(service.getCurrentSessionSnapshot().token).toBe(SOON_EXPIRING_TOKEN);
+    expect(Date.now()).toBeLessThan(EXPIRES_AT_MS);
+    expect(atVerdict.hostRefusedHeldBearer).toBe(true);
+    expect(signedOutEverywhere.count()).toBe(1);
+    expect(authn.refreshCalls).toBeGreaterThan(0);
+    expect(
+      resolveShellLocalPlaneAdmission(
+        atVerdict.status,
+        true,
+        atVerdict.hostRefusedHeldBearer,
+      ),
+    ).toEqual({ admitted: false, refusal: "unverified-host-refused" });
+  });
+
+  it("does not carry the revoked mark onto the bearer a later sign-in lands on: a plain refusal of the new unexpired bearer still waits for its exp", async () => {
+    useFakeClock();
+    const { service, host, signedOutEverywhere } = await startRevokedSession(
+      authn,
+      SOON_EXPIRING_TOKEN,
+    );
+    expect(useAuthStore.getState().hostRefusedHeldBearer).toBe(true);
+
+    await signInInteractively(service, host, authn, LONG_LIVED_TOKEN);
+    const signedIn = useAuthStore.getState();
+    expect(signedIn.hostRefusedHeldBearer).toBe(false);
+    expect(signedIn.cloudVerdictLoss).toBe("unreachable");
+    expect(service.getCurrentSessionSnapshot().token).toBe(LONG_LIVED_TOKEN);
+
+    // authn now refuses the NEW bearer, but plainly: no revocation scope.
+    authn.answerValidation = () => status(401);
+    authn.answerRefresh = () => status(401);
+    const verdict = await service.revalidateCurrentContext();
+    expect(verdict?.kind).toBe("rejected");
+
+    const refused = useAuthStore.getState();
+    expect(refused.status).toBe("unverified");
+    expect(refused.cloudVerdictLoss).toBe("session-rejected");
+    // Plain "expired" copy, not a second signed-out-everywhere.
+    expect(service.getLastError()).toBe(AUTH_ERROR_SESSION_EXPIRED);
+    expect(signedOutEverywhere.count()).toBe(1);
+    expect(refused.hostRefusedHeldBearer).toBe(false);
+
+    const credentials = liveCredentials(service);
+    const early = await refuseUnary(service, credentials, 3);
+    expect(early).toEqual(repeated(3, "rejected"));
+    expect(useAuthStore.getState().hostRefusedHeldBearer).toBe(false);
+
+    // Past the new bearer's own expiry, the next refusal flags it as usual.
+    vi.setSystemTime(LONG_LIVED_PAST_EXPIRY_MS);
+    expect(await service.revalidateExpectedBearer(credentials)).toBe(
+      "rejected",
+    );
+    expect(useAuthStore.getState().hostRefusedHeldBearer).toBe(true);
+  });
+
+  it("clears the revoked mark with the latch: the same bearer, held again after a sign-in, is not flagged by a later demotion that carries no revocation", async () => {
+    useFakeClock();
+    const { service, host } = await startRevokedSession(
+      authn,
+      LONG_LIVED_TOKEN,
+    );
+    expect(useAuthStore.getState().hostRefusedHeldBearer).toBe(true);
+
+    // The sign-in lands on the very bearer the revocation named, so a mark
+    // that outlived the latch would match it.
+    await signInInteractively(service, host, authn, LONG_LIVED_TOKEN);
+    expect(useAuthStore.getState().hostRefusedHeldBearer).toBe(false);
+
+    // A sibling window's demotion names this bearer. It reaches the latch
+    // without a refresh refusal, so it does not rewrite the mark itself.
+    service.ingestCloudAuthorizationRevoked(LONG_LIVED_TOKEN);
+
+    const after = useAuthStore.getState();
+    expect(after.status).toBe("unverified");
+    expect(after.cloudVerdictLoss).toBe("ended-elsewhere");
+    expect(Date.now()).toBeLessThan(LONG_LIVED_EXPIRES_AT_MS);
+    expect(after.hostRefusedHeldBearer).toBe(false);
   });
 });
