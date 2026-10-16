@@ -969,6 +969,7 @@ describe("RuntimeHostMessenger availability forwarding", () => {
         frozen: false,
         profile: null,
         ownerTeamName: null,
+        ownerTeamId: null,
       },
     };
     await requestRemote();
@@ -986,6 +987,7 @@ describe("RuntimeHostMessenger availability forwarding", () => {
         frozen: false,
         profile: null,
         ownerTeamName: null,
+        ownerTeamId: null,
       },
     };
     await requestRemote();
@@ -1081,7 +1083,13 @@ function sandboxVerdictRig(first: HostDirectoryEntry): SandboxVerdictRig {
 function sandboxRow(frozen: boolean): RemoteHostDirectoryEntry {
   return {
     ...remoteEntry,
-    sandbox: { state: "awake", frozen, profile: null, ownerTeamName: null },
+    sandbox: {
+      state: "awake",
+      frozen,
+      profile: null,
+      ownerTeamName: null,
+      ownerTeamId: null,
+    },
   };
 }
 

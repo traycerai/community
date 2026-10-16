@@ -7,6 +7,7 @@ import {
 } from "@/components/ui/collapsible";
 import { GettingStartedCards } from "@/components/onboarding/getting-started-cards";
 import { SetUpPersonalGroup } from "@/components/onboarding/set-up-personal-group";
+import { SetUpTeamGroup } from "@/components/onboarding/set-up-team-group";
 import {
   isPermanentlyUnavailable,
   useGettingStartedChecklist,
@@ -85,6 +86,9 @@ export function HomeGettingStartedSection(): ReactNode {
           <CollapsibleContent className="pt-2">{cards}</CollapsibleContent>
         </Collapsible>
       )}
+      {/* Outside the fold: a finished checklist must not hide the team's
+          next step. */}
+      <SetUpTeamGroup surface="home" />
     </section>
   );
 }

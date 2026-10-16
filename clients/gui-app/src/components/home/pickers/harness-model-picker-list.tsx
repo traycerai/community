@@ -34,6 +34,8 @@ interface HarnessModelPickerListProps {
   readonly terminalLoginSurface: ProviderTerminalLoginSurface | null;
   readonly runTargetHostId: string | null;
   readonly onClosePicker: () => void;
+  /** Every row listed but not selectable. */
+  readonly rowsDisabled: boolean;
 }
 
 export function HarnessModelPickerList(
@@ -62,6 +64,7 @@ export function HarnessModelPickerList(
     terminalLoginSurface,
     runTargetHostId,
     onClosePicker,
+    rowsDisabled,
   } = props;
 
   const stateRow = ModelRowsState({
@@ -125,6 +128,7 @@ export function HarnessModelPickerList(
               onHover={onHover}
               onActive={onActive}
               onSelect={onSelect}
+              disabled={rowsDisabled}
             />
           </div>
         );

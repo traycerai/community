@@ -128,6 +128,8 @@ import {
 } from "@/components/epic-canvas/pane-activation";
 import { useProvidersFocusStore } from "@/stores/settings/providers-focus-store";
 import { useHostCredentialRefusal } from "@/hooks/host/use-host-credential-refusal";
+import { useOnTeamSandbox } from "@/hooks/sandboxes/use-on-team-sandbox";
+import { teamSandboxHarnessBlocked } from "@/lib/sandboxes/team-sandbox-harness";
 
 export type { ReasoningFooterConfig, ServiceTierFooterConfig };
 
@@ -941,10 +943,22 @@ function HarnessModelPickerImpl(props: HarnessModelPickerProps) {
     query: trimmedQuery,
     activeProviderId: resolvedActiveProviderId,
   });
+  const onTeamSandbox = useOnTeamSandbox(runTargetHostId);
   const selectRow = useCallback(
     (row: HarnessModelRow) => {
       if (disabled) {
         closeOnly();
+        return;
+      }
+      // The keyboard path to a row a team sandbox does not offer: the row is
+      // listed but not selectable (ticket E17 checkpoint 6).
+      const entry = catalogHarnesses.find(
+        (harness) => harness.id === row.harnessId,
+      );
+      if (
+        entry !== undefined &&
+        teamSandboxHarnessBlocked(entry.sandboxCredentialMode, onTeamSandbox)
+      ) {
         return;
       }
       // Commit the picked model through the memory-aware funnel (restores that
@@ -953,7 +967,14 @@ function HarnessModelPickerImpl(props: HarnessModelPickerProps) {
       // click / escape (handled by Popover's onOpenChange -> closeOnly).
       commitSelection(store, row.harnessId, row.value, activePanelProfileId);
     },
-    [activePanelProfileId, closeOnly, disabled, store],
+    [
+      activePanelProfileId,
+      catalogHarnesses,
+      closeOnly,
+      disabled,
+      onTeamSandbox,
+      store,
+    ],
   );
   const handleRailEntryChange = useCallback(
     (providerId: ProviderId) => {

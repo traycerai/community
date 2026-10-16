@@ -7,6 +7,11 @@ import { HarnessModelPickerList } from "@/components/home/pickers/harness-model-
 import { ProviderRail } from "@/components/home/pickers/harness-model-picker-group";
 import { PickerProviderAuthLine } from "@/components/home/pickers/harness-model-picker-auth-line";
 import { PickerSandboxCredentialLine } from "@/components/home/pickers/harness-sandbox-credential-line";
+import { useOnTeamSandbox } from "@/hooks/sandboxes/use-on-team-sandbox";
+import {
+  TEAM_SANDBOX_HARNESS_UNAVAILABLE,
+  teamSandboxHarnessBlocked,
+} from "@/lib/sandboxes/team-sandbox-harness";
 import { PickerProfileDropdown } from "@/components/home/pickers/picker-profile-dropdown";
 import { TerminalAccountFirstMention } from "@/components/home/pickers/terminal-account-first-mention";
 import { isProfileUsageSidecarTarget } from "@/components/providers/profile-usage-sidecar-target";
@@ -285,6 +290,15 @@ export function HarnessModelPickerPanelBody(
     createProfileDisabledReason,
     profileAdmission,
   } = props;
+  // On a team sandbox only a harness whose credential stays a placeholder is
+  // offered (ticket E17 checkpoint 6); any other is listed, not selectable.
+  const onTeamSandbox = useOnTeamSandbox(runTargetHostId);
+  const teamBlocked =
+    activeProvider !== null &&
+    teamSandboxHarnessBlocked(
+      activeProvider.sandboxCredentialMode,
+      onTeamSandbox,
+    );
   const openAddProfile = useProviderProfileAddFlowStore(
     (state) => state.openForHarness,
   );
@@ -379,7 +393,16 @@ export function HarnessModelPickerPanelBody(
               onClosePicker={onClosePicker}
             />
           )}
-          <PickerSandboxCredentialLine harness={activeProvider} />
+          {teamBlocked ? (
+            <p
+              className="px-3 py-1 text-ui-xs text-muted-foreground"
+              data-testid="picker-team-sandbox-unavailable"
+            >
+              {TEAM_SANDBOX_HARNESS_UNAVAILABLE}
+            </p>
+          ) : (
+            <PickerSandboxCredentialLine harness={activeProvider} />
+          )}
           <div className="min-h-0 flex-1 overflow-hidden">
             <HarnessModelPickerList
               idPrefix={idPrefix}
@@ -404,6 +427,7 @@ export function HarnessModelPickerPanelBody(
               terminalLoginSurface={terminalLoginSurface}
               runTargetHostId={runTargetHostId}
               onClosePicker={onClosePicker}
+              rowsDisabled={teamBlocked}
             />
           </div>
           <HarnessModelPickerModelSettingsFooter
