@@ -1252,6 +1252,50 @@ describe("<SandboxCard /> grants list", () => {
     expect(routes[2].textContent).toContain("Connector is offline");
   });
 
+  it("shows no reported route state once the sandbox's host is offline, but keeps the broker's", () => {
+    mocks.grantsData = grantsOf(
+      [
+        grantOf({
+          routes: [
+            {
+              route: "route-1",
+              destination: "db.internal",
+              port: 5432,
+              unready: null,
+            },
+            {
+              route: "route-2",
+              destination: "cache.internal",
+              port: 6379,
+              unready: "connector_offline",
+            },
+          ],
+        }),
+      ],
+      null,
+    );
+
+    // The host's last report says both are ready; it can no longer vouch for
+    // that, while the broker's own word still stands.
+    renderCardOnHost(
+      sandboxOf("awake", false, {
+        phase: "ready",
+        routes: [
+          { route: "route-1", state: "ready", code: null },
+          { route: "route-2", state: "ready", code: null },
+        ],
+      }),
+      null,
+      "offline",
+    );
+
+    const routes = screen.getAllByTestId("sandbox-card-grant-route");
+    expect(routes.map((route) => route.getAttribute("data-readiness"))).toEqual(
+      ["unknown", "unavailable"],
+    );
+    expect(routes[0].textContent).not.toContain("ready");
+  });
+
   it("shows a route whose connector the broker reports offline, by the connector's name", () => {
     mocks.grantsData = grantsOf(
       [

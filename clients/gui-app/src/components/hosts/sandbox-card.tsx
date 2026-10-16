@@ -31,6 +31,7 @@ import {
   sandboxCardShowsCostView,
   sandboxCreatorLine,
   sandboxGuestConfigFailure,
+  sandboxHostVouches,
   sandboxIdleLine,
   sandboxPodRoomLine,
   sandboxSecretsReadiness,
@@ -562,7 +563,9 @@ function SandboxSecretsSection(props: {
       />
       <SandboxGrantsList
         summary={grantsSummary}
-        routes={summary.routes}
+        // What the host last reported per route is shown only while its host
+        // vouches for it; the broker's own word on a route always is.
+        routes={sandboxHostVouches(props.hostState) ? summary.routes : null}
         failed={grants.isError}
         refetching={grants.isFetching}
         onRetry={() => void grants.refetch()}
