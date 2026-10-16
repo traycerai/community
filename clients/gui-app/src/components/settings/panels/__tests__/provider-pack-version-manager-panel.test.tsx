@@ -1947,4 +1947,90 @@ describe("<ProviderPackVersionManagerPanel /> macOS-ineligible versions", () => 
     expect(screen.queryByTestId("version-row-notice")).toBeNull();
     expect(screen.queryByText(/Needs macOS/u)).toBeNull();
   });
+
+  describe("update banner for a version the host refused for this macOS", () => {
+    afterEach(() => {
+      mocks.installMutate.mockReset();
+    });
+
+    function renderUpdateOffer(
+      refusedVersions: readonly {
+        readonly version: string;
+        readonly requiredMacos: string;
+      }[],
+    ): void {
+      render(
+        <ProviderPackVersionManagerPanel
+          hostId="host-1"
+          packId="antigravity"
+          packDisplayName="Antigravity CLI"
+          managedVersions={managed(
+            [
+              version({
+                version: "1.0.0",
+                current: true,
+                installState: { status: "installed" },
+              }),
+              // Eligible and absent: nothing but the OS refusal stops it.
+              version({
+                version: "2.0.0",
+                installState: { status: "absent" },
+              }),
+            ],
+            { updateAvailable: { version: "2.0.0" } },
+          )}
+          refusedVersions={refusedVersions}
+          runningMacos="14.2"
+        />,
+      );
+    }
+
+    it("disables the banner and row Download with the version's own floor and dispatches no install", async () => {
+      const user = userEvent.setup();
+      renderUpdateOffer([{ version: "2.0.0", requiredMacos: "15.0" }]);
+
+      const bannerDownload = screen.getByTestId(
+        "provider-pack-update-download",
+      );
+      const rowDownload = screen.getByRole("button", {
+        name: rowActionName("Download", "2.0.0"),
+      });
+      expect(bannerDownload.hasAttribute("disabled")).toBe(true);
+      expect(rowDownload.hasAttribute("disabled")).toBe(true);
+      expect(
+        screen.getByTestId("provider-pack-update-banner-disabled-reason")
+          .textContent,
+      ).toBe("Needs macOS 15.0 or later. This Mac runs macOS 14.2.");
+
+      await user.click(bannerDownload);
+      await user.click(rowDownload);
+      expect(mocks.installMutate).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      { name: "no refusal reported (older host)", refused: [] },
+      {
+        name: "a refusal for a different version",
+        refused: [{ version: "3.0.0", requiredMacos: "16.0" }],
+      },
+    ])("still downloads from the banner with $name", async ({ refused }) => {
+      const user = userEvent.setup();
+      renderUpdateOffer(refused);
+
+      const bannerDownload = screen.getByTestId(
+        "provider-pack-update-download",
+      );
+      expect(bannerDownload.hasAttribute("disabled")).toBe(false);
+      expect(
+        screen.queryByTestId("provider-pack-update-banner-disabled-reason"),
+      ).toBeNull();
+
+      await user.click(bannerDownload);
+      expect(mocks.installMutate).toHaveBeenCalledTimes(1);
+      expect(mocks.installMutate.mock.calls[0]?.[0]).toEqual({
+        packId: "antigravity",
+        version: "2.0.0",
+      });
+    });
+  });
 });

@@ -354,9 +354,16 @@ export function ProviderPackVersionManagerPanel(
   const bannerDownload =
     updateAvailable === null
       ? null
-      : updateBannerDownloadEligibility(
-          managedVersions.available,
-          updateAvailable.version,
+      : downloadEligibilityWithMacosRefusal(
+          updateBannerDownloadEligibility(
+            managedVersions.available,
+            updateAvailable.version,
+          ),
+          macosVersionRefusalMessage(
+            props.refusedVersions,
+            props.runningMacos,
+            updateAvailable.version,
+          ),
         );
 
   // Runs at the top of every action. Disarming the delete here is what keeps
@@ -978,6 +985,16 @@ function UpdateAvailableBanner(props: {
   );
 }
 
+/** Both download controls honor the executing host's exact-version refusal. */
+function downloadEligibilityWithMacosRefusal(
+  eligibility: VersionDownloadEligibility,
+  macosRefusal: string | null,
+): VersionDownloadEligibility {
+  return macosRefusal === null
+    ? eligibility
+    : { allowed: false, reason: macosRefusal };
+}
+
 function macosVersionRefusalMessage(
   refusedVersions: readonly ProviderMacosRequirement["refusedVersions"][number][],
   runningMacos: string | null,
@@ -1056,10 +1073,10 @@ function VersionRow(props: VersionRowProps): JSX.Element {
     onDelete,
   } = props;
 
-  const download: VersionDownloadEligibility =
-    macosRefusal === null
-      ? versionDownloadEligibility(row)
-      : { allowed: false, reason: macosRefusal };
+  const download = downloadEligibilityWithMacosRefusal(
+    versionDownloadEligibility(row),
+    macosRefusal,
+  );
   const useElig: VersionUseEligibility =
     macosRefusal === null
       ? versionUseEligibility(row)
