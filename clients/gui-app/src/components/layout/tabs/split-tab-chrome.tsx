@@ -17,11 +17,10 @@ const SPLIT_CONTROL_WIDTH_CLASS = "w-11";
 
 /**
  * Whether the members below sit in the selected pair, which draws the
- * underline, and if so whether something paints the pane's fill behind the
- * raised member: the pair's own joined box, or the selection traveller while
- * it slides to the pair. Either paints only from md, where the sheet join
- * lives; below it, or with neither (partly out of the strip), the raised
- * member fills itself.
+ * underline, and if so whether the pair's joined box paints the pane's fill
+ * behind the raised member. It paints only from md, where the sheet join
+ * lives; below it, or unjoined (partly out of the strip, while the selection
+ * slides to the pair), the raised member fills itself.
  */
 type SplitPairSelection = "unselected" | "backed" | "unbacked";
 const SplitPairSelectionContext =
@@ -45,11 +44,6 @@ interface SplitTabLayoutProps {
    * inside it (`SplitMemberChrome`).
    */
   readonly joined: SheetJoinPane | null;
-  /**
-   * Whether the selection traveller is sliding to this pair, which then
-   * draws the joined box in `joined`'s place.
-   */
-  readonly travellerBehind: boolean;
   readonly control: ReactNode;
   readonly left: ReactNode;
   readonly right: ReactNode;
@@ -62,10 +56,7 @@ export function SplitTabLayout(props: SplitTabLayoutProps): ReactNode {
   const pane = inStrip ? props.joined : null;
   usePublishSheetJoin(pane, null);
   const selected = props.selectedSide !== null;
-  const selection = splitPairSelection(
-    selected,
-    pane !== null || props.travellerBehind,
-  );
+  const selection = splitPairSelection(selected, pane !== null);
   return (
     <SplitPairSelectionContext value={selection}>
       <div className="relative flex w-full min-w-0 items-end">
@@ -270,8 +261,8 @@ function SplitRaisedTab(props: {
       {/* Inset one pixel less than a foot is wide, so its side border lies
           on the foot's. */}
       <span className="absolute inset-x-[calc(--spacing(2)-1px)] top-0 bottom-2 rounded-t-lg border border-b-0 border-(--swatch)" />
-      <span className="absolute bottom-0 left-0 size-2 rounded-br-full border-r border-b border-(--swatch)" />
-      <span className="absolute right-0 bottom-0 size-2 rounded-bl-full border-b border-l border-(--swatch)" />
+      <span className="absolute bottom-0 left-0 size-2 rounded-br-full border-r border-b-[1.5px] border-(--swatch)" />
+      <span className="absolute right-0 bottom-0 size-2 rounded-bl-full border-b-[1.5px] border-l border-(--swatch)" />
     </span>
   );
 }

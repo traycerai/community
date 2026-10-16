@@ -1363,7 +1363,6 @@ describe("<TabStrip />", () => {
         splitId="pair"
         selectedSide="left"
         joined={null}
-        travellerBehind={false}
         control={null}
         left={<SplitMemberChrome focused color={null} />}
         right={<SplitMemberChrome focused={false} color={rightColor} />}
@@ -1390,15 +1389,11 @@ describe("<TabStrip />", () => {
   });
 
   it("fills the raised member wherever nothing behind it paints the pane", () => {
-    const pair = (
-      joined: "surface" | null,
-      travellerBehind: boolean,
-    ): ReactNode => (
+    const pair = (joined: "surface" | null): ReactNode => (
       <SplitTabLayout
         splitId="pair"
         selectedSide="left"
         joined={joined}
-        travellerBehind={travellerBehind}
         control={null}
         left={<SplitMemberChrome focused color={null} />}
         right={<SplitMemberChrome focused={false} color={null} />}
@@ -1408,19 +1403,16 @@ describe("<TabStrip />", () => {
       screen.getByTestId("split-member-raised-tab").dataset.fill;
     // Joined: the pair's box paints the pane, but only from md, where the
     // sheet join lives, so below it the member still fills itself.
-    const { rerender } = render(pair("surface", false));
+    const { rerender } = render(pair("surface"));
     expect(fill()).toBe("below-md");
     expect(screen.getByTestId("split-member-raised-fill").className).toContain(
       "md:hidden",
     );
 
-    // The selection sliding here: the traveller is the box behind it.
-    rerender(pair(null, true));
-    expect(fill()).toBe("below-md");
-
-    // Partly out of the strip: unjoined, so nothing behind the member
-    // paints, and it fills itself at every width.
-    rerender(pair(null, false));
+    // Unjoined (partly out of the strip, or while the selection slides
+    // here): nothing behind the member paints, so it fills itself at every
+    // width.
+    rerender(pair(null));
     expect(fill()).toBe("always");
     expect(
       screen.getByTestId("split-member-raised-fill").className,
@@ -1433,7 +1425,6 @@ describe("<TabStrip />", () => {
         splitId="pair"
         selectedSide={null}
         joined={null}
-        travellerBehind={false}
         control={null}
         left={<SplitMemberChrome focused={false} color={null} />}
         right={<SplitMemberChrome focused={false} color="#12ab34" />}
@@ -1738,7 +1729,6 @@ describe("<TabStrip />", () => {
             splitId="split-a"
             selectedSide="left"
             joined={pane}
-            travellerBehind={false}
             control={null}
             left={<span>left</span>}
             right={<span>right</span>}
@@ -1753,7 +1743,6 @@ describe("<TabStrip />", () => {
             splitId="split-a"
             selectedSide="left"
             joined={null}
-            travellerBehind={false}
             control={null}
             left={<span>left</span>}
             right={<span>right</span>}

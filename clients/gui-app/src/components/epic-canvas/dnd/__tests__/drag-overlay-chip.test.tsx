@@ -928,9 +928,11 @@ describe("<EpicRootDragOverlayContent />", () => {
       expect(
         within(overlay).queryByTestId("split-tab-divider-split-1"),
       ).toBeNull();
+      // The overlay joins as the dragged pair does, so its box paints the
+      // pane behind the raised member from md.
       expect(
-        within(overlay).getByTestId("split-member-raised-tab"),
-      ).toBeTruthy();
+        within(overlay).getByTestId("split-member-raised-tab").dataset.fill,
+      ).toBe("below-md");
       expect(
         within(overlay).getByTestId("split-underline-control-split-1"),
       ).toBeTruthy();
