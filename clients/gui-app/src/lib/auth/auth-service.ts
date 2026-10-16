@@ -520,6 +520,12 @@ function linkResultForTokenApplication(
 export interface RevokedCloudAuthorization {
   /** The bearer the cloud rejected - the fence a copy held elsewhere applies. */
   readonly token: string;
+  /**
+   * `user-epoch` when the refusal was the user's own "sign out everywhere".
+   * A host refuses such a bearer at once rather than at its expiry, so a
+   * sibling window holding it needs to know (`revokedHeldBearer`).
+   */
+  readonly revocation: "user-epoch" | null;
 }
 
 export class AuthService {
@@ -2315,13 +2321,22 @@ export class AuthService {
    * source rather than relying on the idempotence guard downstream to absorb
    * a loop it never intended to run.
    */
-  ingestCloudAuthorizationRevoked(rejectedToken: string): void {
+  ingestCloudAuthorizationRevoked(
+    rejectedToken: string,
+    revocation: "user-epoch" | null,
+  ): void {
     if (this.disposed) return;
     if (rejectedToken.length === 0) return;
     if (this.currentBearer !== rejectedToken) return;
     if (!this.hasVerifiedSession()) return;
     this.suppressCloudAuthorizationRevokedFanOut = true;
     try {
+      // The sibling saw a "sign out everywhere", so the host refuses this
+      // bearer now, not at its expiry. Recorded before the demotion latches,
+      // which is when `noteHostRefusedHeldBearer` reads it. A shell that
+      // predates the scope passes nothing here, which reads as no revocation.
+      this.revokedHeldBearer =
+        revocation === "user-epoch" ? rejectedToken : null;
       // The same entry point the local terminal-verdict paths use, so an
       // inbound revoke and a locally-observed one cannot drift: it builds the
       // session from `currentProfile` and returns false when there is no
@@ -5077,7 +5092,11 @@ export class AuthService {
         this.cloudAuthorizationRevokedListeners,
       )) {
         try {
-          listener({ token: session.token });
+          listener({
+            token: session.token,
+            revocation:
+              this.revokedHeldBearer === session.token ? "user-epoch" : null,
+          });
         } catch (error) {
           appLogger.warn(
             "[auth] a cloud-authorization-revoked listener failed",

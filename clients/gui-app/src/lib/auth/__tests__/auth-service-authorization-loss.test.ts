@@ -23,6 +23,7 @@ import {
   AuthService,
   AUTH_ERROR_SESSION_EXPIRED,
   type ExternalSession,
+  type RevokedCloudAuthorization,
 } from "@/lib/auth/auth-service";
 import { useAuthStore } from "@/stores/auth/auth-store";
 
@@ -426,10 +427,10 @@ describe("AuthService authorization-loss remote-session sweep", () => {
     // The copies held outside this renderer (desktop main's jar-plane
     // principal) learn of the terminal loss through this edge and nothing
     // else - an `unverified` snapshot is never projected cross-window.
-    const revokedTokens: string[] = [];
+    const revokedFanOuts: RevokedCloudAuthorization[] = [];
     const revokedSubscription = service.onCloudAuthorizationRevoked(
       (revoked) => {
-        revokedTokens.push(revoked.token);
+        revokedFanOuts.push(revoked);
       },
     );
 
@@ -440,7 +441,9 @@ describe("AuthService authorization-loss remote-session sweep", () => {
     expect(service.getLastError()).toBe(AUTH_ERROR_SESSION_EXPIRED);
     // Once, and naming the bearer that was rejected - the fence a copy held
     // outside this renderer applies before withdrawing its own verification.
-    expect(revokedTokens).toEqual(["dead-token"]);
+    // A plain credential refusal (no `revocation_scope`), so it carries no
+    // revocation: only a "sign out everywhere" tells the other windows more.
+    expect(revokedFanOuts).toEqual([{ token: "dead-token", revocation: null }]);
     revokedSubscription.dispose();
 
     // THE FIX: the previously-established remote session was closed by the
@@ -872,7 +875,7 @@ describe("AuthService cloudAuthorized verdict propagation on in-place transition
       await deviceSignIn(service, host, "sibling-token");
       expect(useAuthStore.getState().status).toBe("signed-in");
 
-      service.ingestCloudAuthorizationRevoked("sibling-token");
+      service.ingestCloudAuthorizationRevoked("sibling-token", null);
 
       expect(useAuthStore.getState().status).toBe("unverified");
     });
@@ -890,7 +893,7 @@ describe("AuthService cloudAuthorized verdict propagation on in-place transition
       expect(useAuthStore.getState().cloudVerdictLoss).toBe("unreachable");
       expect(service.getLastError()).toBeNull();
 
-      service.ingestCloudAuthorizationRevoked("sibling-token");
+      service.ingestCloudAuthorizationRevoked("sibling-token", null);
 
       expect(useAuthStore.getState().cloudVerdictLoss).toBe("ended-elsewhere");
     });
@@ -901,7 +904,10 @@ describe("AuthService cloudAuthorized verdict propagation on in-place transition
       await service.start();
       await deviceSignIn(service, host, "current-token");
 
-      service.ingestCloudAuthorizationRevoked("a-bearer-this-window-replaced");
+      service.ingestCloudAuthorizationRevoked(
+        "a-bearer-this-window-replaced",
+        null,
+      );
 
       expect(useAuthStore.getState().status).toBe("signed-in");
       expect(useAuthStore.getState().cloudVerdictLoss).toBe("unreachable");
@@ -918,7 +924,10 @@ describe("AuthService cloudAuthorized verdict propagation on in-place transition
       await deviceSignIn(service, host, "current-token");
       expect(useAuthStore.getState().status).toBe("signed-in");
 
-      service.ingestCloudAuthorizationRevoked("a-bearer-this-window-replaced");
+      service.ingestCloudAuthorizationRevoked(
+        "a-bearer-this-window-replaced",
+        null,
+      );
 
       expect(useAuthStore.getState().status).toBe("signed-in");
     });
@@ -937,7 +946,7 @@ describe("AuthService cloudAuthorized verdict propagation on in-place transition
         announcements += 1;
       });
 
-      service.ingestCloudAuthorizationRevoked("echo-token");
+      service.ingestCloudAuthorizationRevoked("echo-token", null);
 
       expect(useAuthStore.getState().status).toBe("unverified");
       expect(announcements).toBe(0);

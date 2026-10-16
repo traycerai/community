@@ -9,6 +9,7 @@ import {
   AuthService,
   AUTH_ERROR_SESSION_EXPIRED,
   AUTH_ERROR_SIGNED_OUT_EVERYWHERE,
+  type RevokedCloudAuthorization,
 } from "@/lib/auth/auth-service";
 import { createStreamAuthRevalidator } from "@/lib/auth/stream-auth-revalidator";
 import { resolveShellLocalPlaneAdmission } from "@/hooks/auth/use-shell-local-plane-admission";
@@ -53,7 +54,10 @@ import { useAuthStore } from "@/stores/auth/auth-store";
  * the service remembers the bearer it held at that refusal
  * (`revokedHeldBearer`) and flags it at once, however far off its `exp` is.
  * Only that bearer: a plain credential refusal still waits for `exp`, and the
- * mark clears with the latch, so it never rides onto a later session.
+ * mark clears with the latch, so it never rides onto a later session. A
+ * sibling window that held the same bearer learns of the revocation over the
+ * cross-window revoke channel, which carries the scope
+ * (`ingestCloudAuthorizationRevoked`), so it flags the bearer at once as well.
  *
  * Fixtures follow `auth-service-session-recovery-wake.test.ts`: a
  * `MockRunnerHost`, a `fetch` double keyed on the two authn routes (counted,
@@ -414,6 +418,26 @@ async function startRevokedSession(
     AUTH_ERROR_SIGNED_OUT_EVERYWHERE,
   );
   return { service, host, signedOutEverywhere: deliveries };
+}
+
+/**
+ * A stored session authn accepts, started `signed-in` on `token`: the state of
+ * a window that holds a cloud verdict, before anything refuses it.
+ */
+async function startSignedInSession(
+  authn: AuthnDouble,
+  token: string,
+): Promise<{ service: AuthService; host: MockRunnerHost }> {
+  const { service, host } = makeService();
+  authn.answerValidation = okUser;
+  await host.tokenStore.signIn(
+    { token, refreshToken: "live-refresh" },
+    { ...DEFAULT_IDENTITY },
+  );
+  await service.start();
+  expect(useAuthStore.getState().status).toBe("signed-in");
+  expect(useAuthStore.getState().hostRefusedHeldBearer).toBe(false);
+  return { service, host };
 }
 
 /**
@@ -1019,14 +1043,161 @@ describe("AuthService - a host refusing the bearer of a session authn refused", 
     await signInInteractively(service, host, authn, LONG_LIVED_TOKEN);
     expect(useAuthStore.getState().hostRefusedHeldBearer).toBe(false);
 
-    // A sibling window's demotion names this bearer. It reaches the latch
-    // without a refresh refusal, so it does not rewrite the mark itself.
-    service.ingestCloudAuthorizationRevoked(LONG_LIVED_TOKEN);
+    // A sibling window's demotion names this bearer and carries no revocation
+    // scope (a plain refusal on its side): nothing marks it revoked here.
+    service.ingestCloudAuthorizationRevoked(LONG_LIVED_TOKEN, null);
 
     const after = useAuthStore.getState();
     expect(after.status).toBe("unverified");
     expect(after.cloudVerdictLoss).toBe("ended-elsewhere");
     expect(Date.now()).toBeLessThan(LONG_LIVED_EXPIRES_AT_MS);
     expect(after.hostRefusedHeldBearer).toBe(false);
+  });
+
+  /**
+   * "Sign out everywhere" has to reach every window, not only the one whose
+   * refresh authn refused. The window that SAW the refusal flags its bearer at
+   * once (above); a sibling learns of it through the cross-window revoke
+   * channel, which carries the revocation scope for exactly this.
+   */
+  describe("a sibling window's revoke of the bearer this window holds", () => {
+    it("flags the held bearer at once, before its exp, when the revoke is a user-epoch revocation", async () => {
+      useFakeClock();
+      const { service } = await startSignedInSession(authn, LONG_LIVED_TOKEN);
+      const validationBefore = authn.validationCalls;
+      const refreshBefore = authn.refreshCalls;
+
+      // The sibling saw authn's "sign out everywhere": the host refuses this
+      // bearer now, whatever its `exp` says.
+      service.ingestCloudAuthorizationRevoked(LONG_LIVED_TOKEN, "user-epoch");
+
+      const after = useAuthStore.getState();
+      expect(after.status).toBe("unverified");
+      expect(after.cloudVerdictLoss).toBe("ended-elsewhere");
+      expect(service.getCurrentSessionSnapshot().token).toBe(LONG_LIVED_TOKEN);
+      // Not vacuous: the clock is well inside the bearer's lifetime, so the
+      // flag below is not the expiry rule.
+      expect(Date.now()).toBeLessThan(LONG_LIVED_EXPIRES_AT_MS);
+      expect(after.hostRefusedHeldBearer).toBe(true);
+      expect(
+        resolveShellLocalPlaneAdmission(
+          after.status,
+          true,
+          after.hostRefusedHeldBearer,
+        ),
+      ).toEqual({ admitted: false, refusal: "unverified-host-refused" });
+      // Told by a sibling, so it cost this window no round trip to authn...
+      expect(authn.validationCalls).toBe(validationBefore);
+      expect(authn.refreshCalls).toBe(refreshBefore);
+
+      // ...and it holds across repeated host refusals, still asking authn
+      // nothing.
+      const outcomes = await refuseUnary(service, liveCredentials(service), 3);
+      expect(outcomes).toEqual(repeated(3, "rejected"));
+      expect(authn.validationCalls).toBe(validationBefore);
+      expect(authn.refreshCalls).toBe(refreshBefore);
+      expect(useAuthStore.getState().hostRefusedHeldBearer).toBe(true);
+      expect(useAuthStore.getState().status).toBe("unverified");
+    });
+
+    it("leaves an unexpired bearer unflagged when the revoke carries no scope, and flags it on the first host refusal after its exp", async () => {
+      useFakeClock();
+      const { service } = await startSignedInSession(authn, LONG_LIVED_TOKEN);
+      const validationBefore = authn.validationCalls;
+      const refreshBefore = authn.refreshCalls;
+
+      service.ingestCloudAuthorizationRevoked(LONG_LIVED_TOKEN, null);
+
+      const after = useAuthStore.getState();
+      expect(after.status).toBe("unverified");
+      expect(after.cloudVerdictLoss).toBe("ended-elsewhere");
+      expect(service.getCurrentSessionSnapshot().token).toBe(LONG_LIVED_TOKEN);
+      expect(Date.now()).toBeLessThan(LONG_LIVED_EXPIRES_AT_MS);
+      expect(after.hostRefusedHeldBearer).toBe(false);
+
+      // A host refusing a bearer whose `exp` is still ahead is not "the local
+      // plane is gone": it may only need the cloud verdict this window lost.
+      const credentials = liveCredentials(service);
+      const early = await refuseUnary(service, credentials, 3);
+      expect(early).toEqual(repeated(3, "rejected"));
+      expect(useAuthStore.getState().hostRefusedHeldBearer).toBe(false);
+      expect(useAuthStore.getState().status).toBe("unverified");
+
+      // The bearer expires. Nothing time-driven flags it...
+      vi.setSystemTime(LONG_LIVED_PAST_EXPIRY_MS);
+      expect(useAuthStore.getState().hostRefusedHeldBearer).toBe(false);
+
+      // ...the next refusal does, still without asking authn anything.
+      expect(await service.revalidateExpectedBearer(credentials)).toBe(
+        "rejected",
+      );
+      expect(useAuthStore.getState().hostRefusedHeldBearer).toBe(true);
+      expect(useAuthStore.getState().status).toBe("unverified");
+      expect(authn.validationCalls).toBe(validationBefore);
+      expect(authn.refreshCalls).toBe(refreshBefore);
+    });
+
+    it("leaves a window holding a different bearer alone, whatever the scope", async () => {
+      useFakeClock();
+      const { service } = await startSignedInSession(authn, LONG_LIVED_TOKEN);
+
+      // Windows' IPC is unordered: a revoke raised before this window's
+      // sign-in can land after it. The fence runs before the scope is read.
+      service.ingestCloudAuthorizationRevoked(
+        SOON_EXPIRING_TOKEN,
+        "user-epoch",
+      );
+
+      const after = useAuthStore.getState();
+      expect(after.status).toBe("signed-in");
+      expect(after.cloudVerdictLoss).toBe("unreachable");
+      expect(after.hostRefusedHeldBearer).toBe(false);
+      expect(service.getCurrentSessionSnapshot().token).toBe(LONG_LIVED_TOKEN);
+    });
+  });
+
+  /**
+   * The OUTBOUND half of the same channel: the scope a window's own refusal
+   * carries to its siblings. `revokedHeldBearer` is set by the refresh arm
+   * before the demotion fans out, so the listener hears what the refusal was.
+   */
+  describe("the cloud-authorization-revoked fan-out of a live refusal", () => {
+    it("carries the user-epoch scope when authn's refusal is a user-epoch revocation", async () => {
+      useFakeClock();
+      const { service } = await startSignedInSession(authn, LONG_LIVED_TOKEN);
+      const fanOuts: RevokedCloudAuthorization[] = [];
+      service.onCloudAuthorizationRevoked((revoked) => {
+        fanOuts.push(revoked);
+      });
+
+      authn.answerValidation = () => status(401);
+      authn.answerRefresh = revokedEverywhere;
+      const verdict = await service.revalidateCurrentContext();
+
+      expect(verdict?.kind).toBe("rejected");
+      expect(useAuthStore.getState().status).toBe("unverified");
+      // Once, naming the refused bearer, and telling the other windows it was
+      // the user's own "sign out everywhere".
+      expect(fanOuts).toEqual([
+        { token: LONG_LIVED_TOKEN, revocation: "user-epoch" },
+      ]);
+    });
+
+    it("carries no scope when authn's refusal is a plain credential refusal", async () => {
+      useFakeClock();
+      const { service } = await startSignedInSession(authn, LONG_LIVED_TOKEN);
+      const fanOuts: RevokedCloudAuthorization[] = [];
+      service.onCloudAuthorizationRevoked((revoked) => {
+        fanOuts.push(revoked);
+      });
+
+      authn.answerValidation = () => status(401);
+      authn.answerRefresh = () => status(401);
+      const verdict = await service.revalidateCurrentContext();
+
+      expect(verdict?.kind).toBe("rejected");
+      expect(useAuthStore.getState().status).toBe("unverified");
+      expect(fanOuts).toEqual([{ token: LONG_LIVED_TOKEN, revocation: null }]);
+    });
   });
 });
