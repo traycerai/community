@@ -67,6 +67,8 @@ const ENVIRONMENT_SECTION: SupportEnvironmentSection = {
       ],
     },
   ],
+  reachDenials: null,
+  servedTask: null,
 };
 
 describe("createReportIssueDraftContext", () => {

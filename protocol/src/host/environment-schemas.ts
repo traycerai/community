@@ -1092,3 +1092,75 @@ export const environmentSecretsConsentResponseSchema = lazySchema(() =>
 export type EnvironmentSecretsConsentResponse = z.infer<
   typeof environmentSecretsConsentResponseSchema
 >;
+
+// ── environment.reachDiagnostics ────────────────────────────────────────────
+
+/**
+ * A host's owner as a category only (ticket E13 checkpoint 4): never an id,
+ * never a team's name. `unknown` is a directory row with no owner, or a host
+ * the account's directory does not list.
+ */
+export const reachPrincipalCategorySchema = z.enum([
+  "personal",
+  "team",
+  "unknown",
+]);
+export type ReachPrincipalCategory = z.infer<
+  typeof reachPrincipalCategorySchema
+>;
+
+/**
+ * One same-principal refusal this host made (identity page, the A2A row): the
+ * opaque source and target host references, the task, the reason and the two
+ * principal categories. Never message text, never a display label. `count`
+ * folds the repeats of one (target, task, category pair) inside its window.
+ */
+export const reachDenialSchema = lazySchema(() =>
+  z.object({
+    denialId: z.string().min(1).max(64),
+    at: z.number().int().nonnegative(),
+    sourceHostRef: z.string().min(1).max(256),
+    targetHostRef: z.string().min(1).max(256),
+    taskRef: z.string().min(1).max(256).nullable(),
+    reason: z.literal("principal_mismatch"),
+    sourcePrincipal: reachPrincipalCategorySchema,
+    targetPrincipal: reachPrincipalCategorySchema,
+    count: z.number().int().positive(),
+  }),
+);
+export type ReachDenial = z.infer<typeof reachDenialSchema>;
+
+/**
+ * `environment.reachDiagnostics@1.0`, the support bundle's read (ticket E13
+ * checkpoint 4). `epicId` is the task the person has selected, or `null`.
+ */
+export const environmentReachDiagnosticsRequestSchema = lazySchema(() =>
+  z.object({ epicId: z.string().min(1).nullable() }),
+);
+export type EnvironmentReachDiagnosticsRequest = z.infer<
+  typeof environmentReachDiagnosticsRequestSchema
+>;
+
+/** The most denials one answer carries, newest first. */
+export const REACH_DIAGNOSTICS_MAX_DENIALS = 20;
+
+/**
+ * `denials`: this host's recent refusals, newest first. `servedTask`: the
+ * selected task, with the principal categories of the OTHER hosts that carry
+ * agents in it (each category once); `null` with no task selected or none
+ * this host holds.
+ */
+export const environmentReachDiagnosticsResponseSchema = lazySchema(() =>
+  z.object({
+    denials: z.array(reachDenialSchema).max(REACH_DIAGNOSTICS_MAX_DENIALS),
+    servedTask: z
+      .object({
+        taskRef: z.string().min(1).max(256),
+        otherHostPrincipals: z.array(reachPrincipalCategorySchema).max(3),
+      })
+      .nullable(),
+  }),
+);
+export type EnvironmentReachDiagnosticsResponse = z.infer<
+  typeof environmentReachDiagnosticsResponseSchema
+>;

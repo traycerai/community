@@ -66,6 +66,8 @@ interface Section {
   setupAttempts: unknown;
   policy: unknown;
   rotations: unknown;
+  reachDenials: unknown;
+  servedTask: unknown;
 }
 
 function validSection(): Section {
@@ -135,6 +137,23 @@ function validSection(): Section {
         ],
       },
     ],
+    reachDenials: [
+      {
+        denialId: "denial-1",
+        at: 1_700_000_000_000,
+        sourceHostRef: "host-ref-source",
+        targetHostRef: "host-ref-target",
+        taskRef: "task-ref-1",
+        reason: "principal_mismatch",
+        sourcePrincipal: "personal",
+        targetPrincipal: "team",
+        count: 3,
+      },
+    ],
+    servedTask: {
+      taskRef: "task-ref-1",
+      otherHostPrincipals: ["personal", "team", "unknown"],
+    },
   };
 }
 
@@ -166,6 +185,12 @@ function firstAttempt(section: Section): Record<string, unknown> {
 }
 function firstRotation(section: Section): Record<string, unknown> {
   return (section.rotations as Record<string, unknown>[])[0];
+}
+function firstDenial(section: Section): Record<string, unknown> {
+  return (section.reachDenials as Record<string, unknown>[])[0];
+}
+function servedTask(section: Section): Record<string, unknown> {
+  return section.servedTask as Record<string, unknown>;
 }
 function producer(section: Section, index: number): Record<string, unknown> {
   return (firstRotation(section).producers as Record<string, unknown>[])[index];
@@ -344,5 +369,115 @@ describe("an environment section's lists and categories", () => {
     const section = validSection();
     section.principal = principal;
     expect(() => submit(section)).not.toThrow();
+  });
+});
+
+// Ticket E13, checkpoint 4: the reach section, field by field. Its ids are
+// opaque references bounded at 256 characters; its two principal fields are a
+// closed set of three categories; the reason is one literal.
+const REACH_ID_SPOTS: readonly Spot[] = [
+  { name: "a denial's denialId", put: (s, v) => (firstDenial(s).denialId = v) },
+  {
+    name: "a denial's sourceHostRef",
+    put: (s, v) => (firstDenial(s).sourceHostRef = v),
+  },
+  {
+    name: "a denial's targetHostRef",
+    put: (s, v) => (firstDenial(s).targetHostRef = v),
+  },
+  { name: "a denial's taskRef", put: (s, v) => (firstDenial(s).taskRef = v) },
+  {
+    name: "the served task's taskRef",
+    put: (s, v) => (servedTask(s).taskRef = v),
+  },
+];
+
+describe("an environment section's reach fields", () => {
+  it.each(REACH_ID_SPOTS)("accepts $name of exactly 256 characters", (spot) => {
+    const section = validSection();
+    spot.put(section, "r".repeat(256));
+    expect(() => submit(section)).not.toThrow();
+  });
+
+  it.each(REACH_ID_SPOTS)("rejects $name one character past 256", (spot) => {
+    const section = validSection();
+    spot.put(section, "r".repeat(257));
+    expect(() => submit(section)).toThrow("is longer than 256 characters");
+  });
+
+  it.each(REACH_ID_SPOTS)("refuses a number in $name", (spot) => {
+    const section = validSection();
+    spot.put(section, 42);
+    expect(() => submit(section)).toThrow(/requires a string argument/);
+  });
+
+  it("accepts a denial with no task", () => {
+    const section = validSection();
+    firstDenial(section).taskRef = null;
+    expect(() => submit(section)).not.toThrow();
+  });
+
+  it.each([
+    ["at", (s: Section, v: unknown) => (firstDenial(s).at = v)],
+    ["count", (s: Section, v: unknown) => (firstDenial(s).count = v)],
+  ])("refuses a string in a denial's %s", (_name, put) => {
+    const section = validSection();
+    put(section, "Bearer sk_live_not_a_number");
+    expect(() => submit(section)).toThrow(/requires a finite number argument/);
+  });
+
+  it.each(["sourcePrincipal", "targetPrincipal"])(
+    "refuses a denial's %s outside personal, team and unknown",
+    (key) => {
+      for (const bad of ["owner", "Acme", "", "Team", 7, null]) {
+        const section = validSection();
+        firstDenial(section)[key] = bad;
+        expect(() => submit(section)).toThrow(
+          /must be "personal", "team", or "unknown"/,
+        );
+      }
+    },
+  );
+
+  it.each(["personal", "team", "unknown"])(
+    "accepts %j as a denial's principal and as a served task's principal",
+    (category) => {
+      const section = validSection();
+      firstDenial(section).sourcePrincipal = category;
+      firstDenial(section).targetPrincipal = category;
+      servedTask(section).otherHostPrincipals = [category];
+      expect(() => submit(section)).not.toThrow();
+    },
+  );
+
+  it("refuses a served task principal outside the three categories", () => {
+    const section = validSection();
+    servedTask(section).otherHostPrincipals = ["personal", "Acme"];
+    expect(() => submit(section)).toThrow(
+      /must be "personal", "team", or "unknown"/,
+    );
+  });
+
+  it.each(["no_such_host", "", "PRINCIPAL_MISMATCH", null])(
+    "refuses reason %j: only principal_mismatch",
+    (reason) => {
+      const section = validSection();
+      firstDenial(section).reason = reason;
+      expect(() => submit(section)).toThrow(
+        'reason must be "principal_mismatch"',
+      );
+    },
+  );
+
+  it.each([
+    ["reachDenials", (s: Section, v: unknown) => (s.reachDenials = v)],
+    [
+      "a served task's otherHostPrincipals",
+      (s: Section, v: unknown) => (servedTask(s).otherHostPrincipals = v),
+    ],
+  ])("refuses an object where %s belongs", (_name, put) => {
+    const section = validSection();
+    put(section, { "0": { token: "sk_live_x" } });
+    expect(() => submit(section)).toThrow("must be an array");
   });
 });

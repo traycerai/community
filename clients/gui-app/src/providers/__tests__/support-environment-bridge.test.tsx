@@ -32,6 +32,7 @@ import { cleanup, render, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { HostClient } from "@traycer-clients/shared/host-client/host-client";
 import type {
+  EnvironmentReachDiagnosticsResponse,
   EnvironmentSecret,
   EnvironmentSecretsRotationResponse,
 } from "@traycer/protocol/host/environment-schemas";
@@ -67,6 +68,8 @@ const STALE_SECTION: SupportEnvironmentSection = {
   setupAttempts: null,
   policy: null,
   rotations: null,
+  reachDenials: null,
+  servedTask: null,
 };
 
 const SECRET: EnvironmentSecret = {
@@ -213,5 +216,50 @@ describe("SupportEnvironmentBridge (ticket E11, checkpoint 5)", () => {
     ]);
     // The team travels as a category; its name does not.
     expect(JSON.stringify(section)).not.toContain(TEAM_NAME);
+  });
+
+  it("carries the host's reach denials and served task when it serves environment.reachDiagnostics", async () => {
+    for (const method of [
+      "environment.status",
+      "environment.reachDiagnostics",
+    ]) {
+      harness.methods.add(method);
+    }
+    const reach: EnvironmentReachDiagnosticsResponse = {
+      denials: [
+        {
+          denialId: "denial-1",
+          at: 1_700_000_000_000,
+          sourceHostRef: "host-ref-source",
+          targetHostRef: "host-ref-target",
+          taskRef: "task-ref-1",
+          reason: "principal_mismatch",
+          sourcePrincipal: "personal",
+          targetPrincipal: "team",
+          count: 2,
+        },
+      ],
+      servedTask: { taskRef: "task-ref-1", otherHostPrincipals: ["team"] },
+    };
+    const { client } = buildEnvironmentClient({
+      hostId: HOST_ID,
+      handlers: {
+        "environment.status": () => environmentStatusFixture({}),
+        "environment.reachDiagnostics": () => reach,
+      },
+    });
+
+    renderBridge(client);
+
+    await waitFor(() => {
+      const field = getSupportEnvironmentSection();
+      if (field.status !== "known") throw new Error("not known yet");
+      expect(field.value.reachDenials).toHaveLength(1);
+    });
+
+    const field = getSupportEnvironmentSection();
+    if (field.status !== "known") throw new Error("the section is not known");
+    expect(field.value.reachDenials).toEqual(reach.denials);
+    expect(field.value.servedTask).toEqual(reach.servedTask);
   });
 });

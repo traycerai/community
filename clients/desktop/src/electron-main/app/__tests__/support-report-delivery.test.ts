@@ -339,6 +339,8 @@ const ENVIRONMENT_SECTION: SupportEnvironmentSection = {
       ],
     },
   ],
+  reachDenials: null,
+  servedTask: null,
 };
 
 /** `DELIVERY_FORM` carrying `environment`, with the diagnostics toggle as given. */
@@ -2650,6 +2652,8 @@ describe("DesktopSupportService.submitReport - the environment context's leaves 
         producers: [WORKER, HOST],
       },
     ],
+    reachDenials: null,
+    servedTask: null,
   };
 
   function rotationWith(
