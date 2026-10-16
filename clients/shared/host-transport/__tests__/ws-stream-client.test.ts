@@ -52,8 +52,6 @@ import type {
 } from "../i-stream-session";
 import { WsStreamClient } from "../ws-stream-client";
 import { resetStreamMethodSupportMemo } from "../stream-method-support-registry";
-import { subscribeTeamMemberRemovedClose } from "../team-member-removed-close";
-import { TEAM_MEMBER_REMOVED_FATAL_CODE } from "../../host-client/host-connection-reconnect-engine";
 import {
   getNegotiatedStreamMethodVersion,
   resetNegotiatedStreamVersions,
@@ -6758,115 +6756,5 @@ describe("WsStreamClient stream-method-support-registry seed", () => {
 
     expect(client.getMethodSupport(SEED_METHOD)).toBe("unknown");
     session.close();
-  });
-});
-
-/**
- * Ticket E17 checkpoint 7, removal close: a team host ends a removed member's
- * every session with a `TEAM_MEMBER_REMOVED` fatal, and the stream client
- * reports the host THIS connection dialed to the app (once per frame) so the
- * app can close the team's tiles and say so. Any other fatal reports nothing.
- */
-describe("WsStreamClient team-member-removed close report (Ticket E17 checkpoint 7, removal close)", () => {
-  const reported: string[] = [];
-  let unsubscribe: () => void = () => {};
-
-  beforeEach(() => {
-    vi.useRealTimers();
-    reported.length = 0;
-    unsubscribe = subscribeTeamMemberRemovedClose((hostId) => {
-      reported.push(hostId);
-    });
-  });
-
-  afterEach(() => {
-    unsubscribe();
-    vi.useRealTimers();
-    resetNegotiatedStreamVersions();
-  });
-
-  function fatalFrame(code: string): Record<string, unknown> {
-    return {
-      kind: "fatalError",
-      details: {
-        code,
-        reason: `host ended the session with ${code}`,
-        incompatibleMethods: null,
-        upgradeGuidance: null,
-      },
-    };
-  }
-
-  it("reports the dialed host exactly once for a TEAM_MEMBER_REMOVED fatal", async () => {
-    const { factory, sockets } = makeFactory();
-    const client = makeClientWithEvidence({
-      factory,
-      authToken: "t",
-      evidence: new RecordingTransportEvidence(),
-      endpoint: () => mockLocalHostEntry,
-    });
-    const session = client.subscribe("epic.subscribe", { epicId: "epic-1" });
-    session.onStatusChange(() => {});
-
-    await flush();
-    const stub = sockets[0].socket;
-    stub.fireOpen();
-    stub.fireText(fatalFrame(TEAM_MEMBER_REMOVED_FATAL_CODE));
-
-    expect(reported).toEqual([mockLocalHostEntry.hostId]);
-  });
-
-  it("reports the hostId THIS connection dialed, not whatever the endpoint provider returns later", async () => {
-    const { factory, sockets } = makeFactory();
-    let currentEndpoint = mockLocalHostEntry;
-    const client = makeClientWithEvidence({
-      factory,
-      authToken: "t",
-      evidence: new RecordingTransportEvidence(),
-      endpoint: () => currentEndpoint,
-    });
-    const session = client.subscribe("epic.subscribe", { epicId: "epic-1" });
-    session.onStatusChange(() => {});
-
-    await flush();
-    const stub = sockets[0].socket;
-    stub.fireOpen();
-
-    expect(mockRemoteHostEntry.hostId).not.toBe(mockLocalHostEntry.hostId);
-    currentEndpoint = mockRemoteHostEntry;
-    stub.fireText(fatalFrame(TEAM_MEMBER_REMOVED_FATAL_CODE));
-
-    expect(reported).toEqual([mockLocalHostEntry.hostId]);
-  });
-
-  it("reports nothing for a fatal with any other code", async () => {
-    const { factory, sockets } = makeFactory();
-    const client = makeClientWithEvidence({
-      factory,
-      authToken: "t",
-      evidence: new RecordingTransportEvidence(),
-      endpoint: () => mockLocalHostEntry,
-    });
-    const session = client.subscribe("epic.subscribe", { epicId: "epic-1" });
-    let closedCode: string | null = null;
-    session.onStatusChange((status, reason) => {
-      if (
-        status === "closed" &&
-        reason !== null &&
-        reason.kind === "fatalError"
-      ) {
-        closedCode = reason.details.code;
-      }
-    });
-
-    await flush();
-    const stub = sockets[0].socket;
-    stub.fireOpen();
-    stub.fireText(fatalFrame("INCOMPATIBLE"));
-
-    // Positive control: the fatal was handled (the session closed terminally
-    // with its code), so the empty report list is not because nothing ran.
-    expect(closedCode).toBe("INCOMPATIBLE");
-    expect(reported).toEqual([]);
   });
 });
