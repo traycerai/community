@@ -225,6 +225,18 @@ For Cursor, add the Cursor API key in [Settings › Providers](/settings/provide
 
 If a provider is missing from the picker, it may not be installed or configured on that host.
 
+## Models Or Downloads Fail Behind Antivirus Or A Proxy
+
+If a provider's model list never loads or a model download fails, and `curl` or your browser reaches the same service fine, your antivirus or company proxy may be inspecting secure (HTTPS) connections with its own certificate. Traycer doesn't recognize that certificate, so it refuses the connection. The host log shows a certificate error such as `SELF_SIGNED_CERT_IN_CHAIN` or `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`.
+
+To fix it:
+
+1. Export the security software's root certificate as a PEM file (`.pem` or `.crt`). Your antivirus or IT team can tell you where it is.
+2. Set the `NODE_EXTRA_CA_CERTS` environment variable to the full path of that file.
+3. Quit Traycer completely and start it again, so it starts with the variable set.
+
+Traycer keeps trusting its normal certificates and also trusts the one you added.
+
 ## App Menus
 
 **Help menu:** **Documentation**, **Release Notes**, **Report Issue**, **Open Logs**, **Restart Host**, **Check for Updates** and **About Traycer**.
