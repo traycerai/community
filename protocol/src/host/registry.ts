@@ -1007,6 +1007,7 @@ import {
   worktreeDeleteBatchByPathStreamV10,
   worktreeDeleteBatchByPathStreamV11,
   worktreeDeleteBatchByPathStreamV12,
+  worktreeDeleteBatchByPathStreamV13,
 } from "@traycer/protocol/host/worktree-delete-batch-stream";
 import {
   worktreeDeleteByPathStreamV10,
@@ -13351,7 +13352,7 @@ const HOST_STREAM_RPC_REGISTRY_OTHER_DEFINITION = {
   // which is what makes fallback safe for a destructive operation.
   "worktree.deleteBatchByPath": {
     1: {
-      latestMinor: 2,
+      latestMinor: 3,
       versions: {
         0: {
           contract: worktreeDeleteBatchByPathStreamV10,
@@ -13361,6 +13362,9 @@ const HOST_STREAM_RPC_REGISTRY_OTHER_DEFINITION = {
         },
         2: {
           contract: worktreeDeleteBatchByPathStreamV12,
+        },
+        3: {
+          contract: worktreeDeleteBatchByPathStreamV13,
         },
       },
     },
