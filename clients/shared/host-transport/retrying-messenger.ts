@@ -114,7 +114,29 @@ export function createRetryingMessenger<Registry extends VersionedRpcRegistry>(
     // requirement: being the last attempt does not make an unkeyed replay any
     // safer.
     throwIfAuthorityAborted(authority, method);
-    return attemptCall(replayMustBeKeyed);
+    try {
+      return await attemptCall(replayMustBeKeyed);
+    } catch (cause) {
+      // An earlier attempt was sent and its answer lost, so the host may have
+      // run the call. A final PRE-send failure must not erase that: handed on
+      // as it is, it reads as "the host never saw it". Same error, with the
+      // sent-and-dropped ground restored.
+      if (
+        replayMustBeKeyed &&
+        cause instanceof RetryableTransportError &&
+        !cause.replaySafetyFromKey
+      ) {
+        throw new RetryableTransportError({
+          code: cause.code,
+          message: cause.message,
+          requestId: cause.requestId,
+          method: cause.method,
+          fatalDetails: cause.fatalDetails,
+          replaySafetyFromKey: true,
+        });
+      }
+      throw cause;
+    }
   };
 
   return {

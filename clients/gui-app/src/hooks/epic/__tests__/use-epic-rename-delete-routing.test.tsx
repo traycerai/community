@@ -784,7 +784,7 @@ describe("useEpicDeleteTuiAgent routing", () => {
     });
 
     expect(toast.message).toHaveBeenCalledWith(
-      "That host is offline, so nothing on it was changed. Try again once it is back.",
+      "Traycer can't reach that host right now, so nothing on it was changed. Try again once it is reachable.",
       expect.anything(),
     );
     expect(toast.error).not.toHaveBeenCalled();

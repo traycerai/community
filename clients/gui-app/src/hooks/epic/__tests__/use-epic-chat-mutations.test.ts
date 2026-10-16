@@ -194,7 +194,7 @@ function makeError(code: RpcErrorCode): HostRpcError {
 }
 
 const OFFLINE_NOTICE =
-  "That host is offline, so nothing on it was changed. Try again once it is back.";
+  "Traycer can't reach that host right now, so nothing on it was changed. Try again once it is reachable.";
 
 function hostOffline(method: string): RetryableTransportError {
   return new RetryableTransportError({

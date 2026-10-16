@@ -22,7 +22,6 @@ import {
   worktreeCleanupFailureDetail,
   type WorktreeCleanupOutcome,
 } from "@/lib/epics/run-worktree-cleanup";
-import { toastFromHostError } from "@/lib/host-error-toast";
 import { toastFromOwnerHostWriteError } from "@/lib/owner-host-write-error-toast";
 import { progressToast } from "@/lib/toast/progress-toast";
 import { LANDING_ROUTE } from "@/lib/routes";

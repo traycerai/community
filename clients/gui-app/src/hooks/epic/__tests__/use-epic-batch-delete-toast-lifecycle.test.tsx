@@ -588,7 +588,7 @@ describe("the delete's progress toast", () => {
         expect(mocks.toastMessage).toHaveBeenCalledTimes(2);
       });
       expect(mocks.toastMessage.mock.calls[1][0]).toBe(
-        "That host is offline, so nothing on it was changed. Try again once it is back.",
+        "Traycer can't reach that host right now, so nothing on it was changed. Try again once it is reachable.",
       );
       expect(mocks.toastFromHostError).not.toHaveBeenCalled();
       expect(mocks.toastDismiss).toHaveBeenCalledWith(id);

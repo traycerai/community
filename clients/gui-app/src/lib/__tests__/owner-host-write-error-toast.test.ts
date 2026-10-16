@@ -18,7 +18,7 @@ import {
 } from "@traycer-clients/shared/host-transport/host-messenger";
 
 const OFFLINE_NOTICE =
-  "That host is offline, so nothing on it was changed. Try again once it is back.";
+  "Traycer can't reach that host right now, so nothing on it was changed. Try again once it is reachable.";
 
 function notReady(): RetryableTransportError {
   return new RetryableTransportError({
