@@ -381,8 +381,10 @@ import {
   hostStatusUpgradeV13ToV14,
   hostStatusUpgradeV14ToV15,
   hostStatusUpgradeV15ToV16,
+  hostStatusUpgradeV16ToV17,
   hostStatusV15,
   hostStatusV16,
+  hostStatusV17,
 } from "@traycer/protocol/host/status/contracts";
 import {
   hostRestartUpgradeV10ToV11,
@@ -6007,7 +6009,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   },
   "host.status": {
     1: {
-      latestMinor: 6,
+      latestMinor: 7,
       versions: {
         0: {
           contract: hostStatusV10,
@@ -6036,6 +6038,10 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
         6: {
           contract: hostStatusV16,
           upgradeFromPreviousVersion: hostStatusUpgradeV15ToV16,
+        },
+        7: {
+          contract: hostStatusV17,
+          upgradeFromPreviousVersion: hostStatusUpgradeV16ToV17,
         },
       },
       downgradePathsFromLatest: {},

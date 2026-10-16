@@ -40,6 +40,7 @@ import {
   StderrLogTee,
   type StderrTee,
   type CrashReportMatch,
+  type CrashReportMemory,
   crashReportsDirFor,
   describeExitCode,
   describeFatalSignal,
@@ -3636,6 +3637,7 @@ async function persistChildExit(input: {
         signal,
         exitMeaning: fatalMeaning,
         hasDiagnosticReport: crashReport !== null,
+        reportMemory: crashReportMemory(crashReport),
         uptimeMs: Math.max(
           0,
           input.childEndedMonoMs - input.childSpawnedMonoMs,
@@ -3791,6 +3793,7 @@ async function persistChildExit(input: {
     signal: null,
     exitMeaning: exitMeaning ?? null,
     hasDiagnosticReport: crashReport !== null,
+    reportMemory: crashReportMemory(crashReport),
     uptimeMs: Math.max(0, input.childEndedMonoMs - input.childSpawnedMonoMs),
     stopRequested: input.stopRequested,
     stderrEmpty: input.stderrTee.capture.isEmpty(),
@@ -3819,6 +3822,13 @@ function boundedCrashTelemetry(
       timer.unref?.();
     }),
   ]);
+}
+
+/** The report's memory numbers, every field `null` when there was no report. */
+function crashReportMemory(report: CrashReportMatch | null): CrashReportMemory {
+  return report === null
+    ? { heapLimitBytes: null, heapUsedBytes: null, rssBytes: null }
+    : report.memory;
 }
 
 /**

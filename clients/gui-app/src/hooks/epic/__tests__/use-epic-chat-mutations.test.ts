@@ -195,6 +195,10 @@ function makeError(code: RpcErrorCode): HostRpcError {
 
 const UNREACHABLE_NOTICE =
   "Traycer can't reach that host right now, so nothing on it was changed. Try again once it is reachable.";
+const BATCH_ONE_HOST_NOTICE =
+  "Traycer can't reach the host these agents run on, so nothing on it was changed. Try again once it is reachable.";
+const BATCH_HOSTS_NOTICE =
+  "Traycer can't reach the hosts these agents run on, so nothing on them was changed. Try again once they are reachable.";
 
 function hostUnreachable(method: string): RetryableTransportError {
   return new RetryableTransportError({
@@ -983,7 +987,7 @@ describe("useEpicArchiveChats", () => {
     expect(toast.error).toHaveBeenCalledTimes(1);
   });
 
-  it("reports one unreachable notice when every owning host in the batch is unreachable", async () => {
+  it("reports one plural notice when the unreachable batch spans several hosts", async () => {
     archiveChatMutateAsync.mockImplementation(() =>
       Promise.reject(hostUnreachable("epic.setChatArchived")),
     );
@@ -1004,7 +1008,36 @@ describe("useEpicArchiveChats", () => {
 
     await waitFor(() => {
       expect(toast.message).toHaveBeenCalledWith(
-        UNREACHABLE_NOTICE,
+        BATCH_HOSTS_NOTICE,
+        expect.anything(),
+      );
+    });
+    expect(toast.message).toHaveBeenCalledTimes(1);
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("names one host when every agent in the unreachable batch runs on it", async () => {
+    archiveChatMutateAsync.mockImplementation(() =>
+      Promise.reject(hostUnreachable("epic.setChatArchived")),
+    );
+    const { result } = renderHook(() => useEpicArchiveChats(), {
+      wrapper: makeWrapper(),
+    });
+
+    act(() => {
+      result.current.mutate({
+        epicId: "epic-1",
+        chats: [
+          { chatId: "chat-1", hostId: "remote-host" },
+          { chatId: "chat-2", hostId: "remote-host" },
+        ],
+        archived: true,
+      });
+    });
+
+    await waitFor(() => {
+      expect(toast.message).toHaveBeenCalledWith(
+        BATCH_ONE_HOST_NOTICE,
         expect.anything(),
       );
     });

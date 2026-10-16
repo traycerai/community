@@ -14,6 +14,12 @@ const OWNER_HOST_UNREACHABLE_TOAST_ID = "owner-host-unreachable-notice";
 const OWNER_HOST_UNREACHABLE_NOTICE =
   "Traycer can't reach that host right now, so nothing on it was changed. Try again once it is reachable.";
 
+const OWNER_HOST_UNREACHABLE_BATCH_ONE_HOST_NOTICE =
+  "Traycer can't reach the host these agents run on, so nothing on it was changed. Try again once it is reachable.";
+
+const OWNER_HOST_UNREACHABLE_BATCH_HOSTS_NOTICE =
+  "Traycer can't reach the hosts these agents run on, so nothing on them was changed. Try again once they are reachable.";
+
 /**
  * Whether this failure proves the request never reached the host.
  *
@@ -56,4 +62,19 @@ export function toastFromOwnerHostWriteError(
     return;
   }
   toastFromHostError(error, fallback);
+}
+
+/**
+ * The notice for a batch write in which every request failed with
+ * `isOwnerHostUnreachableFailure`. A batch can span agents on several hosts, so
+ * the copy is singular only when one host owns them all.
+ */
+export function toastOwnerHostsUnreachableForBatch(
+  ownerHostIds: readonly (string | null)[],
+): void {
+  const notice =
+    new Set(ownerHostIds).size === 1
+      ? OWNER_HOST_UNREACHABLE_BATCH_ONE_HOST_NOTICE
+      : OWNER_HOST_UNREACHABLE_BATCH_HOSTS_NOTICE;
+  toast.message(notice, { id: OWNER_HOST_UNREACHABLE_TOAST_ID });
 }
