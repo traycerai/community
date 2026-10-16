@@ -205,10 +205,12 @@ export interface MobileRunnerHostOptions {
    * loopback dev host that is not registered in the cloud. Resolves to the
    * fleet's rows, each flagged sandbox or not, or `null` on a transient
    * failure (the current fleet is retained - a blip must not read as "you own
-   * no hosts"). Given the stored bearer, or `null` while signed out.
+   * no hosts"). Given the stored sign-in, or `null` while signed out.
    */
   readonly fleetHostIds:
-    | ((bearerToken: string | null) => Promise<readonly FleetHostRow[] | null>)
+    | ((
+        stored: StoredCredentials | null,
+      ) => Promise<readonly FleetHostRow[] | null>)
     | null;
   /**
    * Native QR scanner for link-login sign-in, or `null` where no camera
@@ -354,7 +356,9 @@ export class MobileRunnerHost implements IRunnerHost {
   private readonly selectionAuthorityMount: InProcessSelectionAuthority;
   readonly selectionAuthority: SelectionAuthorityClient;
   private readonly fleetHostIds:
-    | ((bearerToken: string | null) => Promise<readonly FleetHostRow[] | null>)
+    | ((
+        stored: StoredCredentials | null,
+      ) => Promise<readonly FleetHostRow[] | null>)
     | null;
 
   constructor(options: MobileRunnerHostOptions) {
@@ -479,8 +483,7 @@ export class MobileRunnerHost implements IRunnerHost {
   private async resolveFleetHostIds(): Promise<readonly FleetHostRow[] | null> {
     if (this.fleetHostIds !== null) {
       // The dev entry's discovery: its loopback host plus the registry's.
-      const stored = await this.tokenStore.get();
-      return this.fleetHostIds(stored === null ? null : stored.token);
+      return this.fleetHostIds(await this.tokenStore.get());
     }
     const stored = await this.tokenStore.get();
     if (stored === null) {

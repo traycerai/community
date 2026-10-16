@@ -9,13 +9,16 @@ import {
 } from "@traycer-clients/shared/host-client/remote-fetcher";
 import {
   buildDevHostDiscovery,
+  createDevHostRegistryMemory,
   fleetRowsOf,
+  type DevHostRegistryMemory,
   type DevHostRegistrySource,
 } from "../src/web/dev-host-discovery";
 
 const RELAY_BASE_URL = "wss://relay.example.test/attach";
 const SANDBOX_HOST_ID = "bc29447a-0000-4000-8000-d9157ce22442";
 const DEV_HOST_ID = "dev-host-0000-4000-8000-loopback0001";
+const ACCOUNT_ID = "user-signed-in";
 
 const SIGNED_IN_ERA: AuthEra = {
   identity: "user-signed-in",
@@ -90,15 +93,33 @@ function registryHarness(
   token: string | null,
   result: HostListFetchResult,
 ): RegistryHarness {
+  return registryHarnessFor(
+    token,
+    ACCOUNT_ID,
+    result,
+    createDevHostRegistryMemory(),
+  );
+}
+
+function registryHarnessFor(
+  token: string | null,
+  accountId: string,
+  result: HostListFetchResult,
+  memory: DevHostRegistryMemory,
+): RegistryHarness {
   const listRegisteredHosts = vi
     .fn<(bearerToken: string) => Promise<HostListFetchResult>>()
     .mockResolvedValue(result);
   return {
     listRegisteredHosts,
     registry: {
-      bearerToken: () => Promise.resolve(token),
+      signIn: () =>
+        Promise.resolve(
+          token === null ? null : { bearerToken: token, accountId },
+        ),
       listRegisteredHosts,
       relayBaseUrl: RELAY_BASE_URL,
+      memory,
     },
   };
 }
@@ -215,6 +236,33 @@ describe("buildDevHostDiscovery", () => {
     ]);
     const sandbox = entries.find((entry) => entry.hostId === SANDBOX_HOST_ID);
     expect(sandbox?.transportDialability).toBe("dialable");
+  });
+
+  it("never serves one account's retained rows to another account", async () => {
+    const memory = createDevHostRegistryMemory();
+    const first = registryHarnessFor(
+      "bearer-a",
+      "user-a",
+      okResult([SANDBOX_ROW]),
+      memory,
+    );
+    await buildDevHostDiscovery(
+      () => Promise.resolve(DEV_OUTCOME),
+      first.registry,
+    )(SIGNED_IN_ERA);
+    const second = registryHarnessFor(
+      "bearer-b",
+      "user-b",
+      { kind: "network-error" },
+      memory,
+    );
+
+    const outcome = await buildDevHostDiscovery(
+      () => Promise.resolve(DEV_OUTCOME),
+      second.registry,
+    )(SIGNED_IN_ERA);
+
+    expect(outcome).toEqual({ kind: "hosts", entries: [DEV_ENTRY] });
   });
 
   it("re-reads the dev host on a failed registry read", async () => {

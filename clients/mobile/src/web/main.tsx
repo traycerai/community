@@ -25,6 +25,7 @@ import {
   type RemoteHostFetcher,
   type RemoteHostFetchOutcome,
 } from "@traycer-clients/shared/host-client/remote-fetcher";
+import type { StoredCredentials } from "@traycer-clients/shared/platform/runner-host";
 import {
   registerDevicePushTokenViaHttp,
   removeDevicePushTokenViaHttp,
@@ -33,8 +34,10 @@ import { startNativeKeyboardBridge } from "./native-keyboard-bridge";
 import {
   buildDevHostDiscovery,
   buildDevHostFetcher,
+  createDevHostRegistryMemory,
   fleetRowsOf,
   readDevHostDiscovery,
+  type DevHostSignIn,
 } from "./dev-host-discovery";
 import { AuthSession, MobileAuthSheet } from "../auth-sheet";
 import { SANDBOXES_UNAVAILABLE_IN_STAGING } from "@traycer-clients/shared/host-client/sandbox-control";
@@ -115,6 +118,15 @@ const config = __TRAYCER_MOBILE_CONFIG__;
 // adds its loopback host to that same list (`buildDevHostDiscovery`, F25).
 const devHostFetch: (() => Promise<RemoteHostFetchOutcome>) | null =
   config.devHost === null ? null : buildDevHostFetcher(config.devHost);
+// One memory for the directory's and the fleet's registry reads, so a failed
+// read answers the same last good rows to both.
+const devHostRegistryMemory = createDevHostRegistryMemory();
+
+function devHostSignIn(stored: StoredCredentials | null): DevHostSignIn | null {
+  return stored === null
+    ? null
+    : { bearerToken: stored.token, accountId: stored.user.id };
+}
 
 function bootstrap(): void {
   // Crash reporting comes up before anything that can fail, so a bootstrap
@@ -266,13 +278,14 @@ async function mount(input: {
     fleetHostIds:
       devHostFetch === null
         ? null
-        : async (bearerToken) =>
+        : async (stored) =>
             fleetRowsOf(
               await readDevHostDiscovery(devHostFetch, {
-                bearerToken: () => Promise.resolve(bearerToken),
+                signIn: () => Promise.resolve(devHostSignIn(stored)),
                 listRegisteredHosts: (token) =>
                   fetchRegisteredHostsViaHttp(config.authnBaseUrl, token),
                 relayBaseUrl: config.relayBaseUrl,
+                memory: devHostRegistryMemory,
               }),
             ),
     // `@capacitor/barcode-scanner` has no web implementation, so the camera
@@ -321,12 +334,10 @@ async function mount(input: {
     devHostFetch === null
       ? null
       : buildDevHostDiscovery(devHostFetch, {
-          bearerToken: async () => {
-            const stored = await host.tokenStore.get();
-            return stored === null ? null : stored.token;
-          },
+          signIn: async () => devHostSignIn(await host.tokenStore.get()),
           listRegisteredHosts: (token) => host.listRegisteredHosts(token),
           relayBaseUrl: host.relayBaseUrl,
+          memory: devHostRegistryMemory,
         });
   await stylesheet;
   const container = document.getElementById("root");
