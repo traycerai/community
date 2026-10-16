@@ -60,6 +60,7 @@ import {
   commitChatTabStateToDurable,
   peekSavedChatTabState,
   restoreChatTabState,
+  restoreChatTabStateForMount,
   saveChatTabState,
   type ChatTabScrollMode,
   type SavedChatTabScrollState,
@@ -87,6 +88,7 @@ import {
   type ChordString,
 } from "@/lib/keybindings/chord";
 import { isMac } from "@/lib/keybindings/platform";
+import { ScrollToTopRequestEvent } from "@/lib/dom/scroll-to-top-request";
 import { useKeybindingStore } from "@/stores/settings/keybinding-store";
 import { ActivityGroupOpenStoreProvider } from "@/stores/chats/activity-group-open-store";
 import { A2AOpenStoreProvider } from "@/stores/chats/a2a-open-store";
@@ -2010,7 +2012,7 @@ function ChatMessagesInner(props: ChatMessagesInnerProps) {
   // render would only repeat an O(n) row scan whose result the
   // initializers below already captured.
   const [restoredTabState] = useState<SavedChatTabScrollState>(() =>
-    restoreChatTabState(
+    restoreChatTabStateForMount(
       identity,
       listRows.map((row) => row.key),
     ),
@@ -2369,7 +2371,7 @@ function ChatMessagesInner(props: ChatMessagesInnerProps) {
   // unresolved saved coordinate. That ref is cleared only by an actual
   // reader gesture or explicit navigation (`cancelTimelineLiveFollowForUser
   // Navigation`'s `publishesReaderPosition` branch, `navigateToMessage`,
-  // `cancelManualNavigationForFind`) or once the hydration-retry effect
+  // `releaseForExplicitNavigation`) or once the hydration-retry effect
   // itself resolves the coordinate. Same reasoning gates the persistence
   // release below: a passive geometry report must not publish the temporary
   // tail as durably authoritative while that coordinate is still pending.
@@ -2759,9 +2761,8 @@ function ChatMessagesInner(props: ChatMessagesInnerProps) {
     // fine to scroll by and useless to persist: reindex the transcript before
     // the tab is reopened and that same key names a different row, which
     // `restoreChatTabState` accepts as an exact match and restores to. Saving
-    // no anchor at all is the better answer - restore falls back to the offset
-    // and to its pending-hydration correction, both of which are built for
-    // "the anchor is not resolvable yet".
+    // no anchor at all is the better answer - with no row to restore to, the
+    // reopened tab follows the latest content.
     const anchorMessageId =
       resolvedAnchorMessageId !== null &&
       isUnplacedRowKey(resolvedAnchorMessageId)
@@ -3703,6 +3704,20 @@ function ChatMessagesInner(props: ChatMessagesInnerProps) {
     visible,
   ]);
 
+  // Decision #21: minimap/find/deep-link/status-bar navigation all perform
+  // manual-navigation cancellation first. Not a real gesture - a plain
+  // release, no freeze: the navigation's own scroll (issued right after, via
+  // issueFreeTimelineNavigation) takes over immediately regardless.
+  const releaseForExplicitNavigation = useCallback((): void => {
+    forgetPendingHydrationRestore(identity);
+    pendingHydrationRestoreAnchorIdRef.current = null;
+    cancelTimelineLiveFollowForUserNavigation({
+      direction: "indeterminate",
+      freezeInFlightScroll: false,
+      publishesReaderPosition: false,
+    });
+  }, [cancelTimelineLiveFollowForUserNavigation, identity]);
+
   const navigateToMessage = useCallback(
     (
       messageId: string,
@@ -3710,17 +3725,7 @@ function ChatMessagesInner(props: ChatMessagesInnerProps) {
       animated: boolean,
       blockId: string | null,
     ): void => {
-      // Decision #21: minimap/find/deep-link navigation all perform
-      // manual-navigation cancellation first. Not a real gesture - a plain
-      // release, no freeze: the navigation's own scroll (right below, via
-      // issueFreeTimelineNavigation) takes over immediately regardless.
-      forgetPendingHydrationRestore(identity);
-      pendingHydrationRestoreAnchorIdRef.current = null;
-      cancelTimelineLiveFollowForUserNavigation({
-        direction: "indeterminate",
-        freezeInFlightScroll: false,
-        publishesReaderPosition: false,
-      });
+      releaseForExplicitNavigation();
       setScrolledActiveUserMessageIdIfChanged(messageId);
       const location = chatTimelineLocationForMessage(
         messageId,
@@ -3748,13 +3753,57 @@ function ChatMessagesInner(props: ChatMessagesInnerProps) {
     },
     [
       blockReveal,
-      cancelTimelineLiveFollowForUserNavigation,
-      identity,
       issueFreeTimelineNavigation,
+      releaseForExplicitNavigation,
       setScrolledActiveUserMessageIdIfChanged,
       showNavigationHighlight,
     ],
   );
+
+  // The iOS status-bar tap asks for the top. A bare scroll there would read
+  // to the follow latch as layout settling and be pulled back to the newest
+  // reply, so the transcript answers with the same owned navigation a
+  // Messages-list pick runs. Row 0 sits one list header below the scroll
+  // origin, so a header-sized offset lands it at the very top. Listened for
+  // on the container because the scroll node remounts with the list; the
+  // target check leaves an open-as-chat view's own scroller to the default.
+  useEffect(() => {
+    const container = transcriptContainerRef.current;
+    if (container === null) return;
+    const answerScrollToTop = (event: Event): void => {
+      if (!(event instanceof ScrollToTopRequestEvent)) return;
+      if (event.target !== chatTimelineRef.current?.getScrollableNode()) {
+        return;
+      }
+      event.preventDefault();
+      // A cross-tile jump still waiting for its row would land after this
+      // and pull the transcript back down; the tap is the newer intent.
+      const pendingLanding = pendingScrollRequestLandingRef.current;
+      if (pendingLanding !== null) {
+        settleScrollRequest(pendingLanding.requestId, "cancelled");
+      }
+      releaseForExplicitNavigation();
+      issueFreeTimelineNavigation(
+        {
+          index: 0,
+          viewOffset: listTopOffsetAdjustmentRef.current,
+          animated: event.animated,
+        },
+        null,
+      );
+    };
+    container.addEventListener(ScrollToTopRequestEvent.type, answerScrollToTop);
+    return () => {
+      container.removeEventListener(
+        ScrollToTopRequestEvent.type,
+        answerScrollToTop,
+      );
+    };
+  }, [
+    issueFreeTimelineNavigation,
+    releaseForExplicitNavigation,
+    settleScrollRequest,
+  ]);
 
   // Ticket 15 review (live pass S5, confirmed defect): `restoredTabState`/
   // `initialScrollIndexAnchor` are computed ONCE at mount against whatever
@@ -3795,7 +3844,7 @@ function ChatMessagesInner(props: ChatMessagesInnerProps) {
   // attempt). A real gesture or explicit navigation supersedes immediately
   // via its own unconditional clear (`cancelTimelineLiveFollowForUser
   // Navigation`'s `publishesReaderPosition` branch, `navigateToMessage`,
-  // `cancelManualNavigationForFind`), independent of this effect.
+  // `releaseForExplicitNavigation`), independent of this effect.
   useEffect(() => {
     const anchorId = pendingHydrationRestoreAnchorIdRef.current;
     if (anchorId === null) return;
@@ -3817,18 +3866,6 @@ function ChatMessagesInner(props: ChatMessagesInnerProps) {
       navigateToMessage(messageId, false, true, null),
     [navigateToMessage],
   );
-
-  // Find navigation is not a real gesture (like navigateToMessage) - a plain
-  // release, no freeze.
-  const cancelManualNavigationForFind = useCallback((): void => {
-    forgetPendingHydrationRestore(identity);
-    pendingHydrationRestoreAnchorIdRef.current = null;
-    cancelTimelineLiveFollowForUserNavigation({
-      direction: "indeterminate",
-      freezeInFlightScroll: false,
-      publishesReaderPosition: false,
-    });
-  }, [cancelTimelineLiveFollowForUserNavigation, identity]);
 
   // Find scans the records the client HOLDS. On the windowed line that is a
   // subset, so the bar has to say so - a count over a subset presented as a
@@ -3901,7 +3938,7 @@ function ChatMessagesInner(props: ChatMessagesInnerProps) {
     rowIndexByKeyRef,
     getScroller,
     scrollToLocation: scrollToTimelineLocationSuppressingFollowRestore,
-    cancelManualNavigation: cancelManualNavigationForFind,
+    cancelManualNavigation: releaseForExplicitNavigation,
     getNavigationGeneration: getReaderNavigationGeneration,
     setScrolledActiveUserMessageIdIfChanged,
     openSubagentId: subagentDrillIn.openId,
@@ -4009,13 +4046,7 @@ function ChatMessagesInner(props: ChatMessagesInnerProps) {
     // navigation, so it releases any pending hydration restore and the live
     // follow, and the ring paints at issue so an already-in-view target rings
     // immediately (it is re-armed from the real landing).
-    forgetPendingHydrationRestore(identity);
-    pendingHydrationRestoreAnchorIdRef.current = null;
-    cancelTimelineLiveFollowForUserNavigation({
-      direction: "indeterminate",
-      freezeInFlightScroll: false,
-      publishesReaderPosition: false,
-    });
+    releaseForExplicitNavigation();
     setScrolledActiveUserMessageIdIfChanged(request.messageId);
     showNavigationHighlight(landing.messageId, landing.blockId);
     // Deliberately NOT the animated `navigateToMessage` path: the landing
@@ -4024,9 +4055,8 @@ function ChatMessagesInner(props: ChatMessagesInnerProps) {
     scrollRequestRef.current = null;
   }, [
     activityGroupOpenStore,
-    cancelTimelineLiveFollowForUserNavigation,
     closeSubagentDrillIn,
-    identity,
+    releaseForExplicitNavigation,
     scrollRequest?.requestId,
     scrollToEnd,
     setScrolledActiveUserMessageIdIfChanged,

@@ -195,7 +195,14 @@ export type ProviderMcpAuthAction = z.infer<typeof providerMcpAuthActionSchema>;
  * remove; kimi is patch-only; etc.
  */
 export const providerMcpMutationActionSchema = lazySchema(() =>
-  z.enum(["add", "update", "remove", "toggleServer", "toggleTool"]),
+  z.enum([
+    "add",
+    "update",
+    "remove",
+    "toggleServer",
+    "toggleTool",
+    "applyRemedy",
+  ]),
 );
 export type ProviderMcpMutationAction = z.infer<
   typeof providerMcpMutationActionSchema
@@ -252,6 +259,7 @@ export const providerMcpCapabilityActionSchema = lazySchema(() =>
     "toggleTool",
     "discover",
     "auth",
+    "applyRemedy",
   ]),
 );
 export type ProviderMcpCapabilityAction = z.infer<
@@ -286,6 +294,7 @@ export const providerMcpCapabilitiesSchema = lazySchema(() =>
       toggleTool: z.array(providerNativeScopeSchema),
       discover: z.array(providerNativeScopeSchema),
       auth: z.array(providerNativeScopeSchema),
+      applyRemedy: z.array(providerNativeScopeSchema).default([]).optional(),
     }),
     addServer: providerMcpWritePathSchema,
     removeServer: providerMcpWritePathSchema,
@@ -523,6 +532,14 @@ export type ProviderNativeCapabilities = z.infer<
   typeof providerNativeCapabilitiesSchema
 >;
 
+/** Keep list@10.0's MCP descriptor independent of the live remedy capability. */
+export const providerNativeCapabilitiesSchemaBeforeMcpRemedies = lazySchema(
+  () =>
+    providerNativeCapabilitiesSchema.extend({
+      mcp: providerMcpCapabilitiesSchemaV70.nullable(),
+    }),
+);
+
 /**
  * Default descriptor for old-host responses / `.catch()` on wire parse.
  * Empty tabs → UI shows only the pre-existing General/Env/Usage surfaces
@@ -738,7 +755,8 @@ export const providerMcpToolSchema = lazySchema(() =>
  */
 export type ProviderMcpTool = z.infer<typeof providerMcpToolSchema>;
 
-export const providerMcpServerSchema = lazySchema(() =>
+/** The MCP row shipped by every list carrier through 10.0 and mutate@1.0. */
+export const providerMcpServerSchemaV70Preimage = lazySchema(() =>
   z.object({
     name: z.string(),
     enabled: z.boolean(),
@@ -768,6 +786,36 @@ export const providerMcpServerSchema = lazySchema(() =>
      * (V3 degrade). Config editable; live connect unavailable in-session.
      */
     stdioDegraded: z.boolean(),
+  }),
+);
+
+export const providerMcpRemedySchema = lazySchema(() =>
+  z.object({
+    id: z.string().min(1),
+    label: z.string().min(1),
+    confirmation: z.string(),
+  }),
+);
+export type ProviderMcpRemedy = z.infer<typeof providerMcpRemedySchema>;
+
+export const providerMcpNoticeSchema = lazySchema(() =>
+  z.object({
+    id: z.string().min(1),
+    tone: z.enum(["info", "warning"]),
+    text: z.string().min(1),
+    blocking: z.boolean(),
+    remedy: providerMcpRemedySchema.nullable(),
+  }),
+);
+export type ProviderMcpNotice = z.infer<typeof providerMcpNoticeSchema>;
+
+export const providerMcpServerSchema = lazySchema(() =>
+  providerMcpServerSchemaV70Preimage.extend({
+    remedy: providerMcpRemedySchema.nullable().default(null).optional(),
+    enableConfirmation: providerMcpRemedySchema
+      .nullable()
+      .default(null)
+      .optional(),
   }),
 );
 export type ProviderMcpServer = z.infer<typeof providerMcpServerSchema>;
@@ -943,6 +991,10 @@ export const providersMcpMutateActionSchema = lazySchema(() =>
       serverName: z.string().min(1),
       toolName: z.string().min(1),
       enabled: z.boolean(),
+    }),
+    z.object({
+      action: z.literal("applyRemedy"),
+      remedyId: z.string().min(1),
     }),
   ]),
 );
@@ -1145,6 +1197,7 @@ const nativeListSuccessResultSchema = lazySchema(() =>
       ok: z.literal(true),
       kind: z.literal("mcp"),
       servers: z.array(providerMcpServerSchema),
+      notices: z.array(providerMcpNoticeSchema).default([]).optional(),
     }),
     z.object({
       ok: z.literal(true),
@@ -1174,18 +1227,52 @@ export const nativeListResultSchema = lazySchema(() =>
 );
 export type NativeListResult = z.infer<typeof nativeListResultSchema>;
 
+/** MCP arms before remedies; used by every released list carrier. */
+export const nativeListResultSchemaBeforeMcpRemedies = lazySchema(() =>
+  z.union([
+    z.discriminatedUnion("kind", [
+      z.object({
+        ok: z.literal(true),
+        kind: z.literal("mcp"),
+        servers: z.array(providerMcpServerSchemaV70Preimage),
+      }),
+      z.object({
+        ok: z.literal(true),
+        kind: z.literal("plugins"),
+        plugins: z.array(providerPluginSchema),
+      }),
+      z.object({
+        ok: z.literal(true),
+        kind: z.literal("skills"),
+        skills: z.array(providerSkillSchema),
+      }),
+      z.object({
+        ok: z.literal(true),
+        kind: z.literal("mcpDiscover"),
+        server: providerMcpServerSchemaV70Preimage,
+      }),
+      z.object({
+        ok: z.literal(true),
+        kind: z.literal("pluginIcon"),
+        icon: providerPluginIconSchema,
+      }),
+    ]),
+    providerNativeErrorResultSchema,
+  ]),
+);
+
 /**
  * Frozen list result as of the `providers.list@7.0` cut. Live
  * {@link nativeListResultSchema} grew `origin` / `conflict` on skill rows;
- * v7.0 must not. Other arms stay pointed at the live object schemas they
- * already used - those have not grown.
+ * v7.0 must not. MCP rows are pinned too: remedies and enable confirmation
+ * opened only on list@10.1. The remaining arms have not grown.
  */
 const nativeListSuccessResultSchemaV70Preimage = lazySchema(() =>
   z.discriminatedUnion("kind", [
     z.object({
       ok: z.literal(true),
       kind: z.literal("mcp"),
-      servers: z.array(providerMcpServerSchema),
+      servers: z.array(providerMcpServerSchemaV70Preimage),
     }),
     z.object({
       ok: z.literal(true),
@@ -1200,7 +1287,7 @@ const nativeListSuccessResultSchemaV70Preimage = lazySchema(() =>
     z.object({
       ok: z.literal(true),
       kind: z.literal("mcpDiscover"),
-      server: providerMcpServerSchema,
+      server: providerMcpServerSchemaV70Preimage,
     }),
     z.object({
       ok: z.literal(true),
@@ -1266,12 +1353,79 @@ export const nativeMutationSchema = lazySchema(() =>
 );
 export type NativeMutation = z.infer<typeof nativeMutationSchema>;
 
+const providersMcpMutateActionSchemaV10Preimage = lazySchema(() =>
+  z.discriminatedUnion("action", [
+    z.object({
+      action: z.literal("add"),
+      name: z.string().min(1),
+      transport: providerMcpServerTransportWriteSchema,
+    }),
+    z.object({
+      action: z.literal("update"),
+      name: z.string().min(1),
+      transport: providerMcpServerTransportWriteSchema,
+    }),
+    z.object({ action: z.literal("remove"), name: z.string().min(1) }),
+    z.object({
+      action: z.literal("toggleServer"),
+      name: z.string().min(1),
+      enabled: z.boolean(),
+    }),
+    z.object({
+      action: z.literal("toggleTool"),
+      serverName: z.string().min(1),
+      toolName: z.string().min(1),
+      enabled: z.boolean(),
+    }),
+  ]),
+);
+
+/** Request preimage for the released nativeMutate@1.0 carrier. */
+export const nativeMutationSchemaV10Preimage = lazySchema(() =>
+  z
+    .discriminatedUnion("kind", [
+      z.object({
+        kind: z.literal("mcp"),
+        scope: providerNativeScopeSchema,
+        workspaceRoot: z.string().nullable(),
+        mutation: providersMcpMutateActionSchemaV10Preimage,
+      }),
+      z.object({
+        kind: z.literal("plugins"),
+        scope: providerNativeScopeSchema,
+        workspaceRoot: z.string().nullable(),
+        mutation: providersPluginsMutateActionSchema,
+      }),
+      z.object({
+        kind: z.literal("skills"),
+        scope: providerNativeScopeSchema,
+        workspaceRoot: z.string().nullable(),
+        mutation: providersSkillsMutateActionSchema,
+      }),
+    ])
+    .superRefine((value, ctx) => {
+      refineProviderNativeScope(value, ctx);
+      if (
+        value.kind === "skills" &&
+        value.mutation.action === "inspect" &&
+        value.mutation.scope !== value.scope
+      ) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["mutation", "scope"],
+          message: "inspect scope must match the mutation scope",
+        });
+      }
+    }),
+);
+
 const nativeMutationSuccessResultSchema = lazySchema(() =>
   z.discriminatedUnion("kind", [
     z.object({
       ok: z.literal(true),
       kind: z.literal("mcp"),
       servers: z.array(providerMcpServerSchema),
+      notices: z.array(providerMcpNoticeSchema).default([]).optional(),
     }),
     z.object({
       ok: z.literal(true),
@@ -1295,6 +1449,35 @@ export const nativeMutationResultSchema = lazySchema(() =>
   z.union([nativeMutationSuccessResultSchema, providerNativeErrorResultSchema]),
 );
 export type NativeMutationResult = z.infer<typeof nativeMutationResultSchema>;
+
+/** Response preimage for the released nativeMutate@1.0 carrier. */
+export const nativeMutationResultSchemaV10Preimage = lazySchema(() =>
+  z.union([
+    z.discriminatedUnion("kind", [
+      z.object({
+        ok: z.literal(true),
+        kind: z.literal("mcp"),
+        servers: z.array(providerMcpServerSchemaV70Preimage),
+      }),
+      z.object({
+        ok: z.literal(true),
+        kind: z.literal("plugins"),
+        plugins: z.array(providerPluginSchema),
+      }),
+      z.object({
+        ok: z.literal(true),
+        kind: z.literal("skills"),
+        skills: z.array(providerSkillSchema),
+      }),
+      z.object({
+        ok: z.literal(true),
+        kind: z.literal("skillsInspect"),
+        ...providersSkillsInspectResultSchema.shape,
+      }),
+    ]),
+    providerNativeErrorResultSchema,
+  ]),
+);
 
 // ── Carrier payloads: MCP auth (startLogin / awaitLogin / cancelLogin) ─────
 
@@ -2423,6 +2606,7 @@ export type ProviderSettingsTabV70 = z.infer<
 export const providerNativeCapabilitiesSchemaV70 = lazySchema(() =>
   providerNativeCapabilitiesSchema.extend({
     supportedTabs: z.array(providerSettingsTabSchemaV70),
+    mcp: providerMcpCapabilitiesSchemaV70.nullable(),
   }),
 );
 export type ProviderNativeCapabilitiesV70 = z.infer<
