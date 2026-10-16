@@ -255,6 +255,7 @@ const testState = vi.hoisted(() => ({
     ownershipScopes: [] as HistoryFacets["ownershipScopes"],
   },
   isFetching: false,
+  isCountPending: false,
   mobileViewport: false,
   cloudPagePending: false,
   completeness: null as ListTasksCompleteness | null,
@@ -321,6 +322,7 @@ vi.mock("@/hooks/home/use-history-query", () => ({
     },
     isPending: false,
     isFetching: testState.isFetching,
+    isCountPending: testState.isCountPending,
     cloudPagePending: testState.cloudPagePending,
     error: null,
     hostId: testState.hostId,
@@ -652,6 +654,7 @@ describe("<EpicsListPanel />", () => {
       ownershipScopes: [],
     };
     testState.isFetching = false;
+    testState.isCountPending = false;
     testState.cloudPagePending = false;
     testState.mobileViewport = false;
     testState.completeness = null;
@@ -3633,7 +3636,11 @@ describe("<EpicsListPanel />", () => {
     );
 
     // Selection mode hides the sort menu, so a re-sort arrives through the
-    // History search store another History surface shares.
+    // History search store another History surface shares. The re-sorted
+    // request is a new query key, so the hook reports it fetching with its
+    // count pending until the new first page lands.
+    testState.isFetching = true;
+    testState.isCountPending = true;
     await act(async () => {
       useHistorySearchStore.setState({
         search: { ...DEFAULT_HISTORY_SEARCH, sort: "oldest", sortExplicit: true },
@@ -3641,6 +3648,8 @@ describe("<EpicsListPanel />", () => {
       await Promise.resolve();
     });
     expect(testState.fetchAllItems.mock.calls[0]?.[0].aborted).toBe(false);
+    testState.isFetching = false;
+    testState.isCountPending = false;
 
     testState.items = [
       historyItem({}),

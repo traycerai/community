@@ -478,9 +478,12 @@ function EpicsListPanelBody(props: EpicsListPanelBodyProps): ReactNode {
     () => abortSelectAll,
     [abortSelectAll, matchingSetKey, hostId, currentUserId, localContextMatchKey],
   );
+  // A refresh of the same request re-reads the set the walk is collecting, so
+  // it cancels the walk. A fetch for a new request key (a re-sort, which keeps
+  // the matching set) arrives with `isCountPending` and is left alone.
   useEffect(() => {
-    if (isFetching) abortSelectAll();
-  }, [abortSelectAll, isFetching]);
+    if (isFetching && !isCountPending) abortSelectAll();
+  }, [abortSelectAll, isCountPending, isFetching]);
   const [pendingDeleteIds, setPendingDeleteIds] =
     useState<ReadonlyArray<string> | null>(null);
   // Explicit user overrides of the per-worktree checkbox. Absent entries fall
