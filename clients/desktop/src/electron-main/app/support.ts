@@ -1473,6 +1473,8 @@ function environmentContextForSentry(
     setupAttempts: JSON.stringify(section.setupAttempts),
     policy: JSON.stringify(section.policy),
     rotations: JSON.stringify(section.rotations),
+    reachDenials: JSON.stringify(section.reachDenials),
+    servedTask: JSON.stringify(section.servedTask),
   };
 }
 
@@ -1548,6 +1550,29 @@ function scrubEnvironmentSection(
                     })),
             })),
           })),
+    reachDenials:
+      section.reachDenials === null
+        ? null
+        : section.reachDenials.map((denial) => ({
+            denialId: scrubSupportText(denial.denialId),
+            at: denial.at,
+            sourceHostRef: scrubSupportText(denial.sourceHostRef),
+            targetHostRef: scrubSupportText(denial.targetHostRef),
+            taskRef: scrubNullableText(denial.taskRef),
+            reason: scrubSupportText(denial.reason),
+            sourcePrincipal: scrubSupportText(denial.sourcePrincipal),
+            targetPrincipal: scrubSupportText(denial.targetPrincipal),
+            count: denial.count,
+          })),
+    servedTask:
+      section.servedTask === null
+        ? null
+        : {
+            taskRef: scrubSupportText(section.servedTask.taskRef),
+            otherHostPrincipals: section.servedTask.otherHostPrincipals.map(
+              (category) => scrubSupportText(category),
+            ),
+          },
   };
 }
 
