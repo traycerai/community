@@ -140,7 +140,7 @@ function renderCard(sandbox: HostScopeSandbox): void {
   });
   render(
     <QueryClientProvider client={queryClient}>
-      <SandboxCard hostName="Host name" sandbox={sandbox} teamOwned={false} />
+      <SandboxCard hostName="Host name" sandbox={sandbox} />
     </QueryClientProvider>,
   );
 }
@@ -159,6 +159,7 @@ function sandboxOf(
       frozen,
       ...overrides,
     }),
+    teamOwned: false,
   };
 }
 
@@ -535,7 +536,7 @@ describe("<SandboxCard /> without a summary", () => {
   });
 
   function renderWithoutSummary(state: HostScopeSandbox["state"]): void {
-    renderCard({ state, frozen: false, summary: null });
+    renderCard({ state, frozen: false, summary: null, teamOwned: false });
   }
 
   it("says it is loading while the list has not answered", async () => {

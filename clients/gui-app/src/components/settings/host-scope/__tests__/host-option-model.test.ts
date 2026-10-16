@@ -296,7 +296,12 @@ describe("hostOptionStatusWord - a sandbox's lifecycle word against its health",
         tone: "idle",
         live: false,
       },
-      sandbox: { state: input.state, frozen: input.frozen, summary: null },
+      sandbox: {
+        state: input.state,
+        frozen: input.frozen,
+        summary: null,
+        teamOwned: false,
+      },
     });
   }
   const available = AVAILABLE_HOST_ROW_SURFACE_STATE;
@@ -374,7 +379,12 @@ describe("sandboxWordYieldsToHealth", () => {
         tone: "idle",
         live: false,
       },
-      sandbox: { state: input.state, frozen: false, summary: null },
+      sandbox: {
+        state: input.state,
+        frozen: false,
+        summary: null,
+        teamOwned: false,
+      },
     });
   }
 

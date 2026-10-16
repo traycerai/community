@@ -12,10 +12,7 @@ import {
 } from "@/components/host/host-restart-copy";
 import { DoctorSheet } from "@/components/settings/panels/host-settings-doctor-sheet";
 import { HostIdentityCard } from "@/components/settings/host-scope/host-identity-card";
-import {
-  hostOptionCanActivate,
-  hostOptionTeamOwner,
-} from "@/components/settings/host-scope/host-option-model";
+import { hostOptionCanActivate } from "@/components/settings/host-scope/host-option-model";
 import { HostLifecycleModeLine } from "@/components/settings/host-scope/host-lifecycle-mode-line";
 import { HostUpdateRequiredAction } from "@/components/settings/host-scope/host-update-required-action";
 import { useHostLease } from "@/hooks/host/use-host-lease";
@@ -1905,11 +1902,7 @@ export function HostOverviewPanel(props: {
   return (
     <>
       {host.sandbox === null ? null : (
-        <SandboxCard
-          hostName={displayName}
-          sandbox={host.sandbox}
-          teamOwned={hostOptionTeamOwner(host) !== null}
-        />
+        <SandboxCard hostName={displayName} sandbox={host.sandbox} />
       )}
       <HostIdentityCard
         host={host}

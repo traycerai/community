@@ -1070,7 +1070,7 @@ describe("RunnerIpcBridge", () => {
         "openSandboxAutomation.bearerToken",
       );
     }
-    for (const bad of [undefined, 7, {}]) {
+    for (const bad of ["", undefined, 7, {}]) {
       await expect(read(bareEvent(), "bearer-1", bad)).rejects.toThrow(
         "getSandboxAutomation.environmentId",
       );

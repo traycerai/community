@@ -90,6 +90,7 @@ function sandboxRow(
         hostId,
         ...summary,
       }),
+      teamOwned: owner?.kind === "team",
     },
   });
 }

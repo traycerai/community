@@ -19,6 +19,11 @@ import {
   type FakeSandboxBinding,
 } from "@/hooks/sandboxes/__tests__/sandbox-binding-fixture";
 import { sandboxSummaryFixture } from "@/hooks/sandboxes/__tests__/sandbox-fixtures";
+import {
+  formatSandboxDay,
+  sandboxTeamFrozenStateLine,
+} from "@/components/hosts/sandbox-card-model";
+import { frozenDestroyAt } from "@/lib/sandboxes/sandbox-balance";
 import { useAuthStore } from "@/stores/auth/auth-store";
 import { useTeamWakeConfirmStore } from "@/stores/hosts/team-wake-confirm-store";
 import { SANDBOX_VERB_FETCH_TIMEOUT_MS } from "@traycer-clients/shared/host-client/sandbox-control";
@@ -122,7 +127,7 @@ function renderCard(sandbox: HostScopeSandbox, teamOwned: boolean): void {
   });
   render(
     <QueryClientProvider client={queryClient}>
-      <SandboxCard hostName="Host name" sandbox={sandbox} teamOwned={teamOwned} />
+      <SandboxCard hostName="Host name" sandbox={{ ...sandbox, teamOwned }} />
       <TeamWakeConfirmDialogHost />
     </QueryClientProvider>,
   );
@@ -142,6 +147,7 @@ function sandboxOf(
       frozen,
       ...overrides,
     }),
+    teamOwned: false,
   };
 }
 
@@ -240,6 +246,48 @@ describe("<SandboxCard /> team creator and wake payer", () => {
     );
     expect(text("sandbox-card-state-line")).toBe(
       "Frozen: Ada Lovelace's bundle is out.",
+    );
+  });
+});
+
+describe("<SandboxCard /> frozen team destroy date", () => {
+  const FROZEN_AT = new Date(2026, 8, 1, 12).getTime();
+  const ADA = { userId: "user-ada", displayName: "Ada Lovelace" };
+  const BASE = "Frozen: Ada Lovelace's bundle is out.";
+
+  it("adds the day the sandbox is destroyed when the server sends frozenAt", () => {
+    renderCard(
+      sandboxOf("suspended", true, { frozenAt: FROZEN_AT, wakePayer: ADA }),
+      true,
+    );
+    expect(text("sandbox-card-state-line")).toBe(
+      `${BASE} Destroyed on ${formatSandboxDay(frozenDestroyAt(FROZEN_AT))}.`,
+    );
+  });
+
+  it("adds no date when frozenAt is not sent", () => {
+    renderCard(
+      sandboxOf("suspended", true, { frozenAt: null, wakePayer: ADA }),
+      true,
+    );
+    expect(text("sandbox-card-state-line")).toBe(BASE);
+  });
+
+  it("builds the line from the payer's name, the viewer's own bundle and a missing payer", () => {
+    const frozen = (payer: SandboxSummary["wakePayer"]): SandboxSummary =>
+      sandboxSummaryFixture({ frozenAt: FROZEN_AT, wakePayer: payer });
+    const day = formatSandboxDay(frozenDestroyAt(FROZEN_AT));
+    expect(sandboxTeamFrozenStateLine(frozen(ADA), VIEWER)).toBe(
+      `${BASE} Destroyed on ${day}.`,
+    );
+    expect(
+      sandboxTeamFrozenStateLine(
+        frozen({ userId: VIEWER, displayName: "Vera Viewer" }),
+        VIEWER,
+      ),
+    ).toBe(`Frozen: your bundle is out. Destroyed on ${day}.`);
+    expect(sandboxTeamFrozenStateLine(frozen(null), VIEWER)).toBe(
+      `Frozen: its payer's bundle is out. Destroyed on ${day}.`,
     );
   });
 });
@@ -357,6 +405,18 @@ describe("<SandboxCard /> team pod room", () => {
     expect(screen.queryByTestId("sandbox-card-pod-room")).toBeNull();
   });
 
+  it("shows no room line, and reads no pod list, for a team pod with no environment", async () => {
+    renderCard(
+      sandboxOf("awake", false, { kind: "automation", environmentId: null }),
+      true,
+    );
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    // Reading it with no environment would read the person's own host.
+    expect(mocks.binding?.auth.getSandboxAutomation).not.toHaveBeenCalled();
+    expect(screen.queryByTestId("sandbox-card-pod-room")).toBeNull();
+  });
+
   it("reads no pod list for a personal Automations card or a team card that is not a pod", async () => {
     renderCard(
       sandboxOf("awake", false, { kind: "automation", environmentId: ENV }),
@@ -381,15 +441,17 @@ describe("<SandboxCard /> team destroy", () => {
     openDestroy();
 
     const dialog = await screen.findByTestId("confirm-destructive-dialog");
-    expect(within(dialog).getByTestId("sandbox-card-destroy-team")).toBeDefined();
+    expect(
+      within(dialog).getByTestId("sandbox-card-destroy-team"),
+    ).toBeDefined();
     expect(text("sandbox-card-destroy-team")).toContain(
       "other members' running agents",
     );
     const input = screen.getByTestId("sandbox-card-destroy-typed");
     expect(input).toBeDefined();
-    expect(
-      screen.getByTestId("confirm-action").hasAttribute("disabled"),
-    ).toBe(true);
+    expect(screen.getByTestId("confirm-action").hasAttribute("disabled")).toBe(
+      true,
+    );
     expect(mocks.binding?.auth.destroySandbox).not.toHaveBeenCalled();
   });
 
@@ -403,14 +465,14 @@ describe("<SandboxCard /> team destroy", () => {
     expect(text("confirm-blocked-reason")).toBe(
       `Type ${NAME} below to destroy it.`,
     );
-    expect(
-      screen.getByTestId("confirm-action").hasAttribute("disabled"),
-    ).toBe(true);
+    expect(screen.getByTestId("confirm-action").hasAttribute("disabled")).toBe(
+      true,
+    );
 
     fireEvent.change(input, { target: { value: NAME } });
-    expect(
-      screen.getByTestId("confirm-action").hasAttribute("disabled"),
-    ).toBe(false);
+    expect(screen.getByTestId("confirm-action").hasAttribute("disabled")).toBe(
+      false,
+    );
     fireEvent.click(screen.getByTestId("confirm-action"));
     await waitFor(() => {
       expect(mocks.binding?.auth.destroySandbox).toHaveBeenCalledWith("sbx_1");

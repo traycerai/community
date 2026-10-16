@@ -634,29 +634,29 @@ function HostSwitcherCollapsible(props: {
   const [open, setOpen] = useState(props.defaultOpen);
   const expanded = open || props.forceOpen;
   return (
-      <Collapsible
-        open={expanded}
-        onOpenChange={setOpen}
-        className="flex flex-col"
-        data-testid={props.testId}
+    <Collapsible
+      open={expanded}
+      onOpenChange={setOpen}
+      className="flex flex-col"
+      data-testid={props.testId}
+    >
+      <CollapsibleTrigger
+        variant="quiet"
+        className="flex w-full items-center text-ui-xs font-medium"
+        data-testid={`${props.testId}-toggle`}
       >
-        <CollapsibleTrigger
-          variant="quiet"
-          className="flex w-full items-center text-ui-xs font-medium"
-          data-testid={`${props.testId}-toggle`}
-        >
-          {expanded ? (
-            <ChevronDown className="size-3.5 shrink-0" aria-hidden />
-          ) : (
-            <ChevronRight className="size-3.5 shrink-0" aria-hidden />
-          )}
-          <span className="min-w-0 flex-1 truncate text-start">
-            {props.title}
-          </span>
-          <span className="shrink-0 tabular-nums">{props.count}</span>
-        </CollapsibleTrigger>
-        <CollapsibleContent>{props.children}</CollapsibleContent>
-      </Collapsible>
+        {expanded ? (
+          <ChevronDown className="size-3.5 shrink-0" aria-hidden />
+        ) : (
+          <ChevronRight className="size-3.5 shrink-0" aria-hidden />
+        )}
+        <span className="min-w-0 flex-1 truncate text-start">
+          {props.title}
+        </span>
+        <span className="shrink-0 tabular-nums">{props.count}</span>
+      </CollapsibleTrigger>
+      <CollapsibleContent>{props.children}</CollapsibleContent>
+    </Collapsible>
   );
 }
 

@@ -196,6 +196,7 @@ describe("sandboxSummariesUnread", () => {
         summary: hasSummary
           ? sandboxSummaryFixture({ hostId: "sbx-host" })
           : null,
+        teamOwned: false,
       },
     });
   const personalHost = hostScopeOptionFixture({ hostId: "laptop" });
@@ -257,6 +258,7 @@ describe("sandboxSummariesPending", () => {
         summary: hasSummary
           ? sandboxSummaryFixture({ hostId: "sbx-host" })
           : null,
+        teamOwned: false,
       },
     });
   const personalHost = hostScopeOptionFixture({ hostId: "laptop" });

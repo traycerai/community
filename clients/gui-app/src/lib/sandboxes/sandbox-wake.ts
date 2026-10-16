@@ -216,13 +216,18 @@ async function runSharedWake(
   return { outcome: await attempt.outcome, joined: false };
 }
 
-function toastWakeOutcome(outcome: SandboxWakeOutcome): void {
+function toastWakeOutcome(
+  outcome: SandboxWakeOutcome,
+  teamOwned: boolean,
+): void {
   switch (outcome.kind) {
     case "awake":
       return;
     case "refused":
+      // A team sandbox's wake is on its payer's bundle, not the viewer's
+      // credits, so the personal "your credits ran out" would misdirect.
       toast.warning("This sandbox is frozen", {
-        description: outcome.message,
+        description: teamOwned ? "Its payer's bundle is out." : outcome.message,
       });
       return;
     case "credit-gate":
@@ -282,6 +287,11 @@ export function startSandboxWake(
   client: QueryClient,
   binding: SandboxWakeBinding | null,
   hostId: string,
+  /**
+   * What the caller already knows asks: a pick's own row says team before
+   * the directory may have the entry. `false` from a caller with no row.
+   */
+  callerAsks: boolean,
 ): void {
   // Signed out there is no sandbox row to wake, and nothing a retry fixes.
   if (binding === null) return;
@@ -298,19 +308,26 @@ export function startSandboxWake(
   const entry = directory.findById(hostId);
   const facts =
     entry !== null && isRemoteHostDirectoryEntry(entry) ? entry.sandbox : null;
-  const asks =
+  const teamOwned =
+    callerAsks || (facts !== null && facts.ownerTeamName !== null);
+  const directoryAsks =
     facts !== null &&
-    teamWakeAsks(facts.ownerTeamName !== null, facts.profile, facts.frozen) &&
+    teamWakeAsks(facts.ownerTeamName !== null, facts.profile, facts.frozen);
+  const asks =
+    (callerAsks || directoryAsks) &&
     client.isMutating({ mutationKey: sandboxMutationKeys.wake(hostId) }) === 0;
-  confirmTeamWake(asks, () => runSandboxWake(client, auth, directory, hostId));
+  confirmTeamWake(asks, () =>
+    runSandboxWake(client, binding, hostId, teamOwned),
+  );
 }
 
 function runSandboxWake(
   client: QueryClient,
-  auth: AuthService,
-  directory: HostDirectoryService,
+  binding: SandboxWakeBinding,
   hostId: string,
+  teamOwned: boolean,
 ): void {
+  const { auth, directory } = binding;
   // The account this wake runs for. A wake that ends under another account
   // stops polling (see `readSandboxFacts`), and reports and refreshes nothing:
   // its outcome, a credit shortfall included, is the first account's. The next
@@ -325,7 +342,7 @@ function runSandboxWake(
       void client.invalidateQueries({
         queryKey: authQueryKeys.registeredHostsAll(),
       });
-      toastWakeOutcome(run.outcome);
+      toastWakeOutcome(run.outcome, teamOwned);
     },
     onError: () => {
       if (signedInUserId() !== startedBy) return;
@@ -353,5 +370,13 @@ function runSandboxWake(
  */
 export function wakeSandboxOnPick(host: HostScopeOption): void {
   if (!isSleepingSandboxPick(host)) return;
-  startSandboxWake(queryClient, getHostBindingSnapshot(), host.hostId);
+  const sandbox = host.sandbox;
+  const asks =
+    sandbox !== null &&
+    teamWakeAsks(
+      sandbox.teamOwned,
+      sandbox.summary?.kind ?? host.item?.profile ?? null,
+      sandbox.frozen,
+    );
+  startSandboxWake(queryClient, getHostBindingSnapshot(), host.hostId, asks);
 }

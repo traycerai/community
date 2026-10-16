@@ -472,12 +472,7 @@ function useNewTerminalWorkspaceItems(
           run: () => {
             // A full team's refusal toasts its server message verbatim
             // (`sandboxFailureMessage`, `team_pods_full`).
-            openPod(row.target, {
-              onSuccess: (settled) => {
-                if (settled) toast.success(`${row.label} is open`);
-                else toast.info(`Opening ${row.label}…`);
-              },
-            });
+            openPod(row.target);
           },
         }),
     );

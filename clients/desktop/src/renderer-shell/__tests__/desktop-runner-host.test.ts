@@ -925,14 +925,18 @@ describe("DesktopRunnerHost Automations calls", () => {
       signInUrl: "https://auth.example.invalid/sign-in",
     });
 
-    await expect(host.getSandboxAutomation("bearer-1", "env-1")).resolves.toEqual({
+    await expect(
+      host.getSandboxAutomation("bearer-1", "env-1"),
+    ).resolves.toEqual({
       kind: "ok",
       automation: { available: true, sandbox: null, pods: [] },
     });
-    await expect(host.openSandboxAutomation("bearer-2", {
+    await expect(
+      host.openSandboxAutomation("bearer-2", {
         environmentId: "env-1",
         ordinal: 2,
-      })).resolves.toEqual({
+      }),
+    ).resolves.toEqual({
       kind: "unauthorized",
     });
 

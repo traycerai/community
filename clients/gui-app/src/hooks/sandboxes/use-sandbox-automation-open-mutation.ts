@@ -4,6 +4,7 @@ import {
   type UseMutationResult,
 } from "@tanstack/react-query";
 import type { SandboxAutomationOpenTarget } from "@traycer/protocol/host/sandbox-control";
+import { toast } from "sonner";
 import { toastFromAuthError } from "@/lib/auth-error-toast";
 import { useHostBinding, type HostDirectoryService } from "@/lib/host";
 import { authQueryKeys, sandboxMutationKeys } from "@/lib/query-keys";
@@ -60,6 +61,13 @@ export function useSandboxAutomationOpen(): UseMutationResult<
       void queryClient.invalidateQueries({
         queryKey: authQueryKeys.registeredHostsAll(),
       });
+    },
+    // A team pod's open reports here, not at the call: the picker that
+    // started it closes on run, and a call-site callback dies with it.
+    onSuccess: (settled, target, context) => {
+      if (target === null || !settledForStartingAccount(context)) return;
+      if (settled) toast.success("The team pod is open");
+      else toast.info("Opening the team pod…");
     },
     onError: (error, target, context) => {
       if (!settledForStartingAccount(context)) return;

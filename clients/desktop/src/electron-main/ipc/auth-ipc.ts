@@ -43,6 +43,7 @@ import {
   assertString,
   parseDesktopAuthSession,
   parseMintHostCredentialRequest,
+  parseSandboxAutomationEnvironmentId,
   parseSandboxAutomationOpenTarget,
   parseSandboxCreateRequest,
   parseSandboxLifecycleVerb,
@@ -302,11 +303,10 @@ export function registerAuthIpc(bridge: RunnerIpcBridge): void {
     RunnerHostInvoke.getSandboxAutomation,
     async (_event, bearerToken: unknown, environmentId: unknown) => {
       assertString(bearerToken, "getSandboxAutomation.bearerToken");
-      assertNullableString(environmentId, "getSandboxAutomation.environmentId");
       return getSandboxAutomationViaHttp(
         config.serverBaseUrl,
         bearerToken,
-        environmentId,
+        parseSandboxAutomationEnvironmentId(environmentId),
       );
     },
   );

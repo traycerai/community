@@ -65,6 +65,7 @@ function listed(
       frozen,
       burst,
     }),
+    teamOwned: false,
   };
 }
 
@@ -101,7 +102,7 @@ const UNKNOWN_BURST = sandboxOption({
   hostId: "sbx-unknown",
   name: "Unanswered box",
   connectable: true,
-  sandbox: { state: "awake", frozen: false, summary: null },
+  sandbox: { state: "awake", frozen: false, summary: null, teamOwned: false },
 });
 
 const POD_AWAKE = sandboxOption({
@@ -116,6 +117,7 @@ const POD_AWAKE = sandboxOption({
       hostId: "pod-awake",
       kind: "automation",
     }),
+    teamOwned: false,
   },
 });
 const POD_RELEASED = sandboxOption({
@@ -131,6 +133,7 @@ const POD_RELEASED = sandboxOption({
       state: "released",
       kind: "automation",
     }),
+    teamOwned: false,
   },
 });
 

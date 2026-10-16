@@ -277,9 +277,11 @@ function sandboxEntry(
   return hostListItemToDirectoryEntry(item, "wss://relay.example.test");
 }
 
+/** The row a pick hands `wakeSandboxOnPick`; `teamOwned` is what its scope resolved. */
 function sleepingOption(
   state: HostSandboxState,
   kind: SandboxKind,
+  teamOwned: boolean,
 ): HostScopeOption {
   return hostScopeOptionFixture({
     hostId: HOST_ID,
@@ -294,6 +296,7 @@ function sleepingOption(
         state,
         kind,
       }),
+      teamOwned,
     },
   });
 }
@@ -331,7 +334,7 @@ async function settleWake(): Promise<void> {
   await vi.advanceTimersByTimeAsync(0);
 }
 
-describe("startSandboxWake on a team sandbox", () => {
+describe("a pick that wakes a sandbox", () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -343,142 +346,166 @@ describe("startSandboxWake on a team sandbox", () => {
     vi.useRealTimers();
   });
 
-  function bindDirectory(entry: RemoteHostDirectoryEntry): FakeSandboxBinding {
+  /** A binding whose directory knows the host as `entry`, or not at all. */
+  function bindDirectory(
+    entry: RemoteHostDirectoryEntry | null,
+    asleep: HostSandboxState,
+    kind: SandboxKind,
+  ): FakeSandboxBinding {
     const binding = createFakeSandboxBinding();
     binding.directory.findById.mockImplementation((hostId) =>
       hostId === HOST_ID ? entry : null,
     );
-    scriptListUntilVerb(binding, "suspended", "agent");
+    scriptListUntilVerb(binding, asleep, kind);
     mocks.binding = binding;
     return binding;
   }
 
-  it("waits for the confirm: no list read and no verb until Resume, then wakes once", async () => {
-    const binding = bindDirectory(sandboxEntry(TEAM, "agent"));
+  describe("on a team sandbox", () => {
+    it("waits for the confirm: no list read and no verb until Resume, then wakes once", async () => {
+      const binding = bindDirectory(
+        sandboxEntry(TEAM, "agent"),
+        "suspended",
+        "agent",
+      );
 
-    wakeSandboxOnPick(sleepingOption("suspended", "agent"));
-    await settleWake();
+      wakeSandboxOnPick(sleepingOption("suspended", "agent", true));
+      await settleWake();
 
-    expect(pending()).toBe(true);
-    expect(binding.auth.listSandboxes).not.toHaveBeenCalled();
-    expect(binding.auth.runSandboxVerb).not.toHaveBeenCalled();
+      expect(pending()).toBe(true);
+      expect(binding.auth.listSandboxes).not.toHaveBeenCalled();
+      expect(binding.auth.runSandboxVerb).not.toHaveBeenCalled();
 
-    settleTeamWake(true);
-    await settleWake();
+      settleTeamWake(true);
+      await settleWake();
 
-    expect(pending()).toBe(false);
-    expect(binding.auth.runSandboxVerb).toHaveBeenCalledTimes(1);
-    expect(binding.auth.runSandboxVerb).toHaveBeenCalledWith(
-      "sbx_1",
-      "resume",
-      WAKE_BUDGET_MS,
-    );
+      expect(pending()).toBe(false);
+      expect(binding.auth.runSandboxVerb).toHaveBeenCalledTimes(1);
+      expect(binding.auth.runSandboxVerb).toHaveBeenCalledWith(
+        "sbx_1",
+        "resume",
+        WAKE_BUDGET_MS,
+      );
+    });
+
+    it("asks even when the directory has no entry for the picked row", async () => {
+      const binding = bindDirectory(null, "suspended", "agent");
+
+      wakeSandboxOnPick(sleepingOption("suspended", "agent", true));
+      await settleWake();
+
+      expect(pending()).toBe(true);
+      expect(binding.auth.listSandboxes).not.toHaveBeenCalled();
+      expect(binding.auth.runSandboxVerb).not.toHaveBeenCalled();
+
+      settleTeamWake(true);
+      await settleWake();
+
+      expect(binding.auth.runSandboxVerb).toHaveBeenCalledTimes(1);
+    });
+
+    it("asks when only the directory knows it is a team's: the pick's row says personal", async () => {
+      const binding = bindDirectory(
+        sandboxEntry(TEAM, "agent"),
+        "suspended",
+        "agent",
+      );
+
+      wakeSandboxOnPick(sleepingOption("suspended", "agent", false));
+      await settleWake();
+
+      expect(pending()).toBe(true);
+      expect(binding.auth.runSandboxVerb).not.toHaveBeenCalled();
+    });
+
+    it("wakes nothing when the confirm is cancelled", async () => {
+      const binding = bindDirectory(null, "suspended", "agent");
+
+      wakeSandboxOnPick(sleepingOption("suspended", "agent", true));
+      settleTeamWake(false);
+      await settleWake();
+
+      expect(binding.auth.listSandboxes).not.toHaveBeenCalled();
+      expect(binding.auth.runSandboxVerb).not.toHaveBeenCalled();
+      expect(pending()).toBe(false);
+    });
+
+    it("wakes nothing when the account changed before Resume", async () => {
+      const binding = bindDirectory(null, "suspended", "agent");
+
+      wakeSandboxOnPick(sleepingOption("suspended", "agent", true));
+      signInAs("user-b");
+      settleTeamWake(true);
+      await settleWake();
+
+      expect(binding.auth.runSandboxVerb).not.toHaveBeenCalled();
+    });
+
+    it("does not ask again when it joins a wake already in flight for the host", async () => {
+      const binding = bindDirectory(null, "suspended", "agent");
+      // A lifecycle request that stays pending, so the first wake is in flight.
+      binding.auth.runSandboxVerb.mockImplementation(
+        (_sandboxId, _verb, timeoutMs) =>
+          new Promise((resolve) => {
+            setTimeout(
+              () =>
+                resolve({
+                  kind: "network-error",
+                  detail: "the request timed out",
+                }),
+              timeoutMs,
+            );
+          }),
+      );
+
+      wakeSandboxOnPick(sleepingOption("suspended", "agent", true));
+      settleTeamWake(true);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(binding.auth.runSandboxVerb).toHaveBeenCalledTimes(1);
+
+      // A second pick of the same host while the first wake runs.
+      wakeSandboxOnPick(sleepingOption("suspended", "agent", true));
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(pending()).toBe(false);
+      expect(binding.auth.runSandboxVerb).toHaveBeenCalledTimes(1);
+    });
   });
 
-  it("wakes nothing when the confirm is cancelled", async () => {
-    const binding = bindDirectory(sandboxEntry(TEAM, "agent"));
+  describe("that does not ask", () => {
+    it("starts a team pod's wake at once, with the directory's entry or without", async () => {
+      for (const entry of [sandboxEntry(TEAM, "automation"), null]) {
+        const binding = bindDirectory(entry, "released", "automation");
 
-    wakeSandboxOnPick(sleepingOption("suspended", "agent"));
-    settleTeamWake(false);
-    await settleWake();
+        wakeSandboxOnPick(sleepingOption("released", "automation", true));
+        await settleWake();
 
-    expect(binding.auth.listSandboxes).not.toHaveBeenCalled();
-    expect(binding.auth.runSandboxVerb).not.toHaveBeenCalled();
-    expect(pending()).toBe(false);
-  });
+        expect(pending()).toBe(false);
+        expect(binding.auth.runSandboxVerb).toHaveBeenCalledTimes(1);
+        expect(binding.auth.runSandboxVerb).toHaveBeenCalledWith(
+          "sbx_1",
+          "start",
+          WAKE_BUDGET_MS,
+        );
+        await vi.advanceTimersByTimeAsync(300_000);
+      }
+    });
 
-  it("wakes nothing when the account changed before Resume", async () => {
-    const binding = bindDirectory(sandboxEntry(TEAM, "agent"));
+    it("starts a personal sandbox's wake at once, whether the directory has its entry or not", async () => {
+      for (const entry of [
+        sandboxEntry(undefined, "agent"),
+        sandboxEntry({ kind: "user", id: "user-a" }, "agent"),
+        null,
+      ]) {
+        const binding = bindDirectory(entry, "suspended", "agent");
 
-    wakeSandboxOnPick(sleepingOption("suspended", "agent"));
-    signInAs("user-b");
-    settleTeamWake(true);
-    await settleWake();
+        wakeSandboxOnPick(sleepingOption("suspended", "agent", false));
+        await settleWake();
 
-    expect(binding.auth.runSandboxVerb).not.toHaveBeenCalled();
-  });
-
-  it("does not ask for a sandbox the person owns: the wake starts at once", async () => {
-    const binding = bindDirectory(sandboxEntry(undefined, "agent"));
-
-    wakeSandboxOnPick(sleepingOption("suspended", "agent"));
-    await settleWake();
-
-    expect(pending()).toBe(false);
-    expect(binding.auth.runSandboxVerb).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not ask for a sandbox a user principal owns", async () => {
-    const binding = bindDirectory(
-      sandboxEntry({ kind: "user", id: "user-a" }, "agent"),
-    );
-
-    wakeSandboxOnPick(sleepingOption("suspended", "agent"));
-    await settleWake();
-
-    expect(pending()).toBe(false);
-    expect(binding.auth.runSandboxVerb).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not ask for a team pod: the wake starts at once", async () => {
-    const binding = createFakeSandboxBinding();
-    binding.directory.findById.mockImplementation(() =>
-      sandboxEntry(TEAM, "automation"),
-    );
-    scriptListUntilVerb(binding, "released", "automation");
-    mocks.binding = binding;
-
-    wakeSandboxOnPick(sleepingOption("released", "automation"));
-    await settleWake();
-
-    expect(pending()).toBe(false);
-    expect(binding.auth.runSandboxVerb).toHaveBeenCalledTimes(1);
-    expect(binding.auth.runSandboxVerb).toHaveBeenCalledWith(
-      "sbx_1",
-      "start",
-      WAKE_BUDGET_MS,
-    );
-  });
-
-  it("does not ask for a host the directory has not heard of", async () => {
-    const binding = createFakeSandboxBinding();
-    scriptListUntilVerb(binding, "suspended", "agent");
-    mocks.binding = binding;
-
-    wakeSandboxOnPick(sleepingOption("suspended", "agent"));
-    await settleWake();
-
-    expect(pending()).toBe(false);
-    expect(binding.auth.runSandboxVerb).toHaveBeenCalledTimes(1);
-  });
-
-  it("does not ask again when it joins a wake already in flight for the host", async () => {
-    const binding = bindDirectory(sandboxEntry(TEAM, "agent"));
-    // A lifecycle request that stays pending, so the first wake is in flight.
-    binding.auth.runSandboxVerb.mockImplementation(
-      (_sandboxId, _verb, timeoutMs) =>
-        new Promise((resolve) => {
-          setTimeout(
-            () =>
-              resolve({
-                kind: "network-error",
-                detail: "the request timed out",
-              }),
-            timeoutMs,
-          );
-        }),
-    );
-
-    wakeSandboxOnPick(sleepingOption("suspended", "agent"));
-    settleTeamWake(true);
-    await vi.advanceTimersByTimeAsync(0);
-    expect(binding.auth.runSandboxVerb).toHaveBeenCalledTimes(1);
-
-    // A second pick of the same host while the first wake runs.
-    wakeSandboxOnPick(sleepingOption("suspended", "agent"));
-    await vi.advanceTimersByTimeAsync(0);
-
-    expect(pending()).toBe(false);
-    expect(binding.auth.runSandboxVerb).toHaveBeenCalledTimes(1);
+        expect(pending()).toBe(false);
+        expect(binding.auth.runSandboxVerb).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(300_000);
+      }
+    });
   });
 });

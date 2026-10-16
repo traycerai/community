@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   assertNullableString,
   parseQuitDecision,
+  parseSandboxAutomationEnvironmentId,
   parseSandboxAutomationOpenTarget,
   parseSandboxCreateRequest,
   parseSandboxLifecycleVerb,
@@ -227,6 +228,29 @@ describe("parseSandboxCreateRequest", () => {
         parseSandboxCreateRequest({ ...VALID, ...override }),
       ).toThrow(`createSandbox.request.${field}`);
     }
+  });
+});
+
+// The environment a `getSandboxAutomation` read names: an empty id would send
+// `?environmentId=` and read no environment at all, so it is refused here.
+describe("parseSandboxAutomationEnvironmentId", () => {
+  it("keeps null as null: the person's own Automations host", () => {
+    expect(parseSandboxAutomationEnvironmentId(null)).toBeNull();
+  });
+
+  it("returns a non-empty id unchanged", () => {
+    expect(parseSandboxAutomationEnvironmentId("env_1")).toBe("env_1");
+  });
+
+  it.each([
+    ["an empty string", ""],
+    ["undefined", undefined],
+    ["a number", 7],
+    ["an object", {}],
+  ])("refuses %s", (_label, bad) => {
+    expect(() => parseSandboxAutomationEnvironmentId(bad)).toThrow(
+      "getSandboxAutomation.environmentId",
+    );
   });
 });
 

@@ -157,7 +157,7 @@ describe("useMakeActiveHost", () => {
         hostId,
         kind: "sandbox",
         isActive: false,
-        sandbox: { state: "awake", frozen: false, summary },
+        sandbox: { state: "awake", frozen: false, summary, teamOwned: false },
       });
     const rows = [
       hostScopeOptionFixture({ hostId: "host-a" }),

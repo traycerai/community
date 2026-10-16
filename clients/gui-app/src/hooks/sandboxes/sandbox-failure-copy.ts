@@ -41,20 +41,30 @@ function insufficientCreditCopy(
 }
 
 /** The refusals whose sentence depends on nothing but the code. */
-const REFUSAL_COPY: Readonly<Partial<Record<string, string>>> = {
-  [SANDBOX_REFUSAL_CODE_PROVIDER_UNAVAILABLE]:
+const REFUSAL_COPY: ReadonlyMap<string, string> = new Map([
+  [
+    SANDBOX_REFUSAL_CODE_PROVIDER_UNAVAILABLE,
     "Sandboxes aren't available right now. Try again later.",
-  [SANDBOX_REFUSAL_CODE_PROVIDER_FAILED]:
+  ],
+  [
+    SANDBOX_REFUSAL_CODE_PROVIDER_FAILED,
     "The sandbox failed to start. It's listed as failed; destroy it and try again.",
-  [SANDBOX_REFUSAL_CODE_TRANSITION_CONFLICT]:
+  ],
+  [
+    SANDBOX_REFUSAL_CODE_TRANSITION_CONFLICT,
     "This sandbox is changing state. Try again in a moment.",
-  [SANDBOX_REFUSAL_CODE_BUSY]:
+  ],
+  [
+    SANDBOX_REFUSAL_CODE_BUSY,
     "It's in use (an agent turn, a running shell or an open tab), so it stays awake.",
-  [SANDBOX_REFUSAL_CODE_FROZEN]:
+  ],
+  [
+    SANDBOX_REFUSAL_CODE_FROZEN,
     "This sandbox is frozen because your credits ran out. Add credits to wake it.",
-  [SANDBOX_REFUSAL_CODE_NOT_FOUND]: "This sandbox no longer exists.",
-  [SANDBOX_REFUSAL_CODE_VERB_NOT_AVAILABLE]: "This action isn't available yet.",
-};
+  ],
+  [SANDBOX_REFUSAL_CODE_NOT_FOUND, "This sandbox no longer exists."],
+  [SANDBOX_REFUSAL_CODE_VERB_NOT_AVAILABLE, "This action isn't available yet."],
+]);
 
 /**
  * The user-facing sentence for a control-plane failure. Every known code gets
@@ -81,8 +91,10 @@ export function sandboxFailureMessage(failure: SandboxControlFailure): string {
       );
     // The server names the team and its admins; its sentence is the copy.
     case SANDBOX_REFUSAL_CODE_TEAM_PODS_FULL:
-      return failure.message ?? "Every team pod is full; ask an admin to add one.";
+      return failure.message !== null && failure.message.length > 0
+        ? failure.message
+        : "Every team pod is full; ask an admin to add one.";
     default:
-      return REFUSAL_COPY[failure.code] ?? "Traycer refused that request.";
+      return REFUSAL_COPY.get(failure.code) ?? "Traycer refused that request.";
   }
 }

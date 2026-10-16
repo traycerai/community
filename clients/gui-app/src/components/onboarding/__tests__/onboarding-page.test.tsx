@@ -225,7 +225,12 @@ function tourScope(selection: HostScopeSelection): HostScope {
           hostId,
           name: hostId,
           kind: "sandbox",
-          sandbox: { state: "awake", frozen: false, summary: null },
+          sandbox: {
+            state: "awake",
+            frozen: false,
+            summary: null,
+            teamOwned: false,
+          },
         })
       : hostScopeOptionFixture({ hostId, name: hostId }),
   );

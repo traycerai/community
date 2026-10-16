@@ -39,6 +39,7 @@ export function useSandboxWakeForOpenedTile(hostId: string): void {
   useEffect(() => {
     if (!known || firedRef.current) return;
     firedRef.current = true;
-    if (needsWake) startSandboxWake(queryClient, binding, hostId);
+    // No row of its own: the directory entry says whether it asks.
+    if (needsWake) startSandboxWake(queryClient, binding, hostId, false);
   }, [binding, hostId, known, needsWake, queryClient]);
 }

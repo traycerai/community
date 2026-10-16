@@ -573,6 +573,19 @@ export function parseSandboxCreateRequest(
 }
 
 /**
+ * The environment a `getSandboxAutomation` reads: `null` for the person's own
+ * Automations host, otherwise a non-empty id (an empty one would send
+ * `?environmentId=` and read no environment at all).
+ */
+export function parseSandboxAutomationEnvironmentId(
+  value: unknown,
+): string | null {
+  return nullOr(value, (v) =>
+    requireNonEmptyString(v, "getSandboxAutomation.environmentId"),
+  );
+}
+
+/**
  * Parses the renderer-supplied Automations open target: `null` (the
  * caller's own host, no body) or a team environment and the pod's slot. A
  * malformed target throws, like a malformed create: a guessed one would open

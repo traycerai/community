@@ -12,10 +12,33 @@ export interface TeamPodOpenRow {
   readonly target: SandboxAutomationOpenTarget;
 }
 
-function teamPods(groups: HostPickerGroups): readonly HostScopeOption[] {
-  return groups.teams.flatMap((team) =>
-    team.sandboxes.filter((host) => host.sandbox?.summary?.kind === "automation"),
-  );
+/** A team pod with an environment to address it by. */
+interface TeamPod {
+  readonly host: HostScopeOption;
+  readonly sandboxId: string;
+  readonly environmentId: string;
+}
+
+/**
+ * The teams' pods. A pod row without an environment (a server from before
+ * environments) has nothing to open it by and is left out: opening it with
+ * no environment would address the person's own Automations host.
+ */
+function teamPods(groups: HostPickerGroups): readonly TeamPod[] {
+  const pods: TeamPod[] = [];
+  for (const team of groups.teams) {
+    for (const host of team.sandboxes) {
+      const summary = host.sandbox?.summary ?? null;
+      if (summary === null || summary.kind !== "automation") continue;
+      if (summary.environmentId === null) continue;
+      pods.push({
+        host,
+        sandboxId: summary.id,
+        environmentId: summary.environmentId,
+      });
+    }
+  }
+  return pods;
 }
 
 /**
@@ -25,12 +48,7 @@ function teamPods(groups: HostPickerGroups): readonly HostScopeOption[] {
 export function teamPodEnvironmentIds(
   groups: HostPickerGroups,
 ): readonly string[] {
-  const ids = new Set<string>();
-  for (const host of teamPods(groups)) {
-    const summary = host.sandbox?.summary ?? null;
-    if (summary !== null) ids.add(summary.environmentId);
-  }
-  return [...ids];
+  return [...new Set(teamPods(groups).map((pod) => pod.environmentId))];
 }
 
 /**
@@ -45,18 +63,17 @@ export function teamPodOpenRows(
   dialable: (hostId: string) => boolean,
 ): readonly TeamPodOpenRow[] {
   const rows: TeamPodOpenRow[] = [];
-  for (const host of teamPods(groups)) {
-    const summary = host.sandbox?.summary ?? null;
-    if (summary === null || dialable(host.hostId)) continue;
+  for (const { host, sandboxId, environmentId } of teamPods(groups)) {
+    if (dialable(host.hostId)) continue;
     const pod =
       podsByEnvironment
-        .get(summary.environmentId)
-        ?.find((p) => p.sandbox.id === summary.id) ?? null;
+        .get(environmentId)
+        ?.find((p) => p.sandbox.id === sandboxId) ?? null;
     rows.push({
       hostId: host.hostId,
       label: host.name,
       target: {
-        environmentId: summary.environmentId,
+        environmentId,
         ordinal: pod === null ? null : pod.ordinal,
       },
     });

@@ -28,9 +28,12 @@ const state = vi.hoisted(() => ({
   requestFleetRefresh: vi.fn(),
   toastFromAuthError: vi.fn<(error: Error, title: string) => void>(),
   toastSuccess: vi.fn<(message: string) => void>(),
+  toastInfo: vi.fn<(message: string) => void>(),
 }));
 
-vi.mock("sonner", () => ({ toast: { success: state.toastSuccess } }));
+vi.mock("sonner", () => ({
+  toast: { success: state.toastSuccess, info: state.toastInfo },
+}));
 
 vi.mock("@/lib/host", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/host")>()),
@@ -299,6 +302,105 @@ describe("useSandboxAutomationOpen", () => {
     expect(state.toastFromAuthError.mock.calls[0][1]).toBe(
       "Couldn't open this team pod.",
     );
+  });
+
+  describe("the hook's own toast for a team pod", () => {
+    const TARGET = { environmentId: "env_team", ordinal: 2 };
+
+    beforeEach(() => {
+      state.toastSuccess.mockClear();
+      state.toastInfo.mockClear();
+    });
+
+    it("says the pod is open once it settles, though the call passed no callbacks", async () => {
+      state.binding?.auth.openSandboxAutomation.mockResolvedValue({
+        ...OPENED,
+        settled: true,
+      });
+      const { wrapper } = setup();
+      const { result } = renderHook(() => useSandboxAutomationOpen(), {
+        wrapper,
+      });
+
+      act(() => {
+        result.current.mutate(TARGET);
+      });
+
+      await waitFor(() => {
+        expect(state.toastSuccess).toHaveBeenCalledWith("The team pod is open");
+      });
+      expect(state.toastSuccess).toHaveBeenCalledTimes(1);
+      expect(state.toastInfo).not.toHaveBeenCalled();
+    });
+
+    it("says it is opening while the row is still moving (202)", async () => {
+      state.binding?.auth.openSandboxAutomation.mockResolvedValue({
+        ...OPENED,
+        settled: false,
+      });
+      const { wrapper } = setup();
+      const { result } = renderHook(() => useSandboxAutomationOpen(), {
+        wrapper,
+      });
+
+      act(() => {
+        result.current.mutate(TARGET);
+      });
+
+      await waitFor(() => {
+        expect(state.toastInfo).toHaveBeenCalledWith("Opening the team pod…");
+      });
+      expect(state.toastSuccess).not.toHaveBeenCalled();
+    });
+
+    it("toasts nothing for the person's own Automations entry (a null target)", async () => {
+      state.binding?.auth.openSandboxAutomation.mockResolvedValue({
+        ...OPENED,
+        settled: true,
+      });
+      const { wrapper } = setup();
+      const { result } = renderHook(() => useSandboxAutomationOpen(), {
+        wrapper,
+      });
+
+      await act(async () => {
+        await result.current.mutateAsync(null);
+      });
+
+      expect(state.toastSuccess).not.toHaveBeenCalled();
+      expect(state.toastInfo).not.toHaveBeenCalled();
+    });
+
+    it("says nothing of an open that ends under another account", async () => {
+      let finish: () => void = () => undefined;
+      state.binding?.auth.openSandboxAutomation.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            finish = () => resolve({ ...OPENED, settled: true });
+          }),
+      );
+      signInAs("user-a");
+      const { wrapper } = setup();
+      const { result } = renderHook(() => useSandboxAutomationOpen(), {
+        wrapper,
+      });
+
+      act(() => {
+        result.current.mutate(TARGET);
+      });
+      await waitFor(() => {
+        expect(state.binding?.auth.openSandboxAutomation).toHaveBeenCalled();
+      });
+      signInAs("user-b");
+      await act(async () => {
+        finish();
+        await Promise.resolve();
+      });
+
+      expect(state.toastSuccess).not.toHaveBeenCalled();
+      expect(state.toastInfo).not.toHaveBeenCalled();
+      signInAs(null);
+    });
   });
 
   it("fails with a sign-in message, calling nothing, when no one is signed in", async () => {

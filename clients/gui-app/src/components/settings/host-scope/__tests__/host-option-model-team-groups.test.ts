@@ -74,6 +74,7 @@ function sandboxRow(
       frozen: false,
       summary:
         summary === null ? null : sandboxSummaryFixture({ hostId, ...summary }),
+      teamOwned: owner?.kind === "team",
     },
   });
 }
@@ -246,6 +247,7 @@ describe("groupHostOptions teams", () => {
         state: "awake",
         frozen: false,
         summary: sandboxSummaryFixture({ hostId: "no-item" }),
+        teamOwned: false,
       },
     });
     const noItemBurst = hostScopeOptionFixture({
@@ -255,7 +257,11 @@ describe("groupHostOptions teams", () => {
       sandbox: {
         state: "awake",
         frozen: false,
-        summary: sandboxSummaryFixture({ hostId: "no-item-burst", burst: true }),
+        summary: sandboxSummaryFixture({
+          hostId: "no-item-burst",
+          burst: true,
+        }),
+        teamOwned: false,
       },
     });
     const groups = groupHostOptions(
@@ -279,7 +285,10 @@ describe("groupHostOptions teams", () => {
 
   it("keeps a sandbox owned by a user in the user's own sandboxes", () => {
     const groups = groupHostOptions(
-      [sandboxRow("mine", ME, {}), sandboxRow("mine-burst", ME, { burst: true })],
+      [
+        sandboxRow("mine", ME, {}),
+        sandboxRow("mine-burst", ME, { burst: true }),
+      ],
       true,
       false,
       null,

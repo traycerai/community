@@ -5,6 +5,7 @@ import { isRemoteHostDirectoryEntry } from "@traycer-clients/shared/host-client/
 import { useTabHostId } from "@/components/epic-canvas/hooks/use-tab-host-id";
 import {
   sandboxFrozenLine,
+  sandboxTeamFrozenStateLine,
   sandboxTileOverlay,
   type SandboxTileOverlay,
 } from "@/components/hosts/sandbox-card-model";
@@ -16,6 +17,7 @@ import { useSandboxControlUnavailableReason } from "@/hooks/sandboxes/use-sandbo
 import { useSandboxVerb } from "@/hooks/sandboxes/use-sandbox-verb-mutation";
 import { useHostBinding } from "@/lib/host";
 import { sandboxMutationKeys } from "@/lib/query-keys";
+import { useAuthStore } from "@/stores/auth/auth-store";
 import {
   confirmTeamWake,
   teamWakeAsks,
@@ -82,6 +84,7 @@ function SandboxTileStateFrameInRuntime(props: {
           hostId={hostId}
           overlay={overlay}
           wakeAsks={wakeAsks}
+          teamOwned={facts !== null && facts.ownerTeamName !== null}
         />
       )}
     </div>
@@ -93,8 +96,11 @@ function SandboxTileOverlayLayer(props: {
   readonly overlay: SandboxTileOverlay;
   /** A team sandbox asks before its Resume or Start bills the opener. */
   readonly wakeAsks: boolean;
+  /** A team's frozen sandbox says whose bundle is out, not "your credits". */
+  readonly teamOwned: boolean;
 }): ReactNode {
   const list = useSandboxList();
+  const viewerUserId = useAuthStore((s) => s.contextMetadata?.userId ?? null);
   const summary =
     list.data?.sandboxes.find((s) => s.hostId === props.hostId) ?? null;
   // The tab-open wake (`useSandboxWakeForOpenedTile`) is already bringing it
@@ -121,7 +127,9 @@ function SandboxTileOverlayLayer(props: {
       >
         {overlay.kind === "frozen" ? (
           <p className="font-medium text-warning-foreground">
-            {sandboxFrozenLine(summary?.frozenAt ?? null)}
+            {props.teamOwned && summary !== null
+              ? sandboxTeamFrozenStateLine(summary, viewerUserId)
+              : sandboxFrozenLine(summary?.frozenAt ?? null)}
           </p>
         ) : null}
         {overlay.kind === "moving" ? (
@@ -212,9 +220,7 @@ function SandboxTileWakeButton(props: {
       size="sm"
       disabled={verb.isPending}
       data-testid="sandbox-tile-overlay-wake"
-      onClick={() =>
-        confirmTeamWake(props.asks, () => verb.mutate(props.verb))
-      }
+      onClick={() => confirmTeamWake(props.asks, () => verb.mutate(props.verb))}
     >
       {verb.isPending ? (
         <AgentSpinningDots

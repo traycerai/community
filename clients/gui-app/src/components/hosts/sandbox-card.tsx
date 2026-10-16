@@ -36,7 +36,7 @@ import {
   sandboxSecretsReadiness,
   sandboxStateLine,
   sandboxSuspendKeepsLine,
-  sandboxTeamFrozenLine,
+  sandboxTeamFrozenStateLine,
   sandboxWakePayerLine,
   type SandboxCardAction,
 } from "@/components/hosts/sandbox-card-model";
@@ -103,19 +103,15 @@ import {
 export function SandboxCard(props: {
   readonly hostName: string;
   readonly sandbox: HostScopeSandbox;
-  /** A team owns it (the registry row's `owner`), pods included. */
-  readonly teamOwned: boolean;
 }): ReactNode {
   // Taken as resolved. The builder (`sandboxFactsOf`) already prefers the
   // host list's facts and falls back to the sandbox-list summary, so a second
   // fallback here would let a stale summary's `frozen` undo a resolved thaw.
-  const { summary, state, frozen } = props.sandbox;
+  const { summary, state, frozen, teamOwned } = props.sandbox;
   const word = sandboxStateWord(props.sandbox);
   const actions =
     summary === null ? [] : sandboxCardActions(state, frozen, summary.kind);
-  const viewerUserId = useAuthStore(
-    (s) => s.contextMetadata?.userId ?? null,
-  );
+  const viewerUserId = useAuthStore((s) => s.contextMetadata?.userId ?? null);
   return (
     <Card
       size="sm"
@@ -126,9 +122,7 @@ export function SandboxCard(props: {
       <CardHeader>
         <CardTitle>{summary?.displayName ?? props.hostName}</CardTitle>
         <CardDescription data-testid="sandbox-card-state-line">
-          {props.teamOwned && frozen && summary !== null
-            ? sandboxTeamFrozenLine(summary, viewerUserId)
-            : sandboxStateLine(state, frozen, summary)}
+          {cardStateLine(props.sandbox, viewerUserId)}
         </CardDescription>
         {word === null ? null : (
           <CardAction>
@@ -148,24 +142,19 @@ export function SandboxCard(props: {
           <>
             <SandboxFacts
               summary={summary}
-              teamOwned={props.teamOwned}
+              teamOwned={teamOwned}
               state={state}
               frozen={frozen}
               viewerUserId={viewerUserId}
             />
-            {props.teamOwned && summary.kind === "automation" ? (
-              <SandboxPodRoom
-                environmentId={summary.environmentId}
-                sandboxId={summary.id}
-              />
-            ) : null}
+            <SandboxPodRoom summary={summary} teamOwned={teamOwned} />
             <SandboxGuestConfigFailure summary={summary} />
             <SandboxSecretsSection
               summary={summary}
               state={state}
               frozen={frozen}
             />
-            {sandboxCardShowsCostView(props.teamOwned) ? (
+            {sandboxCardShowsCostView(teamOwned) ? (
               <SandboxCostView sandboxId={summary.id} frozen={frozen} />
             ) : null}
           </>
@@ -177,7 +166,7 @@ export function SandboxCard(props: {
             summary={summary}
             actions={actions}
             frozen={frozen}
-            teamOwned={props.teamOwned}
+            teamOwned={teamOwned}
           />
         </CardFooter>
       ) : null}
@@ -340,19 +329,49 @@ function SandboxFacts(props: {
   );
 }
 
+/** A frozen team sandbox names whose bundle is out; every other row as before. */
+function cardStateLine(
+  sandbox: HostScopeSandbox,
+  viewerUserId: string | null,
+): string {
+  const { summary, state, frozen } = sandbox;
+  return sandbox.teamOwned && frozen && summary !== null
+    ? sandboxTeamFrozenStateLine(summary, viewerUserId)
+    : sandboxStateLine(state, frozen, summary);
+}
+
+/**
+ * The room line, on a team pod only. A pod row without an environment (a
+ * server from before environments) shows none: reading it with no
+ * environment would read the person's own Automations host.
+ */
+function SandboxPodRoom(props: {
+  readonly summary: SandboxSummary;
+  readonly teamOwned: boolean;
+}): ReactNode {
+  const { summary } = props;
+  if (!props.teamOwned || summary.kind !== "automation") return null;
+  if (summary.environmentId === null) return null;
+  return (
+    <SandboxPodRoomLine
+      environmentId={summary.environmentId}
+      sandboxId={summary.id}
+    />
+  );
+}
+
 /**
  * A team pod's room for more shells, from its environment's pod list. Every
  * pod card of a team reads the same `GET /automation?environmentId=` (one
  * query per environment), so three pods cost one read.
  */
-function SandboxPodRoom(props: {
+function SandboxPodRoomLine(props: {
   readonly environmentId: string;
   readonly sandboxId: string;
 }): ReactNode {
   const automation = useSandboxAutomation(props.environmentId);
   const pod =
-    automation.data?.pods.find((p) => p.sandbox.id === props.sandboxId) ??
-    null;
+    automation.data?.pods.find((p) => p.sandbox.id === props.sandboxId) ?? null;
   if (pod === null) return null;
   return (
     <p
@@ -905,18 +924,18 @@ function SandboxActions(props: {
             onClick={() => {
               const run = (): void => {
                 verb.mutate(action, {
-                onSuccess: (outcome) => {
-                  if (outcome === "settled") {
-                    toast.success(
-                      `${VERB_DONE_TOAST[action]} ${summary.displayName}`,
-                    );
-                  } else if (outcome === "moving") {
-                    toast.info(
-                      `${VERB_MOVING_TOAST[action]} ${summary.displayName}…`,
-                    );
-                  }
-                },
-              });
+                  onSuccess: (outcome) => {
+                    if (outcome === "settled") {
+                      toast.success(
+                        `${VERB_DONE_TOAST[action]} ${summary.displayName}`,
+                      );
+                    } else if (outcome === "moving") {
+                      toast.info(
+                        `${VERB_MOVING_TOAST[action]} ${summary.displayName}…`,
+                      );
+                    }
+                  },
+                });
               };
               // Only a wake bills: Suspend and Stop never ask.
               confirmTeamWake(

@@ -433,7 +433,12 @@ describe("HostDangerZone", () => {
             hostId: "host-sbx",
             name: "host-sbx",
             isLocalMachine: false,
-            sandbox: { state: "awake", frozen: false, summary: null },
+            sandbox: {
+              state: "awake",
+              frozen: false,
+              summary: null,
+              teamOwned: false,
+            },
           }),
           status: "ready",
           client: SOME_CLIENT,

@@ -175,6 +175,20 @@ export function sandboxTeamFrozenLine(
     : `Frozen: ${payer.displayName}'s bundle is out.`;
 }
 
+/**
+ * A frozen team sandbox's state line: whose bundle is out, then the destroy
+ * date when the server sends `frozenAt`, as the personal line has it.
+ */
+export function sandboxTeamFrozenStateLine(
+  summary: SandboxSummary,
+  viewerUserId: string | null,
+): string {
+  const line = sandboxTeamFrozenLine(summary, viewerUserId);
+  return summary.frozenAt === null
+    ? line
+    : `${line} Destroyed on ${formatSandboxDay(frozenDestroyAt(summary.frozenAt))}.`;
+}
+
 /** A team pod's room, from the pod list's `headroom` and `liveShells`. */
 export function sandboxPodRoomLine(
   headroom: number,

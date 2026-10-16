@@ -795,7 +795,9 @@ describe("openSandboxAutomationViaHttp", () => {
       stubFetch(async () =>
         jsonResponse(status, { code: "verb_not_available" }),
       );
-      expect(await openSandboxAutomationViaHttp(BASE, BEARER, null)).toMatchObject({
+      expect(
+        await openSandboxAutomationViaHttp(BASE, BEARER, null),
+      ).toMatchObject({
         kind: "refused",
         status,
       });

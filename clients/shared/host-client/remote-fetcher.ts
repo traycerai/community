@@ -539,8 +539,7 @@ export function hostListItemToDirectoryEntry(
               item.sandboxFrozen === true,
             ),
             profile: item.profile ?? null,
-            ownerTeamName:
-              item.owner?.kind === "team" ? item.owner.name : null,
+            ownerTeamName: item.owner?.kind === "team" ? item.owner.name : null,
           }
         : null,
   };

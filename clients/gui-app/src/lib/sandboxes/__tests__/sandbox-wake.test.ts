@@ -67,6 +67,7 @@ function sandboxOption(
       state,
       frozen,
       summary: sandboxSummaryFixture({ id: "sbx_1", hostId: HOST_ID, state }),
+      teamOwned: false,
     },
   });
 }

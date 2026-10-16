@@ -832,6 +832,7 @@ describe("<ProfileSyncModalHost />", () => {
             hostId: SANDBOX_HOST_ID,
             burst: false,
           }),
+          teamOwned: false,
         },
       }),
     ];

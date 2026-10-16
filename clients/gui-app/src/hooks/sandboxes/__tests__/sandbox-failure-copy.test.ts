@@ -146,9 +146,37 @@ describe("sandboxFailureMessage", () => {
         message: sentence,
       }),
     ).toBe(sentence);
+    expect(sandboxFailureMessage(refused("team_pods_full", NO_DETAIL))).toBe(
+      "Every team pod is full; ask an admin to add one.",
+    );
+  });
+
+  it("falls back to the fixed team-pods-full sentence when the server's message is empty", () => {
     expect(
-      sandboxFailureMessage(refused("team_pods_full", NO_DETAIL)),
+      sandboxFailureMessage({
+        kind: "refused",
+        status: 409,
+        code: "team_pods_full",
+        reason: null,
+        shortfallMc: null,
+        newRateMcPerHour: null,
+        currentAwakeBurnMcPerHour: null,
+        message: "",
+      }),
     ).toBe("Every team pod is full; ask an admin to add one.");
+  });
+
+  it("treats a code that is an Object.prototype name as unknown, not as a lookup hit", () => {
+    for (const code of [
+      "constructor",
+      "toString",
+      "__proto__",
+      "hasOwnProperty",
+    ]) {
+      expect(sandboxFailureMessage(refused(code, NO_DETAIL))).toBe(
+        "Traycer refused that request.",
+      );
+    }
   });
 
   it("never shows a message the server sends with any other code", () => {

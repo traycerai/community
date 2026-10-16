@@ -94,6 +94,12 @@ export interface HostScopeSandbox {
   readonly state: HostSandboxState | null;
   readonly frozen: boolean;
   readonly summary: SandboxSummary | null;
+  /**
+   * A team owns it (ticket E17): the registry row's `owner`, or the
+   * directory entry's copy of it for a row the registry has not answered
+   * for yet. Decides the card's team lines and whether a wake asks first.
+   */
+  readonly teamOwned: boolean;
 }
 
 export interface BuildHostScopeOptionsInput {
@@ -211,8 +217,21 @@ function sandboxFactsOf(
         known?.frozen ?? summary?.frozen ?? false,
       ),
       summary,
+      teamOwned: isTeamOwned(item, entryFacts),
     },
   };
+}
+
+/**
+ * Whether a team owns the row: the registry row's `owner`, or the directory
+ * entry's copy for a row the registry has not answered for yet.
+ */
+function isTeamOwned(
+  item: HostListItem | null,
+  entryFacts: RemoteHostSandboxFacts | null,
+): boolean {
+  if (item?.owner?.kind === "team") return true;
+  return entryFacts !== null && entryFacts.ownerTeamName !== null;
 }
 
 function kindOfEntryFacts(

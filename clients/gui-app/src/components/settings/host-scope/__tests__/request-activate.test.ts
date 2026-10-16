@@ -90,7 +90,12 @@ describe("requestActivate (Settings ▸ Activate, the only preferred-host write 
     const option = hostScopeOptionFixture({
       hostId: "sbx-1",
       kind: "sandbox",
-      sandbox: { state: "suspended", frozen: false, summary: null },
+      sandbox: {
+        state: "suspended",
+        frozen: false,
+        summary: null,
+        teamOwned: false,
+      },
     });
 
     await requestActivate(

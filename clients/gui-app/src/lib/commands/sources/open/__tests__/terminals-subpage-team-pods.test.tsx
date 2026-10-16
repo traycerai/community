@@ -48,18 +48,23 @@ import {
  * read per team environment, however many pods the team has.
  */
 
-const TEAM_A: HostOwnerPrincipal = { kind: "team", id: "team-a", name: "Alpha" };
-const TEAM_B: HostOwnerPrincipal = { kind: "team", id: "team-b", name: "Bravo" };
+const TEAM_A: HostOwnerPrincipal = {
+  kind: "team",
+  id: "team-a",
+  name: "Alpha",
+};
+const TEAM_B: HostOwnerPrincipal = {
+  kind: "team",
+  id: "team-b",
+  name: "Bravo",
+};
 const ENV_A = "env-a";
 const ENV_B = "env-b";
 /** Held in constants: a hook's id list is stable across renders, as the picker's is. */
 const ONLY_A: readonly string[] = [ENV_A];
 const NO_ENVIRONMENTS: readonly string[] = [];
 
-function registryItem(
-  hostId: string,
-  owner: HostOwnerPrincipal,
-): HostListItem {
+function registryItem(hostId: string, owner: HostOwnerPrincipal): HostListItem {
   return {
     hostId,
     displayName: hostId,
@@ -82,7 +87,7 @@ function registryItem(
 
 function summaryOf(
   hostId: string,
-  environmentId: string,
+  environmentId: string | null,
   kind: SandboxSummary["kind"],
 ): SandboxSummary {
   return sandboxSummaryFixture({
@@ -96,7 +101,7 @@ function summaryOf(
 function teamRow(
   hostId: string,
   owner: HostOwnerPrincipal,
-  environmentId: string,
+  environmentId: string | null,
   kind: SandboxSummary["kind"],
 ): HostScopeOption {
   return hostScopeOptionFixture({
@@ -109,6 +114,7 @@ function teamRow(
       state: "awake",
       frozen: false,
       summary: summaryOf(hostId, environmentId, kind),
+      teamOwned: true,
     },
   });
 }
@@ -124,6 +130,7 @@ function ownRow(hostId: string, kind: SandboxSummary["kind"]): HostScopeOption {
       state: "awake",
       frozen: false,
       summary: summaryOf(hostId, "env-own", kind),
+      teamOwned: false,
     },
   });
 }
@@ -169,6 +176,19 @@ describe("teamPodEnvironmentIds", () => {
       ownRow("own-pod", "automation"),
     ]);
     expect(teamPodEnvironmentIds(groups)).toEqual([]);
+  });
+
+  it("leaves out a pod with no environment: there is nothing to read its pod list by", () => {
+    const groups = pickerGroups([
+      teamRow("a-pod-0", TEAM_A, ENV_A, "automation"),
+      teamRow("a-pod-legacy", TEAM_A, null, "automation"),
+    ]);
+    expect(teamPodEnvironmentIds(groups)).toEqual([ENV_A]);
+    expect(
+      teamPodEnvironmentIds(
+        pickerGroups([teamRow("a-pod-legacy", TEAM_A, null, "automation")]),
+      ),
+    ).toEqual([]);
   });
 
   it("gives none when there is no team", () => {
@@ -251,6 +271,18 @@ describe("teamPodOpenRows", () => {
       { environmentId: ENV_A, ordinal: 4 },
       { environmentId: ENV_B, ordinal: null },
     ]);
+  });
+
+  it("offers no open for a pod with no environment, since opening it would address the person's own Automations host", () => {
+    const withLegacy = pickerGroups([
+      teamRow("a-pod-0", TEAM_A, ENV_A, "automation"),
+      teamRow("a-pod-legacy", TEAM_A, null, "automation"),
+    ]);
+    expect(
+      teamPodOpenRows(withLegacy, new Map(), NONE_DIALABLE).map(
+        (row) => row.hostId,
+      ),
+    ).toEqual(["a-pod-0"]);
   });
 
   it("offers nothing when every pod can be dialed", () => {
@@ -336,9 +368,9 @@ describe("the pod reads behind the new terminal picker", () => {
       expect(result.current.size).toBe(2);
     });
     expect(binding.auth.getSandboxAutomation).toHaveBeenCalledTimes(2);
-    expect(binding.auth.getSandboxAutomation.mock.calls.map(([e]) => e)).toEqual(
-      [ENV_A, ENV_B],
-    );
+    expect(
+      binding.auth.getSandboxAutomation.mock.calls.map(([e]) => e),
+    ).toEqual([ENV_A, ENV_B]);
     expect(result.current.get(ENV_B)).toHaveLength(1);
   });
 
