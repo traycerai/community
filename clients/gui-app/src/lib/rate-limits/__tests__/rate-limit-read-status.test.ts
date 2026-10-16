@@ -61,9 +61,7 @@ describe("isRateLimitReadStillRunningOnHost", () => {
 
   it("is false once the authority was disposed", () => {
     expect(
-      isRateLimitReadStillRunningOnHost(
-        new HostRequestAbortedError({ ...BASE, mayHaveDispatched: false }),
-      ),
+      isRateLimitReadStillRunningOnHost(new HostRequestAbortedError(BASE)),
     ).toBe(false);
   });
 

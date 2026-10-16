@@ -723,7 +723,6 @@ describe("transport-class causes never reach a reportable toast", () => {
         message: "authority replaced",
         requestId: "req-abort",
         method: "epic.subscribe",
-        mayHaveDispatched: false,
       }),
       "Couldn't subscribe.",
     );

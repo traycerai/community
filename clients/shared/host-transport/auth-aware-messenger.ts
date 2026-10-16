@@ -68,7 +68,6 @@ export function createAuthAwareMessenger<Registry extends VersionedRpcRegistry>(
             "Host request authority was aborted before authentication recovery",
           requestId: "authority-aborted",
           method,
-          mayHaveDispatched: false,
         });
       }
       const before = readBearer(authority.bearer);
@@ -92,7 +91,6 @@ export function createAuthAwareMessenger<Registry extends VersionedRpcRegistry>(
               "Host request authority was aborted during authentication recovery",
             requestId: "authority-aborted",
             method,
-            mayHaveDispatched: false,
           });
         }
         throw cause;

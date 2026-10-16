@@ -165,7 +165,6 @@ import {
   useEpicDeleteChatInBatch,
 } from "@/hooks/epic/use-epic-chat-mutations";
 import {
-  HostRequestAbortedError,
   HostRpcError,
   RetryableTransportError,
 } from "@traycer-clients/shared/host-transport/host-messenger";
@@ -211,30 +210,6 @@ function hostUnreachable(method: string): RetryableTransportError {
     method,
     fatalDetails: null,
   });
-}
-
-const UNKNOWN_OUTCOME_NOTICE =
-  "No reply came back from the Traycer host, so this may or may not have gone through.";
-
-function aborted(
-  method: string,
-  mayHaveDispatched: boolean,
-): HostRequestAbortedError {
-  return new HostRequestAbortedError({
-    message: "aborted",
-    requestId: "req-aborted",
-    method,
-    mayHaveDispatched,
-  });
-}
-
-/** The ids every notice the test raised was given, in order. */
-function noticeIds(): unknown[] {
-  return vi
-    .mocked(toast)
-    .mock.calls.map((call) =>
-      typeof call[1] === "object" ? call[1].id : undefined,
-    );
 }
 
 function makeWrapperWithClient(): {
@@ -693,47 +668,6 @@ describe("useEpicDeleteChat", () => {
     expect(toast.error).not.toHaveBeenCalled();
   });
 
-  // traycerai/traycer#2546 row 3, on the individual path: an abort after the
-  // send may have deleted the agent, so it is not silent.
-  it("says no reply came back when an individual delete was aborted after its send", () => {
-    renderHook(() => useEpicDeleteChat(), { wrapper: makeWrapper() });
-    const opts = getCapturedMutation("epic.deleteChat").options as {
-      onError: (e: HostRpcError, variables: DeleteChatMutationInput) => void;
-    };
-    const variables = {
-      epicId: "epic-1",
-      chatId: "chat-1",
-      hostId: "host-test",
-    };
-    opts.onError(aborted("epic.deleteChat", true), variables);
-    opts.onError(aborted("epic.deleteChat", true), variables);
-    expect(vi.mocked(toast).mock.calls.map((call) => call[0])).toEqual([
-      UNKNOWN_OUTCOME_NOTICE,
-      UNKNOWN_OUTCOME_NOTICE,
-    ]);
-    // One id per action: the second delete's notice does not replace the
-    // first's.
-    const ids = noticeIds();
-    expect(new Set(ids).size).toBe(2);
-    expect(toast.error).not.toHaveBeenCalled();
-    expect(toast.message).not.toHaveBeenCalled();
-  });
-
-  it("stays silent when an individual delete was cancelled before its send", () => {
-    renderHook(() => useEpicDeleteChat(), { wrapper: makeWrapper() });
-    const opts = getCapturedMutation("epic.deleteChat").options as {
-      onError: (e: HostRpcError, variables: DeleteChatMutationInput) => void;
-    };
-    opts.onError(aborted("epic.deleteChat", false), {
-      epicId: "epic-1",
-      chatId: "chat-1",
-      hostId: "host-test",
-    });
-    expect(toast).not.toHaveBeenCalled();
-    expect(toast.error).not.toHaveBeenCalled();
-    expect(toast.message).not.toHaveBeenCalled();
-  });
-
   it("leaves a batch member's failure to its caller and still rolls back the row", () => {
     renderHook(() => useEpicDeleteChatInBatch(), { wrapper: makeWrapper() });
     useEpicCanvasStore.getState().markArtifactSelfDeleted("chat-1");
@@ -952,34 +886,6 @@ describe("useEpicArchiveChat", () => {
     expect(toast.error).not.toHaveBeenCalled();
   });
 
-  // traycerai/traycer#2546 row 3, on the individual path.
-  it("says no reply came back when an individual archive was aborted after its send", () => {
-    renderHook(() => useEpicArchiveChat(), { wrapper: makeWrapper() });
-    const opts = getCapturedMutation("epic.setChatArchived").options as {
-      onError: (e: HostRpcError) => void;
-    };
-    opts.onError(aborted("epic.setChatArchived", true));
-    expect(toast).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(toast).mock.calls.map((call) => call[0])).toEqual([
-      UNKNOWN_OUTCOME_NOTICE,
-    ]);
-    expect(vi.mocked(toast).mock.calls[0][1]?.id).toMatch(
-      /^owner-host-batch-result:/,
-    );
-    expect(toast.error).not.toHaveBeenCalled();
-  });
-
-  it("stays silent when an individual archive was cancelled before its send", () => {
-    renderHook(() => useEpicArchiveChat(), { wrapper: makeWrapper() });
-    const opts = getCapturedMutation("epic.setChatArchived").options as {
-      onError: (e: HostRpcError) => void;
-    };
-    opts.onError(aborted("epic.setChatArchived", false));
-    expect(toast).not.toHaveBeenCalled();
-    expect(toast.error).not.toHaveBeenCalled();
-    expect(toast.message).not.toHaveBeenCalled();
-  });
-
   it("toasts a generic fallback on a real failure (B9)", () => {
     renderHook(() => useEpicArchiveChat(), { wrapper: makeWrapper() });
     const opts = getCapturedMutation("epic.setChatArchived").options as {
@@ -1095,8 +1001,7 @@ describe("useEpicArchiveChats", () => {
       ]);
     });
     expect(toast.error).toHaveBeenCalledWith(
-      "Archived 1 of 2 selected agents. 1 couldn't be archived.",
-      expect.anything(),
+      "Couldn't archive some selected agents.",
     );
     expect(toast.error).toHaveBeenCalledTimes(1);
   });
@@ -1184,13 +1089,11 @@ describe("useEpicArchiveChats", () => {
     });
 
     await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith(
-        "Archived 1 of 2 selected agents. 1 couldn't be archived.",
-        expect.anything(),
-      );
+      expect(toast).toHaveBeenCalledTimes(1);
     });
-    expect(toast.error).toHaveBeenCalledTimes(1);
-    expect(toast).not.toHaveBeenCalled();
-    expect(toast.message).not.toHaveBeenCalled();
+    expect(toast.message).not.toHaveBeenCalledWith(
+      UNREACHABLE_NOTICE,
+      expect.anything(),
+    );
   });
 });
