@@ -127,6 +127,7 @@ const UNAVAILABLE = { status: "unavailable" };
 const VALID_REGISTRY = {
   routeTemplate: KNOWN_STRING,
   hostId: KNOWN_STRING,
+  tabHostId: { status: "known", value: "host-tab-1" },
   epicId: KNOWN_STRING,
   tabId: STALE_STRING,
   artifactId: UNAVAILABLE,

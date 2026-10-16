@@ -103,6 +103,7 @@ import {
 import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
 import { registerDynamicActionHandler } from "@/lib/keybindings/dispatch";
 import { formatChordForDisplay } from "@/lib/keybindings/chord";
+import { listNavigationKey } from "@/lib/keybindings/list-navigation-key";
 import { useBindingForAction } from "@/stores/settings/keybinding-store";
 import {
   useGlobalResourceProjection,
@@ -2061,12 +2062,13 @@ function handleResourcePanelKeyDown(
   const navigationKey = target.getAttribute(RESOURCE_NAVIGATION_KEY_ATTRIBUTE);
   const root = panel ?? event.currentTarget;
   if (isSearch || navigationKey !== null) {
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    const listKey = listNavigationKey(event);
+    if (listKey === "ArrowDown" || listKey === "ArrowUp") {
       if (
         moveResourceNavigationFocus(
           root,
           target,
-          event.key === "ArrowDown" ? 1 : -1,
+          listKey === "ArrowDown" ? 1 : -1,
         )
       ) {
         event.preventDefault();
