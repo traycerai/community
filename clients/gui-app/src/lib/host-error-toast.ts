@@ -202,8 +202,12 @@ function transportNoticeToast(error: HostRpcError): void {
     });
     return;
   }
+  // `description: undefined`, stated: Sonner merges an update into the toast
+  // already under this id, so leaving it out would keep a refused retry's
+  // guidance line from `toastUnknownOutcomeAfterRefusedRetry`.
   toast(HOST_UNKNOWN_OUTCOME_NOTICE, {
     id: TRANSPORT_UNKNOWN_OUTCOME_TOAST_ID,
+    description: undefined,
   });
 }
 
@@ -242,11 +246,13 @@ export function toastUnknownOutcomeAfterRefusedRetry(
     finalRefusal.code === "E_IDEMPOTENCY_OUTCOME_UNKNOWN"
       ? fallback
       : hostErrorToastMessage(finalRefusal, fallback);
+  // The description is always stated, `undefined` included: Sonner merges an
+  // update into the toast already under this id, so an omitted one would
+  // keep an earlier notice's line.
   toast(HOST_UNKNOWN_OUTCOME_MAY_STILL_APPEAR_NOTICE, {
     id: TRANSPORT_UNKNOWN_OUTCOME_TOAST_ID,
-    ...(guidance === fallback
-      ? {}
-      : { description: `The retry was refused: ${guidance}` }),
+    description:
+      guidance === fallback ? undefined : `The retry was refused: ${guidance}`,
   });
 }
 
