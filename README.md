@@ -35,8 +35,8 @@ Traycer is an open-source AI orchestration app. Every agent keeps a durable sess
 | **Chat and Terminal, side by side** — Work with the same providers through a rich Chat interface or a real Terminal, with files and Git diff panels one keystroke away. | <!-- assets/terminal-and-diff.gif --> <sub><i>demo coming soon</i></sub> |
 | **Cross-device sync** — Close your laptop, open another machine, and pick up the same agents in the same state. Any device, any OS. | <!-- assets/cross-device.gif --> <sub><i>demo coming soon</i></sub> |
 | **Remote hosts** — Every machine you sign in on runs a Traycer Host, and the app can connect to your reachable hosts. Kick off agents on your desktop or a beefy remote box, then steer them from wherever you are. | <!-- assets/remote-hosts.gif --> <sub><i>demo coming soon</i></sub> |
-| **Mobile app** <sub>*coming soon*</sub> — Watch runs, answer your agents' questions, and start new work from your phone. iOS and Android. | <!-- assets/mobile.gif --> <sub><i>demo coming soon</i></sub> |
-| **In-app browser** <sub>*coming soon*</sub> — A browser built into Traycer that agents can drive: open the app they just built, click through flows, and debug live pages without leaving the workspace. | <!-- assets/in-app-browser.gif --> <sub><i>demo coming soon</i></sub> |
+| **Mobile app** — Watch runs, answer your agents' questions, and start new work from your phone. iOS and Android. | <!-- assets/mobile.gif --> <sub><i>demo coming soon</i></sub> |
+| **In-app browser** — A browser built into Traycer that agents can drive: open the app they just built, click through flows, and debug live pages without leaving the workspace. | <!-- assets/in-app-browser.gif --> <sub><i>demo coming soon</i></sub> |
 
 ## Bring Your Own Agent
 
@@ -100,7 +100,7 @@ graph LR
 - **Worktrees** — run each agent in your workspace folder, a fresh Git worktree, or an existing one.
 - **Hosts** — each machine you sign in on runs a Traycer Host that owns its agents and files; clients can connect to your reachable hosts, local or remote.
 
-This repository contains the open-source clients, CLI, and protocol. The Traycer Host is provisioned as a signed build from GitHub Releases — see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
+This repository contains the open-source clients, CLI, and protocol. The Traycer Host is provisioned as a signed build from GitHub Releases — see [CLI documentation](clients/traycer-cli/README.md).
 
 ## Installation
 
@@ -113,7 +113,7 @@ This repository contains the open-source clients, CLI, and protocol. The Traycer
 | Linux (Fedora/RHEL)   | [Download .rpm](https://github.com/traycerai/traycer/releases/latest/download/traycer-desktop-linux-x86_64.rpm)           |
 | Windows (x64)         | [Download .exe](https://github.com/traycerai/traycer/releases/latest/download/traycer-desktop-windows-x64.exe)            |
 
-All builds: [latest release](https://github.com/traycerai/traycer/releases/latest). Mobile apps for iOS and Android are coming soon.
+All builds: [latest release](https://github.com/traycerai/traycer/releases/latest). For iOS and Android, see the [mobile installation guide](https://docs.traycer.ai/account/mobile-app).
 
 ## Privacy
 
