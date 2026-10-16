@@ -8,6 +8,7 @@ import {
   NO_HOST_OPTION_REFUSALS,
 } from "@/components/settings/host-scope/host-option-model";
 import { hostScopeOptionFixture } from "@/components/settings/host-scope/host-scope-fixture";
+import { buildHostScopeOptions } from "@/components/settings/host-scope/host-scope-model";
 import type {
   HostScopeOption,
   HostScopeSandbox,
@@ -437,5 +438,65 @@ describe("<HostSwitcher /> the Automations pod", () => {
     expect(isSleepingSandboxPick(POD_AWAKE)).toBe(false);
     expect(isSleepingSandboxPick(POD_RELEASED)).toBe(true);
     expect(onSelect).toHaveBeenCalledWith("pod-awake");
+  });
+});
+
+/**
+ * Ticket E17, finding F15 (a sandbox with no host row is listed): the rows come
+ * from the real builder, fed a control-plane list whose `failed` sandbox has no
+ * directory entry and no registry row (its guest never enrolled), because that
+ * join is where the row went missing.
+ */
+describe("<HostSwitcher /> a sandbox no host row stands for", () => {
+  function hostsWithBrokenBox(): readonly HostScopeOption[] {
+    const built = buildHostScopeOptions({
+      leases: [],
+      authorityAttached: false,
+      directory: [],
+      registry: [],
+      localHostId: null,
+      activeHostId: null,
+      localService: undefined,
+      hasLiveSession: () => false,
+      localHostSettingUp: false,
+      sandboxes: [
+        sandboxSummaryFixture({
+          id: "sbx-broken",
+          hostId: "sbx-never-enrolled",
+          displayName: "Broken box",
+          state: "failed",
+          failureCode: "PROVIDER_CREATE_FAILED",
+        }),
+      ],
+      nowMs: 0,
+    });
+    return [PERSONAL, ...built];
+  }
+
+  it("lists a failed sandbox the registry and directory do not list, by name, in the host list's sandboxes group", () => {
+    renderSwitcher({
+      hosts: hostsWithBrokenBox(),
+      selected: PERSONAL,
+      action: HOST_LIST_ACTION,
+      intent: "view",
+    });
+
+    const group = screen.getByTestId("settings-host-switcher-sandboxes");
+    const brokenRow = row("sbx-never-enrolled");
+    expect(group.contains(brokenRow)).toBe(true);
+    expect(brokenRow.textContent).toContain("Broken box");
+  });
+
+  it("offers it to no picker", () => {
+    renderSwitcher({
+      hosts: hostsWithBrokenBox(),
+      selected: PERSONAL,
+      action: PICKER_ACTION,
+      intent: "bind",
+    });
+
+    expect(
+      screen.queryByTestId("settings-host-switcher-option-sbx-never-enrolled"),
+    ).toBeNull();
   });
 });
