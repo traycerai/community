@@ -756,21 +756,34 @@ describe("machine-slot.sh auto admission", () => {
     writeMeminfo(dir, LOW);
     const env = admissionEnv(dir, { TRAYCER_MACHINE_SLOT_TIMEOUT: "60" });
 
-    const a = runSlot(["beat", "auto", ...markerCommand("A", "12")], env);
-    await waitForLine(logFile, "start:A");
+    // Slot file 0 is held from outside for the whole test, so W is never alone
+    // and nothing here depends on how long a sleeping holder lasts.
+    const holder = await holdFile(join(dir, "traycer-slot-beat.0.lock"));
     const w = runSlot(["beat", "auto", ...markerCommand("W", "0.1")], env);
     await waitForFiles(dir, (names) => names.some(isTicket));
-    const readBeat = () =>
-      Number(
-        readFileSync(join(dir, readdirSync(dir).find(isTicket)), "utf8").split(
-          /\s+/,
-        )[2],
-      );
-    const firstBeat = readBeat();
+    // The ticket file exists before its first write lands: read until it holds
+    // three finite numbers (started, deadline, beat).
+    const readBeat = async () => {
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        const name = readdirSync(dir).find(isTicket);
+        const fields = (
+          name === undefined ? "" : readFileSync(join(dir, name), "utf8")
+        )
+          .split(/\s+/)
+          .filter((word) => word !== "")
+          .map(Number);
+        if (fields.length >= 3 && fields.slice(0, 3).every(Number.isFinite)) {
+          return fields[2];
+        }
+        await pause(50);
+      }
+      throw new Error("the ticket never held three numbers");
+    };
+    const firstBeat = await readBeat();
     // Long enough that a heartbeat written once, at creation, would be stale.
     await pause(7500);
-    expect(readBeat() - firstBeat).toBeGreaterThan(5);
-    expect(readLogLines(logFile)).toEqual(["start:A"]);
+    expect((await readBeat()) - firstBeat).toBeGreaterThan(5);
+    expect(readLogLines(logFile)).toEqual([]);
 
     writeMeminfo(dir, HIGH);
     const l = runSlot(["beat", "auto", ...markerCommand("L", "0.1")], env);
@@ -779,10 +792,9 @@ describe("machine-slot.sh auto admission", () => {
       expect(result.code, result.stderr).toBe(0);
     }
     const lines = readLogLines(logFile);
-    expect(lines.indexOf("end:A")).toBe(-1);
     expect(lines.indexOf("start:W")).toBeGreaterThan(-1);
     expect(lines.indexOf("start:W")).toBeLessThan(lines.indexOf("start:L"));
-    expect((await a.done).code).toBe(0);
+    holder.kill("SIGKILL");
   }, 40000);
 
   it("takes the admission gate around admission: a caller waits while another process holds it", async () => {
