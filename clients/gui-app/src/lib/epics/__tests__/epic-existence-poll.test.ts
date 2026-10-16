@@ -481,7 +481,7 @@ describe("a keyed create retried to exhaustion", () => {
     });
   }
 
-  it("polls after a sent-and-dropped attempt followed by attested timeouts, and finds the Task", async () => {
+  it("a sent-and-dropped attempt followed by attested timeouts ends decidable, and the poll finds the Task", async () => {
     // Attempt 1 committed on the host and lost its answer; the retries then
     // each timed out before dispatch, with the host attesting so.
     const outcomes: RetryableTransportError[] = [
