@@ -29,6 +29,7 @@ import {
   removeDevicePushTokenViaHttp,
 } from "@traycer-clients/shared/auth/push-token-fetcher";
 import { startNativeKeyboardBridge } from "./native-keyboard-bridge";
+import { buildDevHostFetcher } from "./dev-host-discovery";
 import { AuthSession, MobileAuthSheet } from "../auth-sheet";
 import { SANDBOXES_UNAVAILABLE_IN_STAGING } from "@traycer-clients/shared/host-client/sandbox-control";
 import { MobileRunnerHost } from "../mobile-runner-host";
@@ -100,56 +101,6 @@ function buildOpenPushSettings(): (() => Promise<void>) | null {
 }
 
 const config = __TRAYCER_MOBILE_CONFIG__;
-
-// The baked dev host captures the port as of Vite startup, which goes stale
-// whenever the dev host restarts; the dev-server endpoint re-reads the host's
-// pid.json per request, so each directory refresh gets the live port.
-// BROWSER-TESTING SCAFFOLDING (dev entry only): a shipped build carries no
-// `devHost` and uses real remote-host discovery instead (see below).
-function buildDevHostFetcher(
-  devHost: TraycerMobileDevHost,
-): () => Promise<RemoteHostFetchOutcome> {
-  // The baked config predates the directory's dialability field; the dev
-  // host is a loopback WebSocket, which is the definition of dialable.
-  const bakedHost: RemoteHostFetchOutcome = {
-    kind: "hosts",
-    entries: [{ ...devHost.host, transportDialability: "dialable" }],
-  };
-  return async () => {
-    try {
-      const response = await fetch(devHost.devHostPath);
-      if (!response.ok) return bakedHost;
-      const parsed: unknown = await response.json();
-      if (parsed === null || typeof parsed !== "object") return bakedHost;
-      const record = parsed as Record<string, unknown>;
-      const { hostId, version, websocketUrl } = record;
-      if (
-        typeof hostId !== "string" ||
-        typeof version !== "string" ||
-        typeof websocketUrl !== "string"
-      ) {
-        return bakedHost;
-      }
-      return {
-        kind: "hosts",
-        entries: [
-          {
-            ...devHost.host,
-            hostId,
-            version,
-            websocketUrl,
-            transportDialability: "dialable",
-          },
-        ],
-      };
-    } catch {
-      // The baked entry, not `failed`: this scaffolding's whole point is that
-      // the dev host is reachable at a known port even when the pid re-read
-      // misses.
-      return bakedHost;
-    }
-  };
-}
 
 // `null` hands discovery to gui-app's default fetcher — the registry list
 // (`GET /api/v3/hosts` through `MobileRunnerHost.listRegisteredHosts`)
