@@ -26,7 +26,8 @@ export interface SandboxGrantRouteView {
   readonly address: string;
   /**
    * `null` when the sandbox has reported nothing for this route: asleep, a
-   * server from before the field, or a route bound since its last heartbeat.
+   * server from before the field, a route bound since its last heartbeat, or
+   * a host that no longer vouches for its reports (`sandboxHostVouches`).
    * Shown as no state at all, never as ready.
    */
   readonly readiness: "pending" | "ready" | "unavailable" | null;

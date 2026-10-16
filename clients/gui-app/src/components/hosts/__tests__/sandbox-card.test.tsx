@@ -126,6 +126,7 @@ vi.mock("@/hooks/auth/use-auth-user-query", () => ({
 }));
 
 import { SandboxCard } from "@/components/hosts/sandbox-card";
+import type { HostHealthState } from "@/components/settings/host-scope/host-health";
 import { SANDBOX_STAND_IN_CLAUSE } from "@/lib/sandboxes/sandbox-grants-view";
 import {
   buildHostScopeOptions,
@@ -135,12 +136,20 @@ import {
 const NAME = "build-box";
 
 function renderCard(sandbox: HostScopeSandbox): void {
-  renderCardDestroyed(sandbox, null);
+  renderCardOnHost(sandbox, null, "online");
 }
 
 function renderCardDestroyed(
   sandbox: HostScopeSandbox,
   onDestroyed: (() => void) | null,
+): void {
+  renderCardOnHost(sandbox, onDestroyed, "online");
+}
+
+function renderCardOnHost(
+  sandbox: HostScopeSandbox,
+  onDestroyed: (() => void) | null,
+  hostState: HostHealthState,
 ): void {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false }, queries: { retry: false } },
@@ -149,6 +158,7 @@ function renderCardDestroyed(
     <QueryClientProvider client={queryClient}>
       <SandboxCard
         hostName="Host name"
+        hostState={hostState}
         sandbox={sandbox}
         likeThis={{ kind: "personal" }}
         onDestroyed={onDestroyed}
@@ -964,6 +974,16 @@ describe("<SandboxCard /> secrets readiness", () => {
     const line = screen.getByTestId("sandbox-card-secrets-readiness");
     expect(line.getAttribute("data-tone")).toBe("pending");
   });
+
+  it("shows no readiness line once the sandbox's host is offline", () => {
+    renderCardOnHost(
+      sandboxOf("awake", false, { phase: "ready" }),
+      null,
+      "offline",
+    );
+
+    expect(screen.queryByTestId("sandbox-card-secrets-readiness")).toBeNull();
+  });
 });
 
 describe("<SandboxCard /> secrets section", () => {
@@ -1232,6 +1252,50 @@ describe("<SandboxCard /> grants list", () => {
     expect(routes[1].textContent).toContain("not used yet");
     expect(routes[2].textContent).toContain("cache-2.internal");
     expect(routes[2].textContent).toContain("Connector is offline");
+  });
+
+  it("shows no reported route state once the sandbox's host is offline, but keeps the broker's", () => {
+    mocks.grantsData = grantsOf(
+      [
+        grantOf({
+          routes: [
+            {
+              route: "route-1",
+              destination: "db.internal",
+              port: 5432,
+              unready: null,
+            },
+            {
+              route: "route-2",
+              destination: "cache.internal",
+              port: 6379,
+              unready: "connector_offline",
+            },
+          ],
+        }),
+      ],
+      null,
+    );
+
+    // The host's last report says both are ready; it can no longer vouch for
+    // that, while the broker's own word still stands.
+    renderCardOnHost(
+      sandboxOf("awake", false, {
+        phase: "ready",
+        routes: [
+          { route: "route-1", state: "ready", code: null },
+          { route: "route-2", state: "ready", code: null },
+        ],
+      }),
+      null,
+      "offline",
+    );
+
+    const routes = screen.getAllByTestId("sandbox-card-grant-route");
+    expect(routes.map((route) => route.getAttribute("data-readiness"))).toEqual(
+      ["unknown", "unavailable"],
+    );
+    expect(routes[0].textContent).not.toContain("ready");
   });
 
   it("shows a route whose connector the broker reports offline, by the connector's name", () => {

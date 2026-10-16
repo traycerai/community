@@ -6,6 +6,7 @@ import {
   type SandboxMember,
   type SandboxSummary,
 } from "@traycer/protocol/host/sandbox-control";
+import type { HostHealthState } from "@/components/settings/host-scope/host-health";
 import { frozenDestroyAt } from "@/lib/sandboxes/sandbox-balance";
 
 /**
@@ -338,22 +339,40 @@ export interface SandboxSecretsReadiness {
   readonly text: string;
 }
 
+/**
+ * Whether what the sandbox's host last reported (its phase, its per-route
+ * readiness) can still be shown. Nothing ages those reports: an idle
+ * sandbox's host reports nothing, by design. So they stand only while the
+ * host's own health - the verdict the host switcher shows - says it is
+ * reachable; a host that went offline says nothing rather than a state it can
+ * no longer vouch for. `reported-reachable` keeps them: it is the healthy
+ * reading of a host this window never dialled.
+ */
+export function sandboxHostVouches(hostState: HostHealthState): boolean {
+  return hostState === "online" || hostState === "reported-reachable";
+}
+
 /** The longest hop name shown; the phase is the guest's own text. */
 const DEGRADED_HOP_MAX_LENGTH = 80;
 
 /**
  * `null` when there is nothing to say: the sandbox is not awake (its grants
  * are refused until it is, and the state line already says where it stands),
- * the server reports no phase (one from before the field, or a sandbox with
- * no brokered secrets), or the phase is one this build does not know - which
- * is shown as nothing, never as ready.
+ * its host is not reachable, the server reports no phase (one from before the
+ * field, or a sandbox with no brokered secrets), or the phase is one this
+ * build does not know - which is shown as nothing, never as ready.
+ *
+ * The phase is the one the host LAST reported, so the line stands only while
+ * `sandboxHostVouches(hostState)`.
  */
 export function sandboxSecretsReadiness(
   state: HostSandboxState | null,
   frozen: boolean,
   summary: SandboxSummary,
+  hostState: HostHealthState,
 ): SandboxSecretsReadiness | null {
   if (frozen || state !== "awake" || summary.phase === null) return null;
+  if (!sandboxHostVouches(hostState)) return null;
   const phase = parseSandboxHeartbeatPhase(summary.phase);
   switch (phase.kind) {
     case "proxy-reachable":

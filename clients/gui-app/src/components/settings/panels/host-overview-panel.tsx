@@ -1912,6 +1912,7 @@ export function HostOverviewPanel(props: {
       {host.sandbox === null ? null : (
         <SandboxCard
           hostName={displayName}
+          hostState={host.health.state}
           sandbox={host.sandbox}
           likeThis={sandboxLikeThis(host, host.sandbox)}
           // Destroying a sandbox no host row stands for removes its row, so

@@ -145,6 +145,7 @@ function renderCardLikeThis(
     <QueryClientProvider client={queryClient}>
       <SandboxCard
         hostName="Host name"
+        hostState="online"
         sandbox={{ ...sandbox, teamOwned }}
         likeThis={likeThis}
         onDestroyed={null}
