@@ -122,6 +122,8 @@ function sampleTelemetry(
     exitMeaning: "some crash meaning",
     hasDiagnosticReport: true,
     uptimeMs: 1500,
+    stopRequested: false,
+    stderrEmpty: false,
     ...overrides,
   };
 }
@@ -190,10 +192,14 @@ describe("buildHostCrashEvent", () => {
         "cli_version",
         "crash_kind",
         "host_environment",
+        "host_output",
+        "host_phase",
         "host_running_version",
         "host_version",
         "os_release",
         "platform",
+        "stop_requested",
+        "uptime_bucket",
       ].sort(),
     );
     expect(Object.keys(event.extra).sort()).toEqual(
@@ -244,6 +250,10 @@ describe("buildHostCrashEvent", () => {
       arch: arch(),
       os_release: release(),
       crash_kind: "1",
+      stop_requested: "no",
+      host_output: "wrote",
+      host_phase: "published",
+      uptime_bucket: "lt-10s",
     });
   });
 
@@ -261,6 +271,88 @@ describe("buildHostCrashEvent", () => {
     expect(event.tags.host_running_version).toBe("unknown");
     expect(event.hostId).toBe("host-mismatched");
     expect(event.extra.hostIdKnown).toBe(true);
+  });
+
+  describe("external termination", () => {
+    it("reports DBG_TERMINATE_PROCESS as a warning under its own fingerprint, tagged host_exit_kind", () => {
+      const event = buildHostCrashEvent(
+        sampleTelemetry({
+          exitCode: 0x40010004,
+          signal: null,
+          exitMeaning:
+            "0x40010004 DBG_TERMINATE_PROCESS (terminated from outside)",
+        }),
+        null,
+      );
+      expect(event.level).toBe("warning");
+      expect(event.fingerprint).toEqual([
+        HOST_CRASH_FINGERPRINT_ROOT,
+        platform(),
+        "external-termination",
+      ]);
+      expect(event.tags.host_exit_kind).toBe("external-termination");
+      expect(event.tags.crash_kind).toBe("0x40010004");
+    });
+
+    it("keeps every other exit status an error under the crash fingerprint with no host_exit_kind", () => {
+      const event = buildHostCrashEvent(
+        sampleTelemetry({ exitCode: 0xc0000005, exitMeaning: null }),
+        null,
+      );
+      expect(event.level).toBe("error");
+      expect(event.fingerprint).toEqual([
+        HOST_CRASH_FINGERPRINT_ROOT,
+        platform(),
+        "0xC0000005",
+      ]);
+      expect(event.tags).not.toHaveProperty("host_exit_kind");
+    });
+  });
+
+  describe("exit-cause tags", () => {
+    it("tags a requested stop and a silent child as closed-set verdicts", () => {
+      const event = buildHostCrashEvent(
+        sampleTelemetry({ stopRequested: true, stderrEmpty: true }),
+        null,
+      );
+      expect(event.tags.stop_requested).toBe("yes");
+      expect(event.tags.host_output).toBe("silent");
+    });
+
+    it("derives host_phase from whether the child published its own pid.json", () => {
+      const published = buildHostCrashEvent(sampleTelemetry({}), {
+        hostId: "host-a",
+        runningVersion: "1.2.4",
+      });
+      const beforePublish = buildHostCrashEvent(sampleTelemetry({}), {
+        hostId: "host-a",
+        runningVersion: null,
+      });
+      const unknown = buildHostCrashEvent(sampleTelemetry({}), null);
+      expect(published.tags.host_phase).toBe("published");
+      expect(beforePublish.tags.host_phase).toBe("before-publish");
+      expect(unknown.tags.host_phase).toBe("unknown");
+      // A spawn that yielded no pid cannot be compared with the file's pid.
+      const noChildPid = buildHostCrashEvent(
+        sampleTelemetry({ childPid: null }),
+        { hostId: "host-a", runningVersion: null },
+      );
+      expect(noChildPid.tags.host_phase).toBe("unknown");
+    });
+
+    it.each([
+      [0, "lt-10s"],
+      [9_999, "lt-10s"],
+      [10_000, "lt-1m"],
+      [59_999, "lt-1m"],
+      [60_000, "lt-10m"],
+      [10 * 60_000, "lt-1h"],
+      [60 * 60_000, "lt-24h"],
+      [24 * 60 * 60_000, "gte-24h"],
+    ])("buckets an uptime of %d ms as %s", (uptimeMs, bucket) => {
+      const event = buildHostCrashEvent(sampleTelemetry({ uptimeMs }), null);
+      expect(event.tags.uptime_bucket).toBe(bucket);
+    });
   });
 
   describe("cli_version tag", () => {
@@ -390,6 +482,20 @@ describe("captureHostCrashEvent", () => {
     expect(sentryMocks.captureMessage).toHaveBeenCalledWith(
       event.message,
       "error",
+    );
+  });
+
+  it("sends an externally terminated host at warning level, not error", () => {
+    const event = buildHostCrashEvent(
+      sampleTelemetry({ exitCode: 0x40010004, signal: null }),
+      null,
+    );
+    captureHostCrashEvent(event);
+
+    expect(sentryMocks.setLevel).toHaveBeenCalledWith("warning");
+    expect(sentryMocks.captureMessage).toHaveBeenCalledWith(
+      event.message,
+      "warning",
     );
   });
 

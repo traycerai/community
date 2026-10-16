@@ -1,6 +1,10 @@
 #!/usr/bin/env -S bun
-// Must stay the first import: it installs the proxy dispatcher every later
-// module's outbound request depends on, Sentry's transport included.
+// Must stay the first two imports, in this order. The socket guard comes ahead
+// of anything that can open a connection: without it a reset loopback
+// connection throws out of Node's HTTP client as an uncaught exception
+// (traycerai/traycer#2093). The second installs the proxy dispatcher every
+// later module's outbound request depends on, Sentry's transport included.
+import "@traycer-clients/shared/platform/install-socket-tos-guard";
 import "./net/install-env-proxy";
 import "./sentry";
 import * as Sentry from "@sentry/node";
@@ -164,7 +168,11 @@ import {
   assertAgentWorktreeCreateAllowed,
   readAgentWorktreeCreatePolicy,
 } from "./agent-worktree-create";
-import { writeStderr, writeStdout } from "./runner/std-write";
+import {
+  installStdioErrorGuards,
+  writeStderr,
+  writeStdout,
+} from "./runner/std-write";
 
 // Helper: register a runner-aware action handler. The runner owns
 // process termination, so anything composed via `withRunner` participates in
@@ -3073,12 +3081,19 @@ function registerAgentCommands(
       .option(
         "-a, --all",
         "List all agents in this Task, not just agents belonging to this user",
+      )
+      .option("--live", "Hide archived agents")
+      .option(
+        "--compact",
+        "One short line per agent, without folders, model or session detail",
       ),
     (opts) =>
       buildAgentListCommand({
         epicId: null,
         senderAgentId: null,
         all: opts.all === true,
+        live: opts.live === true,
+        compact: opts.compact === true,
       }),
   );
 
@@ -3651,7 +3666,11 @@ function registerMonitorCommand(program: Command): void {
         }\n`,
       );
       await finishAndExit(1);
+      return;
     }
+    // `runMonitor` returns only once stdout's reader has closed the pipe (an
+    // orphaned monitor): that is a normal end, not a failure.
+    await finishAndExit(0);
   });
 }
 
@@ -3666,6 +3685,10 @@ const entryArgv = typeof process !== "undefined" ? process.argv[1] : undefined;
 if (isTraycerCliEntrypoint(entryArgv)) {
   const entryLogger = createCliLogger(config.environment);
   installProcessFailureHandlers(entryLogger);
+  // Before any command runs, so every writer is covered - including the ones
+  // that bypass std-write (bare `process.stdout.write`, `console.error`). A
+  // reader that closed the pipe is not a CLI fault; see std-write.ts.
+  installStdioErrorGuards();
   const program = buildProgram();
   entryLogger.debug("CLI entrypoint parsing argv", {
     environment: config.environment,

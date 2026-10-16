@@ -14,6 +14,8 @@
  * why the results collapse to coarse variants instead of surfacing bodies.
  */
 
+import { timeoutSignal } from "../host-client/timeout-signal";
+
 const PUSH_TOKEN_FETCH_TIMEOUT_MS = 10_000;
 
 export type DevicePushPlatform = "ios" | "android";
@@ -74,7 +76,7 @@ async function postPushTokens(
         "Content-Type": "application/json",
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(PUSH_TOKEN_FETCH_TIMEOUT_MS),
+      signal: timeoutSignal(PUSH_TOKEN_FETCH_TIMEOUT_MS),
     });
   } catch {
     return { kind: "network-error" };

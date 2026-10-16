@@ -17,6 +17,7 @@ import {
   SettingsMasterSelect,
 } from "@/components/settings/settings-master-detail";
 import { RefreshIconButton } from "@/components/refresh-icon-button";
+import { ProviderCatalogTimeoutGroup } from "@/components/settings/panels/provider-catalog-timeout-group";
 import { MutedAgentSpinner } from "@/components/ui/agent-spinning-dots";
 import { ReportIssueAction } from "@/components/report-issue/report-issue-action";
 import { createReportIssueContext } from "@/lib/report-issue-context";
@@ -245,6 +246,8 @@ const PROVIDER_DESCRIPTIONS: Record<ProviderId, string> = {
     "Reasonix - a coding CLI you point at your own model provider; keys live in Reasonix's own store, set up from its terminal wizard.",
   antigravity:
     "Antigravity - Google's agent server via your Google account; Traycer can sign the terminal account in or switch its Google account, but never signs it out.",
+  commandcode:
+    "Command Code - a coding CLI via your Command Code account; install it yourself and sign in from a terminal.",
 };
 
 function hasPendingProviderProbe(
@@ -451,6 +454,9 @@ function ProvidersSettingsPanelInner({
       // override precisely because the ambient client already IS the scoped
       // host's. Gating on `ready` alone would hide the control in the ordinary
       // no-explicit-pick case.
+      //
+      // Status only: settings live in the body, as rows in the tab they
+      // belong to (the Model list timeout is in each provider's CLI & Args).
       headerAction={
         isHostScopeUsable(scope.status) ? <ProvidersGlobalStatus /> : undefined
       }
@@ -1425,6 +1431,10 @@ function ProviderTabBody({
           <TerminalAgentArgsSection
             key={state.terminalAgentArgs}
             state={state}
+          />
+          <ProviderCatalogTimeoutGroup
+            providerId={state.providerId}
+            hostId={hostId}
           />
         </div>
       );

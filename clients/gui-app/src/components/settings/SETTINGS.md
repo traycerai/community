@@ -266,6 +266,11 @@ predicates; it never imports the assembled index or the search consumer.
   `null` / `false` / `""` rendering the bare label. The theme slots pass
   `"Active"` there ("Light theme · Active"); the definition's label stays the
   searchable copy.
+- **`details` is the row's full-width tail.** Options a row's control
+  governs go in `details`, drawn on a line of their own under the label and
+  the control, across the row's whole width; `null` / `false` draw nothing,
+  which is how a row hides its options while its switch is off. Archive idle
+  agents automatically is the caller.
 - **Hand-built regions read the definition too.** The branch-prefix row keeps
   its bespoke layout (the input and its live preview share a line) and writes
   `data-settings-anchor={GENERAL.definitions.branchPrefix.anchor}` and its
@@ -1104,8 +1109,8 @@ means the drain UI renders NOTHING - never a zero, which would offer to end
       no alias for it (nothing stores an anchor token, so there is nothing an
       alias would redirect).
   - **Agents** (anchor `general-agents`, `data-testid="settings-general-agents"`):
-    Prevent sleep while running, When you quit Traycer, Worktree branch prefix
-    and Agent roles. These were four groups of one setting each (Running
+    Prevent sleep while running, When you quit Traycer, Worktree branch prefix,
+    Agent roles and Archive idle agents automatically. These were four groups of one setting each (Running
     agents, When you quit Traycer, Worktrees, Experimental), which drew four
     headings and four borders around four settings. The rule now is the one
     under "Page shapes": a group holds at least two rows. Each row gates
@@ -1167,6 +1172,58 @@ means the drain UI renders NOTHING - never a zero, which would offer to end
       feature-settings bridge) and marked with the muted xs **Experimental**
       badge the permission modes use, in place of an Experimental heading over
       one row.
+    - **Archive idle agents automatically** (`ChatAutoArchiveSettingsRow` in
+      `panels/chat-auto-archive-settings-row.tsx`, definition
+      `chatAutoArchive`): the ACCOUNT-wide chat auto-archive setting, read and
+      written through the app-wide host (`chatAutoArchive.get` / `.set`,
+      hooks under `hooks/chat-auto-archive/`), which proxies one cloud row
+      every host the user runs applies. Rendered only when that host
+      advertises BOTH methods (two `useHostMethodSupport` calls); otherwise
+      absent. Gated on the selected host, so it has no search entry of its
+      own: its label and keywords (archive, idle, inactive, auto, cleanup,
+      timer) contribute to the Agents group. Controls: the main switch
+      (`enabled`), alone in the control slot. Its options sit in the row's
+      `details` slot, an inset group (`bg-foreground/3`, one option per line,
+      label and hint left, control right) drawn only while the policy has
+      loaded and the switch is on; closing it writes nothing. "Archive after"
+      is a preset picker (1 hour, 6 hours, 1 day, 3 days, 7 days, 30 days,
+      filtered to the host's `bounds`) that commits on pick, plus "Custom…",
+      which writes nothing and opens a number-and-unit field: minutes, hours
+      and days, with seconds listed only when the shown value needs them,
+      in the largest unit that states the shown seconds exactly (the shown
+      threshold is the newest save's while one is in flight, else the saved
+      one). A shown value that is no preset is Custom with the field open, and
+      picking a preset drops the field's draft. The presets and the custom
+      field are one value, so one action is one write: the custom value
+      commits on a unit pick, on Enter (not an Enter that confirms an IME
+      composition), and when focus leaves the whole threshold control -
+      moving between the number, the unit picker, the preset picker or
+      either portalled list is not leaving. A value outside `bounds` shows an
+      inline error and writes nothing, and a commit that matches the shown
+      threshold sends nothing. "Include chats I started" (`includeUserCreated`, off by
+      default; terminal agent chats count as the user's) is the second line.
+      Under the group, a footnote: "Archived when a host next opens the task.
+      A new message brings a chat back." A never-saved account shows 3600
+      clamped into `bounds`, which is also what the switches write. Every
+      write sends all three fields. A failed read adds "Couldn't read the
+      auto-archive setting from this host." under the description. Controls
+      stay disabled with no error until the viewer id resolves and the read
+      lands. While a save is pending they stay LIVE, unlike the usual
+      disabled-while-pending rule, with `AgentSpinningDots` beside the main
+      switch: saves queue in order (`chatAutoArchiveWriteScope`), the row
+      shows the newest save's policy, and a disabled switch would swallow the
+      click that lands right after the threshold field saved on its way out.
+      Every write is built at event time on the newest unsettled write the
+      row sent (a ref, cleared when that write settles), not on the rendered
+      policy: a touch tap delivers the field's leave-blur and the switch's
+      click in one task, before React has re-rendered. When the newest save
+      is rejected the row drops back to the saved policy; a rejected older
+      save does not, because the newer save queued behind it re-sends its
+      fields. The row body is keyed by the viewer, so an account switch with
+      Settings open drops the outgoing account's draft and stops following
+      its in-flight save. The client never schedules archiving: the
+      host's sweep does, and a task nothing holds open is swept when a host
+      next opens it, which is why the copy makes no wall-clock promise.
   - **Onboarding**: Product tour (replay onboarding), and nothing else. Import
     your work and Data migration used to share this group under the name
     "Setup & migration"; both moved to the scoped host's **Overview**, because
@@ -1931,6 +1988,13 @@ codeFontSize` in muted styling while `null`; any tick/type pins an
     actions and Pause, under the pill row and every other row. It has no
     Size, no Shown and no dock position; stale stored values for it are
     dropped on rehydrate. It empties to nothing, leaving no gap.
+    Its fold is remembered per host and chat in `chat-dock-open-store.ts`
+    (#2441), because the panel unmounts whenever the queue drains and a fold
+    kept in the panel came back open with the next queued message; chat ids
+    are host-minted, so the host is part of the key. A received agent row is
+    one line (its sender chip and the message as plain text, ellipsized; a
+    held reason waits for the unfold) until its text is clicked, and the
+    header splits the count: `2 messages · 12 from agents`.
   - **Received A2A queue rows follow the Running agents mode**, and fold into
     the same chip with their own count. That is also why the chip exists
     whenever those rows do, even with no sub-agent running: without it, folding
@@ -2658,6 +2722,47 @@ window`, recorded in the type as `coverage.browsersAreMountedOnly` -
     Claude/OpenCode, but BEFORE Codex's `resume` subcommand). The launch picker
     pre-fills this value as a cosmetic default; an untouched pre-fill launches
     with `null` so the host resolves the current saved value itself.
+  - **Model list** (`provider-catalog-timeout-group.tsx`), the last group on
+    CLI & Args: how long the scoped host waits for this provider's model and
+    command lists (`~/.traycer/cli/config.json` on that machine: the shared
+    value in `catalog.probeTimeoutSeconds`, each provider's own in the
+    top-level `catalogOverrides` block, over `config.catalog.get` / `set` at
+    1.1; top-level because a #2450-era binary strips unknown keys INSIDE
+    `catalog` on its next write but carries an unknown top-level block). Two `SettingsRow`s and
+    no other copy. **Timeout** ("How long to wait for the model list.") is a
+    `SettingsSegmentedControl` of 60 / 90 / 120 / 180 s filtered to the
+    `bounds` the host returns, plus the shown value as its own segment when a
+    hand-edited file holds another. **Same for all providers** is a switch.
+    On (the default: no `overrides[harnessId]`), the picker shows and edits the
+    SHARED value (`scope: "all"`), which every provider whose switch is on
+    follows; it never touches another provider's own value. Off, the provider
+    has its own value (`scope: "harness"`) and the picker edits only that.
+    Turning it off writes the shared value as the provider's own, so nothing
+    changes until the picker moves; turning it on clears it (`null`). The
+    override map is keyed by HARNESS id (`GUI_HARNESS_BY_PROVIDER_ID`, so
+    `claude-code` stores under `claude`), because the host reads it per catalog
+    probe, which is keyed by harness. Gate: the panel's `HostScopeGate` (usable
+    scope) plus `resolveAutoCleanupGate` (reachable host, BOTH methods
+    negotiated at 1.1 - `catalogTimeoutRowsSupported`); anything short of
+    `ready` renders nothing, so a 1.0 host (shared value only) has no rows.
+    Writes go through `useConfigCatalogSetMutation`, which cancels any
+    in-flight read, files the host's answer (the re-read state) into the
+    `config.catalog.get` cache and only then settles. The controls are
+    disabled while ANY write is outstanding on the host
+    (`useConfigCatalogSetOutstanding`, `useIsMutating` on the host-keyed
+    `configMutationKeys.catalogSet(hostId)`), including one whose rows have
+    since unmounted, so the next write is never built on the state before the
+    last one (switch off, then a pick, must go out as `scope: "harness"`). The
+    write carries a dispatch-time floor of `config.catalog.set@1.1`
+    (`requiredHostMethodVersion`): a host rolled back to 1.0 after the rows
+    rendered refuses it instead of taking the 1.1 body through the same-major
+    downgrade, which would strip `scope` and move the shared value. A failed first read (malformed config file) replaces
+    the Timeout row's description with the repair sentence; a failed RE-read
+    behind a known value keeps that value. Search: the `modelList` region group
+    (anchor `null`, like every Providers region) with both rows contributing
+    to it. Every provider that advertises CLI & Args (all of them today, amp
+    and cursor included) has the rows. The host reads the value at every
+    catalog probe, so a change applies to the next read without a restart.
   - **Who reviews &lt;provider&gt;'s commands**
     (`provider-auto-judge-section.tsx`), on the provider's own **Permissions**
     tab (icon `ShieldCheck`, since the Account tab already uses `KeyRound`,
@@ -2777,9 +2882,12 @@ window`, recorded in the type as `coverage.browsersAreMountedOnly` -
     is not needed, just show plan, bonus and credits"); the tier chip lives on
     the header popover's account cards instead. Each bar is shown only when that
     bucket's total > 0; amounts
-    are `$`-denominated. Credit-based vs rate-limit-based is decided exactly like
-    the extension (`isCreditBasedPricing` - V3 plans are credit-based); **legacy /
-    v2 (usage-limit) plans** instead render a **Usage limit** section with the
+    are `$`-denominated. Credit-based vs rate-limit-based is decided by
+    `usesCreditView`: a credit-based status (`isCreditBasedPricing` - FREE and
+    the V3 plans), or any plan whose
+    server payload carries `totalPlanCredits > 0`, shows the credit breakdown. No
+    client clock is involved, so legacy plans switch when the server grants them
+    plan credits. **Legacy / v2 (usage-limit) plans without plan credits** instead render a **Usage limit** section with the
     recharge rate ("New artifact every N minutes", from `rechargeRateSeconds`)
     plus the Bundle bar. The extension's live "Artifact Used" bar is omitted -
     `totalTokens`/`remainingTokens` come from the inference `GetRateLimitUsage`
@@ -3330,7 +3438,11 @@ window`, recorded in the type as `coverage.browsersAreMountedOnly` -
       code rather than becoming a wrong-bug answer: a config the parser rejects
       is a server that failed to start.
     - **The global "All providers" status lives on the panel HEADING row**, and
-      renders only when `isHostScopeUsable(scope.status)`.
+      renders only when `isHostScopeUsable(scope.status)`. The heading row
+      carries STATUS ONLY: a setting is a row in the tab it belongs to. The
+      Model list timeout sat there as a chip for one staging build
+      (traycer#2450) and was moved to each provider's CLI & Args tab, below,
+      because a knob on a status line has no label hierarchy around it.
       `latestProviderCheckedAt` is a max over every provider and Refresh
       re-probes all of them; at the card's top-right it sat inches from the
       selected provider's Enabled toggle and read as that provider's own.
@@ -5773,6 +5885,66 @@ set-state-in-effect` forbids the effect form, and an effect would also
     - **No auto-update caption.** The switch is the next row on the same tab
       and states the policy itself.
 
+  - **Updates ▸ Traycer Desktop row** (`HostOverviewDesktopAppRow` in
+    `host-overview-desktop-app-row.tsx`), under the answer card and above the
+    auto-update row. It is the APP's update, not the host's: the two are
+    separate artifacts that update separately, and this is the page where a
+    host update happens, so a host that just moved to a new version would
+    otherwise sit above an app still on the old one with nothing saying the
+    app has an update of its own.
+    - **Gate.** `host.isLocalMachine` and a desktop updater bridge
+      (`useDesktopAppUpdates().bridge !== null`), decided in the panel. A
+      remote host's page says nothing about the app in this window, and a
+      browser has no app to update. It needs no route to the host, so it
+      stays while the host cannot be reached. Nothing is drawn until the
+      updater's first snapshot names a version.
+    - **One snapshot, no machinery.** It reads the snapshot the header's
+      update button and the update toast read, and runs the same download
+      (`bridge.downloadUpdate()`) and the same guarded restart
+      (`requestAppUpdateInstall`), so the three cannot disagree.
+
+      | Updater state                                         | State line            | Control                             |
+      | ----------------------------------------------------- | --------------------- | ----------------------------------- |
+      | a finished check found nothing                        | `Up to date (vX)`     | none                                |
+      | `available`                                           | `vY available`        | Download                            |
+      | `downloading`                                         | `Downloading N%`      | Download, waiting, with a spinner   |
+      | `ready`                                               | `vY ready`            | Restart                             |
+      | `ready` with `installGuidance`                        | `vY ready`            | Finish update (the guidance dialog) |
+      | `error` with `installGuidance`                        | `Update not finished` | Finish update (the guidance dialog) |
+      | anything else (checking, a plain error, no check yet) | `vX`                  | none                                |
+
+    - **"Up to date" is a claim about a check.** The updater publishes
+      `up-to-date` only for a check the user asked for; an automatic check
+      that finds nothing returns to `idle` with the check time and the feed's
+      latest version set. Both read "Up to date". An `idle` without them, and
+      every other state, shows the version and claims nothing.
+    - **An `error` carrying `installGuidance` keeps Finish update, and
+      names no version.** A Linux deb/rpm install whose privilege prompt
+      failed reports the failure AND the steps that finish the downloaded
+      file by hand, so the row keeps Finish update, as the update toast keeps
+      View instructions. Its state line is "Update not finished", never
+      "vY ready": the updater holds that guidance until the staged update is
+      discarded, so it can outlive the install it came from (a newer version
+      found later replaces `latestVersion`, and if that download fails the
+      guidance is for the older file). The snapshot does not tell the two
+      apart, so the row claims neither. `ready` does name its version. A
+      blocked install (`installBlockedReason`) keeps its control disabled
+      with the reason as the row's line.
+    - **One button, and one standing live region.** Download, Download
+      waiting, and Restart are the same button, so the focus of whoever
+      pressed it is not dropped when the download starts. While it waits
+      (the download, the restart) it is `aria-disabled` with its press
+      ignored, NOT natively `disabled`: Chromium moves the focus to the
+      document the moment a focused button becomes `disabled` and does not
+      return it (measured in the app's engine; jsdom keeps it, so no Vitest
+      case can see the difference). Native `disabled` is only the blocked
+      install. When the control does go (a failed download, a withdrawn
+      candidate) while it holds the focus, the row itself takes it. The
+      row's `role="status"` region is always mounted and empty when quiet,
+      for the reason the answer card's is; it says the download began (never
+      its percentage), that the update is ready (and, when it is, that
+      finishing needs a manual step), and that the restart began. A failure
+      is the update toast's to report, here as everywhere.
   - **The restart offer** that opens by itself (`deriveActivationAutoOpen`)
     stays at panel level, so it opens over whichever tab is showing.
   - **One component per tab**, each drawing what the panel hands it; the
@@ -5786,12 +5958,12 @@ set-state-in-effect` forbids the effect form, and an effect would also
     badges (the Ports count, the Installation dot) hang on `HostOverviewTabs`'
     `badges`.
 
-    | Tab          | File                                 | What lives there                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-    | ------------ | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-    | Installation | `host-overview-installation-tab.tsx` | About this host (`host-overview-about-this-host.tsx`, from the account's record, so it reads offline), the Install record shown open (`host-settings-installation-details.tsx`), OS service (`host-overview-os-service-section.tsx`) - both replaced by one needs-a-connection line when unreachable - then Command-line tools (this computer only, `host-settings-package-manager-upgrade-hint.tsx`, which also draws the trigger's dot), the Danger zone last |
-    | Updates      | `host-overview-updates-tab.tsx`      | The answer card, only when the answer has news or an action (`host-overview-updates.tsx`: icon, title, the update answer, Update now or the command-line-tools fix, the failed-attempt footer), a single-row auto-update group without a drawn label, then Pick a different version (`host-overview-version-picker.tsx`) with Check now on its heading, its release-candidate choice, version list and inline refusal                                           |
-    | Data         | `host-overview-data-tab.tsx`         | Import & migration (`HostImportMigrationSection`), Version history (`ArtifactVersionSettingsSection`), then an unlabeled File edit snapshots group (`HostFileEditSnapshotsSection`); one disk connection line replaces all groups when unreachable                                                                                                                                                                                                              |
-    | Ports        | `host-overview-ports-tab.tsx`        | `HostPortForwardsCard`, on every host: one sentence when there is no list (connecting, unreachable, older host, failed read, nothing forwarded), else Forwards on this host and Ports other machines hold here, then Refresh; the trigger's count                                                                                                                                                                                                               |
+    | Tab          | File                                 | What lives there                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+    | ------------ | ------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+    | Installation | `host-overview-installation-tab.tsx` | About this host (`host-overview-about-this-host.tsx`, from the account's record, so it reads offline), the Install record shown open (`host-settings-installation-details.tsx`), OS service (`host-overview-os-service-section.tsx`) - both replaced by one needs-a-connection line when unreachable - then Command-line tools (this computer only, `host-settings-package-manager-upgrade-hint.tsx`, which also draws the trigger's dot), the Danger zone last                                                                                      |
+    | Updates      | `host-overview-updates-tab.tsx`      | The answer card, only when the answer has news or an action (`host-overview-updates.tsx`: icon, title, the update answer, Update now or the command-line-tools fix, the failed-attempt footer), the Traycer Desktop row (`host-overview-desktop-app-row.tsx`: the app's own update, desktop app and this machine's host only), a single-row auto-update group without a drawn label, then Pick a different version (`host-overview-version-picker.tsx`) with Check now on its heading, its release-candidate choice, version list and inline refusal |
+    | Data         | `host-overview-data-tab.tsx`         | Import & migration (`HostImportMigrationSection`), Version history (`ArtifactVersionSettingsSection`), then an unlabeled File edit snapshots group (`HostFileEditSnapshotsSection`); one disk connection line replaces all groups when unreachable                                                                                                                                                                                                                                                                                                   |
+    | Ports        | `host-overview-ports-tab.tsx`        | `HostPortForwardsCard`, on every host: one sentence when there is no list (connecting, unreachable, older host, failed read, nothing forwarded), else Forwards on this host and Ports other machines hold here, then Refresh; the trigger's count                                                                                                                                                                                                                                                                                                    |
 
   - **Ports is on every host, in every state.** There used to be a card that
     was absent whenever nothing was forwarded and on hosts without port

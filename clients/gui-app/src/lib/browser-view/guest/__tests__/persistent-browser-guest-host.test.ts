@@ -523,6 +523,62 @@ describe("persistent browser guest host", () => {
       expect(readBrowserGuestViewport(REGISTRATION_A)).toBeNull();
     });
 
+    it("finishes a Fit the host kept unconfirmed once the guest lays it out", async () => {
+      const bridge = new FakeBrowserViewBridge({});
+      startHost(bridge, NOOP_ACTIVATE);
+      bridge.emitGuestMountRequested(mountRequest(REGISTRATION_A, PARTITION_A));
+      const guest = guestNodes(REGISTRATION_A);
+      bridge.emitGuestViewportRequested({
+        requestId: "viewport-fit",
+        registrationId: REGISTRATION_A,
+        revision: 1,
+        width: 800,
+        height: 600,
+        intent: { mode: "fit" },
+        zoom: 1,
+      });
+      // A window that draws no frames never reports an applied size, so the
+      // host keeps the Fit at the request's own revision. A new tab holds the
+      // same state before its first Fit lands.
+      const unconfirmedFit: BrowserViewportState = {
+        sessionId: "session-1",
+        tabId: "tab-1",
+        intent: { mode: "fit" },
+        applied: null,
+        revision: 1,
+        source: "user",
+        fitOwnerId: null,
+      };
+
+      confirmBrowserGuestViewport({
+        registrationId: REGISTRATION_A,
+        state: unconfirmedFit,
+        zoom: 1,
+      });
+      expect(readBrowserGuestViewport(REGISTRATION_A)).toMatchObject({
+        confirmed: false,
+        requestId: "viewport-fit",
+      });
+
+      setMeasuredGuestSize(guest.webview, 800, 600);
+      await waitForViewportRequest();
+      expect(bridge.guestViewportResultCalls).toEqual([
+        {
+          requestId: "viewport-fit",
+          registrationId: REGISTRATION_A,
+          revision: 1,
+          applied: true,
+        },
+      ]);
+
+      confirmBrowserGuestViewport({
+        registrationId: REGISTRATION_A,
+        state: unconfirmedFit,
+        zoom: 1,
+      });
+      expect(readBrowserGuestViewport(REGISTRATION_A)).toBeNull();
+    });
+
     it("waits for the matching presented placement before applying native layout", async () => {
       const bridge = new FakeBrowserViewBridge({});
       startHost(bridge, NOOP_ACTIVATE);
@@ -914,6 +970,26 @@ describe("persistent browser guest host", () => {
   });
 
   describe("presentation states", () => {
+    /**
+     * The parked posture: laid out at the window's origin at full size, shrunk
+     * to a speck by a transform and made invisible by a filter. The plain
+     * `opacity` stays unset because opacity:0 stops the compositor drawing the
+     * guest, and a guest nobody draws cannot be captured.
+     */
+    function expectParkedPosture(wrapper: HTMLElement): void {
+      expect(wrapper.style.position).toBe("fixed");
+      expect(wrapper.style.insetInlineStart).toBe("0px");
+      expect(wrapper.style.insetBlockStart).toBe("0px");
+      expect(wrapper.style.width).toBe("1280px");
+      expect(wrapper.style.height).toBe("800px");
+      expect(wrapper.style.transform).toBe("scale(0.02)");
+      expect(wrapper.style.transformOrigin).toBe("top left");
+      expect(wrapper.style.filter).toBe("opacity(0)");
+      expect(wrapper.style.opacity).toBe("");
+      expect(wrapper.style.pointerEvents).toBe("none");
+      expect(wrapper.style.display).toBe("block");
+    }
+
     it("maps presented, retained, and unbound onto visibility and interactivity", () => {
       const bridge = new FakeBrowserViewBridge({});
       startHost(bridge, NOOP_ACTIVATE);
@@ -921,13 +997,7 @@ describe("persistent browser guest host", () => {
       const { wrapper } = guestNodes(REGISTRATION_A);
 
       expect(wrapper.getAttribute("data-browser-guest-state")).toBe("unbound");
-      expect(wrapper.style.position).toBe("fixed");
-      expect(wrapper.style.insetInlineStart).toBe("-10000px");
-      expect(wrapper.style.width).toBe("1280px");
-      expect(wrapper.style.height).toBe("800px");
-      expect(wrapper.style.opacity).toBe("0");
-      expect(wrapper.style.pointerEvents).toBe("none");
-      expect(wrapper.style.display).toBe("block");
+      expectParkedPosture(wrapper);
       expect(wrapper.inert).toBe(true);
       expect(wrapper.getAttribute("aria-hidden")).toBe("true");
       expect(wrapper.hasAttribute(HOSTED_TILE_INSTANCE_ID_ATTRIBUTE)).toBe(
@@ -949,6 +1019,8 @@ describe("persistent browser guest host", () => {
       expect(wrapper.style.position).toBe("fixed");
       expect(wrapper.style.getPropertyValue("position-anchor")).toBe(ANCHOR_A);
       expect(wrapper.style.opacity).toBe("1");
+      expect(wrapper.style.transform).toBe("");
+      expect(wrapper.style.filter).toBe("");
       expect(wrapper.style.pointerEvents).toBe("auto");
       expect(wrapper.style.display).toBe("block");
       expect(wrapper.inert).toBe(false);
@@ -972,13 +1044,10 @@ describe("persistent browser guest host", () => {
         viewport: null,
       });
       expect(wrapper.getAttribute("data-browser-guest-state")).toBe("retained");
-      // Retained keeps the unbound offscreen posture: a `display: none` guest
-      // stops compositing, and CDP/PiP frames go blank with it.
-      expect(wrapper.style.display).toBe("block");
-      expect(wrapper.style.position).toBe("fixed");
-      expect(wrapper.style.insetInlineStart).toBe("-10000px");
-      expect(wrapper.style.pointerEvents).toBe("none");
-      expect(wrapper.style.opacity).toBe("0");
+      // Retained keeps the unbound parked posture. A guest is captured only
+      // while the compositor draws it, and `display: none`, `opacity: 0` and
+      // an off-viewport box each stop that.
+      expectParkedPosture(wrapper);
       expect(wrapper.style.getPropertyValue("position-anchor")).toBe("");
       expect(wrapper.inert).toBe(true);
       expect(wrapper.getAttribute("aria-hidden")).toBe("true");
@@ -991,10 +1060,7 @@ describe("persistent browser guest host", () => {
 
       clearBrowserGuestTilePlacement(owner, REGISTRATION_A);
       expect(wrapper.getAttribute("data-browser-guest-state")).toBe("unbound");
-      expect(wrapper.style.position).toBe("fixed");
-      expect(wrapper.style.insetInlineStart).toBe("-10000px");
-      expect(wrapper.style.width).toBe("1280px");
-      expect(wrapper.style.height).toBe("800px");
+      expectParkedPosture(wrapper);
       expect(wrapper.inert).toBe(true);
       expect(wrapper.getAttribute("aria-hidden")).toBe("true");
     });
@@ -1035,6 +1101,42 @@ describe("persistent browser guest host", () => {
       expect(wrapper.contains(document.activeElement)).toBe(false);
       expect(usedPresentationLoss).toBe(true);
       expect(wrapper.getAttribute("data-browser-guest-state")).toBe("retained");
+    });
+
+    it("keeps the size a presented guest was laid out at when its tile is hidden", () => {
+      const bridge = new FakeBrowserViewBridge({});
+      startHost(bridge, NOOP_ACTIVATE);
+      bridge.emitGuestMountRequested(mountRequest(REGISTRATION_A, PARTITION_A));
+      const { wrapper, webview } = guestNodes(REGISTRATION_A);
+      const owner = Symbol("tile");
+      setOwnedPlacement(owner, {
+        registrationId: REGISTRATION_A,
+        instanceId: INSTANCE_A,
+        viewTabId: "view-1",
+        paneId: "pane-1",
+        presented: true,
+        viewport: null,
+      });
+
+      // The frame the guest was laid out in its tile, where the anchor resolves.
+      setMeasuredGuestSize(webview, 797, 877);
+      triggerGuestResizeObservers();
+
+      // React hides the tile before the host hears of it, so a read at the hide
+      // finds no anchor and measures the bare 300x150 webview.
+      setMeasuredGuestSize(webview, 300, 150);
+      setOwnedPlacement(owner, {
+        registrationId: REGISTRATION_A,
+        instanceId: INSTANCE_A,
+        viewTabId: "view-1",
+        paneId: "pane-1",
+        presented: false,
+        viewport: null,
+      });
+
+      expect(wrapper.getAttribute("data-browser-guest-state")).toBe("retained");
+      expect(webview.style.width).toBe("797px");
+      expect(webview.style.height).toBe("877px");
     });
   });
 

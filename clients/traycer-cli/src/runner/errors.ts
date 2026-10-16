@@ -38,6 +38,18 @@ export const CLI_ERROR_CODES = {
   AGENT_ARCHIVE_BUSY: "E_AGENT_ARCHIVE_BUSY",
   AGENT_RECORD_NOT_FOUND: "E_AGENT_RECORD_NOT_FOUND",
 
+  // --- Host refusals of the caller's own environment (mirror the host's
+  // typed wire codes 1:1) ---
+  // Each is the host answering, with a typed code, that something about the
+  // machine or the workspace the person set up stops the request: a bound
+  // folder deleted from disk, an agent with no workspace chosen, a full disk
+  // on the host machine. The message names the remedy. None is a CLI defect,
+  // and before these codes each one fell through to UNEXPECTED and was
+  // captured.
+  WORKTREE_MISSING: "E_WORKTREE_MISSING",
+  WORKSPACE_BINDING_REQUIRED: "E_WORKSPACE_BINDING_REQUIRED",
+  HOST_STORAGE_FULL: "E_HOST_STORAGE_FULL",
+
   // --- Auth ---
   AUTH_NO_CREDENTIALS: "E_AUTH_NO_CREDENTIALS",
   AUTH_REJECTED: "E_AUTH_REJECTED",
@@ -250,6 +262,9 @@ export const EXPECTED_CLI_ERROR_CODES: ReadonlySet<CliErrorCode> =
     CLI_ERROR_CODES.ROLE_FORBIDDEN,
     CLI_ERROR_CODES.AGENT_ARCHIVE_BUSY,
     CLI_ERROR_CODES.AGENT_RECORD_NOT_FOUND,
+    CLI_ERROR_CODES.WORKTREE_MISSING,
+    CLI_ERROR_CODES.WORKSPACE_BINDING_REQUIRED,
+    CLI_ERROR_CODES.HOST_STORAGE_FULL,
     CLI_ERROR_CODES.CONFIG_INVALID,
     CLI_ERROR_CODES.CONFIG_INVALID_VALUE,
     CLI_ERROR_CODES.CONFIG_MISSING_KEY,

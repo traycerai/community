@@ -38,7 +38,7 @@ export const GENERAL = defineSettingsSection("general", {
     search: { anchor: "general-voice-input" },
     label: "Voice input",
     description:
-      "Dictate prompts with the mic button or its shortcut. The microphone opens only while you are dictating, and turning this off closes it. Speech is transcribed on-device - audio never leaves your machine.",
+      "Dictate prompts with the mic button or its shortcut. The microphone opens only while you are dictating, and turning this off closes it. Audio never leaves your machine.",
     availableWhen: isVoiceInputRowAvailable,
     keywords: ["dictation", "dictate", "speech", "microphone", "mic", "audio"],
   },
@@ -172,6 +172,20 @@ export const GENERAL = defineSettingsSection("general", {
       "preview",
       "labs",
     ],
+  },
+  // Gated on the SELECTED HOST (both `chatAutoArchive.*` methods advertised),
+  // which no shell-level predicate can decide, so it has no entry of its own:
+  // its label and keywords fold into the Agents group, a destination drawn in
+  // every shell (SETTINGS.md, "A result must land somewhere").
+  chatAutoArchive: {
+    kind: "row",
+    group: "agents",
+    search: { contributesTo: "agents" },
+    label: "Archive idle agents automatically",
+    description:
+      "Tidy up chats agents started once they go quiet. Applies on all your hosts.",
+    availableWhen: alwaysAvailable,
+    keywords: ["archive", "idle", "inactive", "auto", "cleanup", "timer"],
   },
   dangerZone: {
     kind: "group",
