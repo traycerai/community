@@ -524,6 +524,9 @@ describe("AuthService cloudAuthorized verdict propagation on in-place transition
 
   beforeEach(() => {
     useAuthStore.getState().setSignedOut();
+    // `setSignedOut` keeps the last cloud verdict, so a demotion in an earlier
+    // test would otherwise colour the next test's unverified projection.
+    useAuthStore.getState().setCloudVerdictLoss("unreachable");
     restoreFetch = installFetch(() => okWithProfile());
   });
 
@@ -689,33 +692,48 @@ describe("AuthService cloudAuthorized verdict propagation on in-place transition
     // is NOT a `/api/v3/user` verdict, so the one rotation path that is NOT
     // one of the four fixed call sites (`rotateLiveBearer`, reached here via
     // the reactive 401 path) must NOT flip the verdict back to `true`.
+    //
+    // The session reaches `unverified` through a cold start with authn
+    // UNREACHABLE, not through a 401/401 demotion. A session authn REFUSED
+    // sets the terminal latch, and from then on a reactive revalidation is
+    // answered `rejected` without asking authn or rotating: a host refusing
+    // the held bearer would otherwise re-spend the refused refresh token on
+    // every request (see `auth-service-held-session-host-refusal.test.ts`).
+    // An `unverified` session that authn merely could not be reached for
+    // holds no verdict and no latch, so it still rotates reactively - and that
+    // is the rotation this test guards.
+    vi.useFakeTimers();
     const { service, host } = makeService();
     trackedServices.push(service);
-    await service.start();
-    await deviceSignIn(service, host, "dead-token");
-
-    // Demote to unverified (retain branch) exactly as in the first test.
+    await host.tokenStore.signIn(
+      { token: "stale-stored-token", refreshToken: "stale-stored-refresh" },
+      { id: "user-1", email: "test@example.com", name: "Test User" },
+    );
     restoreFetch();
-    restoreFetch = installFetch((input) => {
-      const url = typeof input === "string" ? input : String(input);
-      if (url === VALIDATION_URL || url === REFRESH_URL) {
-        return status(401);
-      }
-      return status(500);
-    });
-    const demoteOutcome = await service.revalidateCurrentContext();
-    expect(demoteOutcome?.kind).toBe("rejected");
+    restoreFetch = installFetch(() =>
+      Promise.reject(new Error("connection refused")),
+    );
+
+    const start = service.start();
+    for (let retry = 1; retry < AUTH_FETCH_MAX_ATTEMPTS; retry += 1) {
+      await vi.advanceTimersByTimeAsync(authRetryDelayMs(retry));
+    }
+    await start;
     expect(useAuthStore.getState().status).toBe("unverified");
+    // Non-vacuity: no verdict was ever refused, so this is the unlatched path.
+    expect(useAuthStore.getState().cloudVerdictLoss).toBe("unreachable");
 
     const provider = service.getRequestContextProvider();
     const contextBefore = provider.current();
+    // A never-verified startup mints a fresh context with `cloudAuthorized:
+    // false` at construction.
     expect(contextBefore?.cloudAuthorized).toBe(false);
 
-    // The stored refresh token is still good (the file was kept on demotion):
-    // a fresh reactive 401 rotate succeeds ("applied"), which drives
+    // Authn is reachable again and the stored refresh token is still good: a
+    // fresh reactive 401 rotate succeeds ("applied"), which drives
     // `rotateLiveBearer` while the session is still `unverified`. The
     // handler must distinguish the two validate calls by bearer - the stale
-    // "dead-token" (rejected, driving the rotate) and the freshly-rotated
+    // stored token (rejected, driving the rotate) and the freshly-rotated
     // "post-demotion-token" (accepted, driving `revalidateCurrentContextOnce`'s
     // post-rotate re-check) - or the second call would also read as rejected.
     restoreFetch();
@@ -736,6 +754,9 @@ describe("AuthService cloudAuthorized verdict propagation on in-place transition
       return status(500);
     });
 
+    // No timer is advanced before this call: the recovery loop's first tick
+    // would validate the stored token itself and promote the session to
+    // `signed-in`, which is a different transition from the one under test.
     const rotateOutcome = await service.revalidateCurrentContext();
     expect(rotateOutcome?.kind).toBe("valid");
     expect(service.getCurrentSessionSnapshot().token).toBe(

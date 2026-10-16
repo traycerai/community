@@ -715,6 +715,40 @@ export class AuthService {
   private setSessionRecoveryTerminallyRejected(loss: CloudVerdictLoss): void {
     this.sessionRecoveryTerminallyRejected = loss !== "unreachable";
     useAuthStore.getState().setCloudVerdictLoss(loss);
+    // The stored-session arms latch AFTER projecting `unverified`, so this is
+    // their moment to notice a held bearer that has already expired.
+    this.noteHostRefusedHeldBearer();
+  }
+
+  /**
+   * A host refused the bearer this session holds - or would, because it has
+   * expired. On a session authn has refused (the terminal latch) no fresh
+   * bearer can arrive, so the local plane `unverified` holds the app open for
+   * is gone too, and the shell sends the person to sign in
+   * (`hostRefusedHeldBearer`).
+   *
+   * Gated on the held access token having EXPIRED, not on a refusal alone: a
+   * host also answers UNAUTHORIZED to requests that need the cloud verdict this
+   * session no longer has, while it keeps serving the local plane on the same
+   * bearer until that bearer's own expiry. A token whose expiry cannot be read
+   * is not treated as expired, as in `applyProvisionalSession`.
+   *
+   * Called wherever that can change: on a host refusal (unary and stream), when
+   * the latch is set, and on every `unverified` projection.
+   */
+  noteHostRefusedHeldBearer(): void {
+    if (!this.sessionRecoveryTerminallyRejected) {
+      return;
+    }
+    const bearer = this.currentBearer;
+    if (bearer === null) {
+      return;
+    }
+    const expiresAtMs = readAccessTokenExpiryMs(bearer);
+    if (expiresAtMs === null || expiresAtMs > Date.now()) {
+      return;
+    }
+    useAuthStore.getState().noteHostRefusedHeldBearer();
   }
   // Superseded-save undos whose conditional deletes have not LANDED yet
   // (in flight or failed): each stale pair may still be durable. Every
@@ -2434,9 +2468,8 @@ export class AuthService {
       return "superseded";
     }
     if (outcome.kind === "rejected") {
-      // This method's caller is a host that just refused `expected`. On a
-      // session authn has refused, that is the end of the local plane too.
-      useAuthStore.getState().noteHostRefusedHeldBearer();
+      // This method's caller is a host that just refused `expected`.
+      this.noteHostRefusedHeldBearer();
       return "rejected";
     }
     if (outcome.kind === "network-error") {
@@ -2928,16 +2961,20 @@ export class AuthService {
     ) {
       return null;
     }
-    // A session authn has already refused, held open for its local plane.
-    // Asking again cannot change the answer: `/api/v3/user` refuses the same
-    // bearer, and the rotate re-spends a refresh token authn has refused and
-    // re-raises "session expired". Every host request that failed on the held
-    // bearer used to run that round trip, so the toast came back after each one
-    // (a refresh every ~3 s, measured). The wake nudge stands down on the same
-    // latch; a successful sign-in clears it.
+    // A session authn has already refused, held open for its local plane (or
+    // being replaced by a sign-in attempt, which validates its own token and
+    // never comes through here). Asking again cannot change the answer:
+    // `/api/v3/user` refuses the same bearer, and the rotate re-spends a
+    // refresh token authn has refused and re-raises "session expired". Every
+    // host request that failed on the held bearer used to run that round trip,
+    // so the toast came back after each one (a refresh every ~3 s, measured),
+    // and during an attempt the demotion it ended in overwrote `signing-in`.
+    // The wake nudge stands down on the same latch; a successful sign-in clears
+    // it. `signed-in` is excluded: it holds a verdict, whatever the latch says.
+    const status = useAuthStore.getState().status;
     if (
       this.sessionRecoveryTerminallyRejected &&
-      useAuthStore.getState().status === "unverified"
+      (status === "unverified" || status === "signing-in")
     ) {
       return { kind: "rejected" };
     }
@@ -5154,6 +5191,10 @@ export class AuthService {
       userId: identity.userId,
       username: identity.username,
     });
+    // The projection reset the refusal; re-derive it for the bearer just
+    // projected, so re-admitting an expired, refused bearer (recovery after a
+    // cancelled sign-in) goes straight back to the sign-in page.
+    this.noteHostRefusedHeldBearer();
     this.emitSessionSnapshot();
     // THE WITHDRAWAL, ON THE WIRE. The in-place branch above deliberately does
     // not mint or abort a context, so nothing tears down and nothing redials -

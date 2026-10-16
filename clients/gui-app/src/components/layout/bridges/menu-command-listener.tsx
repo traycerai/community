@@ -254,7 +254,12 @@ export function MenuCommandListener() {
             auth.hostRefusedHeldBearer,
           );
           if (!admission.admitted) {
-            void navigate({ to: "/when-you-quit" });
+            // A refused session's shell shows the sign-in page over every
+            // route, so the quit card would not appear - it would surface
+            // only once a sign-in starts, in place of its device code.
+            if (admission.refusal === null) {
+              void navigate({ to: "/when-you-quit" });
+            }
             return;
           }
           openShellSettings(navigate, undefined);

@@ -124,7 +124,7 @@ export function admitsLocalPlane(status: AuthStatus): boolean {
  * The same premise fails a second way on a shell that DOES have a local host:
  * the host verifies the held bearer like any other, and refuses it once it has
  * expired. After authn has refused the session there is no fresh bearer
- * coming, so from that refusal on (`hostRefusedHeldBearer`) nothing in the
+ * coming, so from that expiry on (`hostRefusedHeldBearer`) nothing in the
  * workspace can load, and the auth surface is again the only place that can
  * say why and offer the action that helps.
  *
@@ -301,14 +301,15 @@ export interface AuthState {
    */
   readonly cloudVerdictLoss: CloudVerdictLoss;
   /**
-   * A host refused the bearer this `unverified` session holds (or would: the
-   * bearer has expired) AFTER authn refused the session, i.e. while
-   * `cloudVerdictLoss` is not `unreachable`. No fresh bearer can arrive in that
-   * state, so the local plane `unverified` holds the app open for is gone too
-   * and {@link admitsLocalPlaneOnShell} sends the person to sign in. The status
+   * The bearer this `unverified` session holds has expired, so the host
+   * refuses it, AFTER authn refused the session, i.e. while `cloudVerdictLoss`
+   * is not `unreachable`. No fresh bearer can arrive in that state, so the
+   * local plane `unverified` holds the app open for is gone too and
+   * {@link admitsLocalPlaneOnShell} sends the person to sign in. The status
    * stays `unverified` - the identity is still on disk, nothing account-scoped
    * is purged, and signing back in returns to the same state. Every status
-   * change resets it.
+   * change resets it; `AuthService.noteHostRefusedHeldBearer` sets it, because
+   * only the service holds the bearer whose expiry decides it.
    */
   readonly hostRefusedHeldBearer: boolean;
   readonly profile: AuthProfile | null;
@@ -338,10 +339,9 @@ export interface AuthState {
   readonly signedOutCause: SignedOutCause | null;
   setCloudVerdictLoss(loss: CloudVerdictLoss): void;
   /**
-   * Record that a host refused the held bearer. A no-op unless the session is
-   * `unverified` on a refused cloud verdict - see `hostRefusedHeldBearer`. The
-   * rule lives here so every transport that sees the refusal can report it
-   * without restating it.
+   * Record that the host refuses the held bearer. A no-op unless the session
+   * is `unverified` on a refused cloud verdict - see `hostRefusedHeldBearer`.
+   * The expiry half of the rule is `AuthService`'s, which holds the bearer.
    */
   noteHostRefusedHeldBearer(): void;
   setSigningIn(attempt: SignInAttemptKind): void;
@@ -492,8 +492,7 @@ export const useAuthStore = create<AuthState>()((set) => ({
       status: "unverified",
       signingInAttempt: null,
       signedOutCause: null,
-      // A new projection carries a different bearer than the one a host refused
-      // (re-projecting the same one is short-circuited before it reaches here).
+      // `AuthService` re-derives it for the bearer it has just projected.
       hostRefusedHeldBearer: false,
       profile: {
         ...profile,

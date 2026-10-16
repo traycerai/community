@@ -14,8 +14,9 @@ import { useRunnerHostOrNull } from "@/providers/use-runner-host";
  * have the copy guess which refusal it is describing.
  *
  * - `unverified-relay-only` - the shell has no local host to fall back to.
- * - `unverified-host-refused` - it has one, and that host refused the bearer
- *   held after authn refused the session (`hostRefusedHeldBearer`).
+ * - `unverified-host-refused` - it has one, but authn refused the session and
+ *   the bearer it holds has expired, so the host refuses it too
+ *   (`hostRefusedHeldBearer`).
  */
 export type ShellAdmissionRefusal =
   | "unverified-relay-only"
