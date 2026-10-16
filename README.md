@@ -17,7 +17,7 @@
 
 </div>
 
-**Run a fleet of coding agents — Claude Code, Codex, Cursor, and a dozen more — in parallel, on your existing subscriptions, without losing context.**
+**Run a fleet of coding agents — Claude Code, Codex, Cursor, and more — in parallel, on your existing subscriptions, without losing context.**
 
 Traycer is an open-source AI orchestration app. Every agent keeps a durable session you can hand between models mid-conversation, agents talk to each other to plan, implement, and review, and your whole team can work in the same shared workspace in real time.
 
@@ -34,7 +34,7 @@ Traycer is an open-source AI orchestration app. Every agent keeps a durable sess
 | **Real-time team collaboration** — Invite teammates into a shared workspace: shareable boards, live co-editing, comments, and ticket assignment. | <!-- assets/collaboration.gif --> <sub><i>demo coming soon</i></sub> |
 | **Chat and Terminal, side by side** — Work with the same providers through a rich Chat interface or a real Terminal, with files and Git diff panels one keystroke away. | <!-- assets/terminal-and-diff.gif --> <sub><i>demo coming soon</i></sub> |
 | **Cross-device sync** — Close your laptop, open another machine, and pick up the same agents in the same state. Any device, any OS. | <!-- assets/cross-device.gif --> <sub><i>demo coming soon</i></sub> |
-| **Remote hosts** — Every machine you sign in on runs a Traycer Host, and the app can reach all of yours. Kick off agents on your desktop or a beefy remote box, then steer them from wherever you are. | <!-- assets/remote-hosts.gif --> <sub><i>demo coming soon</i></sub> |
+| **Remote hosts** — Every machine you sign in on runs a Traycer Host, and the app can connect to your reachable hosts. Kick off agents on your desktop or a beefy remote box, then steer them from wherever you are. | <!-- assets/remote-hosts.gif --> <sub><i>demo coming soon</i></sub> |
 | **Mobile app** <sub>*coming soon*</sub> — Watch runs, answer your agents' questions, and start new work from your phone. iOS and Android. | <!-- assets/mobile.gif --> <sub><i>demo coming soon</i></sub> |
 | **In-app browser** <sub>*coming soon*</sub> — A browser built into Traycer that agents can drive: open the app they just built, click through flows, and debug live pages without leaving the workspace. | <!-- assets/in-app-browser.gif --> <sub><i>demo coming soon</i></sub> |
 
@@ -98,7 +98,7 @@ graph LR
 - **Agent** — a durable session; switch its model anytime, delegate to child agents, reach it from any device.
 - **Artifacts** — persistent documents (specs, tickets, stories, reviews) that keep decisions and context beyond the conversation.
 - **Worktrees** — run each agent in your workspace folder, a fresh Git worktree, or an existing one.
-- **Hosts** — each machine you sign in on runs a Traycer Host that owns its agents and files; every client can reach any of your hosts, local or remote.
+- **Hosts** — each machine you sign in on runs a Traycer Host that owns its agents and files; clients can connect to your reachable hosts, local or remote.
 
 This repository contains the open-source clients, CLI, and protocol. The Traycer Host is provisioned as a signed build from GitHub Releases — see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
 
@@ -132,7 +132,7 @@ We welcome contributions! See [CONTRIBUTING.md](CONTRIBUTING.md) and our [Code o
 > **Security:** Please don't report security vulnerabilities through public GitHub issues — email **support@traycer.ai**. See the [Security Policy](SECURITY.md).
 
 <a href="https://github.com/traycerai/traycer/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=traycerai/traycer" />
+  <img src="https://contrib.rocks/image?repo=traycerai/traycer" alt="Traycer contributors" />
 </a>
 
 ## Community
