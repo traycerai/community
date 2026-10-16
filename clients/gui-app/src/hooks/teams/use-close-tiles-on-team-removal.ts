@@ -5,6 +5,7 @@ import { useRegisteredHosts } from "@/hooks/auth/use-registered-hosts-query";
 import { useAuthStore, type EpicShareableTeam } from "@/stores/auth/auth-store";
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
 import { removedTeamIds } from "./team-removal-model";
+import { subscribeTeamMemberRemovedClose } from "@traycer-clients/shared/host-transport/team-member-removed-close";
 
 interface RememberedTeam {
   readonly name: string;
@@ -13,19 +14,23 @@ interface RememberedTeam {
 
 /**
  * A removed team member's tiles on the team's hosts close (ticket E17
- * checkpoint 6), with "You are no longer a member of <team>." The trigger is
- * the person's own team list (the auth projection) losing a team while the
- * same person stays signed in: the admins' `team.member.removed` never
- * reaches the member removed. The team's hosts and name are remembered while
- * the person is in it, because by the time the list changes the registry may
- * already have stopped listing them.
+ * checkpoint 6), with "You are no longer a member of <team>." Two triggers
+ * report the same removal (checkpoint 7): a team host ending one of this
+ * person's sessions with `TEAM_MEMBER_REMOVED`, and the person's own team
+ * list (the auth projection) losing the team while the same person stays
+ * signed in (the admins' `team.member.removed` never reaches the member
+ * removed). Whichever comes first closes and says so; the other finds the
+ * team already closed, so there is one toast and one close, never two. The
+ * team's hosts and name are remembered while the person is in it, because by
+ * the time either trigger fires the registry may already have stopped
+ * listing them.
  */
 export function useCloseTilesOnTeamRemoval(): void {
   const teams = useAuthStore((s) => s.shareableTeams);
   const status = useAuthStore((s) => s.status);
   const viewerUserId = useAuthStore((s) => s.contextMetadata?.userId ?? null);
   const registry = useRegisteredHosts().data ?? null;
-  const remembered = useRef(new Map<string, RememberedTeam>());
+  const memory = useRef(emptyRemovalMemory());
   const previous = useRef<{
     readonly viewerUserId: string | null;
     readonly signedIn: boolean;
@@ -42,38 +47,80 @@ export function useCloseTilesOnTeamRemoval(): void {
       signedIn &&
       before.viewerUserId === viewerUserId
     ) {
-      closeRemovedTeams(before.teamIds, teamIds, remembered.current);
+      closeRemovedTeams(before.teamIds, teamIds, memory.current);
     }
     if (before !== null && before.viewerUserId !== viewerUserId) {
-      remembered.current = new Map();
+      memory.current = emptyRemovalMemory();
     }
-    rememberTeams(teams, registry, remembered.current);
+    rememberTeams(teams, registry, memory.current);
     previous.current = { viewerUserId, signedIn, teamIds };
   }, [registry, status, teams, viewerUserId]);
+
+  useEffect(
+    () =>
+      subscribeTeamMemberRemovedClose((hostId) => {
+        closeTeamOnHost(hostId, memory.current);
+      }),
+    [],
+  );
+}
+
+interface RemovalMemory {
+  /** The person's current teams, by id. */
+  readonly remembered: Map<string, RememberedTeam>;
+  /**
+   * Teams a host's `TEAM_MEMBER_REMOVED` already closed while the team list
+   * still listed them: the list's own removal of them is the same removal.
+   */
+  readonly closedByHost: Set<string>;
+}
+
+function emptyRemovalMemory(): RemovalMemory {
+  return { remembered: new Map(), closedByHost: new Set() };
 }
 
 /** Closes each removed team's tiles and says so, once per removal. */
 function closeRemovedTeams(
   previousTeamIds: readonly string[],
   teamIds: readonly string[],
-  remembered: Map<string, RememberedTeam>,
+  memory: RemovalMemory,
 ): void {
   for (const teamId of removedTeamIds(previousTeamIds, teamIds)) {
-    const team = remembered.get(teamId);
-    if (team === undefined) continue;
-    useEpicCanvasStore.getState().closeTilesOnHosts(team.hostIds);
-    toast.info(`You are no longer a member of ${team.name}.`);
-    remembered.delete(teamId);
+    if (memory.closedByHost.delete(teamId)) continue;
+    closeTeam(teamId, memory);
   }
 }
 
-/** Remembers each current team's name and hosts, keeping what was seen before. */
+/** A host ended this person's session for leaving its team: close that team. */
+function closeTeamOnHost(hostId: string, memory: RemovalMemory): void {
+  for (const [teamId, team] of memory.remembered) {
+    if (!team.hostIds.has(hostId)) continue;
+    closeTeam(teamId, memory);
+    memory.closedByHost.add(teamId);
+    return;
+  }
+}
+
+function closeTeam(teamId: string, memory: RemovalMemory): void {
+  const team = memory.remembered.get(teamId);
+  if (team === undefined) return;
+  useEpicCanvasStore.getState().closeTilesOnHosts(team.hostIds);
+  toast.info(`You are no longer a member of ${team.name}.`);
+  memory.remembered.delete(teamId);
+}
+
+/**
+ * Remembers each current team's name and hosts, keeping what was seen before.
+ * A team a host already closed stays forgotten until the list drops it.
+ */
 function rememberTeams(
   teams: ReadonlyArray<EpicShareableTeam>,
   registry: HostListResponse | null,
-  remembered: Map<string, RememberedTeam>,
+  memory: RemovalMemory,
 ): void {
+  const remembered = memory.remembered;
   for (const team of teams) {
+    if (memory.closedByHost.has(team.teamId)) continue;
     const known = remembered.get(team.teamId);
     const hostIds = new Set(known?.hostIds ?? []);
     let name: string | null = null;
