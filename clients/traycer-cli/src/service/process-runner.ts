@@ -1,4 +1,10 @@
-import { execFile, type ChildProcess } from "node:child_process";
+import {
+  execFile,
+  type ChildProcess,
+  type ExecFileException,
+} from "node:child_process";
+
+import { consoleOutputCodePage, decodeChildOutput } from "./console-codepage";
 
 /**
  * How long a child that `execFile`'s timeout signalled has to exit before it
@@ -32,6 +38,18 @@ function armTimeoutKillEscalation(
     }
   }, timeoutMs + PROCESS_TIMEOUT_KILL_GRACE_MS);
   return () => clearTimeout(timer);
+}
+
+/**
+ * A child's captured output as text. On Windows it is read in the console's
+ * output codepage (`schtasks` and `sc` localize into cp866, cp1251, ... and a
+ * UTF-8 decode of that is what reached the log and the host-start dialog);
+ * everywhere else it is UTF-8, unchanged.
+ */
+function decodeOutput(bytes: Buffer): Promise<string> {
+  return process.platform === "win32"
+    ? decodeChildOutput(bytes, consoleOutputCodePage)
+    : Promise.resolve(bytes.toString("utf8"));
 }
 
 export interface RunResult {
@@ -90,76 +108,86 @@ export function runCommand(
         timeout: options.timeoutMs,
         windowsHide: true,
         maxBuffer: 4 * 1024 * 1024,
-        encoding: "utf8",
+        encoding: "buffer",
       },
       (err, stdout, stderr) => {
         disarmEscalation();
-        const stdoutStr = String(stdout);
-        const stderrStr = String(stderr);
-        if (err === null) {
-          resolve({ stdout: stdoutStr, stderr: stderrStr, exitCode: 0 });
-          return;
-        }
-        const exitCode = typeof err.code === "number" ? err.code : -1;
-        if (options.tolerateNonZeroExit) {
-          resolve({ stdout: stdoutStr, stderr: stderrStr, exitCode });
-          return;
-        }
-        // Distinguish timeout/signal kills from genuine non-zero exits so
-        // the resulting CLI error tells the operator which knob to turn
-        // (raise `timeoutMs`) instead of pointing at a phantom "exit -1".
-        // execFile sets `err.signal` (and `err.killed`) when its own
-        // timer fires SIGTERM at the child.
-        const errWithSignal = err as NodeJS.ErrnoException & {
-          signal?: string | null;
-          killed?: boolean;
-        };
-        const signal = errWithSignal.signal ?? null;
-        const killed = errWithSignal.killed === true;
-        // Never started: no pid and no `spawn` event, and execFile reported
-        // the errno (`ENOENT`, `EACCES`, `EAGAIN`) instead of an exit status.
-        // A child that ran and failed carries a numeric exit code, one this
-        // runner killed carries a signal, and one that overflowed `maxBuffer`
-        // carries a string code but DID start - the pid keeps it a run error.
-        const spawnFailed = !spawned && typeof err.code === "string" && !killed;
-        const timedOut = !spawnFailed && killed && signal !== null;
-        const summary = spawnFailed
-          ? `could not be spawned (${err.code})`
+        // `decodeOutput` never rejects: an unreadable codepage is UTF-8.
+        void Promise.all([decodeOutput(stdout), decodeOutput(stderr)]).then(
+          ([stdoutStr, stderrStr]) => {
+            settle(err, stdoutStr, stderrStr);
+          },
+        );
+      },
+    );
+    const settle = (
+      err: ExecFileException | null,
+      stdoutStr: string,
+      stderrStr: string,
+    ): void => {
+      if (err === null) {
+        resolve({ stdout: stdoutStr, stderr: stderrStr, exitCode: 0 });
+        return;
+      }
+      const exitCode = typeof err.code === "number" ? err.code : -1;
+      if (options.tolerateNonZeroExit) {
+        resolve({ stdout: stdoutStr, stderr: stderrStr, exitCode });
+        return;
+      }
+      // Distinguish timeout/signal kills from genuine non-zero exits so
+      // the resulting CLI error tells the operator which knob to turn
+      // (raise `timeoutMs`) instead of pointing at a phantom "exit -1".
+      // execFile sets `err.signal` (and `err.killed`) when its own
+      // timer fires SIGTERM at the child.
+      const errWithSignal = err as NodeJS.ErrnoException & {
+        signal?: string | null;
+        killed?: boolean;
+      };
+      const signal = errWithSignal.signal ?? null;
+      const killed = errWithSignal.killed === true;
+      // Never started: no pid and no `spawn` event, and execFile reported
+      // the errno (`ENOENT`, `EACCES`, `EAGAIN`) instead of an exit status.
+      // A child that ran and failed carries a numeric exit code, one this
+      // runner killed carries a signal, and one that overflowed `maxBuffer`
+      // carries a string code but DID start - the pid keeps it a run error.
+      const spawnFailed = !spawned && typeof err.code === "string" && !killed;
+      const timedOut = !spawnFailed && killed && signal !== null;
+      const summary = spawnFailed
+        ? `could not be spawned (${err.code})`
+        : timedOut
+          ? `timed out after ${options.timeoutMs}ms (killed via ${signal})`
+          : `exited with code ${exitCode}`;
+      const message = `${command} ${args.join(" ")} ${summary}: ${stderrStr.trim() || stdoutStr.trim()}`;
+      reject(
+        spawnFailed
+          ? new ProcessSpawnError(
+              message,
+              command,
+              args,
+              exitCode,
+              stdoutStr,
+              stderrStr,
+            )
           : timedOut
-            ? `timed out after ${options.timeoutMs}ms (killed via ${signal})`
-            : `exited with code ${exitCode}`;
-        const message = `${command} ${args.join(" ")} ${summary}: ${stderrStr.trim() || stdoutStr.trim()}`;
-        reject(
-          spawnFailed
-            ? new ProcessSpawnError(
+            ? new ProcessTimeoutError(
                 message,
                 command,
                 args,
                 exitCode,
                 stdoutStr,
                 stderrStr,
+                options.timeoutMs,
               )
-            : timedOut
-              ? new ProcessTimeoutError(
-                  message,
-                  command,
-                  args,
-                  exitCode,
-                  stdoutStr,
-                  stderrStr,
-                  options.timeoutMs,
-                )
-              : new ProcessRunError(
-                  message,
-                  command,
-                  args,
-                  exitCode,
-                  stdoutStr,
-                  stderrStr,
-                ),
-        );
-      },
-    );
+            : new ProcessRunError(
+                message,
+                command,
+                args,
+                exitCode,
+                stdoutStr,
+                stderrStr,
+              ),
+      );
+    };
     // Both signals, because they arrive at different times: the pid is set
     // synchronously when the fork succeeded, `spawn` fires once the child is
     // running. Either is proof the command reached the OS; the callback
@@ -180,7 +208,8 @@ export function runCommand(
 export interface RunBytesResult {
   readonly stdout: Buffer;
   /**
-   * The child's stderr, decoded as UTF-8 (lossy): diagnostic text for the
+   * The child's stderr, decoded in the console codepage on Windows and as
+   * UTF-8 (lossy) elsewhere: diagnostic text for the
    * caller that must tell one failure from another, never parsed as data.
    */
   readonly stderr: string;
@@ -215,16 +244,17 @@ export function runCommandForBytes(
       },
       (err, stdout, stderr) => {
         disarmEscalation();
-        const stderrText = stderr.toString("utf8");
-        if (err === null) {
-          resolve({ stdout, stderr: stderrText, exitCode: 0 });
-          return;
-        }
-        if (typeof err.code === "number") {
-          resolve({ stdout, stderr: stderrText, exitCode: err.code });
-          return;
-        }
-        reject(err);
+        void decodeOutput(stderr).then((stderrText) => {
+          if (err === null) {
+            resolve({ stdout, stderr: stderrText, exitCode: 0 });
+            return;
+          }
+          if (typeof err.code === "number") {
+            resolve({ stdout, stderr: stderrText, exitCode: err.code });
+            return;
+          }
+          reject(err);
+        });
       },
     );
     disarmEscalation = armTimeoutKillEscalation(child, options.timeoutMs);
