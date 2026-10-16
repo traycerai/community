@@ -1,6 +1,7 @@
 import { createRef, type ReactNode, type RefObject } from "react";
 import { act, cleanup, renderHook } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { toast } from "sonner";
 import type {
   ChatQueueDeliveryPolicy,
   ChatRunSettings,
@@ -38,6 +39,10 @@ import {
  * Also covers the isReady() submit gate and multi-surface clear broadcast
  * that fix the "queued message reappears in the composer" bug.
  */
+
+vi.mock("sonner", () => ({
+  toast: { info: vi.fn(), error: vi.fn(), success: vi.fn() },
+}));
 
 const DIRTY: JsonContent = {
   type: "doc",
@@ -108,6 +113,7 @@ describe("chat-composer submit gate (path resolution)", () => {
           getActiveTurnForSteer: () => null,
           hasPendingApprovals: false,
           sendDisabled: false,
+          sendDisabledHint: null,
           workspaceBlocked: false,
           imagesUnsupported: false,
           attachmentPreparationPending: pending,
@@ -410,6 +416,7 @@ describe("chat-composer submit after re-key", () => {
  */
 describe("chat-composer submit gate (paused send diagnostics)", () => {
   const REFUSED_LINE = "[composer] submit refused: send disabled";
+  const PAUSED_HINT = "Reconnecting to the host — sending is paused";
 
   afterEach(() => {
     vi.restoreAllMocks();
@@ -418,6 +425,7 @@ describe("chat-composer submit gate (paused send diagnostics)", () => {
 
   function mountPaused(args: {
     readonly sendDisabled: boolean;
+    readonly sendDisabledHint: string | null;
     readonly connectionStatus: StreamConnectionStatus | null;
     readonly onSubmitMessage: (input: ChatComposerSubmitInput) => boolean;
   }) {
@@ -428,6 +436,7 @@ describe("chat-composer submit gate (paused send diagnostics)", () => {
       editorRef,
       onSubmitMessage: args.onSubmitMessage,
       sendDisabled: args.sendDisabled,
+      sendDisabledHint: args.sendDisabledHint,
       targetHostId: "host-tab",
       wrapper: ({ children }) => (
         <QueuedMessageStagesContext
@@ -453,6 +462,7 @@ describe("chat-composer submit gate (paused send diagnostics)", () => {
     const onSubmitMessage = vi.fn(acceptSubmit);
     const { result } = mountPaused({
       sendDisabled: true,
+      sendDisabledHint: PAUSED_HINT,
       connectionStatus: "reconnecting",
       onSubmitMessage,
     });
@@ -485,6 +495,7 @@ describe("chat-composer submit gate (paused send diagnostics)", () => {
     const info = vi.spyOn(appLogger, "info");
     const { result } = mountPaused({
       sendDisabled: true,
+      sendDisabledHint: PAUSED_HINT,
       connectionStatus: "reconnecting",
       onSubmitMessage: vi.fn(acceptSubmit),
     });
@@ -509,6 +520,7 @@ describe("chat-composer submit gate (paused send diagnostics)", () => {
     const info = vi.spyOn(appLogger, "info");
     const { result } = mountPaused({
       sendDisabled: true,
+      sendDisabledHint: PAUSED_HINT,
       connectionStatus: "open",
       onSubmitMessage: vi.fn(acceptSubmit),
     });
@@ -540,6 +552,7 @@ describe("chat-composer submit gate (paused send diagnostics)", () => {
       editorRef,
       onSubmitMessage: vi.fn(acceptSubmit),
       sendDisabled: true,
+      sendDisabledHint: PAUSED_HINT,
       targetHostId: "host-tab",
       wrapper: ({ children }) => (
         <QueuedMessageStagesContext
@@ -564,6 +577,7 @@ describe("chat-composer submit gate (paused send diagnostics)", () => {
     const info = vi.spyOn(appLogger, "info");
     const { result } = mountPaused({
       sendDisabled: false,
+      sendDisabledHint: PAUSED_HINT,
       connectionStatus: "open",
       onSubmitMessage: vi.fn(acceptSubmit),
     });
@@ -576,6 +590,133 @@ describe("chat-composer submit gate (paused send diagnostics)", () => {
   });
 });
 
+/**
+ * Enter while send is disabled used to be a silent no-op - the one cue was a
+ * status line and a tooltip. A submit refused BECAUSE send is disabled now says
+ * why once, with the composer's own hint text; one notice per attempt, so a
+ * held Enter does not stack them.
+ */
+describe("chat-composer submit gate (paused send notice)", () => {
+  const HINT = "Reconnecting to the host — sending is paused";
+  const NOTICE_ID = "chat-composer-send-disabled:chat-notice";
+
+  // Other suites in this file refuse a send too, and each now raises the
+  // notice, so the count starts from a clean mock.
+  beforeEach(() => {
+    vi.mocked(toast.info).mockClear();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function mountNotice(args: {
+    readonly content: JsonContent;
+    readonly sendDisabled: boolean;
+    readonly sendDisabledHint: string | null;
+  }) {
+    const editorRef = createRef<ComposerPromptEditorHandle | null>();
+    editorRef.current = editorHandle({ content: args.content, ready: true });
+    const onSubmitMessage = vi.fn(acceptSubmit);
+    const mounted = mountSubmitHookWith({
+      taskId: "chat-notice",
+      editorRef,
+      onSubmitMessage,
+      sendDisabled: args.sendDisabled,
+      sendDisabledHint: args.sendDisabledHint,
+      targetHostId: "host-tab",
+      wrapper: ({ children }) => children,
+    });
+    return { ...mounted, onSubmitMessage };
+  }
+
+  it("shows the existing hint once, under a stable id, for a blocked Enter", () => {
+    const { result, onSubmitMessage } = mountNotice({
+      content: DIRTY,
+      sendDisabled: true,
+      sendDisabledHint: HINT,
+    });
+
+    act(() => {
+      result.current.submitDraft("enter");
+    });
+
+    expect(onSubmitMessage).not.toHaveBeenCalled();
+    expect(toast.info).toHaveBeenCalledTimes(1);
+    expect(toast.info).toHaveBeenCalledWith(HINT, { id: NOTICE_ID });
+  });
+
+  it("does not stack for repeats of the same blocked state, and re-arms once the window has passed", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-10-16T12:00:00Z"));
+    const { result } = mountNotice({
+      content: DIRTY,
+      sendDisabled: true,
+      sendDisabledHint: HINT,
+    });
+
+    act(() => {
+      result.current.submitDraft("enter");
+      result.current.submitDraft("enter");
+      result.current.submitDraft("enter");
+    });
+    vi.setSystemTime(new Date("2026-10-16T12:00:01.999Z"));
+    act(() => {
+      result.current.submitDraft("enter");
+    });
+    expect(toast.info).toHaveBeenCalledTimes(1);
+
+    vi.setSystemTime(new Date("2026-10-16T12:00:02Z"));
+    act(() => {
+      result.current.submitDraft("enter");
+    });
+    expect(toast.info).toHaveBeenCalledTimes(2);
+  });
+
+  it("shows nothing for an empty draft, where there is no message to refuse", () => {
+    const { result } = mountNotice({
+      content: EMPTY_DOC,
+      sendDisabled: true,
+      sendDisabledHint: HINT,
+    });
+
+    act(() => {
+      result.current.submitDraft("enter");
+    });
+
+    expect(toast.info).not.toHaveBeenCalled();
+  });
+
+  it("shows nothing when send is not disabled", () => {
+    const { result, onSubmitMessage } = mountNotice({
+      content: DIRTY,
+      sendDisabled: false,
+      sendDisabledHint: HINT,
+    });
+
+    act(() => {
+      result.current.submitDraft("enter");
+    });
+
+    expect(onSubmitMessage).toHaveBeenCalledTimes(1);
+    expect(toast.info).not.toHaveBeenCalled();
+  });
+
+  it("shows nothing when send is disabled but there is no hint to say", () => {
+    const { result } = mountNotice({
+      content: DIRTY,
+      sendDisabled: true,
+      sendDisabledHint: null,
+    });
+
+    act(() => {
+      result.current.submitDraft("enter");
+    });
+
+    expect(toast.info).not.toHaveBeenCalled();
+  });
+});
+
 function mountSubmitHook(args: {
   readonly taskId: string;
   readonly editorRef: RefObject<ComposerPromptEditorHandle | null>;
@@ -584,6 +725,7 @@ function mountSubmitHook(args: {
   return mountSubmitHookWith({
     ...args,
     sendDisabled: false,
+    sendDisabledHint: null,
     targetHostId: null,
     wrapper: ({ children }) => children,
   });
@@ -594,6 +736,7 @@ function mountSubmitHookWith(args: {
   readonly editorRef: RefObject<ComposerPromptEditorHandle | null>;
   readonly onSubmitMessage: (input: ChatComposerSubmitInput) => boolean;
   readonly sendDisabled: boolean;
+  readonly sendDisabledHint: string | null;
   readonly targetHostId: string | null;
   readonly wrapper: (props: { readonly children: ReactNode }) => ReactNode;
 }) {
@@ -632,6 +775,7 @@ function mountSubmitHookWith(args: {
         getActiveTurnForSteer: () => null,
         hasPendingApprovals: false,
         sendDisabled: args.sendDisabled,
+        sendDisabledHint: args.sendDisabledHint,
         workspaceBlocked: false,
         imagesUnsupported: false,
         attachmentPreparationPending: false,

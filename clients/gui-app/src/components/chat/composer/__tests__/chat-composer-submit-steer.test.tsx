@@ -716,6 +716,7 @@ function mountSubmit(input: MountSubmitInput): {
         getActiveTurnForSteer: () => props.activeTurn,
         hasPendingApprovals: props.hasPendingApprovals,
         sendDisabled: props.sendDisabled,
+        sendDisabledHint: null,
         workspaceBlocked: props.workspaceBlocked,
         imagesUnsupported: false,
         attachmentPreparationPending: false,

@@ -117,6 +117,12 @@ interface UseChatComposerSubmitArgs {
   readonly hasPendingApprovals: boolean;
   readonly sendDisabled: boolean | undefined;
   /**
+   * The composer's own reason for `sendDisabled`, the same text its tooltip
+   * and status line carry. A submit refused because send is disabled says it
+   * once, so Enter is never silent. `null` when there is nothing to say.
+   */
+  readonly sendDisabledHint: string | null;
+  /**
    * True when the bound workspace folder can't back a turn (none linked, or
    * the host resolved no existing folder). The editor's Enter handler calls
    * this directly, bypassing the send button's `canSubmit` gate, so the block
@@ -228,6 +234,7 @@ export function useChatComposerSubmit(
     getActiveTurnForSteer,
     hasPendingApprovals,
     sendDisabled,
+    sendDisabledHint,
     workspaceBlocked,
     imagesUnsupported,
     attachmentPreparationPending,
@@ -243,10 +250,18 @@ export function useChatComposerSubmit(
   // after an awaited read log from a continuation that holds the closure of the
   // render that started it, and the stream going away is exactly what it is
   // there to name.
-  const liveSendBlockRef = useRef({ connectionStatus, sendDisabled });
+  const liveSendBlockRef = useRef({
+    connectionStatus,
+    sendDisabled,
+    sendDisabledHint,
+  });
   useLayoutEffect(() => {
-    liveSendBlockRef.current = { connectionStatus, sendDisabled };
-  }, [connectionStatus, sendDisabled]);
+    liveSendBlockRef.current = {
+      connectionStatus,
+      sendDisabled,
+      sendDisabledHint,
+    };
+  }, [connectionStatus, sendDisabled, sendDisabledHint]);
   // When the last refused-submit line was written, for the window above.
   const lastRefusedSubmitLogAt = useRef<number | null>(null);
   // Whether a refusal now would write a line: send is disabled and the window
@@ -275,6 +290,14 @@ export function useChatComposerSubmit(
             : "stream-not-open",
         stage,
       });
+      // The same refusal, said to the user. Shares the log's window, so a held
+      // Enter raises one notice, and the id makes a repeat replace it in place
+      // instead of stacking. Nothing to say when the composer gave no reason.
+      if (live.sendDisabledHint !== null) {
+        toast.info(live.sendDisabledHint, {
+          id: `chat-composer-send-disabled:${taskId}`,
+        });
+      }
     },
     [refusedSubmitLogDue, targetHostId, taskId],
   );
@@ -1209,9 +1232,9 @@ export function useChatComposerSubmit(
 }
 
 /**
- * At most one refused-submit line per this window, counted from the last line
- * written: a held Enter repeats the refusal every few tens of milliseconds and
- * would otherwise write one line each.
+ * At most one refused-submit line (and notice) per this window, counted from
+ * the last one written: a held Enter repeats the refusal every few tens of
+ * milliseconds and would otherwise write one each.
  */
 const REFUSED_SUBMIT_LOG_WINDOW_MS = 2_000;
 
