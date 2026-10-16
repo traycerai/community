@@ -131,6 +131,10 @@ import {
   epicSubscribeV16,
 } from "@traycer/protocol/host/epic/subscribe";
 import {
+  listTaskHostsRequestSchema,
+  listTaskHostsResponseSchema,
+} from "@traycer/protocol/host/task-host-summary";
+import {
   listCloudChatPayloadsRequestSchema,
   listCloudChatPayloadsResponseSchema,
   listCloudChatsRequestSchema,
@@ -771,6 +775,20 @@ export const epicMentionReviewsV10 = defineRpcContract({
 // CloudData epic-collaborators query. Schemas are imported from
 // `./unary-schemas` and are the same zod instances CloudDataClient resolves
 // (enforced by epic-list-collaborators-instance-identity.test.ts).
+/**
+ * The task's hosts, each with its owner principal and whether the reading
+ * host's principal reaches it (ticket E17 checkpoint 4): a pass-through of
+ * traycer-server's task host list with the request's own credential. Optional
+ * (non-floor): a host without it degrades `unsupported`, and the client shows
+ * no host list.
+ */
+export const epicListTaskHostsV10 = defineRpcContract({
+  method: "epic.listTaskHosts",
+  schemaVersion: { major: 1, minor: 0 } as const,
+  requestSchema: listTaskHostsRequestSchema,
+  responseSchema: listTaskHostsResponseSchema,
+});
+
 export const epicListCollaboratorsV10 = defineRpcContract({
   method: "epic.listCollaborators",
   schemaVersion: { major: 1, minor: 0 } as const,

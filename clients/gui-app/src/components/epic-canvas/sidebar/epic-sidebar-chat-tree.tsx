@@ -15,6 +15,7 @@ import type {
 import type { CloudChatSummary } from "@traycer/protocol/host/epic/cloud-chat";
 import { v4 as uuidv4 } from "uuid";
 import { useHostReachability } from "@/hooks/agent/use-host-reachability";
+import { TaskHostGroupsSection } from "@/components/epic-canvas/sidebar/task-host-groups";
 import { useHostRefusesEpicStore } from "@/hooks/chats/use-host-refuses-epic-store";
 import { settleDetachedEpicMutation } from "@/lib/artifacts/detached-epic-mutation";
 import { UNKNOWN_HOST_PLACEHOLDER } from "@/lib/host/constants";
@@ -1461,6 +1462,7 @@ export function ChatTreePanelBody(props: ChatTreePanelBodyProps) {
                         {messageHits.node}
                       </SidebarGroupContent>
                     </SidebarGroup>
+                    <TaskHostGroupsSection epicId={epicId} tabId={tabId} />
                   </SidebarContent>
                 </HoverCardGroup>
               </SidebarFilterVisibilityContext.Provider>
