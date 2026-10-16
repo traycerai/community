@@ -42,6 +42,7 @@ import type {
 import { useEpicRenameChat } from "@/hooks/epic/use-epic-chat-mutations";
 import {
   useEpicDeleteTuiAgent,
+  useEpicDeleteTuiAgentInBatch,
   useEpicRenameTuiAgent,
 } from "@/hooks/epic/use-epic-tui-agent-mutations";
 import { useEpicSyncChatRecords } from "@/hooks/chats/use-epic-chat-records";
@@ -787,6 +788,36 @@ describe("useEpicDeleteTuiAgent routing", () => {
       "Traycer can't reach that host right now, so nothing on it was changed. Try again once it is reachable.",
       expect.anything(),
     );
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("leaves a batch member's failure to its caller", async () => {
+    seedRemoteTuiAgent();
+    vi.mocked(toast.error).mockClear();
+    vi.mocked(toast.message).mockClear();
+    fixture.failDeleteTuiAgent = new RetryableTransportError({
+      replaySafetyFromKey: false,
+      code: "RPC_ERROR",
+      message: "Remote session is not ready",
+      requestId: "req-offline-tui-batch",
+      method: "epic.deleteTuiAgent",
+      fatalDetails: null,
+    });
+    const { result } = renderHook(() => useEpicDeleteTuiAgentInBatch(), {
+      wrapper: fixture.wrapper,
+    });
+
+    await act(async () => {
+      await result.current
+        .mutateAsync({
+          epicId: EPIC_ID,
+          tuiAgentId: REMOTE_TUI_ID,
+          hostId: REMOTE.hostId,
+        })
+        .catch(() => undefined);
+    });
+
+    expect(toast.message).not.toHaveBeenCalled();
     expect(toast.error).not.toHaveBeenCalled();
   });
 

@@ -8,6 +8,8 @@ import {
   within,
 } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { toast } from "sonner";
+import { RetryableTransportError } from "@traycer-clients/shared/host-transport/host-messenger";
 import { domMax, LazyMotion } from "motion/react";
 import { forwardRef, type ReactNode } from "react";
 import { userEvent } from "@testing-library/user-event";
@@ -640,6 +642,11 @@ vi.mock("@/hooks/epic/use-epic-chat-mutations", () => ({
     mutateAsync: testState.deleteChatMutateAsync,
     isPending: false,
   }),
+  useEpicDeleteChatInBatch: () => ({
+    mutate: vi.fn(),
+    mutateAsync: testState.deleteChatMutateAsync,
+    isPending: false,
+  }),
   useEpicRenameChat: () => ({
     mutate: vi.fn(),
     mutateAsync: testState.renameChatMutateAsync,
@@ -777,11 +784,16 @@ vi.mock("@/lib/tab-recovery/history", async (importOriginal) => ({
 }));
 
 // Tile-close and closed-payload cleanup for a TUI delete are owned by
-// `useEpicDeleteTuiAgent` itself (`discardDeletedTuiAgentPayloads` is a
+// `useEpicDeleteTuiAgentInBatch` itself (`discardDeletedTuiAgentPayloads` is a
 // private, unexported detail of that module) - this suite only pins that the
 // SIDEBAR never does that work itself, so the hook is a plain mock.
 vi.mock("@/hooks/epic/use-epic-tui-agent-mutations", () => ({
   useEpicDeleteTuiAgent: () => ({
+    mutate: vi.fn(),
+    mutateAsync: testState.deleteTuiAgentMutateAsync,
+    isPending: false,
+  }),
+  useEpicDeleteTuiAgentInBatch: () => ({
     mutate: vi.fn(),
     mutateAsync: testState.deleteTuiAgentMutateAsync,
     isPending: false,
@@ -1591,6 +1603,59 @@ describe("epic sidebar selection mode", () => {
       chatId: "chat-child",
       hostId: null,
     });
+  });
+
+  it("reports one notice naming several hosts when a GUI and terminal agent bulk delete spans two unreachable hosts", async () => {
+    // The chats resolve to the (null) session host and the terminal agent to
+    // host-1: two owner hosts, neither reachable.
+    seedChatTree();
+    const toastMessage = vi.spyOn(toast, "message");
+    testState.deleteChatMutateAsync.mockImplementation(() =>
+      Promise.reject(unreachableOwnerHost("epic.deleteChat")),
+    );
+    testState.deleteTuiAgentMutateAsync.mockImplementation(() =>
+      Promise.reject(unreachableOwnerHost("epic.deleteTuiAgent")),
+    );
+
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "Select agents" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+    fireEvent.click(screen.getByTestId("epic-sidebar-delete-selected-chats"));
+    fireEvent.click(screen.getByTestId("confirm-action"));
+
+    await waitFor(() => {
+      expect(toastMessage).toHaveBeenCalledWith(
+        "Traycer can't reach the hosts these agents run on, so nothing on them was changed. Try again once they are reachable.",
+        expect.anything(),
+      );
+    });
+    expect(toastMessage).toHaveBeenCalledTimes(1);
+    toastMessage.mockRestore();
+  });
+
+  it("reports one notice naming one host when every agent in an unreachable bulk delete runs on it", async () => {
+    seedGuiChatTree();
+    const toastMessage = vi.spyOn(toast, "message");
+    testState.deleteChatMutateAsync.mockImplementation(() =>
+      Promise.reject(unreachableOwnerHost("epic.deleteChat")),
+    );
+
+    render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "Select agents" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+    fireEvent.click(screen.getByTestId("epic-sidebar-delete-selected-chats"));
+    fireEvent.click(screen.getByTestId("confirm-action"));
+
+    await waitFor(() => {
+      expect(toastMessage).toHaveBeenCalledWith(
+        "Traycer can't reach the host these agents run on, so nothing on it was changed. Try again once it is reachable.",
+        expect.anything(),
+      );
+    });
+    expect(toastMessage).toHaveBeenCalledTimes(1);
+    toastMessage.mockRestore();
   });
 
   it("bulk-deletes a terminal agent on its owning host, targeting a same-id row correctly and leaving tile/payload teardown to the mutation hook", async () => {
@@ -5605,6 +5670,18 @@ describe("chat row archive", () => {
  */
 function isMenuItemUnavailable(el: HTMLElement): boolean {
   return el.matches(":disabled") || el.getAttribute("aria-disabled") === "true";
+}
+
+/** A pre-send failure: the owning host's session was not ready. */
+function unreachableOwnerHost(method: string): RetryableTransportError {
+  return new RetryableTransportError({
+    replaySafetyFromKey: false,
+    code: "RPC_ERROR",
+    message: "Remote session is not ready",
+    requestId: "req-1",
+    method,
+    fatalDetails: null,
+  });
 }
 
 function seedChatTree(): void {

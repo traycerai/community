@@ -64,12 +64,52 @@ export function toastFromOwnerHostWriteError(
   toastFromHostError(error, fallback);
 }
 
+/** One write of a batch: the host it was sent to, and its failure if any. */
+export interface OwnerHostBatchWriteOutcome {
+  readonly hostId: string | null;
+  readonly error: HostRpcError | null;
+}
+
+/**
+ * The one error toast for a batch of owner-host writes (archive or delete
+ * several agents), whose members raise none of their own.
+ *
+ * "Nothing on it was changed" holds for the batch only when every write never
+ * reached its host; a partly applied batch, or one with any other failure,
+ * keeps the ordinary toast for its first failure. A batch of one reads like
+ * the single write it is.
+ */
+export function toastFromOwnerHostBatchWriteFailures(
+  outcomes: readonly OwnerHostBatchWriteOutcome[],
+  fallback: string,
+): void {
+  const failures = outcomes.flatMap((outcome) =>
+    outcome.error === null ? [] : [outcome.error],
+  );
+  if (failures.length === 0) return;
+  const firstFailure = failures[0];
+  if (outcomes.length === 1) {
+    toastFromOwnerHostWriteError(firstFailure, fallback);
+    return;
+  }
+  if (
+    failures.length === outcomes.length &&
+    failures.every(isOwnerHostOfflineFailure)
+  ) {
+    toastOwnerHostsUnreachableForBatch(
+      outcomes.map((outcome) => outcome.hostId),
+    );
+    return;
+  }
+  toastFromHostError(firstFailure, fallback);
+}
+
 /**
  * The notice for a batch write in which every request failed with
  * `isOwnerHostOfflineFailure`. A batch can span agents on several hosts, so
  * the copy is singular only when one host owns them all.
  */
-export function toastOwnerHostsUnreachableForBatch(
+function toastOwnerHostsUnreachableForBatch(
   ownerHostIds: readonly (string | null)[],
 ): void {
   const notice =
