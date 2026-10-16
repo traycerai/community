@@ -42,6 +42,7 @@ import {
 import {
   isOwnerHostOfflineFailure,
   toastFromOwnerHostWriteError,
+  toastOwnerHostsUnreachableForBatch,
 } from "@/lib/owner-host-write-error-toast";
 import { invalidateEpicChatRecords } from "@/hooks/chats/use-epic-chat-records";
 import { invalidateChatRunSettings } from "@/hooks/chats/use-chat-run-settings-query";
@@ -781,7 +782,7 @@ export function useEpicArchiveChats(): UseMutationResult<
           }),
         ),
       ),
-    onSuccess: (results) => {
+    onSuccess: (results, variables) => {
       const firstFailure = results.find(
         (result): result is PromiseRejectedResult =>
           result.status === "rejected",
@@ -800,9 +801,8 @@ export function useEpicArchiveChats(): UseMutationResult<
           ),
       );
       if (allOffline) {
-        toastFromOwnerHostWriteError(
-          failure,
-          "Couldn't archive some selected agents.",
+        toastOwnerHostsUnreachableForBatch(
+          variables.chats.map((chat) => chat.hostId),
         );
         return;
       }
