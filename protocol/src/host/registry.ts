@@ -1040,9 +1040,11 @@ import {
 import {
   editorOpenPathsUpgradeV10ToV11,
   editorOpenPathsUpgradeV11ToV12,
+  editorOpenPathsUpgradeV12ToV13,
   editorOpenPathsV10,
   editorOpenPathsV11,
   editorOpenPathsV12,
+  editorOpenPathsV13,
 } from "@traycer/protocol/host/editor/contracts";
 import {
   gitListChangedFilesV10,
@@ -9164,7 +9166,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   },
   "editor.openPaths": {
     1: {
-      latestMinor: 2,
+      latestMinor: 3,
       versions: {
         0: {
           contract: editorOpenPathsV10,
@@ -9177,6 +9179,10 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
         2: {
           contract: editorOpenPathsV12,
           upgradeFromPreviousVersion: editorOpenPathsUpgradeV11ToV12,
+        },
+        3: {
+          contract: editorOpenPathsV13,
+          upgradeFromPreviousVersion: editorOpenPathsUpgradeV12ToV13,
         },
       },
       downgradePathsFromLatest: {},
