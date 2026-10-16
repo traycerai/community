@@ -888,5 +888,50 @@ describe("the delete's progress toast", () => {
       );
       expect(mocks.toastFromHostError).not.toHaveBeenCalled();
     });
+
+    // traycerai/traycer#2546 (Codex P2): reachability alone is not the
+    // remedy when part of the selection was refused for the sign-in.
+    it("names the sign-in refusal beside the unreachable host when the admitted local Task never reached it", async () => {
+      useAuthStore.setState({ status: "unverified" });
+      const view = renderBatchDelete();
+
+      view.dispatch({
+        ids: ["epic-local", "epic-cloud"],
+        isLocalHomedNow: (epicId) => epicId === "epic-local",
+        worktreeCleanup: null,
+      });
+      await waitFor(() => {
+        expect(host.state.requests).toHaveLength(1);
+      });
+      expect(requestedIds(0)).toEqual(["epic-local"]);
+      await act(async () => {
+        hostRequest(0).reject(
+          new RetryableTransportError({
+            replaySafetyFromKey: false,
+            code: "RPC_ERROR",
+            message: "Remote session is not ready",
+            requestId: "request-1",
+            method: "epic.batchDelete",
+            fatalDetails: null,
+          }),
+        );
+        await Promise.resolve();
+      });
+
+      await waitFor(() => {
+        expect(mocks.toastError).toHaveBeenCalledTimes(1);
+      });
+      expect(mocks.toastError.mock.calls[0]?.[0]).toBe(
+        "Couldn't delete 2 tasks.",
+      );
+      const description = mocks.toastError.mock.calls[0]?.[1]?.description;
+      expect(description).toContain(
+        "Traycer can't reach that host right now, so nothing on it was changed.",
+      );
+      expect(description).toContain("couldn't confirm your sign-in");
+      // One notice: the unreachable-host line is not raised on its own too.
+      expect(mocks.toastMessage).toHaveBeenCalledTimes(1);
+      expect(mocks.toastFromHostError).not.toHaveBeenCalled();
+    });
   });
 });

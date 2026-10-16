@@ -19,7 +19,7 @@ import {
  */
 const OWNER_HOST_UNREACHABLE_TOAST_ID = "owner-host-unreachable-notice";
 
-const OWNER_HOST_UNREACHABLE_NOTICE =
+export const OWNER_HOST_UNREACHABLE_NOTICE =
   "Traycer can't reach that host right now, so nothing on it was changed. Try again once it is reachable.";
 
 const OWNER_HOST_UNREACHABLE_BATCH_ONE_HOST_NOTICE =
@@ -81,11 +81,9 @@ function isDispatchedAbort(error: HostRpcError): boolean {
  * (`replaySafetyFromKey`), or it was aborted after it was sent.
  */
 function writeMayHaveApplied(error: HostRpcError): boolean {
-  return (
-    isUnknownOutcomeTransportFailure(error) ||
-    (error instanceof RetryableTransportError && error.replaySafetyFromKey) ||
-    isDispatchedAbort(error)
-  );
+  // `isUnknownOutcomeTransportFailure` covers the keyed sent-and-dropped
+  // `RetryableTransportError` too, attested or not.
+  return isUnknownOutcomeTransportFailure(error) || isDispatchedAbort(error);
 }
 
 /**

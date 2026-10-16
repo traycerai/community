@@ -22,7 +22,11 @@ import {
   worktreeCleanupFailureDetail,
   type WorktreeCleanupOutcome,
 } from "@/lib/epics/run-worktree-cleanup";
-import { toastFromOwnerHostWriteError } from "@/lib/owner-host-write-error-toast";
+import {
+  OWNER_HOST_UNREACHABLE_NOTICE,
+  isOwnerHostUnreachableFailure,
+  toastFromOwnerHostWriteError,
+} from "@/lib/owner-host-write-error-toast";
 import { progressToast } from "@/lib/toast/progress-toast";
 import { LANDING_ROUTE } from "@/lib/routes";
 import { navigateToTabIntent } from "@/lib/tab-navigation";
@@ -351,11 +355,33 @@ export function useEpicBatchDelete(): UseMutationResult<
         // silent for an aborted or recoverable-unauthorized request, and a
         // progress toast nothing dismisses would spin forever.
         if (ctx !== undefined) toast.dismiss(ctx.progressToastId);
-        const refused = epicDeleteRefusedIds.get(variables);
-        if (refused !== undefined && refused.length === variables.ids.length) {
+        const refused = epicDeleteRefusedIds.get(variables) ?? [];
+        if (refused.length === variables.ids.length) {
           // Refused before any request: nothing was sent, so say why.
           const parts = epicDeleteToastParts({
             failures: refusedEpicDeleteResults(refused),
+            successes: 0,
+            total: variables.ids.length,
+            deletedIds: [],
+            epicTitlesById: ctx?.epicTitlesById ?? {},
+          });
+          emitEpicDeleteToast(parts.level, parts.message, parts.detail);
+          return;
+        }
+        if (refused.length > 0 && isOwnerHostUnreachableFailure(error)) {
+          // Nothing was deleted, for two reasons: the admitted ids never
+          // reached the host, and the rest were refused for the sign-in.
+          // Reachability alone is not the remedy, so one notice says both.
+          const sentIds = variables.ids.filter((id) => !refused.includes(id));
+          const parts = epicDeleteToastParts({
+            failures: [
+              ...sentIds.map((taskId) => ({
+                taskId,
+                success: false,
+                errorMessage: OWNER_HOST_UNREACHABLE_NOTICE,
+              })),
+              ...refusedEpicDeleteResults(refused),
+            ],
             successes: 0,
             total: variables.ids.length,
             deletedIds: [],
