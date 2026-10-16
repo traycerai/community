@@ -43,6 +43,10 @@ import {
   reportableWarningToast,
 } from "@/lib/reportable-error-toast";
 import { Analytics, AnalyticsEvent } from "@/lib/analytics";
+import {
+  authorizesCloudCapability,
+  useAuthStore,
+} from "@/stores/auth/auth-store";
 
 interface BatchDeleteEpicMutationContext {
   readonly hostId: string | null;
@@ -82,12 +86,68 @@ export interface BatchDeleteWorktreeCandidate {
  */
 export interface BatchDeleteEpicVariables {
   readonly ids: ReadonlyArray<string>;
+  /**
+   * Whether a Task's row is local-homed right now, asked when the request is
+   * built rather than recorded at confirm: a local row can finish promotion
+   * to cloud while the person confirms or the mutation starts.
+   */
+  readonly isLocalHomedNow: (epicId: string) => boolean;
   readonly worktreeCleanup: {
     readonly candidates: ReadonlyArray<BatchDeleteWorktreeCandidate>;
   } | null;
 }
 
 type DeleteNavigationTarget = HeaderTab | null | undefined;
+
+const EPIC_DELETE_SIGNED_OUT_MESSAGE =
+  "This task was not deleted because Traycer couldn't confirm your sign-in. Try again once you're signed in.";
+
+/** Ids each dispatch refused at send time, merged into its answer. */
+const epicDeleteRefusedIds = new WeakMap<
+  BatchDeleteEpicVariables,
+  ReadonlyArray<string>
+>();
+
+function refusedEpicDeleteResults(
+  taskIds: ReadonlyArray<string>,
+): BatchDeleteItemResult[] {
+  return taskIds.map((taskId) => ({
+    taskId,
+    success: false,
+    errorMessage: EPIC_DELETE_SIGNED_OUT_MESSAGE,
+  }));
+}
+
+/**
+ * The one `epic.batchDelete` request, admitted at the latest point before it
+ * is sent, from live state. While the session is signed in every id goes.
+ * Otherwise only the ids whose row is local-homed now go - deleting those
+ * spends nothing on the account - and the rest are answered "not deleted".
+ * A same-user demotion to `unverified` keeps the bearer, so this is what stops
+ * a cloud delete from going out on it. With nothing admitted no request is
+ * sent and `onError` says why.
+ *
+ * One request carries every admitted id: the cloud bounds it itself, deleting
+ * ten Tasks per transaction within the request's time limit and answering the
+ * rest "not deleted", so a very large selection can come back partly not
+ * deleted and deleting again finishes it.
+ */
+function admitEpicDeleteRequest(variables: BatchDeleteEpicVariables): {
+  ids: string[];
+} {
+  const signedIn = authorizesCloudCapability(useAuthStore.getState().status);
+  const ids = signedIn
+    ? [...variables.ids]
+    : variables.ids.filter((id) => variables.isLocalHomedNow(id));
+  epicDeleteRefusedIds.set(
+    variables,
+    signedIn ? [] : variables.ids.filter((id) => !ids.includes(id)),
+  );
+  if (ids.length === 0) {
+    throw new Error("epic.batchDelete: no task admitted without a sign-in");
+  }
+  return { ids };
+}
 
 export function useEpicBatchDelete(): UseMutationResult<
   ResponseOfMethod<HostRpcRegistry, "epic.batchDelete">,
@@ -110,7 +170,15 @@ export function useEpicBatchDelete(): UseMutationResult<
   >({
     client,
     method: "epic.batchDelete",
-    mapVariables: (variables) => ({ ids: [...variables.ids] }),
+    mapVariables: admitEpicDeleteRequest,
+    resolveResponse: (response, variables) => {
+      const refused = epicDeleteRefusedIds.get(variables) ?? [];
+      if (refused.length === 0) return Promise.resolve(response);
+      return Promise.resolve({
+        ...response,
+        results: [...response.results, ...refusedEpicDeleteResults(refused)],
+      });
+    },
     options: {
       mutationKey: epicMutationKeys.batchDelete(),
       onMutate: (variables) => {
@@ -278,12 +346,27 @@ export function useEpicBatchDelete(): UseMutationResult<
           queryKey: hostQueryKeys.scope(ctx.hostId),
         });
       },
-      onError: (error, _variables, ctx) => {
+      onError: (error, variables, ctx) => {
         // Explicit, never left to the error toast: `toastFromHostError` stays
         // silent for an aborted or recoverable-unauthorized request, and a
         // progress toast nothing dismisses would spin forever.
         if (ctx !== undefined) toast.dismiss(ctx.progressToastId);
-        toastFromOwnerHostWriteError(error, "Couldn't delete epics.");
+        const refused = epicDeleteRefusedIds.get(variables);
+        if (refused !== undefined && refused.length === variables.ids.length) {
+          // Refused before any request: nothing was sent, so say why.
+          const parts = epicDeleteToastParts({
+            failures: refusedEpicDeleteResults(refused),
+            successes: 0,
+            total: variables.ids.length,
+            deletedIds: [],
+            epicTitlesById: ctx?.epicTitlesById ?? {},
+          });
+          emitEpicDeleteToast(parts.level, parts.message, parts.detail);
+          return;
+        }
+        // The one request failed. When it never reached the host, nothing on
+        // it was changed - neither the ids it carried nor any refused above.
+        toastFromOwnerHostWriteError(error, "Couldn't delete tasks.");
       },
     },
   });
@@ -307,13 +390,32 @@ export function usePendingDeleteEpicIds(): ReadonlySet<string> {
     select: (mutation) => mutation.state.variables,
   });
   return useMemo(
-    () =>
-      new Set(
-        pendingVariables.flatMap((variables) =>
-          isBatchDeleteEpicVariables(variables) ? variables.ids : [],
-        ),
-      ),
+    () => pendingDeleteEpicIdsFromVariables(pendingVariables),
     [pendingVariables],
+  );
+}
+
+/** Reads pending deletes at callback time, avoiding a render-time snapshot. */
+export function readPendingDeleteEpicIds(
+  queryClient: QueryClient,
+): ReadonlySet<string> {
+  const pendingVariables = queryClient
+    .getMutationCache()
+    .findAll({
+      mutationKey: epicMutationKeys.batchDelete(),
+      status: "pending",
+    })
+    .map((mutation) => mutation.state.variables);
+  return pendingDeleteEpicIdsFromVariables(pendingVariables);
+}
+
+function pendingDeleteEpicIdsFromVariables(
+  pendingVariables: ReadonlyArray<unknown>,
+): ReadonlySet<string> {
+  return new Set(
+    pendingVariables.flatMap((variables) =>
+      isBatchDeleteEpicVariables(variables) ? variables.ids : [],
+    ),
   );
 }
 
@@ -514,8 +616,8 @@ export function epicDeleteToastParts(args: {
       level: "error",
       message:
         failureCount === 1
-          ? "Couldn't delete epic."
-          : `Couldn't delete ${failureCount} epics.`,
+          ? "Couldn't delete task."
+          : `Couldn't delete ${failureCount} tasks.`,
       detail,
     };
   }

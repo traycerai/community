@@ -34,6 +34,9 @@ import {
   providersListRequestSchemaBeforeV70,
   providersListResponseSchema,
   providersListResponseSchemaV100Preimage,
+  providersListResponseSchemaV101Preimage,
+  providersUsePackVersionResponseSchema,
+  providersUsePackVersionResponseSchemaV10,
   providersListResponseSchemaV70,
   providersListResponseSchemaV90,
   providersListResponseSchemaV91,
@@ -258,9 +261,18 @@ const LIVE_FROZEN_EXPORTS = {
   // 10.0 reader never sees a field it cannot spell. Its dump did not change by
   // the freeze.
   "providers.list@10.0": providersListResponseSchemaV100Preimage,
-  // The head line: it names the LIVE schema, so the next growth of the MCP row,
-  // notice or capability fails here first.
-  "providers.list@10.1": providersListResponseSchema,
+  // 10.1 froze when `macosRequirement` opened 10.2: its row is the pre-field
+  // shape, so a released 10.1 reader never sees a key it cannot spell. Its dump
+  // did not change by the freeze.
+  "providers.list@10.1": providersListResponseSchemaV101Preimage,
+  // The head line: it names the LIVE schema, so the next growth of the provider
+  // state fails here first.
+  "providers.list@10.2": providersListResponseSchema,
+  // 1.0 is hand-frozen at the three-code failure arm when `macos-ineligible`
+  // opened 1.1; its dump did not change by the freeze.
+  "providers.usePackVersion@1.0": providersUsePackVersionResponseSchemaV10,
+  // The head line: it names the LIVE response, so the next arm fails here first.
+  "providers.usePackVersion@1.1": providersUsePackVersionResponseSchema,
   // The fourth method (see the snapshot script for why it is here): its
   // response carries the PERSISTED harness enum, it is off the released floor,
   // and nothing local guarded it until Reasonix grew it and only the tag gate
