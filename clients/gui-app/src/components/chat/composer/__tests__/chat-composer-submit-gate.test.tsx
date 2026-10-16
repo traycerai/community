@@ -437,6 +437,7 @@ describe("chat-composer submit gate (paused send diagnostics)", () => {
       onSubmitMessage: args.onSubmitMessage,
       sendDisabled: args.sendDisabled,
       sendDisabledHint: args.sendDisabledHint,
+      modelSlug: "claude-sonnet",
       targetHostId: "host-tab",
       wrapper: ({ children }) => (
         <QueuedMessageStagesContext
@@ -553,6 +554,7 @@ describe("chat-composer submit gate (paused send diagnostics)", () => {
       onSubmitMessage: vi.fn(acceptSubmit),
       sendDisabled: true,
       sendDisabledHint: PAUSED_HINT,
+      modelSlug: "claude-sonnet",
       targetHostId: "host-tab",
       wrapper: ({ children }) => (
         <QueuedMessageStagesContext
@@ -614,6 +616,7 @@ describe("chat-composer submit gate (paused send notice)", () => {
     readonly content: JsonContent;
     readonly sendDisabled: boolean;
     readonly sendDisabledHint: string | null;
+    readonly modelSlug: string;
   }) {
     const editorRef = createRef<ComposerPromptEditorHandle | null>();
     editorRef.current = editorHandle({ content: args.content, ready: true });
@@ -624,6 +627,7 @@ describe("chat-composer submit gate (paused send notice)", () => {
       onSubmitMessage,
       sendDisabled: args.sendDisabled,
       sendDisabledHint: args.sendDisabledHint,
+      modelSlug: args.modelSlug,
       targetHostId: "host-tab",
       wrapper: ({ children }) => children,
     });
@@ -635,6 +639,7 @@ describe("chat-composer submit gate (paused send notice)", () => {
       content: DIRTY,
       sendDisabled: true,
       sendDisabledHint: HINT,
+      modelSlug: "claude-sonnet",
     });
 
     act(() => {
@@ -653,6 +658,7 @@ describe("chat-composer submit gate (paused send notice)", () => {
       content: DIRTY,
       sendDisabled: true,
       sendDisabledHint: HINT,
+      modelSlug: "claude-sonnet",
     });
 
     act(() => {
@@ -678,6 +684,39 @@ describe("chat-composer submit gate (paused send notice)", () => {
       content: EMPTY_DOC,
       sendDisabled: true,
       sendDisabledHint: HINT,
+      modelSlug: "claude-sonnet",
+    });
+
+    act(() => {
+      result.current.submitDraft("enter");
+    });
+
+    expect(toast.info).not.toHaveBeenCalled();
+  });
+
+  it("still shows the hint while the model catalog has not resolved a slug", () => {
+    const { result, onSubmitMessage } = mountNotice({
+      content: DIRTY,
+      sendDisabled: true,
+      sendDisabledHint: HINT,
+      modelSlug: "",
+    });
+
+    act(() => {
+      result.current.submitDraft("enter");
+    });
+
+    expect(onSubmitMessage).not.toHaveBeenCalled();
+    expect(toast.info).toHaveBeenCalledTimes(1);
+    expect(toast.info).toHaveBeenCalledWith(HINT, { id: NOTICE_ID });
+  });
+
+  it("shows nothing for an empty draft while the model slug is unresolved", () => {
+    const { result } = mountNotice({
+      content: EMPTY_DOC,
+      sendDisabled: true,
+      sendDisabledHint: HINT,
+      modelSlug: "",
     });
 
     act(() => {
@@ -692,6 +731,7 @@ describe("chat-composer submit gate (paused send notice)", () => {
       content: DIRTY,
       sendDisabled: false,
       sendDisabledHint: HINT,
+      modelSlug: "claude-sonnet",
     });
 
     act(() => {
@@ -707,6 +747,7 @@ describe("chat-composer submit gate (paused send notice)", () => {
       content: DIRTY,
       sendDisabled: true,
       sendDisabledHint: null,
+      modelSlug: "claude-sonnet",
     });
 
     act(() => {
@@ -726,6 +767,7 @@ function mountSubmitHook(args: {
     ...args,
     sendDisabled: false,
     sendDisabledHint: null,
+    modelSlug: "claude-sonnet",
     targetHostId: null,
     wrapper: ({ children }) => children,
   });
@@ -737,6 +779,7 @@ function mountSubmitHookWith(args: {
   readonly onSubmitMessage: (input: ChatComposerSubmitInput) => boolean;
   readonly sendDisabled: boolean;
   readonly sendDisabledHint: string | null;
+  readonly modelSlug: string;
   readonly targetHostId: string | null;
   readonly wrapper: (props: { readonly children: ReactNode }) => ReactNode;
 }) {
@@ -749,7 +792,7 @@ function mountSubmitHookWith(args: {
       permission: "supervised",
       selection: {
         harnessId: "claude",
-        modelSlug: "claude-sonnet",
+        modelSlug: args.modelSlug,
         profileId: null,
       },
       reasoning: "medium",

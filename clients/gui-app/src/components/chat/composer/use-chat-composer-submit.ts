@@ -491,14 +491,13 @@ export function useChatComposerSubmit(
       // blocked submit runs them too, for the log's sake only: a refusal is
       // worth a line when a sendable message was refused, not when Enter was
       // pressed on an empty composer.
-      const readSendableDraft = (): {
-        readonly toolbar: ComposerToolbarStoreState;
-        readonly editor: ComposerPromptEditorHandle;
-        readonly annotationRecords: ReadonlyArray<BrowserAnnotationRecord>;
-        readonly editorContent: JsonContent;
-      } | null => {
+      //
+      // Split from the model gate below: an unresolved model slug (catalog
+      // not answered yet, which a fresh tab on a reconnecting host is) says
+      // nothing about whether the user typed a message, and a refused send
+      // with a typed message is exactly what the notice is for.
+      const readDraftToSend = (): ReadDraft | null => {
         const toolbar = toolbarStore.getState();
-        if (toolbar.selection.modelSlug.length === 0) return null;
         const editor = editorRef.current;
         // A handle exists from the owner's first commit, before Tiptap's async
         // `useEditor` resolves - `getJSON()`/`clear()` silently no-op until
@@ -522,8 +521,14 @@ export function useChatComposerSubmit(
         }
         return { toolbar, editor, annotationRecords, editorContent };
       };
+      const readSendableDraft = (): ReadDraft | null => {
+        if (toolbarStore.getState().selection.modelSlug.length === 0) {
+          return null;
+        }
+        return readDraftToSend();
+      };
       if (submitBlocked()) {
-        if (refusedSubmitLogDue() && readSendableDraft() !== null) {
+        if (refusedSubmitLogDue() && readDraftToSend() !== null) {
           noteRefusedSubmit("initial");
         }
         return;
@@ -1229,6 +1234,14 @@ export function useChatComposerSubmit(
       onRestart,
     },
   };
+}
+
+/** A composer draft with something in it, read for a submit. */
+interface ReadDraft {
+  readonly toolbar: ComposerToolbarStoreState;
+  readonly editor: ComposerPromptEditorHandle;
+  readonly annotationRecords: ReadonlyArray<BrowserAnnotationRecord>;
+  readonly editorContent: JsonContent;
 }
 
 /**
