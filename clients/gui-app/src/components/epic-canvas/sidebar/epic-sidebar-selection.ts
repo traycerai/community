@@ -581,6 +581,43 @@ export function rootmostSelectedSidebarIds(args: {
   );
 }
 
+/**
+ * The rows a confirmed bulk delete dispatches, deepest agents first.
+ *
+ * An artifact's delete cascades to its subtree, so a selected descendant of a
+ * selected artifact is dropped: deleting it too would be a second delete of a
+ * row the first already removes. An agent's delete removes only that record -
+ * its nested agents survive and move to the top level - so every selected
+ * agent is its own delete, whatever else is selected above it.
+ */
+export function sidebarBulkDeleteIds(args: {
+  readonly ids: readonly string[];
+  readonly tree: EpicTreeIndex;
+  readonly isAgentId: (id: string) => boolean;
+}): readonly string[] {
+  const agentIds = args.ids.filter((id) => args.isAgentId(id));
+  const artifactIds = rootmostSelectedSidebarIds({
+    ids: args.ids.filter((id) => !args.isAgentId(id)),
+    tree: args.tree,
+  });
+  const depthOf = (id: string): number => {
+    let depth = 0;
+    let parentId = Object.hasOwn(args.tree.nodeById, id)
+      ? args.tree.nodeById[id].parentId
+      : null;
+    while (parentId !== null && Object.hasOwn(args.tree.nodeById, parentId)) {
+      depth += 1;
+      parentId = args.tree.nodeById[parentId].parentId;
+    }
+    return depth;
+  };
+  const deepestFirst = agentIds
+    .map((id, index) => ({ id, index, depth: depthOf(id) }))
+    .sort((a, b) => b.depth - a.depth || a.index - b.index)
+    .map((entry) => entry.id);
+  return [...deepestFirst, ...artifactIds];
+}
+
 export function sidebarIdsWithinRoots(args: {
   readonly ids: readonly string[];
   readonly rootIds: readonly string[];

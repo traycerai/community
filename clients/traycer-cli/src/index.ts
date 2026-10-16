@@ -168,7 +168,11 @@ import {
   assertAgentWorktreeCreateAllowed,
   readAgentWorktreeCreatePolicy,
 } from "./agent-worktree-create";
-import { writeStderr, writeStdout } from "./runner/std-write";
+import {
+  installStdioErrorGuards,
+  writeStderr,
+  writeStdout,
+} from "./runner/std-write";
 
 // Helper: register a runner-aware action handler. The runner owns
 // process termination, so anything composed via `withRunner` participates in
@@ -3662,7 +3666,11 @@ function registerMonitorCommand(program: Command): void {
         }\n`,
       );
       await finishAndExit(1);
+      return;
     }
+    // `runMonitor` returns only once stdout's reader has closed the pipe (an
+    // orphaned monitor): that is a normal end, not a failure.
+    await finishAndExit(0);
   });
 }
 
@@ -3677,6 +3685,10 @@ const entryArgv = typeof process !== "undefined" ? process.argv[1] : undefined;
 if (isTraycerCliEntrypoint(entryArgv)) {
   const entryLogger = createCliLogger(config.environment);
   installProcessFailureHandlers(entryLogger);
+  // Before any command runs, so every writer is covered - including the ones
+  // that bypass std-write (bare `process.stdout.write`, `console.error`). A
+  // reader that closed the pipe is not a CLI fault; see std-write.ts.
+  installStdioErrorGuards();
   const program = buildProgram();
   entryLogger.debug("CLI entrypoint parsing argv", {
     environment: config.environment,

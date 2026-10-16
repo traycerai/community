@@ -33,6 +33,7 @@ import {
   providersListRequestSchema,
   providersListRequestSchemaBeforeV70,
   providersListResponseSchema,
+  providersListResponseSchemaV100Preimage,
   providersListResponseSchemaV70,
   providersListResponseSchemaV90,
   providersListResponseSchemaV91,
@@ -252,7 +253,14 @@ const LIVE_FROZEN_EXPORTS = {
   // design, so the two markers landing on the live capability regenerated it
   // without complaint. The rows above are the ones that refuse; a line earns
   // one the moment a host advertising it is published.
-  "providers.list@10.0": providersListResponseSchema,
+  // 10.0 froze when MCP remedies and notices opened 10.1: its MCP rows, notices
+  // and `applyRemedy` capability scopes are the pre-remedy shape, so a released
+  // 10.0 reader never sees a field it cannot spell. Its dump did not change by
+  // the freeze.
+  "providers.list@10.0": providersListResponseSchemaV100Preimage,
+  // The head line: it names the LIVE schema, so the next growth of the MCP row,
+  // notice or capability fails here first.
+  "providers.list@10.1": providersListResponseSchema,
   // The fourth method (see the snapshot script for why it is here): its
   // response carries the PERSISTED harness enum, it is off the released floor,
   // and nothing local guarded it until Reasonix grew it and only the tag gate
