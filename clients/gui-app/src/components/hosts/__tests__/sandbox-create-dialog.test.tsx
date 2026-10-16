@@ -104,11 +104,16 @@ function loaded(catalogue: SandboxCatalogue): CatalogueState {
 }
 
 function renderDialog(): void {
-  const queryClient = new QueryClient({
-    defaultOptions: { mutations: { retry: false } },
-  });
   act(() => {
     useSandboxCreateDialogStore.getState().openDialog(null, null);
+  });
+  mountDialog();
+}
+
+/** Mounts the dialog without touching the store, as a second copy would. */
+function mountDialog(): void {
+  const queryClient = new QueryClient({
+    defaultOptions: { mutations: { retry: false } },
   });
   render(
     <QueryClientProvider client={queryClient}>
@@ -396,5 +401,92 @@ describe("<SandboxCreateDialog />", () => {
     await screen.findByText("Couldn't reach Traycer. Try again in a moment.");
     fireEvent.click(screen.getByRole("button", { name: "Try again" }));
     expect(refetch).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("a failed create (F46)", () => {
+  it("keeps the entered values and shows the failure in the form", async () => {
+    mocks.binding?.auth.createSandbox.mockResolvedValue(
+      refusal(502, "provider_failed"),
+    );
+    renderDialog();
+    await screen.findByTestId("sandbox-create-dialog");
+    type("sandbox-create-name", "build-box");
+    type("sandbox-create-memory", "4");
+    fireEvent.click(submit());
+
+    await waitFor(() => {
+      expect(mocks.binding?.auth.createSandbox).toHaveBeenCalledTimes(1);
+    });
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe(
+      "The sandbox failed to start. It's listed as failed; destroy it and try again.",
+    );
+    expect(screen.getByTestId("sandbox-create-name")).toHaveProperty(
+      "value",
+      "build-box",
+    );
+    expect(screen.getByTestId("sandbox-create-memory")).toHaveProperty(
+      "value",
+      "4",
+    );
+    expect(submit().hasAttribute("disabled")).toBe(false);
+    expect(useSandboxCreateDialogStore.getState().open).toBe(true);
+  });
+
+  it("keeps what was typed when the form remounts while the dialog is open", async () => {
+    renderDialog();
+    await screen.findByTestId("sandbox-create-dialog");
+    type("sandbox-create-name", "build-box");
+    type("sandbox-create-memory", "4");
+
+    // The store stays open: this is what the second dialog copy (settings
+    // sidebar vs the phone-width surface) or a loading gate does.
+    cleanup();
+    expect(useSandboxCreateDialogStore.getState().open).toBe(true);
+    mountDialog();
+    await screen.findByTestId("sandbox-create-dialog");
+
+    expect(screen.getByTestId("sandbox-create-name")).toHaveProperty(
+      "value",
+      "build-box",
+    );
+    expect(screen.getByTestId("sandbox-create-memory")).toHaveProperty(
+      "value",
+      "4",
+    );
+  });
+
+  it("still toasts a failure when the dialog was closed before the create settled", async () => {
+    let resolveCreate: (result: SandboxCreateFetchResult) => void = () =>
+      undefined;
+    mocks.binding?.auth.createSandbox.mockImplementation(
+      () =>
+        new Promise<SandboxCreateFetchResult>((resolve) => {
+          resolveCreate = resolve;
+        }),
+    );
+    renderDialog();
+    await screen.findByTestId("sandbox-create-dialog");
+    type("sandbox-create-name", "build-box");
+    fireEvent.click(submit());
+    await waitFor(() => {
+      expect(mocks.binding?.auth.createSandbox).toHaveBeenCalledTimes(1);
+    });
+
+    act(() => {
+      useSandboxCreateDialogStore.getState().closeDialog();
+    });
+    await waitFor(() => {
+      expect(screen.queryByTestId("sandbox-create-name")).toBeNull();
+    });
+
+    await act(async () => {
+      resolveCreate(refusal(502, "provider_failed"));
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(mocks.toastFromAuthError).toHaveBeenCalledTimes(1);
+    });
   });
 });
