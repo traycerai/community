@@ -21,41 +21,47 @@
 #   ADMISSION: on Linux, a caller only takes a free slot file in one of two
 #   cases. Either no slot file is held at all, so a lone caller is never
 #   starved; or MemAvailable (re-read on every poll while it waits) is at least
-#   16 GiB plus 8 GiB (one tsgo peak) for every held slot file taken in the
-#   last 75 seconds. The two parts cover different holders. MemAvailable
-#   already leaves out what the holders use, but only holders that have
-#   reached their peak: a holder just admitted is still in format or nx
-#   startup, long before its type-check takes its ~8 GB. The settle window
-#   reserves that ramp-up memory per recent holder instead of blocking on
-#   time, so commits arriving seconds apart are not all admitted on the same
-#   reading, and a roomy machine is not capped at one admission per window.
-#   (A holder stamps its slot file's mtime when it is admitted.) MemAvailable
-#   gates a newcomer rather than sizing the pool because sizing from it would
-#   count the holders twice. Memory in a tmpfs /tmp and other resident sets
-#   show up in it, MemTotal hides them. A kernel without MemAvailable, and
-#   macOS (it compresses memory, so vm_stat's free pages are not a usable
-#   budget), get the pool only.
+#   16 GiB plus 8 GiB (one tsgo peak) for EVERY held slot file. MemAvailable
+#   already leaves out what the holders use, but only once they have reached
+#   their peak: a holder just admitted is still in format or nx startup, long
+#   before its type-check takes its ~8 GB, and how long that takes varies
+#   with the hook. So every live holder is assumed not to have peaked yet, for
+#   as long as it holds its slot. That double-counts a holder already at its
+#   peak, on purpose: the reservation can never expire early, and it needs no
+#   clock or timestamps (nothing to age across a suspend or a clock step).
+#   MemAvailable gates a newcomer rather than sizing the pool because sizing
+#   from it would count the holders twice. Memory in a tmpfs /tmp and other
+#   resident sets show up in it, MemTotal hides them. A kernel without
+#   MemAvailable, and macOS (it compresses memory, so vm_stat's free pages are
+#   not a usable budget), get the pool only.
 #
 #   Admission is atomic and ordered. Every auto caller holds an exclusive
-#   flock on traycer-slot-<name>.admit.lock around read-meminfo, probe, lock
-#   and stamp, so a second caller always sees the first one's stamp. A caller
-#   that is refused leaves a ticket (traycer-slot-<name>.wait.<pid>, holding
-#   its start time) and only the oldest live ticket is admitted, so a later
-#   arrival cannot keep overtaking a waiter. A ticket of a dead pid is removed
-#   by whoever sees it; a process removes its own when admitted or on exit.
+#   flock on traycer-slot-<name>.admit.lock around its read of MemAvailable,
+#   the probe and the lock, so a second caller always sees the first one's
+#   lock. A caller stopped (SIGSTOP) while it holds the gate, a window
+#   of milliseconds per admission, makes the others wait until it continues
+#   or they time out. A caller that is refused leaves a ticket
+#   (traycer-slot-<name>.wait.<pid>, holding its start time and its own
+#   deadline) and only the oldest live ticket is admitted, so a later arrival
+#   cannot keep overtaking a waiter. A ticket is live while its owner holds a
+#   flock on it, which the kernel drops on any death, so SIGTERM, an OOM kill,
+#   a reboot or a recycled pid cannot keep one alive; whoever can lock a
+#   ticket removes it. A ticket past its deadline is ignored (a stopped
+#   waiter). A clock step only reorders tickets or moves a deadline, it
+#   cannot wedge a caller.
 #
 #   A caller refused by admission behind a long holder waits up to
-#   TRAYCER_MACHINE_SLOT_TIMEOUT and then runs unserialized with a warning,
-#   which is what happened before this lock existed.
+#   TRAYCER_MACHINE_SLOT_TIMEOUT and then runs unserialized with a warning
+#   that names the last reason (memory shortfall, a waiter ahead, no free
+#   file), which is what happened before this lock existed.
 #
 # `TRAYCER_MACHINE_SLOTS` (or an explicit count argument) is a pool of exactly
 # that size with no admission check: it turns admission off. Admission also
 # looks at up to 16 slot files for the name, not only this caller's pool, so a
 # holder from a larger explicit pool is seen.
 #
-# Test-only, nothing else should set them: `TRAYCER_MACHINE_SLOT_MEMINFO`
-# points the Linux reads at another regular file, and
-# `TRAYCER_MACHINE_SLOT_SETTLE` is the settle window in seconds.
+# Test-only, nothing else should set it: `TRAYCER_MACHINE_SLOT_MEMINFO`
+# points the Linux reads at another regular file.
 #
 # The internal monorepo's hook sources this file through its traycer/
 # submodule, so both repos' hooks take the same lock files and a commit in
@@ -253,23 +259,15 @@ for index in range(slots):
         sys.exit(0)
 
 ADMIT_KIB = 16 * 1024 * 1024
-# One type-check peak (tsgo, about 8 GiB). A holder still inside its settle
-# window has not reached its peak, so MemAvailable does not show its memory
-# yet: a newcomer must leave this much per such holder on top of ADMIT_KIB.
+# One type-check peak (tsgo, about 8 GiB). Every live holder is assumed not to
+# have reached its peak yet, however long it has held its slot: a newcomer must
+# leave this much per held slot file on top of ADMIT_KIB. That double-counts a
+# holder already at its peak, on purpose: it can never expire early and needs
+# no clock.
 RAMP_KIB = 8 * 1024 * 1024
 # Admission looks at this many slot files for the name, so a holder from a
 # larger explicit pool than the one this caller sized is seen too.
 PROBE_LIMIT = 16
-
-def settle_seconds():
-    # How long a newly admitted holder is given to reach its peak. Test-only
-    # override; anything unusable keeps the default.
-    value = os.environ.get("TRAYCER_MACHINE_SLOT_SETTLE", "")
-    if value.isdigit() and len(value) <= 6:
-        return int(value)
-    return 75
-
-SETTLE = settle_seconds()
 
 def available_kib():
     # MemAvailable in KiB, or None when there is nothing to check against:
@@ -305,10 +303,6 @@ def open_extra_files():
             break
     return extras
 
-def settling(descriptor):
-    age = time.time() - os.fstat(descriptor).st_mtime
-    return 0 <= age < SETTLE
-
 def first_free():
     for descriptor in descriptors:
         try:
@@ -319,8 +313,8 @@ def first_free():
                 raise
     return None
 
-# The admission gate: one exclusive flock around read meminfo, probe, lock a
-# slot file and stamp it, so a second caller always sees the first one stamp.
+# The admission gate: one exclusive flock around read meminfo, probe and lock
+# a slot file, so a second caller always sees the first one lock.
 gate = None
 if admit == "1":
     gate_path = os.path.join(directory, "traycer-slot-%s.admit.lock" % name)
@@ -344,51 +338,83 @@ def take_gate():
     return False
 
 # Waiters queue by arrival: a refused caller leaves a ticket holding its start
-# time, and only the oldest live ticket is admitted. A ticket of a dead pid is
-# removed by whoever sees it; this process removes its own when it is admitted
-# or exits for any reason short of SIGKILL.
+# time and its own deadline, and only the oldest live ticket is admitted. A
+# ticket is live while its owner holds an exclusive flock on it for the whole
+# wait: the kernel drops that lock on any death (SIGKILL, SIGTERM, OOM, a
+# reboot), so a recycled pid or a zombie cannot keep a ticket alive. A scanner
+# that can take the lock knows the owner is gone and removes the ticket. A
+# ticket past its deadline is ignored, which bounds a stopped (SIGSTOP) owner.
 started = time.time()
 me = (started, os.getpid())
 ticket_prefix = "traycer-slot-%s.wait." % name
 my_ticket = os.path.join(directory, ticket_prefix + str(os.getpid()))
+ticket_fd = None
+refusal = [""]
 
 def drop_ticket():
+    global ticket_fd
     try:
         os.unlink(my_ticket)
     except OSError:
         pass
+    if ticket_fd is not None:
+        os.close(ticket_fd)
+        ticket_fd = None
 
 atexit.register(drop_ticket)
 
 def write_ticket():
+    global ticket_fd
+    if ticket_fd is not None:
+        return
     try:
-        fd = os.open(my_ticket, os.O_CREAT | os.O_WRONLY | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
-        os.write(fd, ("%r\n" % started).encode())
-        os.close(fd)
+        fd = os.open(my_ticket, os.O_CREAT | os.O_RDWR | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        os.write(fd, ("%r %r\n" % (started, started + timeout)).encode())
+        ticket_fd = fd
     except OSError:
         pass
 
 def live_tickets():
     found = []
+    now = time.time()
     for entry in os.listdir(directory):
         pid = entry[len(ticket_prefix):]
-        if not entry.startswith(ticket_prefix) or not pid.isdigit():
+        if not entry.startswith(ticket_prefix) or not pid.isdigit() or len(pid) > 10 or int(pid) == 0:
+            continue
+        if int(pid) == os.getpid():
             continue
         path = os.path.join(directory, entry)
         try:
-            os.kill(int(pid), 0)
-            with open(path) as handle:
-                found.append((float(handle.read()), int(pid)))
-        except (ProcessLookupError, ValueError):
+            fd = os.open(path, os.O_RDWR | os.O_NOFOLLOW)
+        except OSError:
+            continue
+        try:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except OSError as error:
+                if not busy(error):
+                    continue
+                # Locked, so its owner is alive: count it unless unparseable
+                # or past the deadline written in it.
+                try:
+                    arrival, due = [float(word) for word in os.read(fd, 100).split()[:2]]
+                except ValueError:
+                    continue
+                if now < due:
+                    found.append((arrival, int(pid)))
+                continue
             try:
                 os.unlink(path)
             except OSError:
                 pass
-        except OSError:
-            pass
+        finally:
+            os.close(fd)
     return found
 
 def admit_one(available):
+    if available is None:
+        return first_free()
     waiting_ahead = [ticket for ticket in live_tickets() if ticket < me]
     descriptor = first_free()
     allowed = False
@@ -408,17 +434,19 @@ def admit_one(available):
                 others_held.append(other)
         for other in probed:
             fcntl.flock(other, fcntl.LOCK_UN)
-        ramping = sum(1 for other in others_held if settling(other))
         for extra in extras:
             os.close(extra)
         # Alone: always admitted. Otherwise memory must cover the 16 GiB floor
-        # plus one peak for each holder still ramping up to it.
-        allowed = not others_held or available >= ADMIT_KIB + RAMP_KIB * ramping
+        # plus one peak for every slot file that is held.
+        needed = ADMIT_KIB + RAMP_KIB * len(others_held)
+        allowed = not others_held or available >= needed
+        if not allowed:
+            refusal[0] = "MemAvailable is %d GiB and this needs %d GiB" % (available // 1048576, needed // 1048576)
+    else:
+        refusal[0] = "every slot file is held"
+    if waiting_ahead:
+        refusal[0] = "a waiter ahead of it has been queued for %d s" % (time.time() - waiting_ahead[0][0])
     if allowed and not waiting_ahead:
-        try:
-            os.utime(descriptor)
-        except OSError:
-            pass
         drop_ticket()
         return descriptor
     if descriptor is not None:
@@ -430,13 +458,13 @@ def try_take():
     # The first free slot file, if admission allows one more holder, else None.
     # Exclusion is only ever the flock on a slot file, so nothing here can
     # let two holders share one. Memory is read again on every call.
-    available = available_kib()
-    if available is None:
+    if available_kib() is None:
         return first_free()
     if not take_gate():
+        refusal[0] = "another caller held the admission gate"
         return None
     try:
-        return admit_one(available)
+        return admit_one(available_kib())
     finally:
         fcntl.flock(gate, fcntl.LOCK_UN)
 
@@ -450,7 +478,7 @@ while held is None:
     if os.getppid() != parent:
         sys.exit(0)
     if time.monotonic() >= deadline:
-        report("timeout")
+        report("timeout " + refusal[0])
         sys.exit(0)
     if not announced:
         sys.stderr.write(
@@ -466,12 +494,6 @@ for descriptor in descriptors:
         os.close(descriptor)
 if gate is not None:
     os.close(gate)
-# Stamp the slot file: a newcomer that is not alone waits out the settle window
-# from here. Best effort.
-try:
-    os.utime(held)
-except OSError:
-    pass
 # Let go of the caller stderr: pre-commit reads the hook output until EOF,
 # and this process outlives the hook by up to one poll interval.
 null = os.open(os.devnull, os.O_WRONLY)
@@ -504,9 +526,11 @@ while os.getppid() == parent:
         held)
             export "${held_var}=1"
             ;;
-        timeout)
+        timeout | timeout\ *)
             echo "machine-slot: waited ${timeout}s for a '${name}' slot; running without one." >&2
-            echo "machine-slot: another run on this machine is still holding it (a hung type-check?)." >&2
+            if [ "$status" != "timeout" ]; then
+                echo "machine-slot: last refused because ${status#timeout }." >&2
+            fi
             ;;
         error\ *)
             echo "machine-slot: ${status#error }; running without a slot." >&2

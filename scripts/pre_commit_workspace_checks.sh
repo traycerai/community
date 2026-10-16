@@ -39,10 +39,12 @@ workspace_check_lane="${WORKSPACE_CHECK_LANE:-all}"
 #   1. One machine-wide slot (scripts/machine-slot.sh) for the whole run,
 #      shared with the internal monorepo's hook, so concurrent commits queue
 #      instead of stacking their peaks. `auto` is a pool of one slot file per
-#      16 GB of RAM plus an admission check: a commit takes a free file only
-#      while 16 GiB is available and no holder is still starting up, or when
-#      nothing else is held. TRAYCER_MACHINE_SLOTS sets a pool of that exact
-#      size and turns admission off.
+#      16 GB of RAM plus an admission check, first come first served: a
+#      commit takes a free file only when nothing else is held, or while
+#      16 GiB plus 8 GiB per held slot file is available (every holder is
+#      assumed not to have peaked yet, however long it has held its slot).
+#      TRAYCER_MACHINE_SLOTS sets a pool of that exact size and turns
+#      admission off.
 #   2. Lint covers only the files this branch changed
 #      (scripts/lint-changed-files.mjs); CI lints every affected project.
 #   3. No `build`: bundling verifies packaging, not types, and CI runs it.
