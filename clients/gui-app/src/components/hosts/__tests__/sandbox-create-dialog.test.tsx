@@ -78,6 +78,8 @@ const CATALOGUE: SandboxCatalogue = {
       stoppedStorage: "snapshot",
       wakeClass: "resume",
       dockerInGuest: true,
+      creatable: true,
+      notCreatableReason: null,
       regions: [
         {
           id: "us-east",

@@ -416,9 +416,26 @@ export interface SandboxCatalogueProvider {
   readonly stoppedStorage: string;
   readonly wakeClass: string;
   readonly dockerInGuest: boolean;
+  /**
+   * False when this deployment's account cannot create the provider's
+   * smallest shape: its plan's per-sandbox memory cap is below what a
+   * sandbox needs. The form offers no shape for it and says why; a create
+   * is refused `shape_not_offered` with `provider-plan-too-small`. True from
+   * a server that predates the field.
+   */
+  readonly creatable: boolean;
+  /**
+   * Why {@link creatable} is false ({@link SANDBOX_NOT_CREATABLE_REASON_PLAN_MEMORY});
+   * null when it is true, and from a server that predates the field.
+   */
+  readonly notCreatableReason: string | null;
   /** Regions with a configured price only; the FIRST is the server's default. */
   readonly regions: readonly SandboxCatalogueRegion[];
 }
+
+/** The plan's per-sandbox memory cap is below the provider's smallest shape. */
+export const SANDBOX_NOT_CREATABLE_REASON_PLAN_MEMORY =
+  "plan-memory-below-host-minimum";
 
 export const sandboxCatalogueProviderSchema: z.ZodType<SandboxCatalogueProvider> =
   lazySchema(() =>
@@ -430,6 +447,8 @@ export const sandboxCatalogueProviderSchema: z.ZodType<SandboxCatalogueProvider>
       stoppedStorage: z.string(),
       wakeClass: z.string(),
       dockerInGuest: z.boolean(),
+      creatable: z.boolean().default(true),
+      notCreatableReason: z.string().nullable().default(null),
       regions: z.array(sandboxCatalogueRegionSchema),
     }),
   );
@@ -499,7 +518,9 @@ export const sandboxCreateAcceptedSchema: z.ZodType<SandboxCreateAccepted> =
  *
  *  - `shape_not_offered` (`400`): `reason` names which bound the shape broke
  *    (`os-not-offered`, `region-not-offered`, `cpus-out-of-range`,
- *    `memory-out-of-range`, `memory-per-cpu-out-of-range`, `disk-out-of-range`).
+ *    `memory-out-of-range`, `memory-per-cpu-out-of-range`, `disk-out-of-range`,
+ *    `provider-plan-too-small`: the account's plan cannot create any shape
+ *    of the provider, see `SandboxCatalogueProvider.creatable`).
  *  - `insufficient_credit` (`402`): the create gate refused; `reason`
  *    (`denied`, `unverified`, `unsupported-subscription`), the shortfall
  *    (`null` when the balance is unknown) and the burn it was computed from.
