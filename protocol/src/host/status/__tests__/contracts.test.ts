@@ -335,6 +335,7 @@ describe("host.status@1.5 install", () => {
     const parsed = hostStatusV15.responseSchema.parse({
       ...V14_RESPONSE,
       install: null,
+      processMemory: null,
     });
     expect(parsed.install).toBeNull();
   });
@@ -424,6 +425,7 @@ const V16_RESPONSE = {
   updateTransaction: null,
   storeFormats: null,
   install: null,
+  processMemory: null,
 };
 
 describe("hostStatusUpgradeV16ToV17", () => {
