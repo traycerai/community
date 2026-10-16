@@ -66,10 +66,10 @@ function summaryOf(overrides: Partial<SandboxSummary>): SandboxSummary {
 const THAWED_ACTIONS: Record<HostSandboxState, readonly SandboxCardAction[]> = {
   creating: [],
   awake: ["suspend", "stop", "destroy"],
-  suspending: [],
+  suspending: ["destroy"],
   suspended: ["resume", "destroy"],
   resuming: [],
-  stopping: [],
+  stopping: ["destroy"],
   stopped: ["start", "destroy"],
   starting: [],
   destroying: [],
@@ -90,7 +90,9 @@ describe("sandboxCardActions", () => {
   it("offers a frozen row Destroy and nothing else wherever its state has Destroy", () => {
     for (const state of [
       "awake",
+      "suspending",
       "suspended",
+      "stopping",
       "stopped",
       "failed",
       "released",
@@ -102,9 +104,7 @@ describe("sandboxCardActions", () => {
   it("offers a frozen row in a transitional state nothing", () => {
     for (const state of [
       "creating",
-      "suspending",
       "resuming",
-      "stopping",
       "starting",
       "destroying",
       "destroyed",

@@ -105,6 +105,48 @@ describe("buildHostScopeOptions sandbox facts", () => {
     expect(options.get("other-host")?.sandbox?.summary).toBeNull();
   });
 
+  it.each([
+    ["stopping", "stopped"],
+    ["suspending", "suspended"],
+    ["destroying", "destroyed"],
+  ] as const)(
+    "reads the control plane's %s while the registry already reads its destination %s",
+    (inFlight, destination) => {
+      const summary = sandboxSummaryFixture({
+        id: "sbx_1",
+        hostId: "sbx-host",
+        state: inFlight,
+      });
+      const option = build({
+        registry: [
+          item({
+            hostId: "sbx-host",
+            kind: "sandbox",
+            sandboxState: destination,
+          }),
+        ],
+        sandboxes: [summary],
+      }).get("sbx-host");
+      expect(option?.sandbox?.state).toBe(inFlight);
+    },
+  );
+
+  it("keeps the registry's state when the control plane's row is not on its way there", () => {
+    // A stale summary from before a wake: the registry's newer word stands.
+    const summary = sandboxSummaryFixture({
+      id: "sbx_1",
+      hostId: "sbx-host",
+      state: "stopping",
+    });
+    const option = build({
+      registry: [
+        item({ hostId: "sbx-host", kind: "sandbox", sandboxState: "awake" }),
+      ],
+      sandboxes: [summary],
+    }).get("sbx-host");
+    expect(option?.sandbox?.state).toBe("awake");
+  });
+
   it("never reads a destroyed sandbox as frozen, whatever flag the registry kept", () => {
     const option = build({
       registry: [

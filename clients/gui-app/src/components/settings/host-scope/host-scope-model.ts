@@ -268,7 +268,7 @@ function sandboxFactsOf(
   }
   const listed = item === null ? null : listedSandboxFacts(item);
   const known = listed ?? entryFacts;
-  const state = known?.state ?? summary?.state ?? null;
+  const state = sandboxStateOf(known?.state ?? null, summary);
   return {
     kind,
     sandbox: {
@@ -281,6 +281,46 @@ function sandboxFactsOf(
       teamOwned: isTeamOwned(item, entryFacts),
     },
   };
+}
+
+/**
+ * The row's sandbox state: the registry's word, or the control plane's row
+ * while it is still on its way to the destination the registry already reads
+ * (`transitDestinationOf`), or the row's when the registry has said nothing.
+ */
+function sandboxStateOf(
+  knownState: HostSandboxState | null,
+  summary: SandboxSummary | null,
+): HostSandboxState | null {
+  if (summary === null) return knownState;
+  if (knownState === null) return summary.state;
+  return transitDestinationOf(summary.state) === knownState
+    ? summary.state
+    : knownState;
+}
+
+/**
+ * Where an in-flight server state lands, for the transitions the registry is
+ * told the end of BEFORE the row gets there: the control plane revokes a
+ * sandbox's credentials first, so the registry already reads `stopped` while
+ * the stop is still running (or failed and waits for its retry). While the
+ * registry reads exactly that destination and the control plane's row is
+ * still in flight, the row's state is the true one; any other pairing keeps
+ * the registry's word, so this never moves a card backwards.
+ */
+function transitDestinationOf(
+  state: HostSandboxState,
+): HostSandboxState | null {
+  switch (state) {
+    case "stopping":
+      return "stopped";
+    case "suspending":
+      return "suspended";
+    case "destroying":
+      return "destroyed";
+    default:
+      return null;
+  }
 }
 
 /**
