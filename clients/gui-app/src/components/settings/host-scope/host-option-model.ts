@@ -3,9 +3,10 @@ import type { HostSandboxState } from "@traycer/protocol/host/host-status";
 import { isSandboxAsleep } from "@traycer-clients/shared/host-client/sandbox-control";
 import type { HostDirectoryEntry } from "@traycer-clients/shared/host-client/host-directory";
 import { isSandboxHostDirectoryEntry } from "@traycer-clients/shared/host-client/remote-fetcher";
-import type {
-  HostScopeOption,
-  HostScopeSandbox,
+import {
+  isUnenrolledSandboxOption,
+  type HostScopeOption,
+  type HostScopeSandbox,
 } from "@/components/settings/host-scope/host-scope-model";
 import type {
   FleetUpdateView,
@@ -463,11 +464,9 @@ export function hostOptionPickerGroup(
   offersAutomations: boolean,
 ): HostPickerGroup {
   if (host.sandbox === null) return "personal";
-  // A sandbox no host row stands for yet (finding F15): listed for
-  // management, never offered as a host.
-  if (host.entry === null && host.item === null) {
-    return listsAgentSandboxes ? "sandbox" : "hidden";
-  }
+  // A sandbox no host row stands for yet (finding F15): never offered as a
+  // host. The host list groups it by the rules below, like any sandbox.
+  if (!listsAgentSandboxes && isUnenrolledSandboxOption(host)) return "hidden";
   const summary = host.sandbox.summary;
   if (summary === null) return listsAgentSandboxes ? "sandbox" : "hidden";
   if (summary.kind === "automation") {

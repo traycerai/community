@@ -232,15 +232,22 @@ function unenrolledSandboxOption(
       state: summary.state,
       frozen: isSandboxFrozenInEffect(summary.state, summary.frozen),
       summary,
-      // The summary names an environment, not a team: a team's sandbox lists
-      // in the top-level group until its registry row names the team.
-      teamOwned: summary.environmentId !== null,
+      // The server names a creator only on a team agent sandbox. The summary
+      // carries no team, so a team's sandbox lists in the top-level group
+      // until its registry row names the team.
+      teamOwned: summary.createdBy !== null,
     },
   };
 }
 
-export function isUnenrolledSandboxOption(_host: HostScopeOption): boolean {
-  return false;
+/**
+ * Whether this row is one `unenrolledSandboxOption` built: a listed sandbox
+ * with no directory entry and no registry row. Destroying it removes the row,
+ * so the overview hands Settings back to the active host rather than reading
+ * the pick as vanished.
+ */
+export function isUnenrolledSandboxOption(host: HostScopeOption): boolean {
+  return host.entry === null && !host.registered && host.sandbox !== null;
 }
 
 /**

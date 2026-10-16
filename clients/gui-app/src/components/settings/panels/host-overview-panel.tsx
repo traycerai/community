@@ -131,9 +131,10 @@ import type { HostRestartRequestResult } from "@traycer-clients/shared/platform/
 import { useIsMobileViewport } from "@/hooks/ui/use-mobile-viewport";
 import { isHostScopeUsable } from "@/components/settings/host-scope/host-scope-status";
 import type { HostScope } from "@/components/settings/host-scope/use-host-scope";
-import type {
-  HostScopeOption,
-  HostScopeSandbox,
+import {
+  isUnenrolledSandboxOption,
+  type HostScopeOption,
+  type HostScopeSandbox,
 } from "@/components/settings/host-scope/host-scope-model";
 import type { HostIdentity } from "@traycer/protocol/host/identity/index";
 import type { HostRestartBusyVerdict } from "@traycer/protocol/host/restart/index";
@@ -1913,6 +1914,11 @@ export function HostOverviewPanel(props: {
           hostName={displayName}
           sandbox={host.sandbox}
           likeThis={sandboxLikeThis(host, host.sandbox)}
+          // Destroying a sandbox no host row stands for removes its row, so
+          // Settings returns to the active host instead of calling it vanished.
+          onDestroyed={
+            isUnenrolledSandboxOption(host) ? scope.returnToActive : null
+          }
         />
       )}
       <HostIdentityCard

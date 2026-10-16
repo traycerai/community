@@ -111,6 +111,11 @@ export function SandboxCard(props: {
    * "like this" (it would open on Personal).
    */
   readonly likeThis: SandboxCreateBelongsTo | null;
+  /**
+   * Called once a destroy has settled (the sandbox is gone), for a row the
+   * destroy removes from the host list; `null` when the row outlives it.
+   */
+  readonly onDestroyed: (() => void) | null;
 }): ReactNode {
   // Taken as resolved. The builder (`sandboxFactsOf`) already prefers the
   // host list's facts and falls back to the sandbox-list summary, so a second
@@ -175,6 +180,7 @@ export function SandboxCard(props: {
           frozen={frozen}
           teamOwned={teamOwned}
           likeThis={props.likeThis}
+          onDestroyed={props.onDestroyed}
         />
       )}
     </Card>
@@ -906,6 +912,7 @@ function SandboxCardFooter(props: {
   readonly frozen: boolean;
   readonly teamOwned: boolean;
   readonly likeThis: SandboxCreateBelongsTo | null;
+  readonly onDestroyed: (() => void) | null;
 }): ReactNode {
   const openCreateSandbox = useSandboxCreateDialogStore((s) => s.openDialog);
   const likeThis = props.summary.kind === "automation" ? null : props.likeThis;
@@ -918,6 +925,7 @@ function SandboxCardFooter(props: {
           actions={props.actions}
           frozen={props.frozen}
           teamOwned={props.teamOwned}
+          onDestroyed={props.onDestroyed}
         />
       )}
       {likeThis === null ? null : (
@@ -940,6 +948,7 @@ function SandboxActions(props: {
   readonly actions: readonly SandboxCardAction[];
   readonly frozen: boolean;
   readonly teamOwned: boolean;
+  readonly onDestroyed: (() => void) | null;
 }): ReactNode {
   const { summary } = props;
   const verb = useSandboxVerb(summary.id);
@@ -958,6 +967,7 @@ function SandboxActions(props: {
             name={summary.displayName}
             typedConfirmation={props.frozen || props.teamOwned}
             teamOwned={props.teamOwned}
+            onDestroyed={props.onDestroyed}
           />
         ) : (
           <Button
@@ -1016,6 +1026,7 @@ function SandboxDestroyAction(props: {
    */
   readonly typedConfirmation: boolean;
   readonly teamOwned: boolean;
+  readonly onDestroyed: (() => void) | null;
 }): ReactNode {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [typed, setTyped] = useState("");
@@ -1064,6 +1075,7 @@ function SandboxDestroyAction(props: {
               setConfirmOpen(false);
               if (gone) {
                 toast.success(`Destroyed ${props.name}`);
+                props.onDestroyed?.();
               } else {
                 toast.info(`Destroying ${props.name}…`);
               }
