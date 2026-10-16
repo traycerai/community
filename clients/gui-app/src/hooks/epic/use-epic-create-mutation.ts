@@ -296,27 +296,34 @@ export function useEpicCreateForClient(
             //
             // A retry episode a refusal ended keeps those words too: `absent`
             // is the poll's last look, not proof the earlier send never ran.
-            // It adds the refusal's guidance, labelled as the retry's.
             if (verdict === "exists") return;
-            if (
-              verdict === "absent" &&
-              error instanceof RetryEpisodeOutcomeUnknownError
-            ) {
-              toastUnknownOutcomeAfterRefusedRetry(
-                error.finalRefusal,
-                "Couldn't create epic.",
-              );
-              return;
-            }
-            toastFromHostError(error, "Couldn't create epic.");
+            toastCreateOutcomeUnknown(error);
           },
+          // A poll that rejected could not tell either.
           () => {
-            toastFromHostError(error, "Couldn't create epic.");
+            toastCreateOutcomeUnknown(error);
           },
         );
       },
     },
   });
+}
+
+/**
+ * The notice for a create whose existence poll did not find it - `absent`,
+ * `unknown`, or a poll that rejected. Each leaves the outcome unknown. A retry
+ * episode a refusal ended adds that refusal's guidance, labelled as the
+ * retry's: the refusal stays true about the retry whatever the poll saw.
+ */
+function toastCreateOutcomeUnknown(error: HostRpcError): void {
+  if (error instanceof RetryEpisodeOutcomeUnknownError) {
+    toastUnknownOutcomeAfterRefusedRetry(
+      error.finalRefusal,
+      "Couldn't create epic.",
+    );
+    return;
+  }
+  toastFromHostError(error, "Couldn't create epic.");
 }
 
 function patchCreatedTaskIntoCloudTaskCaches(

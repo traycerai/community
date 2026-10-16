@@ -971,7 +971,10 @@ describe("useEpicCreateForClient seed hold", () => {
       expect(toastText()).not.toContain("Couldn't create epic.");
     });
 
-    it("keeps the outcome unknown when the poll cannot tell after a refused retry episode", async () => {
+    // A poll that cannot tell, or one that rejects, leaves the outcome as
+    // unknown as `absent` does - and the retry's refusal is just as true, so
+    // its guidance is said beside the uncertainty there too.
+    it("keeps the outcome unknown and labels the retry's refusal when the poll cannot tell", async () => {
       pollMocks.pollEpicExistence.mockResolvedValue("unknown");
       const episodeError = await episodeEndedByRefusal(forbidden());
       const options = renderOptions();
@@ -984,7 +987,29 @@ describe("useEpicCreateForClient seed hold", () => {
       await vi.waitFor(() => {
         expect(toastText()).toContain("may or may not have gone through");
       });
-      expect(toastText()).not.toContain("You don't have permission");
+      expect(toastText()).toContain(
+        "The retry was refused: You don't have permission to do that.",
+      );
+      expect(toastText()).not.toContain("Couldn't create epic.");
+    });
+
+    it("keeps the outcome unknown and labels the retry's refusal when the poll rejects", async () => {
+      pollMocks.pollEpicExistence.mockRejectedValue(new Error("poll failed"));
+      const episodeError = await episodeEndedByRefusal(forbidden());
+      const options = renderOptions();
+
+      options.onError(episodeError, chatVariables, {
+        hostId: "host-1",
+        userId: "user-1",
+      });
+
+      await vi.waitFor(() => {
+        expect(toastText()).toContain("may or may not have gone through");
+      });
+      expect(toastText()).toContain(
+        "The retry was refused: You don't have permission to do that.",
+      );
+      expect(toastText()).not.toContain("Couldn't create epic.");
     });
 
     // The error the retrying messenger hands back when attempt 1 was sent

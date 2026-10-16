@@ -5,6 +5,7 @@ import {
   defineVersionedRpcRegistry,
 } from "@traycer/protocol/framework/index";
 import {
+  HostAuthoritySupersededError,
   HostMethodVersionUnsatisfiedError,
   HostRequestAbortedError,
   HostRpcError,
@@ -81,7 +82,9 @@ function fatalError(): HostRpcError {
  * Inner messenger that throws the queued outcomes (in order) then resolves with
  * `{ echoed }`. Records how many times `request` was called.
  */
-function fakeInner(outcomes: ReadonlyArray<HostRpcError>): {
+function fakeInner(
+  outcomes: ReadonlyArray<HostRpcError | HostAuthoritySupersededError>,
+): {
   readonly messenger: IHostMessenger<typeof testRegistry>;
   calls: () => number;
   /** `options.replayMustBeKeyed` as each attempt actually received it. */
@@ -507,6 +510,60 @@ describe("createRetryingMessenger", () => {
     if (!(failure instanceof RetryEpisodeOutcomeUnknownError)) return;
     expect(failure.fatalDetails).toBeNull();
     expect(failure.finalRefusal).toBe(floorRefusal);
+  });
+
+  // traycerai/traycer thread taE6-: a replay refused UNAUTHORIZED whose
+  // session is replaced during auth recovery ends in the auth layer's
+  // superseded error, which is no `HostRpcError`. After a sent-and-dropped
+  // attempt it must still read as an unknown outcome, or the create flow
+  // reports a definite failure for a create that may have committed.
+  it("a superseded auth recovery after a sent-and-dropped attempt keeps the outcome unknown", async () => {
+    const { messenger } = fakeInner([
+      keyEarnedRetryableError(),
+      new HostAuthoritySupersededError(),
+    ]);
+    const { policy } = makeRecordingPolicy(2, 100, 1_000, () => 0.5);
+
+    const failure = await createRetryingMessenger(messenger, policy)
+      .request(
+        "host.echo",
+        { message: "hi" },
+        {
+          idempotencyKey: "k-1",
+          authority: authority(),
+          replayMustBeKeyed: false,
+          requiredHostMethodVersion: null,
+        },
+      )
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+
+    expect(failure).toBeInstanceOf(HostTransportFailureError);
+    expect(failure).not.toBeInstanceOf(RetryableTransportError);
+    if (!(failure instanceof HostTransportFailureError)) return;
+    expect(failure.fatalDetails).toBeNull();
+    expect(failure.method).toBe("host.echo");
+  });
+
+  it("a superseded auth recovery with no earlier send is passed on as it is", async () => {
+    const superseded = new HostAuthoritySupersededError();
+    const { messenger } = fakeInner([retryableError(), superseded]);
+    const { policy } = makeRecordingPolicy(2, 100, 1_000, () => 0.5);
+
+    await expect(
+      createRetryingMessenger(messenger, policy).request(
+        "host.echo",
+        { message: "hi" },
+        {
+          idempotencyKey: "k-1",
+          authority: authority(),
+          replayMustBeKeyed: false,
+          requiredHostMethodVersion: null,
+        },
+      ),
+    ).rejects.toBe(superseded);
   });
 
   it("a refusal with no earlier send is the refusal itself", async () => {

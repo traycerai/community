@@ -27,6 +27,11 @@ import {
   isOwnerHostUnreachableFailure,
   toastFromOwnerHostWriteError,
 } from "@/lib/owner-host-write-error-toast";
+import {
+  hostErrorToastMessage,
+  isHostTransportFailure,
+  isSilentHostError,
+} from "@/lib/host-error-toast";
 import { progressToast } from "@/lib/toast/progress-toast";
 import { LANDING_ROUTE } from "@/lib/routes";
 import { navigateToTabIntent } from "@/lib/tab-navigation";
@@ -151,6 +156,81 @@ function admitEpicDeleteRequest(variables: BatchDeleteEpicVariables): {
     throw new Error("epic.batchDelete: no task admitted without a sign-in");
   }
   return { ids };
+}
+
+/**
+ * The failure of the one request when part of the selection was refused for
+ * the sign-in before it was sent.
+ *
+ *  - The request never reached the host, or the host refused it: nothing was
+ *    deleted, for two reasons, and one notice gives both remedies.
+ *  - Otherwise (its answer was lost, it was cancelled, or its `UNAUTHORIZED`
+ *    is being recovered): the refused ids' notice says they were never sent,
+ *    and the request's own notice says what is known of the rest - an answer
+ *    that never came back stays unknown, never "not deleted". Two notices
+ *    under their own ids, so neither replaces the other.
+ */
+function toastDeleteFailureWithSignInRefusals(
+  error: HostRpcError,
+  ids: ReadonlyArray<string>,
+  refused: ReadonlyArray<string>,
+  epicTitlesById: Readonly<Record<string, string>>,
+): void {
+  const sentReason = sentIdsNotDeletedReason(error);
+  if (sentReason !== undefined) {
+    const sentIds = ids.filter((id) => !refused.includes(id));
+    const parts = epicDeleteToastParts({
+      failures: [
+        ...sentIds.map((taskId) =>
+          sentReason === null
+            ? { taskId, success: false }
+            : { taskId, success: false, errorMessage: sentReason },
+        ),
+        ...refusedEpicDeleteResults(refused),
+      ],
+      successes: 0,
+      total: ids.length,
+      deletedIds: [],
+      epicTitlesById,
+    });
+    emitEpicDeleteToast(parts.level, parts.message, parts.detail);
+    return;
+  }
+  const parts = epicDeleteToastParts({
+    failures: refusedEpicDeleteResults(refused),
+    successes: 0,
+    total: refused.length,
+    deletedIds: [],
+    epicTitlesById,
+  });
+  emitEpicDeleteToast(parts.level, parts.message, parts.detail);
+  toastFromOwnerHostWriteError(error, "Couldn't delete tasks.");
+}
+
+/**
+ * Why the SENT ids were certainly not deleted - the line their notice gives,
+ * or `null` for a refusal with no guidance of its own - or `undefined` when
+ * the failure does not prove they were not.
+ */
+function sentIdsNotDeletedReason(
+  error: HostRpcError,
+): string | null | undefined {
+  // Reachability alone is not the remedy when part of the selection was
+  // refused for the sign-in, so the line rides in the one notice.
+  if (isOwnerHostUnreachableFailure(error)) {
+    return OWNER_HOST_UNREACHABLE_NOTICE;
+  }
+  if (!isHostRefusal(error)) return undefined;
+  const guidance = hostErrorToastMessage(error, "Couldn't delete tasks.");
+  return guidance === "Couldn't delete tasks." ? null : guidance;
+}
+
+/**
+ * A reached host refused the request: no transport failure, and none of the
+ * quiet ones (an abort, an `UNAUTHORIZED` being recovered).
+ */
+function isHostRefusal(error: HostRpcError): boolean {
+  return !isSilentHostError(error) && !isHostTransportFailure(error);
 }
 
 export function useEpicBatchDelete(): UseMutationResult<
@@ -368,26 +448,13 @@ export function useEpicBatchDelete(): UseMutationResult<
           emitEpicDeleteToast(parts.level, parts.message, parts.detail);
           return;
         }
-        if (refused.length > 0 && isOwnerHostUnreachableFailure(error)) {
-          // Nothing was deleted, for two reasons: the admitted ids never
-          // reached the host, and the rest were refused for the sign-in.
-          // Reachability alone is not the remedy, so one notice says both.
-          const sentIds = variables.ids.filter((id) => !refused.includes(id));
-          const parts = epicDeleteToastParts({
-            failures: [
-              ...sentIds.map((taskId) => ({
-                taskId,
-                success: false,
-                errorMessage: OWNER_HOST_UNREACHABLE_NOTICE,
-              })),
-              ...refusedEpicDeleteResults(refused),
-            ],
-            successes: 0,
-            total: variables.ids.length,
-            deletedIds: [],
-            epicTitlesById: ctx?.epicTitlesById ?? {},
-          });
-          emitEpicDeleteToast(parts.level, parts.message, parts.detail);
+        if (refused.length > 0) {
+          toastDeleteFailureWithSignInRefusals(
+            error,
+            variables.ids,
+            refused,
+            ctx?.epicTitlesById ?? {},
+          );
           return;
         }
         // The one request failed. When it never reached the host, nothing on

@@ -532,7 +532,11 @@ const AGENT_BUSY_TURN_MESSAGE =
 const AGENT_NOT_LOCAL_MESSAGE =
   "This agent runs on another host. Archive it from that host instead.";
 
-function hostErrorToastMessage(error: HostRpcError, fallback: string) {
+/**
+ * The guidance `toastFromHostError` gives for a refusal, or `fallback` when it
+ * has none of its own - for a caller that folds a refusal into its own notice.
+ */
+export function hostErrorToastMessage(error: HostRpcError, fallback: string) {
   const verdict = hostTerminalVerdictMessage(error);
   if (verdict !== null) {
     return verdict;

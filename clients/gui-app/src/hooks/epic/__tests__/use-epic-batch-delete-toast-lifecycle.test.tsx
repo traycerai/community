@@ -5,6 +5,7 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import type { ExternalToast } from "sonner";
 import {
   HostRpcError,
+  HostTransportFailureError,
   RetryableTransportError,
 } from "@traycer-clients/shared/host-transport/host-messenger";
 import type { BatchDeleteResponse } from "@traycer/protocol/host/epic/unary-schemas";
@@ -29,6 +30,13 @@ import type {
 type ToastCall = readonly [ReactNode, ExternalToast | undefined];
 
 const mocks = vi.hoisted(() => ({
+  toast:
+    vi.fn<
+      (
+        message: ReactNode,
+        options: ExternalToast | undefined,
+      ) => string | number
+    >(),
   toastMessage:
     vi.fn<
       (
@@ -98,14 +106,14 @@ const host = vi.hoisted(() => {
 });
 
 vi.mock("sonner", () => ({
-  toast: {
+  toast: Object.assign(mocks.toast, {
     message: mocks.toastMessage,
     success: mocks.toastSuccess,
     warning: mocks.toastWarning,
     error: mocks.toastError,
     dismiss: mocks.toastDismiss,
     getToasts: mocks.toastGetToasts,
-  },
+  }),
 }));
 
 vi.mock("@/lib/host", async (importOriginal) => ({
@@ -269,6 +277,7 @@ function orderOf(fn: {
 describe("the delete's progress toast", () => {
   beforeEach(() => {
     for (const fn of [
+      mocks.toast,
       mocks.toastMessage,
       mocks.toastSuccess,
       mocks.toastWarning,
@@ -931,6 +940,65 @@ describe("the delete's progress toast", () => {
       expect(description).toContain("couldn't confirm your sign-in");
       // One notice: the unreachable-host line is not raised on its own too.
       expect(mocks.toastMessage).toHaveBeenCalledTimes(1);
+      expect(mocks.toastFromHostError).not.toHaveBeenCalled();
+    });
+
+    // traycerai/traycer thread taE6z: the admitted request was sent and its
+    // answer lost. The refused ids were never sent, the admitted one may or
+    // may not have been deleted: two notices, each true of its own ids, and
+    // neither says the whole selection failed.
+    it("says the sign-in refusal and the admitted Task's unknown outcome apart when its answer was lost", async () => {
+      useAuthStore.setState({ status: "unverified" });
+      const view = renderBatchDelete();
+
+      view.dispatch({
+        ids: ["epic-local", "epic-cloud-1", "epic-cloud-2"],
+        isLocalHomedNow: (epicId) => epicId === "epic-local",
+        worktreeCleanup: null,
+      });
+      await waitFor(() => {
+        expect(host.state.requests).toHaveLength(1);
+      });
+      expect(requestedIds(0)).toEqual(["epic-local"]);
+      await act(async () => {
+        hostRequest(0).reject(
+          new HostTransportFailureError({
+            code: "RPC_ERROR",
+            message: "socket closed after the request was sent",
+            requestId: "request-1",
+            method: "epic.batchDelete",
+            fatalDetails: null,
+          }),
+        );
+        await Promise.resolve();
+      });
+
+      await waitFor(() => {
+        expect(mocks.toast).toHaveBeenCalledTimes(1);
+      });
+      expect(mocks.toast.mock.calls[0]?.[0]).toBe(
+        "No reply came back from the Traycer host, so this may or may not have gone through.",
+      );
+      const unknownId = mocks.toast.mock.calls[0]?.[1]?.id;
+      expect(String(unknownId)).toMatch(/^owner-host-batch-result:/);
+      expect(mocks.toast.mock.calls[0]?.[1]?.description).toBeUndefined();
+
+      expect(mocks.toastError).toHaveBeenCalledTimes(1);
+      expect(mocks.toastError.mock.calls[0]?.[0]).toBe(
+        "Couldn't delete 2 tasks.",
+      );
+      expect(mocks.toastError.mock.calls[0]?.[1]?.description).toBe(
+        "This task was not deleted because Traycer couldn't confirm your sign-in. Try again once you're signed in.",
+      );
+      expect(mocks.toastError.mock.calls[0]?.[1]?.id).not.toBe(unknownId);
+      // Nothing says the whole selection failed.
+      expect(
+        JSON.stringify([
+          mocks.toastError.mock.calls,
+          mocks.toastWarning.mock.calls,
+          mocks.toastMessage.mock.calls,
+        ]),
+      ).not.toContain("Couldn't delete 3 tasks.");
       expect(mocks.toastFromHostError).not.toHaveBeenCalled();
     });
   });

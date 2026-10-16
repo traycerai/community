@@ -1,5 +1,6 @@
 import type { VersionedRpcRegistry } from "@traycer/protocol/framework/index";
 import {
+  HostAuthoritySupersededError,
   HostRequestAbortedError,
   HostRpcError,
   HostTransportFailureError,
@@ -94,7 +95,7 @@ export function createRetryingMessenger<Registry extends VersionedRpcRegistry>(
         return await attemptCall(replayMustBeKeyed);
       } catch (cause) {
         if (!(cause instanceof RetryableTransportError)) {
-          throw withEpisodeDispatch(cause, replayMustBeKeyed);
+          throw withEpisodeDispatch(cause, method, replayMustBeKeyed);
         }
         replayMustBeKeyed = replayMustBeKeyed || cause.replaySafetyFromKey;
         await waitForRetryDelay(
@@ -138,7 +139,7 @@ export function createRetryingMessenger<Registry extends VersionedRpcRegistry>(
           replaySafetyFromKey: true,
         });
       }
-      throw withEpisodeDispatch(cause, replayMustBeKeyed);
+      throw withEpisodeDispatch(cause, method, replayMustBeKeyed);
     }
   };
 
@@ -205,9 +206,30 @@ export class RetryEpisodeOutcomeUnknownError extends HostTransportFailureError {
  * earlier send whatever this attempt did. An abort says so on its own flag; a
  * refusal becomes {@link RetryEpisodeOutcomeUnknownError}. An unattested
  * transport drop already reads as unknown and is passed on as it is.
+ *
+ * The auth layer's `HostAuthoritySupersededError` - the session was replaced
+ * while a later attempt's `UNAUTHORIZED` was being recovered - is no
+ * `HostRpcError`, and normalized at the app's boundary it would read as a
+ * definite failure. It becomes an unattested transport failure instead, so
+ * it reads as the unknown outcome it is. Nothing reads the superseded class
+ * itself; with no earlier send it is passed on as it is.
  */
-function withEpisodeDispatch(cause: unknown, sentEarlier: boolean): unknown {
-  if (!sentEarlier || !(cause instanceof HostRpcError)) return cause;
+function withEpisodeDispatch(
+  cause: unknown,
+  method: string,
+  sentEarlier: boolean,
+): unknown {
+  if (!sentEarlier) return cause;
+  if (cause instanceof HostAuthoritySupersededError) {
+    return new HostTransportFailureError({
+      code: "RPC_ERROR",
+      message: `An earlier attempt may have reached the host before authentication recovery was superseded: ${cause.message}`,
+      requestId: "authority-superseded",
+      method,
+      fatalDetails: null,
+    });
+  }
+  if (!(cause instanceof HostRpcError)) return cause;
   // States its own ground; the final attempt restores the keyed one.
   if (cause instanceof RetryableTransportError) return cause;
   if (cause instanceof HostRequestAbortedError) {

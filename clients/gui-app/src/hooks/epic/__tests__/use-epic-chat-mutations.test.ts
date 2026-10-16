@@ -1101,6 +1101,42 @@ describe("useEpicArchiveChats", () => {
     expect(toast.error).toHaveBeenCalledTimes(1);
   });
 
+  // `updated: false` is an already-satisfied no-op, or a chat deleted while
+  // its archive write waited its turn: neither confirms this batch archived
+  // it, so the notice never counts it as archived.
+  it("does not count an agent the host answered `updated: false` for as archived", async () => {
+    archiveChatMutateAsync.mockImplementation(
+      (input: ArchiveChatMutationInput) =>
+        input.chatId === "chat-1"
+          ? Promise.resolve({ updated: false })
+          : Promise.reject(makeError("RPC_ERROR")),
+    );
+    const { result } = renderHook(() => useEpicArchiveChats(), {
+      wrapper: makeWrapper(),
+    });
+
+    act(() => {
+      result.current.mutate({
+        epicId: "epic-1",
+        chats: [
+          { chatId: "chat-1", hostId: "host-test" },
+          { chatId: "chat-2", hostId: "remote-host" },
+        ],
+        archived: true,
+      });
+    });
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledTimes(1);
+    });
+    expect(vi.mocked(toast.error).mock.calls[0]?.[0]).toBe(
+      "Couldn't archive agent.",
+    );
+    expect(JSON.stringify(vi.mocked(toast.error).mock.calls)).not.toContain(
+      "Archived",
+    );
+  });
+
   it("reports one plural notice when the unreachable batch spans several hosts", async () => {
     archiveChatMutateAsync.mockImplementation(() =>
       Promise.reject(hostUnreachable("epic.setChatArchived")),

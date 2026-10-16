@@ -43,6 +43,7 @@ import {
   toastFromOwnerHostBatchWriteFailures,
   toastFromOwnerHostWriteError,
   type OwnerHostBatchWriteCopy,
+  type OwnerHostBatchWriteOutcome,
 } from "@/lib/owner-host-write-error-toast";
 import { invalidateEpicChatRecords } from "@/hooks/chats/use-epic-chat-records";
 import { invalidateChatRunSettings } from "@/hooks/chats/use-chat-run-settings-query";
@@ -804,15 +805,26 @@ export function useEpicArchiveChats(): UseMutationResult<
       ),
     onSuccess: (results, variables) => {
       toastFromOwnerHostBatchWriteFailures(
-        results.map((result, index) => ({
-          kind: "agent",
-          hostId: variables.chats[index]?.hostId ?? null,
-          selectedRows: 1,
-          error:
-            result.status === "rejected"
-              ? toHostRpcError(result.reason, "epic.setChatArchived")
-              : null,
-        })),
+        results.flatMap((result, index): OwnerHostBatchWriteOutcome[] => {
+          // `updated: false` is an already-satisfied no-op, or a chat deleted
+          // while its write waited its turn on the host: neither confirms
+          // this batch changed it, so it counts for nothing in the notice
+          // rather than as archived. It is no failure either.
+          if (result.status === "fulfilled" && !result.value.updated) {
+            return [];
+          }
+          return [
+            {
+              kind: "agent",
+              hostId: variables.chats[index]?.hostId ?? null,
+              selectedRows: 1,
+              error:
+                result.status === "rejected"
+                  ? toHostRpcError(result.reason, "epic.setChatArchived")
+                  : null,
+            },
+          ];
+        }),
         variables.archived ? ARCHIVE_BATCH_COPY : UNARCHIVE_BATCH_COPY,
       );
     },
