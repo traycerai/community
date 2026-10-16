@@ -565,7 +565,7 @@ describe("the delete's progress toast", () => {
       expect(mocks.runWorktreeCleanup).not.toHaveBeenCalled();
     });
 
-    it("says the host is offline, instead of the error toast, when the delete never reached it", async () => {
+    it("says Traycer cannot reach the host, instead of the error toast, when the delete never reached it", async () => {
       const view = renderBatchDelete();
       view.dispatch(deleteOf(["epic-a"], null));
       await waitFor(() => {
