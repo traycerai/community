@@ -467,7 +467,14 @@ function ComposerPromptEditorImpl(props: ComposerPromptEditorProps) {
         containsActiveElement: (activeElement) =>
           activeElement === editor.view.dom ||
           (activeElement !== null && editor.view.dom.contains(activeElement)),
-        isEligible: () => editor.view.dom.isConnected,
+        // A modal dialog aria-hides (and may inert) the chat behind it while
+        // its own new-agent composer stays mounted. Both editors can still
+        // claim `isActive` in the same pane; the hidden one's DOM is connected
+        // but cannot own keyboard focus. Let the registry skip it so a picker
+        // closing in the dialog returns focus to the dialog's editor.
+        isEligible: () =>
+          editor.view.dom.isConnected &&
+          editor.view.dom.closest('[aria-hidden="true"], [inert]') === null,
       },
       isActive,
       isPaneFocusedNow,
