@@ -464,7 +464,10 @@ export const RunnerHostEvent = {
    * session: windows' IPC is unordered, so a revoke can arrive after a
    * sibling's fresh sign-in, and one that names a bearer a window no longer
    * holds must leave it alone (`DesktopAuthSession.revokeVerification` fences
-   * main's own copy by the same rule).
+   * main's own copy by the same rule). Also carries the revocation scope
+   * (`DesktopAuthVerificationRevoked`): a host refuses a "sign out
+   * everywhere" bearer at once, so every window must know it, not only the
+   * one that saw the refusal.
    */
   authVerificationRevoked: "runnerHost:event:windows:authSession:revoked",
   menuCommand: "runnerHost:event:menu:command",
