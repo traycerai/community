@@ -355,6 +355,86 @@ describe("buildWorktreeDeleteCommand terminal outcomes", () => {
     expect(result.exitCode).toBe(1);
   });
 
+  it.each([
+    [
+      "not_managed",
+      "Traycer can't remove this folder because it isn't a worktree it manages, so it was left in place.",
+    ],
+    [
+      "teardown_failed",
+      "The teardown script didn't finish successfully, so the worktree was left in place - check the script and try again.",
+    ],
+    [
+      "removal_failed",
+      "The worktree couldn't be fully removed and part of it may still be on disk - refresh the list and try again, or check the folder.",
+    ],
+  ] as const)(
+    "says why a %s decline left the worktree in place",
+    async (declined, sentence) => {
+      const pending = buildWorktreeDeleteCommand({
+        worktreePath: "/wt/x",
+      })(ctx);
+
+      await waitForSessions(1);
+      commandSession().frameHandler?.({
+        kind: "target.complete",
+        worktreePath: "/wt/x",
+        deleted: false,
+        declined,
+        hasBinaryPayload: false,
+      });
+
+      const result = await pending;
+      expect(result.human).toBe(
+        `Host reported the worktree was not removed: /wt/x.\n${sentence}`,
+      );
+      expect(result.data).toEqual({
+        worktreePath: "/wt/x",
+        deleted: false,
+        declined,
+      });
+      expect(result.exitCode).toBe(1);
+    },
+  );
+
+  it("prints the generic line when the host named no decline kind", async () => {
+    const pending = buildWorktreeDeleteCommand({
+      worktreePath: "/wt/x",
+    })(ctx);
+
+    await waitForSessions(1);
+    commandSession().frameHandler?.({
+      kind: "target.complete",
+      worktreePath: "/wt/x",
+      deleted: false,
+      hasBinaryPayload: false,
+    });
+
+    const result = await pending;
+    expect(result.human).toBe(
+      "Host reported the worktree was not removed: /wt/x.\nCouldn't remove the worktree. It may still be in use - refresh and try again.",
+    );
+    expect(result.exitCode).toBe(1);
+  });
+
+  it("keeps the success line and exit code for a deletion", async () => {
+    const pending = buildWorktreeDeleteCommand({
+      worktreePath: "/wt/x",
+    })(ctx);
+
+    await waitForSessions(1);
+    commandSession().frameHandler?.({
+      kind: "target.complete",
+      worktreePath: "/wt/x",
+      deleted: true,
+      hasBinaryPayload: false,
+    });
+
+    const result = await pending;
+    expect(result.human).toBe("Removed worktree /wt/x.");
+    expect(result.exitCode).toBe(0);
+  });
+
   it("maps a target.failed frame to a CliError carrying the host's reason", async () => {
     const pending = buildWorktreeDeleteCommand({
       worktreePath: "/wt/x",

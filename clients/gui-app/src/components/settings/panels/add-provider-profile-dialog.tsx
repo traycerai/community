@@ -49,6 +49,11 @@ import {
   ProviderLoginRefusalAction,
   ProviderLoginRefusalMessage,
 } from "@/components/providers/provider-login-refusal";
+import {
+  providerHostBlock,
+  providerHostBlockLabel,
+  type ProviderHostBlock,
+} from "@/components/providers/provider-signin-availability";
 import { providerLoginRetryLabel } from "@/lib/providers/provider-login-retry-label";
 import { CodePasteField, CodePasteRestartNotice } from "./code-paste-field";
 import { SignInCopyIconButton } from "./sign-in-copy-icon-button";
@@ -109,6 +114,7 @@ const PROVIDER_SHARES_SKILLS_AND_PLUGINS: Record<
   omp: false,
   reasonix: false,
   antigravity: false,
+  commandcode: false,
 };
 
 export interface FailedProviderProfileAttempt {
@@ -171,7 +177,10 @@ export function AddProviderProfileDialog({
   const recolorProfile = useRecolorProviderProfileForClient(client);
   const renameProfile = useRenameProviderProfileForClient(client);
   const supportsLoginOwnership = useProvidersLoginOwnershipForClient(client);
+  const hostBlock = providerHostBlock(state, "sign-in-and-enable");
+  const macosBlock = hostBlock?.kind === "macos" ? hostBlock : null;
   const flow = useProviderProfileLoginFlow({
+    hostBlock,
     supportsLoginOwnership,
     mode: "create",
     providerId: state.providerId,
@@ -353,6 +362,11 @@ export function AddProviderProfileDialog({
             />
           ) : null}
 
+          <ProfileMacosNotice
+            block={macosBlock}
+            providerId={state.providerId}
+            visible={flow.state.kind === "start"}
+          />
           <AddProfileAccountSection
             providerId={state.providerId}
             flowState={flow.state}
@@ -370,7 +384,9 @@ export function AddProviderProfileDialog({
             namingError={renameProfile.error}
             emailRevealed={emailRevealed}
             setEmailRevealed={setEmailRevealed}
-            linkDisabled={trimmedLabel.length === 0 || flow.busy}
+            linkDisabled={
+              trimmedLabel.length === 0 || flow.busy || macosBlock !== null
+            }
             onLink={linkAccount}
             onOpenExternalLink={(url) => {
               void openLink(url, "auth", null);
@@ -429,6 +445,23 @@ export function AddProviderProfileDialog({
         ) : null}
       </DialogContent>
     </Dialog>
+  );
+}
+
+function ProfileMacosNotice({
+  block,
+  providerId,
+  visible,
+}: {
+  readonly block: Extract<ProviderHostBlock, { kind: "macos" }> | null;
+  readonly providerId: ProviderCliState["providerId"];
+  readonly visible: boolean;
+}): ReactNode {
+  if (block === null || !visible) return null;
+  return (
+    <p role="status" className="text-ui-sm text-muted-foreground">
+      {providerHostBlockLabel(block, PROVIDER_DISPLAY_NAMES[providerId])}
+    </p>
   );
 }
 

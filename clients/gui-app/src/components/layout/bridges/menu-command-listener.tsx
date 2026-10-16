@@ -29,7 +29,7 @@ import { closeLayoutEditorForCloseTabChord } from "@/lib/layout/editor-session";
 import { useRunnerHost } from "@/providers/use-runner-host";
 import { useDesktopDialogStore } from "@/stores/dialogs/desktop-dialog-store";
 import { LocalHostRestartFlow } from "@/components/host/local-host-restart-flow";
-import { HostBusyForceDeferDialog } from "@/components/host/host-busy-force-defer-dialog";
+import { HostUpdateBusyDialog } from "@/components/host/host-update-busy-dialog";
 import { useRunnerHostControllerStatusQuery } from "@/hooks/runner/use-runner-host-controller-status-query";
 import { useRunnerApplyStaged } from "@/hooks/runner/use-runner-apply-staged-mutation";
 import { useRunnerActivateInstalled } from "@/hooks/runner/use-runner-activate-installed-mutation";
@@ -204,7 +204,7 @@ export function MenuCommandListener() {
         source: "native_menu",
       });
       activateInstalledMutation.mutate(
-        { force },
+        { force, retryWhenIdle: false },
         { onSuccess: handleActivateOutcome },
       );
     },
@@ -247,12 +247,19 @@ export function MenuCommandListener() {
           // Admission is read when the command ARRIVES, not when this handler
           // subscribed: a tray "Sign out" followed by "Settings…" can land
           // before React has re-rendered with the new status.
+          const auth = useAuthStore.getState();
           const admission = resolveShellLocalPlaneAdmission(
-            useAuthStore.getState().status,
+            auth.status,
             runnerHost.hasLocalHost,
+            auth.hostRefusedHeldBearer,
           );
           if (!admission.admitted) {
-            void navigate({ to: "/when-you-quit" });
+            // A refused session's shell shows the sign-in page over every
+            // route, so the quit card would not appear - it would surface
+            // only once a sign-in starts, in place of its device code.
+            if (admission.refusal === null) {
+              void navigate({ to: "/when-you-quit" });
+            }
             return;
           }
           openShellSettings(navigate, undefined);
@@ -312,21 +319,14 @@ export function MenuCommandListener() {
         firstLeg="cooperative"
         onClose={() => setPendingHostRestart(false)}
       />
-      <HostBusyForceDeferDialog
+      <HostUpdateBusyDialog
         // The UPDATE commands' busy verdict (`runApply` / `runActivate`);
         // the restart command's lives in `LocalHostRestartFlow` above.
-        purpose="update"
-        detail={null}
-        open={busy !== null}
-        title="Host is busy"
-        message={busy?.message ?? ""}
+        busy={busy}
         isForcing={
           applyStagedMutation.isPending || activateInstalledMutation.isPending
         }
-        forceLabel={
-          busy?.continuation === "activate" ? "Force restart" : "Force update"
-        }
-        forceDestructive
+        onActivateOutcome={handleActivateOutcome}
         onForce={() => {
           if (busy === null) return;
           if (busy.continuation === "activate") {

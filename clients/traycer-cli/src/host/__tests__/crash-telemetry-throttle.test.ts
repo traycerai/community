@@ -25,6 +25,9 @@ function sampleTelemetry(
     exitMeaning: "some crash meaning",
     hasDiagnosticReport: true,
     uptimeMs: 1500,
+    stopRequested: false,
+    stderrEmpty: false,
+    reportMemory: { heapLimitBytes: null, heapUsedBytes: null, rssBytes: null },
     ...overrides,
   };
 }

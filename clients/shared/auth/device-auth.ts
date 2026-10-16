@@ -66,10 +66,101 @@ function buildRequestSignal(
 }
 
 /**
+ * The network errno word of a failed authorize request, from a fixed list:
+ * the thrown error's `code` (or its `cause`'s, where undici nests it) is
+ * matched against a fixed list and anything not on it is `other`. Never the message, a
+ * hostname or a URL. `cert` stands for every TLS certificate verification code.
+ */
+export type DeviceAuthorizeTransportCode =
+  | "ENOTFOUND"
+  | "EAI_AGAIN"
+  | "ECONNREFUSED"
+  | "ECONNRESET"
+  | "ETIMEDOUT"
+  | "EHOSTUNREACH"
+  | "ENETUNREACH"
+  | "cert"
+  | "other";
+
+function readThrownCode(value: unknown): string | null {
+  if (typeof value !== "object" || value === null) {
+    return null;
+  }
+  const code: unknown = Reflect.get(value, "code");
+  return typeof code === "string" ? code : null;
+}
+
+/**
+ * Maps a thrown fetch error to its closed errno word. `cause.code` first (undici
+ * throws `TypeError: fetch failed` with the errno on its `cause`), then the
+ * error's own `code`. Only the code string is read, and only through the fixed
+ * list or the certificate-code test below.
+ */
+function transportCodeOf(error: unknown): DeviceAuthorizeTransportCode {
+  const cause: unknown =
+    typeof error === "object" && error !== null
+      ? Reflect.get(error, "cause")
+      : null;
+  const code = readThrownCode(cause) ?? readThrownCode(error);
+  if (code === null) {
+    return "other";
+  }
+  switch (code) {
+    case "ENOTFOUND":
+    case "EAI_AGAIN":
+    case "ECONNREFUSED":
+    case "ECONNRESET":
+    case "ETIMEDOUT":
+    case "EHOSTUNREACH":
+    case "ENETUNREACH":
+      return code;
+    default:
+      break;
+  }
+  if (
+    code.includes("CERT") ||
+    code.includes("SELF_SIGNED") ||
+    code.startsWith("UNABLE_TO_VERIFY")
+  ) {
+    return "cert";
+  }
+  return "other";
+}
+
+/**
+ * Why `POST /device/authorize` did not start an authorization: a closed set of
+ * words and one number, so a caller can put it in a log line (the desktop log
+ * travels in feedback reports) without carrying a URL, a header or any of the
+ * response body.
+ */
+export type DeviceAuthorizeFailureCause =
+  | { readonly kind: "timeout" }
+  | { readonly kind: "transport"; readonly code: DeviceAuthorizeTransportCode }
+  | { readonly kind: "http-status"; readonly status: number }
+  | { readonly kind: "bad-body" };
+
+/** The log rendering of a cause: fixed words and the status number only. */
+export function describeDeviceAuthorizeFailure(
+  cause: DeviceAuthorizeFailureCause,
+): string {
+  switch (cause.kind) {
+    case "timeout":
+      return "timeout";
+    case "transport":
+      return `transport code=${cause.code}`;
+    case "http-status":
+      return `http-status status=${cause.status}`;
+    case "bad-body":
+      return "bad-body";
+  }
+}
+
+/**
  * Result of `POST /device/authorize`. `started` carries the fields the caller
  * needs to display the verification prompt and drive the poll loop; a
  * transport failure or any non-200 is a transient `network-error` (the caller
- * may retry starting a fresh authorization).
+ * may retry starting a fresh authorization). `cause` says which of those it
+ * was; no caller branches on it.
  */
 export type DeviceAuthorizationResult =
   | {
@@ -81,7 +172,10 @@ export type DeviceAuthorizationResult =
       readonly expiresInSeconds: number;
       readonly intervalSeconds: number;
     }
-  | { readonly kind: "network-error" };
+  | {
+      readonly kind: "network-error";
+      readonly cause: DeviceAuthorizeFailureCause;
+    };
 
 /**
  * Result of one `POST /device/token` poll. The variants mirror the endpoint's
@@ -133,22 +227,37 @@ export async function startDeviceAuthorization(
       }),
       signal: request.signal,
     });
-  } catch {
+  } catch (error: unknown) {
     // A caller abort or per-request timeout surfaces here too; both collapse
     // into the retryable `network-error` variant - the caller decides whether
     // to retry (poll loop) or give up (abort already consumed).
-    return { kind: "network-error" };
+    //
+    // `timeout` is read from the signals alone, never from the thrown error:
+    // the request's signal is aborted and the caller's is not, so the only
+    // abort left is the per-request timer. A caller abort, and anything the
+    // request failed on before either signal fired, reads as `transport`;
+    // only the error's errno `code` is read, against a fixed list.
+    const timedOut = request.signal.aborted && options.signal?.aborted !== true;
+    return {
+      kind: "network-error",
+      cause: timedOut
+        ? { kind: "timeout" }
+        : { kind: "transport", code: transportCodeOf(error) },
+    };
   } finally {
     request.clear();
   }
 
   if (response.status !== 200) {
-    return { kind: "network-error" };
+    return {
+      kind: "network-error",
+      cause: { kind: "http-status", status: response.status },
+    };
   }
 
   const parsed = await readAuthorization(response);
   if (parsed === null) {
-    return { kind: "network-error" };
+    return { kind: "network-error", cause: { kind: "bad-body" } };
   }
   return parsed;
 }

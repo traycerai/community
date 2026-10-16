@@ -13,6 +13,7 @@ import type {
 } from "@traycer/protocol/host/provider-schemas";
 import { chatPublicationDefinitiveReason } from "@/lib/chats/chat-publication-definitive";
 import { DRAFT_BLOB_PUT_RESPONSE_TIMEOUT_MS } from "@/lib/drafts/draft-blob-transport-budget";
+import { CATALOG_LIST_RESPONSE_TIMEOUT_MS } from "@/lib/host-rpc-policy/catalog-list-response-timeout";
 import { PROVIDER_PACK_DISCOVERY_CHECK_TIMEOUT_MS } from "@/lib/host-rpc-policy/provider-pack-discovery-check-timeout";
 import { RATE_LIMIT_USAGE_RESPONSE_TIMEOUT_MS } from "@/lib/rate-limits/rate-limit-timing";
 import { USAGE_SUMMARY_RESPONSE_TIMEOUT_MS } from "@/lib/usage-analytics/usage-summary-timing";
@@ -81,6 +82,18 @@ export function defineConditionPolicy<
     resetLaneIds: entry.resetLaneIds,
   };
 }
+
+/** An epic file the host cannot serve yet; it usually lands on its own. */
+const EPIC_FILE_UNAVAILABLE_POLL_LANE: ConditionPollLane = {
+  id: "epic.readFile.unavailable",
+  initialDelayMs: 15 * SECOND_MS,
+  maxDelayMs: 15 * SECOND_MS,
+};
+const EPIC_FILE_ERROR_POLL_LANE: ConditionPollLane = {
+  id: "epic.readFile.error",
+  initialDelayMs: 15 * SECOND_MS,
+  maxDelayMs: MINUTE_MS,
+};
 
 export const PROVIDERS_PENDING_POLL_LANE: ConditionPollLane = {
   id: "providers.pending",
@@ -791,8 +804,19 @@ export const HOST_METHOD_POLL_TABLE = {
       resetLaneIds: HARNESS_RESET_LANES,
     }),
   },
-  "agent.gui.listModels": { ...LATEST_SCHEDULING, poll: null },
-  "agent.gui.listCommands": { ...LATEST_SCHEDULING, poll: null },
+  // A catalog read waits on the host's own probe bound, which the user's
+  // Model list timeout can raise past the ordinary unary deadline; see
+  // `CATALOG_LIST_RESPONSE_TIMEOUT_MS`. Every caller passes it.
+  "agent.gui.listModels": {
+    ...LATEST_SCHEDULING,
+    joinResponseTimeoutMs: CATALOG_LIST_RESPONSE_TIMEOUT_MS,
+    poll: null,
+  },
+  "agent.gui.listCommands": {
+    ...LATEST_SCHEDULING,
+    joinResponseTimeoutMs: CATALOG_LIST_RESPONSE_TIMEOUT_MS,
+    poll: null,
+  },
   "agent.gui.getPlan": { ...LATEST_SCHEDULING, poll: null },
   "agent.tui.listHarnesses": { ...LATEST_SCHEDULING, poll: null },
   // Preparing a launch creates or updates host-side harness launch state.
@@ -1408,6 +1432,57 @@ export const HOST_METHOD_POLL_TABLE = {
   // their content hash and the image cache owns retry after a transient miss.
   // Polling this unary method would only re-fetch immutable bytes.
   "epic.fetchArtifactAttachment": { ...LATEST_SCHEDULING, poll: null },
+  // Epic files are content-addressed too: a read names its sha. Download
+  // progress rides the files lane's `localState`, never a poll; only an
+  // unavailable answer is asked again, since an upload landing on another
+  // host reaches no lane here.
+  "epic.readFile": {
+    ...LATEST_SCHEDULING,
+    poll: defineConditionPolicy("epic.readFile", {
+      // Three caches share this method: the text and blob reads keep a
+      // `kind` at the top, the signed-URL read keeps it under `result`.
+      classify: (data) => {
+        if (data === undefined) return false;
+        if (data.kind === "unavailable") return EPIC_FILE_UNAVAILABLE_POLL_LANE;
+        if (!("result" in data)) return false;
+        const result = data.result;
+        return typeof result === "object" &&
+          result !== null &&
+          "kind" in result &&
+          result.kind === "unavailable"
+          ? EPIC_FILE_UNAVAILABLE_POLL_LANE
+          : false;
+      },
+      initialErrorLane: EPIC_FILE_ERROR_POLL_LANE,
+      staleDataErrorLane: EPIC_FILE_ERROR_POLL_LANE,
+      resetLaneIds: new Set(),
+    }),
+  },
+  "epic.fetchFile": { ...LATEST_SCHEDULING, poll: null },
+  // User actions: each one runs, in order.
+  "epic.cancelFetchFile": {
+    mode: "fifo",
+    joinResponseTimeoutMs: null,
+    poll: null,
+  },
+  "epic.deleteFile": { mode: "fifo", joinResponseTimeoutMs: null, poll: null },
+  "epic.restoreFile": { mode: "fifo", joinResponseTimeoutMs: null, poll: null },
+  // An MCP App's reads answer from the harness's live server, on demand; the
+  // app asks again when it wants a fresher answer, so nothing polls.
+  "chat.mcpApp.describeTool": { ...LATEST_SCHEDULING, poll: null },
+  "chat.mcpApp.readResource": { ...LATEST_SCHEDULING, poll: null },
+  // A tool call and a model-context update change something: each one runs,
+  // in order.
+  "chat.mcpApp.callTool": {
+    mode: "fifo",
+    joinResponseTimeoutMs: null,
+    poll: null,
+  },
+  "chat.mcpApp.updateModelContext": {
+    mode: "fifo",
+    joinResponseTimeoutMs: null,
+    poll: null,
+  },
   // Not polled, and this is a deliberate freshness choice rather than a copy of
   // the row above it. The answer is "which cloud row does this local chat
   // publish into", which changes exactly once in a chat's life - when a fork
@@ -2195,6 +2270,18 @@ export const HOST_METHOD_POLL_TABLE = {
     joinResponseTimeoutMs: null,
     poll: null,
   },
+  "config.visualization.get": { ...LATEST_SCHEDULING, poll: null },
+  "config.visualization.set": {
+    mode: "fifo",
+    joinResponseTimeoutMs: null,
+    poll: null,
+  },
+  "config.catalog.get": { ...LATEST_SCHEDULING, poll: null },
+  "config.catalog.set": {
+    mode: "fifo",
+    joinResponseTimeoutMs: null,
+    poll: null,
+  },
   "config.worktrees.get": { ...LATEST_SCHEDULING, poll: null },
   "config.worktrees.set": {
     mode: "fifo",
@@ -2234,6 +2321,18 @@ export const HOST_METHOD_POLL_TABLE = {
   // what delivers that (see `autoJudge.set` above - two bodies are two queue
   // keys); `autoPolicyWriteScope` on `useAutoPolicySetMutation` is.
   "autoPolicy.set": {
+    mode: "fifo",
+    joinResponseTimeoutMs: null,
+    poll: null,
+  },
+  // The account-wide chat auto-archive setting. Read on Settings mount, never
+  // polled: another device's save reaches this host's cache on its own
+  // 5-minute refresh, and a timer here would only wake the host for it.
+  "chatAutoArchive.get": { ...LATEST_SCHEDULING, poll: null },
+  // Last-write-wins on the server, ordered on the client by
+  // `chatAutoArchiveWriteScope` on `useChatAutoArchiveSetMutation`, exactly as
+  // `autoPolicy.set` above.
+  "chatAutoArchive.set": {
     mode: "fifo",
     joinResponseTimeoutMs: null,
     poll: null,

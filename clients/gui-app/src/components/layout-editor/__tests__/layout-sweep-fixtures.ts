@@ -144,6 +144,7 @@ export const harnessMessengerFactory: MessengerFactory<HostRpcRegistry> = ({
         updateTransaction: null,
         storeFormats: null,
         install: null,
+        processMemory: null,
       }),
       "host.notifications.indicatorState":
         (): HostNotificationsIndicatorStateResponse => ({
@@ -186,6 +187,8 @@ export function resetToShippedLayout(): void {
     memory: true,
     processes: false,
     ramShare: true,
+    // Rows ship off; the sweep needs their readings drawn to see these change.
+    agentRows: true,
   });
   useSideTabStripStore.getState().setCollapsed(false);
 }
