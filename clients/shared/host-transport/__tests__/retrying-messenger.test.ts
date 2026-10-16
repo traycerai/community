@@ -5,8 +5,10 @@ import {
   defineVersionedRpcRegistry,
 } from "@traycer/protocol/framework/index";
 import {
+  HostMethodVersionUnsatisfiedError,
   HostRequestAbortedError,
   HostRpcError,
+  HostTransportFailureError,
   type HostRequestAuthority,
   type HostRequestOptions,
   RetryableTransportError,
@@ -15,6 +17,7 @@ import {
 import {
   createRetryingMessenger,
   NO_RETRY_TRANSPORT_POLICY,
+  RetryEpisodeOutcomeUnknownError,
   type TransportRetryPolicy,
 } from "../retrying-messenger";
 import { jitteredBackoffFor } from "../backoff";
@@ -463,6 +466,72 @@ describe("createRetryingMessenger", () => {
     expect(
       failure instanceof HostRequestAbortedError && failure.mayHaveDispatched,
     ).toBe(true);
+  });
+
+  // traycerai/traycer thread TEUc: a later refusal speaks for the later
+  // attempt only. A reconnect to a host below the call's method floor is
+  // refused before dispatch, after the earlier keyed send may have committed.
+  it("a refusal of a later attempt, after a sent-and-dropped one, keeps the outcome unknown", async () => {
+    const floorRefusal = new HostMethodVersionUnsatisfiedError({
+      requirement: {
+        method: "host.echo",
+        version: { major: 1, minor: 2 },
+      },
+      negotiated: { major: 1, minor: 0 },
+      requestId: "req-2",
+      method: "host.echo",
+      hostId: "test-host",
+    });
+    const { messenger } = fakeInner([keyEarnedRetryableError(), floorRefusal]);
+    const { policy } = makeRecordingPolicy(2, 100, 1_000, () => 0.5);
+
+    const failure = await createRetryingMessenger(messenger, policy)
+      .request(
+        "host.echo",
+        { message: "hi" },
+        {
+          idempotencyKey: "k-1",
+          authority: authority(),
+          replayMustBeKeyed: false,
+          requiredHostMethodVersion: null,
+        },
+      )
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+
+    expect(failure).toBeInstanceOf(RetryEpisodeOutcomeUnknownError);
+    expect(failure).toBeInstanceOf(HostTransportFailureError);
+    expect(failure).not.toBeInstanceOf(RetryableTransportError);
+    if (!(failure instanceof RetryEpisodeOutcomeUnknownError)) return;
+    expect(failure.fatalDetails).toBeNull();
+    expect(failure.finalRefusal).toBe(floorRefusal);
+  });
+
+  it("a refusal with no earlier send is the refusal itself", async () => {
+    const refusal = new HostRpcError({
+      code: "FORBIDDEN",
+      message: "no",
+      requestId: "req-1",
+      method: "host.echo",
+      fatalDetails: null,
+    });
+    const { messenger } = fakeInner([retryableError(), refusal]);
+    const { policy } = makeRecordingPolicy(2, 100, 1_000, () => 0.5);
+
+    await expect(
+      createRetryingMessenger(messenger, policy).request(
+        "host.echo",
+        { message: "hi" },
+        {
+          idempotencyKey: "k-1",
+          authority: authority(),
+          replayMustBeKeyed: false,
+          requiredHostMethodVersion: null,
+        },
+      ),
+    ).rejects.toBe(refusal);
   });
 
   it("leaves the final error pre-send when no attempt was ever sent", async () => {

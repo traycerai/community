@@ -1,6 +1,8 @@
 import type { VersionedRpcRegistry } from "@traycer/protocol/framework/index";
 import {
   HostRequestAbortedError,
+  HostRpcError,
+  HostTransportFailureError,
   RetryableTransportError,
   type HostRequestAuthority,
   type HostRequestOptions,
@@ -110,10 +112,10 @@ export function createRetryingMessenger<Registry extends VersionedRpcRegistry>(
         );
       }
     }
-    // Final attempt: out of the retry budget, so let whatever it throws -
-    // retryable or not - propagate to the caller unchanged. Still carries the
-    // requirement: being the last attempt does not make an unkeyed replay any
-    // safer.
+    // Final attempt: out of the retry budget, so whatever it throws -
+    // retryable or not - propagates to the caller, with the episode's earlier
+    // send restored below. Still carries the requirement: being the last
+    // attempt does not make an unkeyed replay any safer.
     throwIfAuthorityAborted(authority, method, replayMustBeKeyed);
     try {
       return await attemptCall(replayMustBeKeyed);
@@ -167,24 +169,64 @@ export function createRetryingMessenger<Registry extends VersionedRpcRegistry>(
 }
 
 /**
- * An abort of a later attempt, after an earlier one was sent and its answer
+ * The ending of a retry episode whose earlier attempt was sent and its answer
+ * lost, when a LATER attempt was refused: the outcome is unknown, because the
+ * refusal speaks for the later attempt only and the host may have run the
+ * earlier one. A refusal that never reached the host proves this most
+ * plainly - a reconnect to an incarnation below the method floor the call
+ * requires (`HostMethodVersionUnsatisfiedError`), or an `UNAUTHORIZED` the
+ * auth layer could not recover - but no refusal of a later attempt recalls
+ * an earlier one.
+ *
+ * An unattested `HostTransportFailureError`, so every reader of an ambiguous
+ * post-send drop reads it as one (the create flow polls for the epic; an owner
+ * write says no reply came back). The refusal is kept as `finalRefusal`, for a
+ * caller that has guidance to give once the outcome is settled.
+ */
+export class RetryEpisodeOutcomeUnknownError extends HostTransportFailureError {
+  readonly finalRefusal: HostRpcError;
+
+  constructor(finalRefusal: HostRpcError) {
+    super({
+      code: "RPC_ERROR",
+      message: `An earlier attempt may have reached the host before a later one was refused: ${finalRefusal.message}`,
+      requestId: finalRefusal.requestId,
+      method: finalRefusal.method,
+      fatalDetails: null,
+    });
+    this.name = "RetryEpisodeOutcomeUnknownError";
+    this.finalRefusal = finalRefusal;
+  }
+}
+
+/**
+ * A later attempt's failure, after an earlier one was sent and its answer
  * lost, carries the episode's possible dispatch: the host may be running the
- * earlier send whatever this attempt did.
+ * earlier send whatever this attempt did. An abort says so on its own flag; a
+ * refusal becomes {@link RetryEpisodeOutcomeUnknownError}. An unattested
+ * transport drop already reads as unknown and is passed on as it is.
  */
 function withEpisodeDispatch(cause: unknown, sentEarlier: boolean): unknown {
-  if (
-    sentEarlier &&
-    cause instanceof HostRequestAbortedError &&
-    !cause.mayHaveDispatched
-  ) {
-    return new HostRequestAbortedError({
-      message: cause.message,
-      requestId: cause.requestId,
-      method: cause.method,
-      mayHaveDispatched: true,
-    });
+  if (!sentEarlier || !(cause instanceof HostRpcError)) return cause;
+  // States its own ground; the final attempt restores the keyed one.
+  if (cause instanceof RetryableTransportError) return cause;
+  if (cause instanceof HostRequestAbortedError) {
+    return cause.mayHaveDispatched
+      ? cause
+      : new HostRequestAbortedError({
+          message: cause.message,
+          requestId: cause.requestId,
+          method: cause.method,
+          mayHaveDispatched: true,
+        });
   }
-  return cause;
+  if (
+    cause instanceof HostTransportFailureError &&
+    cause.fatalDetails === null
+  ) {
+    return cause;
+  }
+  return new RetryEpisodeOutcomeUnknownError(cause);
 }
 
 /**
