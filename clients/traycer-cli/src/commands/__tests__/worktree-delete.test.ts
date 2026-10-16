@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { buildWorktreeDeleteCommand } from "../worktree-delete";
-import { CliError, CLI_ERROR_CODES } from "../../runner/errors";
+import {
+  CliError,
+  CLI_ERROR_CODES,
+  EXPECTED_CLI_ERROR_CODES,
+} from "../../runner/errors";
 import type { CommandContext, CommandResult } from "../../runner/runner";
 import type { ProgressInfo } from "../../runner/output";
 import type { StreamCloseReason } from "../../../../shared/host-transport/i-stream-session";
@@ -455,6 +459,58 @@ describe("buildWorktreeDeleteCommand terminal outcomes", () => {
     });
   });
 
+  // The host answers a busy worktree with the typed `WORKTREE_BUSY` code beside
+  // the prose reason. That is the person's own worktree being in use, an
+  // outcome the runner must not report to Sentry; the code (not the prose,
+  // which carries the user's absolute path) is what classifies it.
+  it("maps a WORKTREE_BUSY target.failed frame to an expected code and keeps the host's reason", async () => {
+    const pending = buildWorktreeDeleteCommand({
+      worktreePath: "/wt/x",
+    })(ctx);
+
+    await waitForSessions(1);
+    commandSession().frameHandler?.({
+      kind: "target.failed",
+      worktreePath: "/wt/x",
+      reason:
+        "Worktree /wt/x is in use by an active chat session or background work it owns",
+      code: "WORKTREE_BUSY",
+      hasBinaryPayload: false,
+    });
+
+    const error: unknown = await pending.catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(CliError);
+    if (!(error instanceof CliError)) throw error;
+    expect(error.code).toBe("E_WORKTREE_BUSY");
+    expect(error.exitCode).toBe(1);
+    expect(error.message).toContain("Worktree /wt/x is in use");
+    expect(new Set<string>(EXPECTED_CLI_ERROR_CODES).has(error.code)).toBe(
+      true,
+    );
+  });
+
+  it("keeps UNEXPECTED for a target.failed frame without a typed busy code", async () => {
+    const pending = buildWorktreeDeleteCommand({
+      worktreePath: "/wt/x",
+    })(ctx);
+
+    await waitForSessions(1);
+    commandSession().frameHandler?.({
+      kind: "target.failed",
+      worktreePath: "/wt/x",
+      reason: "git worktree remove failed",
+      hasBinaryPayload: false,
+    });
+
+    const error: unknown = await pending.catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(CliError);
+    if (!(error instanceof CliError)) throw error;
+    expect(error.code).toBe(CLI_ERROR_CODES.UNEXPECTED);
+    expect(new Set<string>(EXPECTED_CLI_ERROR_CODES).has(error.code)).toBe(
+      false,
+    );
+  });
+
   it("maps a command.failed frame to a CliError carrying the host's reason", async () => {
     const pending = buildWorktreeDeleteCommand({
       worktreePath: "/wt/x",
@@ -694,6 +750,23 @@ describe("buildWorktreeDeleteCommand legacy stream v1.1 holders", () => {
       exitCode: 1,
       message: "traycer: worktree delete failed - worktree is busy",
       details: null,
+    });
+  });
+
+  it("maps a v1.2 failed frame carrying WORKTREE_BUSY to the expected busy code", async () => {
+    const { pending, legacy } = await startLegacyFallback();
+
+    legacy.frameHandler?.({
+      kind: "failed",
+      reason: "worktree is busy",
+      code: "WORKTREE_BUSY",
+      hasBinaryPayload: false,
+    });
+
+    await expect(pending).rejects.toMatchObject({
+      code: "E_WORKTREE_BUSY",
+      exitCode: 1,
+      message: "traycer: worktree delete failed - worktree is busy",
     });
   });
 
