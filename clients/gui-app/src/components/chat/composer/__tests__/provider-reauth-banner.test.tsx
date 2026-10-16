@@ -602,6 +602,59 @@ describe("<ProviderReauthBanner />", () => {
     expect(screen.queryByRole("button", { name: /Authenticate/ })).toBeNull();
   });
 
+  // The host settled that nothing can run Antigravity on this Mac. The banner
+  // is one of three sign-in surfaces fed by `providerHostBlock`, so it must show
+  // the sentence instead of an action that could only end in a failed start.
+  it("shows the macOS sentence instead of Authenticate when the host says nothing can run here", () => {
+    render(
+      <ProviderReauthBanner
+        epicId={null}
+        viewTabId={null}
+        providerId="antigravity"
+        state={{
+          ...antigravityState(ANTIGRAVITY_ACP_AUTH_CAP),
+          candidates: [],
+          cliBinaryResolved: false,
+          macosRequirement: {
+            runningMacos: "13.6",
+            managed: { requiredMacos: "14.0" },
+            launch: { requiredMacos: "14.0" },
+            refusedVersions: [],
+          },
+        }}
+        reason="provider_unauthenticated"
+        profileId={null}
+        profileLabel={null}
+        onContinueOnAmbient={null}
+      />,
+    );
+
+    expect(
+      screen.getByText(
+        "Antigravity needs macOS 14.0 or later. This Mac runs macOS 13.6.",
+      ),
+    ).toBeDefined();
+    expect(screen.queryByRole("button", { name: /Authenticate/ })).toBeNull();
+    expect(mocks.startLoginMutate).not.toHaveBeenCalled();
+  });
+
+  it("keeps offering Authenticate when a host that omits the field has a runnable CLI", () => {
+    render(
+      <ProviderReauthBanner
+        epicId={null}
+        viewTabId={null}
+        providerId="antigravity"
+        state={antigravityState(ANTIGRAVITY_ACP_AUTH_CAP)}
+        reason="provider_unauthenticated"
+        profileId={null}
+        profileLabel={null}
+        onContinueOnAmbient={null}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /Authenticate/ })).toBeDefined();
+  });
+
   // Row 1 of the terminal-login contract table: the banner is one of three
   // consumers of `providerSupportsTerminalLogin` - see
   // `provider-signin-availability.test.ts` for the other two

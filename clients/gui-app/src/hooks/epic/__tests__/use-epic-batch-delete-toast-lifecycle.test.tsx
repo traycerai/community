@@ -154,6 +154,7 @@ import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
 import { useDesktopDialogStore } from "@/stores/dialogs/desktop-dialog-store";
 import { emptyTabStripLayout } from "@/stores/tabs/layout";
 import { useTabsStore } from "@/stores/tabs/store";
+import { useAuthStore } from "@/stores/auth/auth-store";
 
 /**
  * What the test says about the sonner toast the user could close: whether a
@@ -206,7 +207,8 @@ function deleteOf(
   ids: ReadonlyArray<string>,
   worktreeCleanup: BatchDeleteEpicVariables["worktreeCleanup"],
 ): BatchDeleteEpicVariables {
-  return { ids, worktreeCleanup };
+  // Cloud rows: admitted only while the session is signed in.
+  return { ids, isLocalHomedNow: () => false, worktreeCleanup };
 }
 
 function cleanupOf(...worktreePaths: ReadonlyArray<string>) {
@@ -284,6 +286,7 @@ describe("the delete's progress toast", () => {
     host.state.activeHostId = "host-1";
     host.state.userId = "user-1";
     host.state.requests.length = 0;
+    useAuthStore.setState({ status: "signed-in" });
     toastScreen.stillShown = true;
     toastScreen.shownId = null;
     mocks.toastMessage.mockImplementation((_message, options) => {
@@ -474,7 +477,7 @@ describe("the delete's progress toast", () => {
       });
       expect(mocks.toastDismiss).toHaveBeenCalledWith(id);
       expect(mocks.toastError.mock.calls.at(0)?.[0]).toBe(
-        "Couldn't delete epic.",
+        "Couldn't delete task.",
       );
     });
 
@@ -557,13 +560,13 @@ describe("the delete's progress toast", () => {
       );
       const [error, fallback] = mocks.toastFromHostError.mock.calls.at(0) ?? [];
       expect(error).toBeInstanceOf(HostRpcError);
-      expect(fallback).toBe("Couldn't delete epics.");
+      expect(fallback).toBe("Couldn't delete tasks.");
       // No outcome toast on a failure that never reached a result.
       expect(mocks.toastSuccess).not.toHaveBeenCalled();
       expect(mocks.runWorktreeCleanup).not.toHaveBeenCalled();
     });
 
-    it("says the host is offline, instead of the error toast, when the delete never reached it", async () => {
+    it("says Traycer cannot reach the host, instead of the error toast, when the delete never reached it", async () => {
       const view = renderBatchDelete();
       view.dispatch(deleteOf(["epic-a"], null));
       await waitFor(() => {
@@ -804,6 +807,86 @@ describe("the delete's progress toast", () => {
       expect(orderOf(mocks.toastDismiss)).toBeLessThan(
         orderOf(mocks.toastSuccess),
       );
+    });
+  });
+
+  describe("admission at send time", () => {
+    function epicIds(count: number): string[] {
+      return Array.from({ length: count }, (_, index) => `epic-${index}`);
+    }
+
+    function requestedIds(index: number): unknown {
+      const params = hostRequest(index).params;
+      return typeof params === "object" && params !== null && "ids" in params
+        ? params.ids
+        : undefined;
+    }
+
+    it("sends every confirmed id in one request", async () => {
+      const ids = epicIds(23);
+      const view = renderBatchDelete();
+
+      view.dispatch(deleteOf(ids, null));
+
+      await waitFor(() => {
+        expect(host.state.requests).toHaveLength(1);
+      });
+      expect(requestedIds(0)).toEqual(ids);
+      await answer(0, deleted(...ids));
+
+      await waitFor(() => {
+        expect(mocks.toastSuccess).toHaveBeenCalledTimes(1);
+      });
+      expect(host.state.requests).toHaveLength(1);
+    });
+
+    it("refuses a row promoted to cloud between confirm and send, and sends the local ones", async () => {
+      // The row was local when the person confirmed; its promotion finishes
+      // while the mutation starts, and the session is no longer signed in.
+      const localNow = new Set([
+        "epic-local-1",
+        "epic-local-2",
+        "epic-promoted",
+      ]);
+      useAuthStore.setState({ status: "unverified" });
+      const view = renderBatchDelete();
+
+      view.dispatch({
+        ids: ["epic-local-1", "epic-promoted", "epic-local-2"],
+        isLocalHomedNow: (epicId) => localNow.has(epicId),
+        worktreeCleanup: null,
+      });
+      localNow.delete("epic-promoted");
+
+      await waitFor(() => {
+        expect(host.state.requests).toHaveLength(1);
+      });
+      expect(requestedIds(0)).toEqual(["epic-local-1", "epic-local-2"]);
+      await answer(0, deleted("epic-local-1", "epic-local-2"));
+
+      await waitFor(() => {
+        expect(mocks.toastWarning).toHaveBeenCalledTimes(1);
+      });
+      expect(mocks.toastWarning.mock.calls[0]?.[0]).toBe(
+        "Deleted 2 of 3; 1 failed.",
+      );
+    });
+
+    it("sends no request when the session is demoted before the request is built", async () => {
+      const ids = epicIds(23);
+      const view = renderBatchDelete();
+
+      view.dispatch(deleteOf(ids, null));
+      useAuthStore.setState({ status: "unverified" });
+
+      await waitFor(() => {
+        expect(mocks.toastError).toHaveBeenCalledTimes(1);
+      });
+      expect(host.state.requests).toHaveLength(0);
+      expect(mocks.toastError.mock.calls[0]?.[0]).toBe(
+        "Couldn't delete 23 tasks.",
+      );
+      expect(mocks.toastFromHostError).not.toHaveBeenCalled();
     });
   });
 });

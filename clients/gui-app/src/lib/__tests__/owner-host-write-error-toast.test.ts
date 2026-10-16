@@ -39,7 +39,7 @@ import {
 const UNKNOWN_OUTCOME_NOTICE =
   "No reply came back from the Traycer host, so this may or may not have gone through.";
 
-const OFFLINE_NOTICE =
+const UNREACHABLE_NOTICE =
   "Traycer can't reach that host right now, so nothing on it was changed. Try again once it is reachable.";
 
 function notReady(): RetryableTransportError {
@@ -58,11 +58,11 @@ describe("toastFromOwnerHostWriteError", () => {
     vi.clearAllMocks();
   });
 
-  it("says the host is offline and nothing on it changed when the request never reached it", () => {
+  it("says Traycer cannot reach the host and nothing on it changed when the request never reached it", () => {
     toastFromOwnerHostWriteError(notReady(), "Couldn't archive agent.");
 
     expect(toast.message).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(toast.message).mock.calls[0][0]).toBe(OFFLINE_NOTICE);
+    expect(vi.mocked(toast.message).mock.calls[0][0]).toBe(UNREACHABLE_NOTICE);
     expect(toastFromHostError).not.toHaveBeenCalled();
   });
 
@@ -76,7 +76,7 @@ describe("toastFromOwnerHostWriteError", () => {
     expect(ids[0]).toBe(ids[1]);
   });
 
-  it("does not claim the host is offline when it answered with an attested no-dispatch timeout", () => {
+  it("does not claim the host is unreachable when it answered with an attested no-dispatch timeout", () => {
     // The host was reached and said it never dispatched the request.
     const attested = new RetryableTransportError({
       replaySafetyFromKey: false,
@@ -602,7 +602,7 @@ describe("batch notice spec (traycerai/traycer#2546, round 10): one test per row
       ARCHIVE_COPY,
     );
 
-    expect(noticesRaised()).toEqual([OFFLINE_NOTICE]);
+    expect(noticesRaised()).toEqual([UNREACHABLE_NOTICE]);
   });
 
   it("row 3: one counted write aborted after its send says its answer never came back", () => {

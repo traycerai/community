@@ -889,6 +889,44 @@ describe("useEpicCreateForClient seed hold", () => {
       });
     });
 
+    // The error the retrying messenger hands back when attempt 1 was sent
+    // and dropped and every retry then timed out with the host attesting no
+    // dispatch: attested, but carrying the episode's earlier send. The create
+    // may have committed, so the production hook must poll, not toast.
+    it("polls, rather than toasting, after a keyed sent-and-dropped attempt whose retries the host attested were never dispatched", async () => {
+      pollMocks.pollEpicExistence.mockResolvedValue("exists");
+      const options = renderOptions();
+
+      options.onError(
+        new RetryableTransportError({
+          replaySafetyFromKey: true,
+          code: "RPC_ERROR",
+          message: "Host timed out awaiting the request frame",
+          requestId: "req-exhausted",
+          method: "epic.create",
+          fatalDetails: {
+            code: "RPC_REQUEST_TIMEOUT",
+            reason: "Host timed out awaiting the request frame",
+            incompatibleMethods: null,
+            upgradeGuidance: null,
+            retryable: true,
+          },
+        }),
+        chatVariables,
+        { hostId: "host-1", userId: "user-1" },
+      );
+
+      expect(toast).not.toHaveBeenCalled();
+      expect(toast.error).not.toHaveBeenCalled();
+      expect(pollMocks.pollEpicExistence).toHaveBeenCalledWith(
+        expect.objectContaining({ hostId: "host-1", epicId: "epic-held" }),
+      );
+      await vi.waitFor(() => {
+        expect(pollMocks.pollEpicExistence).toHaveBeenCalledTimes(1);
+      });
+      expect(toast).not.toHaveBeenCalled();
+    });
+
     it("a RetryableTransportError keeps the pre-send notice immediately, without polling", () => {
       const options = renderOptions();
 

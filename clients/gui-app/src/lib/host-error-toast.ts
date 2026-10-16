@@ -115,13 +115,20 @@ function isTransportClassFailure(error: HostRpcError): boolean {
  * land together, and retiring the notice before the poll exists would trade a
  * vague sentence for silence. This is the seam they attach to.
  *
- * Both exclusions are the cases that are NOT ambiguous: `RetryableTransportError`
- * carries the host's no-dispatch guarantee ("that didn't go through"), and an
- * abort is a caller-owned cancellation, not a network condition.
+ * An abort is a caller-owned cancellation, not a network condition, so it is
+ * never ambiguous. A `RetryableTransportError` is ambiguous exactly on its
+ * keyed sent-and-dropped ground (`replaySafetyFromKey: true`): an attempt of
+ * the same keyed request reached the wire, so the host may have run it. That
+ * holds even with `fatalDetails` - a raw attestation is minted with the flag
+ * false, so the pair is the retrying messenger restoring an earlier attempt's
+ * ground, and the attestation proves only that the FINAL attempt did not
+ * dispatch. Only the pre-send ground (flag false) means the request did not run.
  */
 export function isUnknownOutcomeTransportFailure(error: HostRpcError): boolean {
   if (error instanceof HostRequestAbortedError) return false;
-  if (error instanceof RetryableTransportError) return false;
+  if (error instanceof RetryableTransportError) {
+    return error.replaySafetyFromKey;
+  }
   return isTransportClassFailure(error);
 }
 
@@ -183,7 +190,10 @@ function transportNoticeToast(error: HostRpcError): void {
   // telling a user to wait for a recovery that is not coming is the worse
   // error of the two. Narrating the connection is the session-level
   // affordance's job; this toast's job is the gesture's outcome.
-  if (error instanceof RetryableTransportError) {
+  // `replaySafetyFromKey` is the other ground for the same class: a keyed
+  // request that WAS sent and whose answer was lost, so the host may have run
+  // it. Only the pre-send ground earns "never received it".
+  if (error instanceof RetryableTransportError && !error.replaySafetyFromKey) {
     toast("That didn't go through — the Traycer host never received it.", {
       id: TRANSPORT_NOTICE_TOAST_ID,
     });

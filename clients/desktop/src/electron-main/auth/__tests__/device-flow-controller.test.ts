@@ -446,6 +446,83 @@ describe("DeviceFlowController", () => {
     });
   });
 
+  describe("when a /device/token poll fails, the desktop log names the cause", () => {
+    const POLL_FAILED = "[device-flow] poll failed";
+
+    beforeEach(() => {
+      vi.mocked(log.warn).mockClear();
+    });
+
+    it("logs each new cause once, again after a recovery, and never the url or the device code", async () => {
+      // 503, 503, refused, 428 (recovered), 503, then authorized.
+      const tokenAnswers: Array<"503" | "refused" | "428" | "ok"> = [
+        "503",
+        "503",
+        "refused",
+        "428",
+        "503",
+        "ok",
+      ];
+      let tokenCalls = 0;
+      const original: unknown = (globalThis as { fetch?: unknown }).fetch;
+      Object.defineProperty(globalThis, "fetch", {
+        configurable: true,
+        writable: true,
+        value: (input: unknown): Promise<Response> => {
+          const url = typeof input === "string" ? input : String(input);
+          if (url.endsWith("/device/authorize")) {
+            return Promise.resolve(authorizeOk());
+          }
+          const answer = tokenAnswers[tokenCalls] ?? "ok";
+          tokenCalls += 1;
+          switch (answer) {
+            case "503":
+              return Promise.resolve(new Response(null, { status: 503 }));
+            case "refused":
+              return Promise.reject(
+                Object.assign(new TypeError("fetch failed"), {
+                  cause: Object.assign(new Error("connect authn.test"), {
+                    code: "ECONNREFUSED",
+                  }),
+                }),
+              );
+            case "428":
+              return Promise.resolve(new Response(null, { status: 428 }));
+            case "ok":
+              return Promise.resolve(tokenAuthorized());
+          }
+        },
+      });
+      restoreFetch = () =>
+        Object.defineProperty(globalThis, "fetch", {
+          configurable: true,
+          writable: true,
+          value: original,
+        });
+
+      const results: DeviceFlowResultPayload[] = [];
+      const controller = new DeviceFlowController(AUTHN, RETURN_SCHEME);
+      const outcome = await controller.start({
+        onResult: (_attemptId, result) => results.push(result),
+      });
+      expect(outcome.ok).toBe(true);
+
+      await vi.advanceTimersByTimeAsync(10_000);
+
+      expect(results).toEqual([
+        { kind: "authorized", token: "tok", refreshToken: "tok-refresh" },
+      ]);
+      expect(vi.mocked(log.warn).mock.calls).toEqual([
+        [`${POLL_FAILED} cause=http-status status=503`],
+        [`${POLL_FAILED} cause=transport code=ECONNREFUSED`],
+        [`${POLL_FAILED} cause=http-status status=503`],
+      ]);
+      const lines = JSON.stringify(vi.mocked(log.warn).mock.calls);
+      expect(lines).not.toContain("authn.test");
+      expect(lines).not.toContain("device-code-123");
+    });
+  });
+
   it("delivers a denied result terminally", async () => {
     restoreFetch = installFetch((url) => {
       if (url.endsWith("/device/authorize")) {
