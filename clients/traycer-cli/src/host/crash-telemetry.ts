@@ -7,7 +7,10 @@ import * as Sentry from "@sentry/node";
 import { resolveCliVersion } from "../cli-version";
 import type { Environment } from "../runner/environment";
 import { destroySentryTransportRequests } from "../sentry-transport";
-import { isWindowsExternalTerminationExit } from "./crash-diagnostics";
+import {
+  isWindowsExternalTerminationExit,
+  type CrashReportMemory,
+} from "./crash-diagnostics";
 import { readHostPidMetadata } from "./pid-metadata";
 
 // Fleet visibility for host crashes.
@@ -66,6 +69,11 @@ export interface HostCrashTelemetry {
   readonly stopRequested: boolean;
   /** Whether the child wrote nothing at all to stderr. Only the verdict. */
   readonly stderrEmpty: boolean;
+  /**
+   * The memory numbers the diagnostic report states, in bytes; a field is
+   * `null` when there was no report or the report did not carry it.
+   */
+  readonly reportMemory: CrashReportMemory;
 }
 
 /** The host's own identity, read from pid.json after the crash. */
@@ -232,6 +240,17 @@ export function buildHostCrashEvent(
       hasDiagnosticReport: telemetry.hasDiagnosticReport,
       uptimeMs: telemetry.uptimeMs,
       hostIdKnown: identity !== null,
+      // Plain counters, present only when the report stated them: a missing
+      // reading is absent, never a 0 or -1 that reads as a measurement.
+      ...(telemetry.reportMemory.heapLimitBytes === null
+        ? {}
+        : { heapLimitBytes: telemetry.reportMemory.heapLimitBytes }),
+      ...(telemetry.reportMemory.heapUsedBytes === null
+        ? {}
+        : { heapUsedBytes: telemetry.reportMemory.heapUsedBytes }),
+      ...(telemetry.reportMemory.rssBytes === null
+        ? {}
+        : { rssBytes: telemetry.reportMemory.rssBytes }),
     },
   };
 }

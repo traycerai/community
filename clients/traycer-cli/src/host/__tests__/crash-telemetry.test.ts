@@ -124,6 +124,7 @@ function sampleTelemetry(
     uptimeMs: 1500,
     stopRequested: false,
     stderrEmpty: false,
+    reportMemory: { heapLimitBytes: null, heapUsedBytes: null, rssBytes: null },
     ...overrides,
   };
 }
@@ -390,6 +391,38 @@ describe("buildHostCrashEvent", () => {
     expect(event.extra.supervisorPid).toBe(9999);
     expect(event.extra.hasDiagnosticReport).toBe(false);
     expect(event.extra.uptimeMs).toBe(42);
+  });
+
+  it("carries the report's heap limit, heap used and rss as plain numbers", () => {
+    const event = buildHostCrashEvent(
+      sampleTelemetry({
+        reportMemory: {
+          heapLimitBytes: 4831838208,
+          heapUsedBytes: 4100000000,
+          rssBytes: 4750000000,
+        },
+      }),
+      null,
+    );
+    expect(event.extra.heapLimitBytes).toBe(4831838208);
+    expect(event.extra.heapUsedBytes).toBe(4100000000);
+    expect(event.extra.rssBytes).toBe(4750000000);
+  });
+
+  it("leaves out a memory value the report did not give, never a zero or -1", () => {
+    const event = buildHostCrashEvent(
+      sampleTelemetry({
+        reportMemory: {
+          heapLimitBytes: 4831838208,
+          heapUsedBytes: null,
+          rssBytes: null,
+        },
+      }),
+      null,
+    );
+    expect(event.extra.heapLimitBytes).toBe(4831838208);
+    expect("heapUsedBytes" in event.extra).toBe(false);
+    expect("rssBytes" in event.extra).toBe(false);
   });
 
   it("puts the telemetry's childPid in extra.childPid, and -1 when the spawn yielded no pid", () => {
