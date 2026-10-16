@@ -66,20 +66,31 @@ function buildRequestSignal(
 }
 
 /**
- * The network errno word of a failed authorize request, from a fixed list:
- * the thrown error's `code` (or its `cause`'s, where undici nests it) is
- * matched against a fixed list and anything not on it is `other`. Never the message, a
- * hostname or a URL. `cert` stands for every TLS certificate verification code.
+ * The network errno word of a failed device request, from a fixed list: the
+ * thrown error's `code` (or its `cause`'s, where undici nests it) is matched
+ * against a fixed list and anything not on it is `other`. Never the message, a
+ * hostname or a URL. `cert` stands for every TLS certificate verification
+ * code, `tls` for every other TLS or SSL failure (a proxy that answers plain
+ * HTTP, a handshake that never completes).
+ *
+ * A fixed list rather than any code that fits a safe charset: a `code` is a
+ * free string on an object this module did not make, and a hostname fits
+ * `[A-Za-z0-9_.-]` as well as an errno does.
  */
-export type DeviceAuthorizeTransportCode =
+export type DeviceTransportCode =
   | "ENOTFOUND"
   | "EAI_AGAIN"
   | "ECONNREFUSED"
   | "ECONNRESET"
+  | "ECONNABORTED"
   | "ETIMEDOUT"
   | "EHOSTUNREACH"
   | "ENETUNREACH"
+  | "EPROTO"
+  | "UND_ERR_CONNECT_TIMEOUT"
+  | "UND_ERR_SOCKET"
   | "cert"
+  | "tls"
   | "other";
 
 function readThrownCode(value: unknown): string | null {
@@ -96,7 +107,7 @@ function readThrownCode(value: unknown): string | null {
  * error's own `code`. Only the code string is read, and only through the fixed
  * list or the certificate-code test below.
  */
-function transportCodeOf(error: unknown): DeviceAuthorizeTransportCode {
+function transportCodeOf(error: unknown): DeviceTransportCode {
   const cause: unknown =
     typeof error === "object" && error !== null
       ? Reflect.get(error, "cause")
@@ -110,9 +121,13 @@ function transportCodeOf(error: unknown): DeviceAuthorizeTransportCode {
     case "EAI_AGAIN":
     case "ECONNREFUSED":
     case "ECONNRESET":
+    case "ECONNABORTED":
     case "ETIMEDOUT":
     case "EHOSTUNREACH":
     case "ENETUNREACH":
+    case "EPROTO":
+    case "UND_ERR_CONNECT_TIMEOUT":
+    case "UND_ERR_SOCKET":
       return code;
     default:
       break;
@@ -124,24 +139,27 @@ function transportCodeOf(error: unknown): DeviceAuthorizeTransportCode {
   ) {
     return "cert";
   }
+  if (code.startsWith("ERR_SSL_") || code.startsWith("ERR_TLS_")) {
+    return "tls";
+  }
   return "other";
 }
 
 /**
- * Why `POST /device/authorize` did not start an authorization: a closed set of
- * words and one number, so a caller can put it in a log line (the desktop log
- * travels in feedback reports) without carrying a URL, a header or any of the
- * response body.
+ * Why a device request (`POST /device/authorize` or one `POST /device/token`
+ * poll) came back as `network-error`: a closed set of words and one number, so
+ * a caller can put it in a log line (the desktop log travels in feedback
+ * reports) without carrying a URL, a header or any of the response body.
  */
-export type DeviceAuthorizeFailureCause =
+export type DeviceRequestFailureCause =
   | { readonly kind: "timeout" }
-  | { readonly kind: "transport"; readonly code: DeviceAuthorizeTransportCode }
+  | { readonly kind: "transport"; readonly code: DeviceTransportCode }
   | { readonly kind: "http-status"; readonly status: number }
   | { readonly kind: "bad-body" };
 
 /** The log rendering of a cause: fixed words and the status number only. */
-export function describeDeviceAuthorizeFailure(
-  cause: DeviceAuthorizeFailureCause,
+export function describeDeviceRequestFailure(
+  cause: DeviceRequestFailureCause,
 ): string {
   switch (cause.kind) {
     case "timeout":
@@ -174,7 +192,7 @@ export type DeviceAuthorizationResult =
     }
   | {
       readonly kind: "network-error";
-      readonly cause: DeviceAuthorizeFailureCause;
+      readonly cause: DeviceRequestFailureCause;
     };
 
 /**
@@ -187,7 +205,8 @@ export type DeviceAuthorizationResult =
  *   - `access-denied`         400 `access_denied`, user denied (terminal)
  *   - `expired`               400 `expired`, device_code TTL elapsed (terminal)
  *   - `invalid`               400 `invalid_grant`/unknown 400 reason (terminal)
- *   - `network-error`         transport failure or 5xx (transient; retryable)
+ *   - `network-error`         transport failure, 5xx or an unreadable 200
+ *                             (transient; retryable); `cause` says which
  */
 export type DevicePollResult =
   | {
@@ -200,7 +219,10 @@ export type DevicePollResult =
   | { readonly kind: "access-denied" }
   | { readonly kind: "expired" }
   | { readonly kind: "invalid" }
-  | { readonly kind: "network-error" };
+  | {
+      readonly kind: "network-error";
+      readonly cause: DeviceRequestFailureCause;
+    };
 
 /**
  * Starts a device authorization. On success the caller shows `userCode` +
@@ -231,18 +253,9 @@ export async function startDeviceAuthorization(
     // A caller abort or per-request timeout surfaces here too; both collapse
     // into the retryable `network-error` variant - the caller decides whether
     // to retry (poll loop) or give up (abort already consumed).
-    //
-    // `timeout` is read from the signals alone, never from the thrown error:
-    // the request's signal is aborted and the caller's is not, so the only
-    // abort left is the per-request timer. A caller abort, and anything the
-    // request failed on before either signal fired, reads as `transport`;
-    // only the error's errno `code` is read, against a fixed list.
-    const timedOut = request.signal.aborted && options.signal?.aborted !== true;
     return {
       kind: "network-error",
-      cause: timedOut
-        ? { kind: "timeout" }
-        : { kind: "transport", code: transportCodeOf(error) },
+      cause: thrownRequestCause(request, options, error),
     };
   } finally {
     request.clear();
@@ -286,11 +299,15 @@ export async function pollDeviceToken(
       body: JSON.stringify({ device_code: deviceCode, client_id: clientId }),
       signal: request.signal,
     });
-  } catch {
+  } catch (error: unknown) {
     // Caller abort (superseded attempt / CLI expiry) and per-request timeout
     // both land here and map to the retryable `network-error`, so a stalled
-    // `/device/token` socket can no longer wedge the poll loop.
-    return { kind: "network-error" };
+    // `/device/token` socket can no longer wedge the poll loop. The cause is
+    // read exactly as `startDeviceAuthorization` reads it.
+    return {
+      kind: "network-error",
+      cause: thrownRequestCause(request, options, error),
+    };
   } finally {
     request.clear();
   }
@@ -302,7 +319,7 @@ export async function pollDeviceToken(
     // the code on mint, will then see a terminal `invalid`). This never silently
     // drops a real success on a momentary parse hiccup.
     if (tokens.kind !== "ok") {
-      return { kind: "network-error" };
+      return { kind: "network-error", cause: { kind: "bad-body" } };
     }
     return {
       kind: "authorized",
@@ -329,7 +346,29 @@ export async function pollDeviceToken(
   }
 
   // 5xx (e.g. Redis down) and any other unexpected status are transient.
-  return { kind: "network-error" };
+  return {
+    kind: "network-error",
+    cause: { kind: "http-status", status: response.status },
+  };
+}
+
+/**
+ * The cause of a device request whose `fetch` threw. `timeout` is read from
+ * the signals alone, never from the thrown error: the request's signal is
+ * aborted and the caller's is not, so the only abort left is the per-request
+ * timer. A caller abort, and anything the request failed on before either
+ * signal fired, reads as `transport`; only the error's errno `code` is read,
+ * against a fixed list.
+ */
+function thrownRequestCause(
+  request: ComposedRequestAbort,
+  options: DeviceRequestOptions,
+  error: unknown,
+): DeviceRequestFailureCause {
+  const timedOut = request.signal.aborted && options.signal?.aborted !== true;
+  return timedOut
+    ? { kind: "timeout" }
+    : { kind: "transport", code: transportCodeOf(error) };
 }
 
 /**

@@ -10,7 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   applySlowDown,
   createPollSchedule,
-  describeDeviceAuthorizeFailure,
+  describeDeviceRequestFailure,
   isDeviceExpired,
   MAX_POLL_INTERVAL_SECONDS,
   pollDeviceToken,
@@ -401,6 +401,82 @@ describe("pollDeviceToken - HTTP status to variant mapping", () => {
   });
 });
 
+describe("pollDeviceToken - the cause of a network-error", () => {
+  it("names the errno word of a nested cause.code", async () => {
+    globalThis.fetch = (async (): Promise<Response> => {
+      throw Object.assign(new TypeError("fetch failed"), {
+        cause: Object.assign(new Error("authn.example.test unreachable"), {
+          code: "ECONNREFUSED",
+        }),
+      });
+    }) as typeof fetch;
+    const result = await pollDeviceToken(
+      AUTHN_BASE_URL,
+      "dev-code",
+      "desktop",
+      REQUEST_OPTIONS,
+    );
+    expect(result).toEqual({
+      kind: "network-error",
+      cause: { kind: "transport", code: "ECONNREFUSED" },
+    });
+  });
+
+  it("names the status of a 5xx", async () => {
+    installMockFetch([spec(503, { error: "unavailable" }, null)]);
+    const result = await pollDeviceToken(
+      AUTHN_BASE_URL,
+      "dev-code",
+      "desktop",
+      REQUEST_OPTIONS,
+    );
+    expect(result).toEqual({
+      kind: "network-error",
+      cause: { kind: "http-status", status: 503 },
+    });
+  });
+
+  it("names bad-body for a 200 that is not a token pair", async () => {
+    installMockFetch([spec(200, "not json", null)]);
+    const result = await pollDeviceToken(
+      AUTHN_BASE_URL,
+      "dev-code",
+      "desktop",
+      REQUEST_OPTIONS,
+    );
+    expect(result).toEqual({
+      kind: "network-error",
+      cause: { kind: "bad-body" },
+    });
+  });
+});
+
+describe("transport words for connect and TLS failures", () => {
+  it.each([
+    ["UND_ERR_CONNECT_TIMEOUT", "UND_ERR_CONNECT_TIMEOUT"],
+    ["UND_ERR_SOCKET", "UND_ERR_SOCKET"],
+    ["ECONNABORTED", "ECONNABORTED"],
+    ["EPROTO", "EPROTO"],
+    ["ERR_SSL_WRONG_VERSION_NUMBER", "tls"],
+    ["ERR_TLS_HANDSHAKE_TIMEOUT", "tls"],
+  ])("reads cause.code %s as the transport word %s", async (code, word) => {
+    globalThis.fetch = (async (): Promise<Response> => {
+      throw Object.assign(new TypeError("fetch failed"), {
+        cause: Object.assign(new Error("x"), { code }),
+      });
+    }) as typeof fetch;
+    const result = await startDeviceAuthorization(
+      AUTHN_BASE_URL,
+      { clientId: "desktop", hostLabel: "host" },
+      REQUEST_OPTIONS,
+    );
+    expect(result).toEqual({
+      kind: "network-error",
+      cause: { kind: "transport", code: word },
+    });
+  });
+});
+
 describe("cancellation and timeout", () => {
   // A fetch that never resolves on its own and only rejects when its `signal`
   // aborts (mirroring the real abortable fetch), so we can prove a caller abort
@@ -439,7 +515,10 @@ describe("cancellation and timeout", () => {
       signal: undefined,
       timeoutMs: 5,
     });
-    expect(result.kind).toBe("network-error");
+    expect(result).toEqual({
+      kind: "network-error",
+      cause: { kind: "timeout" },
+    });
   });
 
   it("startDeviceAuthorization surfaces a per-request timeout as network-error", async () => {
@@ -470,17 +549,18 @@ describe("cancellation and timeout", () => {
     });
   });
 
-  it("describeDeviceAuthorizeFailure renders fixed words and the status number only", () => {
-    expect(describeDeviceAuthorizeFailure({ kind: "timeout" })).toBe("timeout");
+  it("describeDeviceRequestFailure renders fixed words and the status number only", () => {
+    expect(describeDeviceRequestFailure({ kind: "timeout" })).toBe("timeout");
     expect(
-      describeDeviceAuthorizeFailure({ kind: "transport", code: "ENOTFOUND" }),
+      describeDeviceRequestFailure({ kind: "transport", code: "ENOTFOUND" }),
     ).toBe("transport code=ENOTFOUND");
     expect(
-      describeDeviceAuthorizeFailure({ kind: "http-status", status: 403 }),
+      describeDeviceRequestFailure({ kind: "http-status", status: 403 }),
     ).toBe("http-status status=403");
-    expect(describeDeviceAuthorizeFailure({ kind: "bad-body" })).toBe(
-      "bad-body",
-    );
+    expect(describeDeviceRequestFailure({ kind: "bad-body" })).toBe("bad-body");
+    expect(
+      describeDeviceRequestFailure({ kind: "transport", code: "tls" }),
+    ).toBe("transport code=tls");
   });
 });
 
