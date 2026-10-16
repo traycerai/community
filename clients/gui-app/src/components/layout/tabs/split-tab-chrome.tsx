@@ -17,20 +17,22 @@ const SPLIT_CONTROL_WIDTH_CLASS = "w-11";
 
 /**
  * Whether the members below sit in the selected pair, which draws the
- * underline, and if so whether its box runs into the sheet: a joined box
- * paints the pane's fill behind the raised member, an unjoined one (partly
- * out of the strip, the layout editor's miniature) paints none.
+ * underline, and if so whether something paints the pane's fill behind the
+ * raised member: the pair's own joined box, or the selection traveller while
+ * it slides to the pair. Either paints only from md, where the sheet join
+ * lives; below it, or with neither (partly out of the strip), the raised
+ * member fills itself.
  */
-type SplitPairSelection = "unselected" | "joined" | "unjoined";
+type SplitPairSelection = "unselected" | "backed" | "unbacked";
 const SplitPairSelectionContext =
   createContext<SplitPairSelection>("unselected");
 
 function splitPairSelection(
   selected: boolean,
-  pane: SheetJoinPane | null,
+  backed: boolean,
 ): SplitPairSelection {
   if (!selected) return "unselected";
-  return pane === null ? "unjoined" : "joined";
+  return backed ? "backed" : "unbacked";
 }
 
 interface SplitTabLayoutProps {
@@ -43,6 +45,11 @@ interface SplitTabLayoutProps {
    * inside it (`SplitMemberChrome`).
    */
   readonly joined: SheetJoinPane | null;
+  /**
+   * Whether the selection traveller is sliding to this pair, which then
+   * draws the joined box in `joined`'s place.
+   */
+  readonly travellerBehind: boolean;
   readonly control: ReactNode;
   readonly left: ReactNode;
   readonly right: ReactNode;
@@ -55,7 +62,10 @@ export function SplitTabLayout(props: SplitTabLayoutProps): ReactNode {
   const pane = inStrip ? props.joined : null;
   usePublishSheetJoin(pane, null);
   const selected = props.selectedSide !== null;
-  const selection = splitPairSelection(selected, pane);
+  const selection = splitPairSelection(
+    selected,
+    pane !== null || props.travellerBehind,
+  );
   return (
     <SplitPairSelectionContext value={selection}>
       <div className="relative flex w-full min-w-0 items-end">
@@ -180,7 +190,12 @@ export function SplitMemberChrome(props: {
   const selection = useContext(SplitPairSelectionContext);
   const accent = props.color ?? "var(--color-primary)";
   if (props.focused) {
-    return <SplitRaisedTab color={accent} filled={selection !== "joined"} />;
+    return (
+      <SplitRaisedTab
+        color={accent}
+        fill={selection === "backed" ? "below-md" : "always"}
+      />
+    );
   }
 
   if (selection !== "unselected") {
@@ -217,24 +232,41 @@ export function SplitMemberChrome(props: {
 /**
  * The focused member's raised tab: sides and top in `color`, open at the
  * bottom, with a concave foot at each bottom corner that lands on the
- * underline's level, so the underline on either side runs into it. `filled`
- * paints its inside in the background when no joined box paints it.
+ * underline's level, so the underline on either side runs into it. Its
+ * inside, out into the feet's flares, is the background: `below-md` where
+ * something behind it paints the pane's fill from md.
  */
 function SplitRaisedTab(props: {
   readonly color: string;
-  readonly filled: boolean;
+  readonly fill: "always" | "below-md";
 }) {
+  const fillClass = cn(
+    "bg-background",
+    props.fill === "below-md" && "md:hidden",
+  );
   return (
     <span
       aria-hidden
       data-testid="split-member-raised-tab"
-      data-filled={props.filled ? "true" : "false"}
+      data-fill={props.fill}
       className="pointer-events-none absolute inset-x-0 inset-y-0.5"
       style={{ "--swatch": props.color } as CSSProperties}
     >
-      {props.filled ? (
-        <span className="absolute inset-x-[calc(--spacing(2)-1px)] inset-y-0 rounded-t-lg bg-background" />
-      ) : null}
+      <span
+        data-testid="split-member-raised-fill"
+        className={cn(
+          "absolute inset-x-[calc(--spacing(2)-1px)] top-0 bottom-2 rounded-t-lg",
+          fillClass,
+        )}
+      />
+      {/* The feet's row, less the ground inside each foot's arc (a circle on
+          its top outer corner). */}
+      <span
+        className={cn(
+          "absolute inset-x-0 bottom-0 h-2 [mask-composite:intersect] [mask-image:radial-gradient(circle_at_0_0,transparent_7.5px,black_8px),radial-gradient(circle_at_100%_0,transparent_7.5px,black_8px)]",
+          fillClass,
+        )}
+      />
       {/* Inset one pixel less than a foot is wide, so its side border lies
           on the foot's. */}
       <span className="absolute inset-x-[calc(--spacing(2)-1px)] top-0 bottom-2 rounded-t-lg border border-b-0 border-(--swatch)" />

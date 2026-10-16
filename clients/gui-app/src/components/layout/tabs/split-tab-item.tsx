@@ -163,6 +163,7 @@ export const SplitTabItem = memo(function SplitTabItem(
         splitId={props.item.id}
         selectedSide={props.isActive ? props.item.focusedSide : null}
         joined={joined}
+        travellerBehind={concealed}
         control={
           quickActionsTab === null ? null : (
             <SplitQuickActions

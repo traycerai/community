@@ -81,6 +81,7 @@ export function SplitTabDragOverlay(props: SplitTabDragOverlayProps) {
           splitId={item.id}
           selectedSide={props.isActive ? item.focusedSide : null}
           joined={props.isActive ? joinPane : null}
+          travellerBehind={false}
           control={
             <span
               className={cn(
