@@ -2882,9 +2882,12 @@ window`, recorded in the type as `coverage.browsersAreMountedOnly` -
     is not needed, just show plan, bonus and credits"); the tier chip lives on
     the header popover's account cards instead. Each bar is shown only when that
     bucket's total > 0; amounts
-    are `$`-denominated. Credit-based vs rate-limit-based is decided exactly like
-    the extension (`isCreditBasedPricing` - V3 plans are credit-based); **legacy /
-    v2 (usage-limit) plans** instead render a **Usage limit** section with the
+    are `$`-denominated. Credit-based vs rate-limit-based is decided by
+    `usesCreditView`: a credit-based status (`isCreditBasedPricing` - FREE and
+    the V3 plans), or any plan whose
+    server payload carries `totalPlanCredits > 0`, shows the credit breakdown. No
+    client clock is involved, so legacy plans switch when the server grants them
+    plan credits. **Legacy / v2 (usage-limit) plans without plan credits** instead render a **Usage limit** section with the
     recharge rate ("New artifact every N minutes", from `rechargeRateSeconds`)
     plus the Bundle bar. The extension's live "Artifact Used" bar is omitted -
     `totalTokens`/`remainingTokens` come from the inference `GetRateLimitUsage`

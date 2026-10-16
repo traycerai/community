@@ -347,6 +347,8 @@ import {
   chatSubscribeV120,
   chatSubscribeV121,
   chatSubscribeV122,
+  chatSubscribeV123,
+  chatSubscribeV124,
 } from "@traycer/protocol/host/agent/gui/contracts";
 import {
   agentTuiGenerateTitleV10,
@@ -490,6 +492,8 @@ import {
   configShellSetV10,
   configWorktreesGetV10,
   configWorktreesSetV10,
+  configVisualizationGetV10,
+  configVisualizationSetV10,
   configCatalogGetV10,
   configCatalogGetV11,
   configCatalogGetUpgradeV10ToV11,
@@ -613,6 +617,19 @@ import {
   providersRefreshProfileStatusUpgradeV10ToV20,
   providersRefreshProfileStatusDowngradeV20ToV10,
 } from "@traycer/protocol/host/rate-limit/contracts";
+import {
+  epicCancelFetchFileV10,
+  epicDeleteFileV10,
+  epicFetchFileV10,
+  epicReadFileV10,
+  epicRestoreFileV10,
+} from "@traycer/protocol/host/epic/files";
+import {
+  chatMcpAppCallToolV10,
+  chatMcpAppDescribeToolV10,
+  chatMcpAppReadResourceV10,
+  chatMcpAppUpdateModelContextV10,
+} from "@traycer/protocol/host/chat/mcp-app";
 import {
   epicBatchDeleteUpgradeV10ToV11,
   epicBatchDeleteV10,
@@ -765,6 +782,7 @@ import {
 import {
   epicStateSubscribeV10,
   epicStateSubscribeV11,
+  epicStateSubscribeV12,
 } from "@traycer/protocol/host/epic/state-subscribe";
 import {
   epicStatusSubscribeV10,
@@ -989,6 +1007,7 @@ import {
   worktreeDeleteBatchByPathStreamV10,
   worktreeDeleteBatchByPathStreamV11,
   worktreeDeleteBatchByPathStreamV12,
+  worktreeDeleteBatchByPathStreamV13,
 } from "@traycer/protocol/host/worktree-delete-batch-stream";
 import {
   worktreeDeleteByPathStreamV10,
@@ -1022,9 +1041,11 @@ import {
 import {
   editorOpenPathsUpgradeV10ToV11,
   editorOpenPathsUpgradeV11ToV12,
+  editorOpenPathsUpgradeV12ToV13,
   editorOpenPathsV10,
   editorOpenPathsV11,
   editorOpenPathsV12,
+  editorOpenPathsV13,
 } from "@traycer/protocol/host/editor/contracts";
 import {
   gitListChangedFilesV10,
@@ -1041,6 +1062,7 @@ import {
 } from "@traycer/protocol/host/git-contracts";
 import {
   prSubscribeListForEpicV10,
+  prSubscribeListForEpicV11,
   prSubscribeDetailV10,
   prGetLocalDiffV10,
   prGetLocalDiffSummaryV10,
@@ -1157,7 +1179,9 @@ import {
   providersMcpAuthRequestSchema,
   providersMcpAuthResponseSchema,
   providersNativeMutateRequestSchema,
+  providersNativeMutateRequestSchemaV10Preimage,
   providersNativeMutateResponseSchema,
+  providersNativeMutateResponseSchemaV10Preimage,
   providersCancelLoginResponseSchemaV10,
   providersClearApiKeyRequestSchema,
   providersClearApiKeyRequestSchemaV10,
@@ -1191,6 +1215,7 @@ import {
   // shape.
   providersListRequestSchema,
   providersListResponseSchema,
+  providersListResponseSchemaV100Preimage,
   providersListResponseSchemaV80,
   providersListResponseSchemaV90,
   providersListResponseSchemaV91,
@@ -2653,7 +2678,24 @@ export const providersListV100 = defineRpcContract({
   method: "providers.list",
   schemaVersion: { major: 10, minor: 0 } as const,
   requestSchema: providersListRequestSchema,
+  responseSchema: providersListResponseSchemaV100Preimage,
+});
+
+export const providersListV101 = defineRpcContract({
+  method: "providers.list",
+  schemaVersion: { major: 10, minor: 1 } as const,
+  requestSchema: providersListRequestSchema,
   responseSchema: providersListResponseSchema,
+});
+
+export const providersListUpgradeV100ToV101 = defineUpgradePath<
+  typeof providersListV100,
+  typeof providersListV101
+>({
+  from: { major: 10, minor: 0 },
+  to: { major: 10, minor: 1 },
+  upgradeRequest: (request) => request,
+  upgradeResponse: (response) => response,
 });
 
 export const providersListUpgradeV92ToV100 = defineUpgradePath<
@@ -3236,10 +3278,10 @@ export const providersListDowngradeV9ToV1 = defineDowngradePath<
 });
 
 export const providersListDowngradeV10ToV9 = defineDowngradePath<
-  typeof providersListV100,
+  typeof providersListV101,
   typeof providersListV92
 >({
-  from: { major: 10, minor: 0 },
+  from: { major: 10, minor: 1 },
   // Lands on 9.2, major 9's latest installed minor; a 9.0 or 9.1 caller's own
   // contract parse then strips the keys its minor predates.
   to: { major: 9, minor: 2 },
@@ -3261,10 +3303,10 @@ export const providersListDowngradeV10ToV9 = defineDowngradePath<
 });
 
 export const providersListDowngradeV10ToV8 = defineDowngradePath<
-  typeof providersListV100,
+  typeof providersListV101,
   typeof providersListV80
 >({
-  from: { major: 10, minor: 0 },
+  from: { major: 10, minor: 1 },
   to: { major: 8, minor: 0 },
   downgradeRequest: (request) => ({
     ok: true,
@@ -3283,10 +3325,10 @@ export const providersListDowngradeV10ToV8 = defineDowngradePath<
 });
 
 export const providersListDowngradeV10ToV7 = defineDowngradePath<
-  typeof providersListV100,
+  typeof providersListV101,
   typeof providersListV70
 >({
-  from: { major: 10, minor: 0 },
+  from: { major: 10, minor: 1 },
   to: { major: 7, minor: 0 },
   downgradeRequest: (request) => ({
     ok: true,
@@ -3305,10 +3347,10 @@ export const providersListDowngradeV10ToV7 = defineDowngradePath<
 });
 
 export const providersListDowngradeV10ToV6 = defineDowngradePath<
-  typeof providersListV100,
+  typeof providersListV101,
   typeof providersListV60
 >({
-  from: { major: 10, minor: 0 },
+  from: { major: 10, minor: 1 },
   to: { major: 6, minor: 0 },
   downgradeRequest: (request) => ({
     ok: true,
@@ -3325,10 +3367,10 @@ export const providersListDowngradeV10ToV6 = defineDowngradePath<
 });
 
 export const providersListDowngradeV10ToV5 = defineDowngradePath<
-  typeof providersListV100,
+  typeof providersListV101,
   typeof providersListV50
 >({
-  from: { major: 10, minor: 0 },
+  from: { major: 10, minor: 1 },
   to: { major: 5, minor: 0 },
   downgradeRequest: (request) => ({
     ok: true,
@@ -3345,10 +3387,10 @@ export const providersListDowngradeV10ToV5 = defineDowngradePath<
 });
 
 export const providersListDowngradeV10ToV4 = defineDowngradePath<
-  typeof providersListV100,
+  typeof providersListV101,
   typeof providersListV40
 >({
-  from: { major: 10, minor: 0 },
+  from: { major: 10, minor: 1 },
   to: { major: 4, minor: 0 },
   downgradeRequest: (request) => ({
     ok: true,
@@ -3365,10 +3407,10 @@ export const providersListDowngradeV10ToV4 = defineDowngradePath<
 });
 
 export const providersListDowngradeV10ToV3 = defineDowngradePath<
-  typeof providersListV100,
+  typeof providersListV101,
   typeof providersListV30
 >({
-  from: { major: 10, minor: 0 },
+  from: { major: 10, minor: 1 },
   to: { major: 3, minor: 0 },
   downgradeRequest: (request) => ({
     ok: true,
@@ -3385,10 +3427,10 @@ export const providersListDowngradeV10ToV3 = defineDowngradePath<
 });
 
 export const providersListDowngradeV10ToV2 = defineDowngradePath<
-  typeof providersListV100,
+  typeof providersListV101,
   typeof providersListV20
 >({
-  from: { major: 10, minor: 0 },
+  from: { major: 10, minor: 1 },
   to: { major: 2, minor: 0 },
   downgradeRequest: (request) => ({
     ok: true,
@@ -3405,10 +3447,10 @@ export const providersListDowngradeV10ToV2 = defineDowngradePath<
 });
 
 export const providersListDowngradeV10ToV1 = defineDowngradePath<
-  typeof providersListV100,
+  typeof providersListV101,
   typeof providersListV10
 >({
-  from: { major: 10, minor: 0 },
+  from: { major: 10, minor: 1 },
   to: { major: 1, minor: 0 },
   downgradeRequest: (request) => ({
     ok: true,
@@ -4303,8 +4345,25 @@ export const providersCancelMcpAuthV10 = defineRpcContract({
 export const providersNativeMutateV10 = defineRpcContract({
   method: "providers.nativeMutate",
   schemaVersion: { major: 1, minor: 0 } as const,
+  requestSchema: providersNativeMutateRequestSchemaV10Preimage,
+  responseSchema: providersNativeMutateResponseSchemaV10Preimage,
+});
+
+export const providersNativeMutateV11 = defineRpcContract({
+  method: "providers.nativeMutate",
+  schemaVersion: { major: 1, minor: 1 } as const,
   requestSchema: providersNativeMutateRequestSchema,
   responseSchema: providersNativeMutateResponseSchema,
+});
+
+export const providersNativeMutateUpgradeV10ToV11 = defineUpgradePath<
+  typeof providersNativeMutateV10,
+  typeof providersNativeMutateV11
+>({
+  from: { major: 1, minor: 0 },
+  to: { major: 1, minor: 1 },
+  upgradeRequest: (request) => request,
+  upgradeResponse: (response) => response,
 });
 
 // ── Per-pack version-manager methods + the on-demand discovery refresh ─────
@@ -5826,6 +5885,32 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
       versions: {
         0: {
           contract: configBrowserSetV10,
+          upgradeFromPreviousVersion: null,
+        },
+      },
+      downgradePathsFromLatest: {},
+    },
+  },
+  "config.visualization.get": {
+    degrade: { kind: "unsupported" },
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: {
+          contract: configVisualizationGetV10,
+          upgradeFromPreviousVersion: null,
+        },
+      },
+      downgradePathsFromLatest: {},
+    },
+  },
+  "config.visualization.set": {
+    degrade: { kind: "unsupported" },
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: {
+          contract: configVisualizationSetV10,
           upgradeFromPreviousVersion: null,
         },
       },
@@ -8750,6 +8835,119 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
     },
     degrade: { kind: "unsupported" },
   },
+  // The epic files plane (`epic/files.ts`): every byte a client renders, the
+  // explicit download of a big file, and tombstone/restore. Optional and off
+  // the released floor: a new method name is handshake-fatal against a
+  // released peer, and an old host simply hides the files surface.
+  "epic.readFile": {
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: { contract: epicReadFileV10, upgradeFromPreviousVersion: null },
+      },
+      downgradePathsFromLatest: {},
+    },
+    degrade: { kind: "unsupported" },
+  },
+  "epic.fetchFile": {
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: { contract: epicFetchFileV10, upgradeFromPreviousVersion: null },
+      },
+      downgradePathsFromLatest: {},
+    },
+    degrade: { kind: "unsupported" },
+  },
+  "epic.cancelFetchFile": {
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: {
+          contract: epicCancelFetchFileV10,
+          upgradeFromPreviousVersion: null,
+        },
+      },
+      downgradePathsFromLatest: {},
+    },
+    degrade: { kind: "unsupported" },
+  },
+  "epic.deleteFile": {
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: { contract: epicDeleteFileV10, upgradeFromPreviousVersion: null },
+      },
+      downgradePathsFromLatest: {},
+    },
+    degrade: { kind: "unsupported" },
+  },
+  "epic.restoreFile": {
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: { contract: epicRestoreFileV10, upgradeFromPreviousVersion: null },
+      },
+      downgradePathsFromLatest: {},
+    },
+    degrade: { kind: "unsupported" },
+  },
+  // An MCP App's requests (`chat/mcp-app.ts`), served through the harness's
+  // own MCP connection behind the host's gate. Optional and off the released
+  // floor: an old host answers `E_HOST_UNSUPPORTED` and the app row renders
+  // read-only from its stored result.
+  "chat.mcpApp.describeTool": {
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: {
+          contract: chatMcpAppDescribeToolV10,
+          upgradeFromPreviousVersion: null,
+        },
+      },
+      downgradePathsFromLatest: {},
+    },
+    degrade: { kind: "unsupported" },
+  },
+  "chat.mcpApp.callTool": {
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: {
+          contract: chatMcpAppCallToolV10,
+          upgradeFromPreviousVersion: null,
+        },
+      },
+      downgradePathsFromLatest: {},
+    },
+    degrade: { kind: "unsupported" },
+  },
+  "chat.mcpApp.readResource": {
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: {
+          contract: chatMcpAppReadResourceV10,
+          upgradeFromPreviousVersion: null,
+        },
+      },
+      downgradePathsFromLatest: {},
+    },
+    degrade: { kind: "unsupported" },
+  },
+  "chat.mcpApp.updateModelContext": {
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: {
+          contract: chatMcpAppUpdateModelContextV10,
+          upgradeFromPreviousVersion: null,
+        },
+      },
+      downgradePathsFromLatest: {},
+    },
+    degrade: { kind: "unsupported" },
+  },
   // Artifact attachment bytes still live in the root-doc attachment map, but
   // @2 does not replicate that map to clients. This optional read keeps the
   // artifact/epic authorization subject on the request; a hash alone is never
@@ -8969,7 +9167,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   },
   "editor.openPaths": {
     1: {
-      latestMinor: 2,
+      latestMinor: 3,
       versions: {
         0: {
           contract: editorOpenPathsV10,
@@ -8982,6 +9180,10 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
         2: {
           contract: editorOpenPathsV12,
           upgradeFromPreviousVersion: editorOpenPathsUpgradeV11ToV12,
+        },
+        3: {
+          contract: editorOpenPathsV13,
+          upgradeFromPreviousVersion: editorOpenPathsUpgradeV12ToV13,
         },
       },
       downgradePathsFromLatest: {},
@@ -10874,11 +11076,15 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
   "providers.nativeMutate": {
     degrade: { kind: "unsupported" },
     1: {
-      latestMinor: 0,
+      latestMinor: 1,
       versions: {
         0: {
           contract: providersNativeMutateV10,
           upgradeFromPreviousVersion: null,
+        },
+        1: {
+          contract: providersNativeMutateV11,
+          upgradeFromPreviousVersion: providersNativeMutateUpgradeV10ToV11,
         },
       },
       downgradePathsFromLatest: {},
@@ -12057,11 +12263,15 @@ const HOST_RPC_PROVIDERS_LIST_REGISTRY_DEFINITION = {
     // whose three minors are frozen at the twenty-one ids that release
     // negotiated.
     10: {
-      latestMinor: 0,
+      latestMinor: 1,
       versions: {
         0: {
           contract: providersListV100,
           upgradeFromPreviousVersion: providersListUpgradeV92ToV100,
+        },
+        1: {
+          contract: providersListV101,
+          upgradeFromPreviousVersion: providersListUpgradeV100ToV101,
         },
       },
       downgradePathsFromLatest: {
@@ -12490,7 +12700,7 @@ const HOST_STREAM_RPC_REGISTRY_OTHER_DEFINITION = {
   // released floor (`released-floor.ts`), which is fail-closed on the name set.
   "epic.state.subscribe": {
     1: {
-      latestMinor: 1,
+      latestMinor: 2,
       versions: {
         0: {
           contract: epicStateSubscribeV10,
@@ -12500,6 +12710,11 @@ const HOST_STREAM_RPC_REGISTRY_OTHER_DEFINITION = {
         // `epicDeletedArtifactRecordSchemaV10`.
         1: {
           contract: epicStateSubscribeV11,
+        },
+        // `@1.2`: the files arm. The host sends it only to a `>=1.2` peer and
+        // projects older peers' frames down (`epic-state-stream-resolver.ts`).
+        2: {
+          contract: epicStateSubscribeV12,
         },
       },
     },
@@ -13137,7 +13352,7 @@ const HOST_STREAM_RPC_REGISTRY_OTHER_DEFINITION = {
   // which is what makes fallback safe for a destructive operation.
   "worktree.deleteBatchByPath": {
     1: {
-      latestMinor: 2,
+      latestMinor: 3,
       versions: {
         0: {
           contract: worktreeDeleteBatchByPathStreamV10,
@@ -13147,6 +13362,9 @@ const HOST_STREAM_RPC_REGISTRY_OTHER_DEFINITION = {
         },
         2: {
           contract: worktreeDeleteBatchByPathStreamV12,
+        },
+        3: {
+          contract: worktreeDeleteBatchByPathStreamV13,
         },
       },
     },
@@ -13200,10 +13418,15 @@ const HOST_STREAM_RPC_REGISTRY_OTHER_DEFINITION = {
   },
   "pr.subscribeListForEpic": {
     1: {
-      latestMinor: 0,
+      // @1.1 adds each row's GitHub-native stack membership (`stack`); @1.0
+      // stays bound to its frozen row so an older peer's re-parse strips it.
+      latestMinor: 1,
       versions: {
         0: {
           contract: prSubscribeListForEpicV10,
+        },
+        1: {
+          contract: prSubscribeListForEpicV11,
         },
       },
     },
@@ -13246,7 +13469,7 @@ const HOST_STREAM_RPC_REGISTRY_DEFINITION = {
   ...HOST_STREAM_RPC_REGISTRY_OTHER_DEFINITION,
   "chat.subscribe": {
     1: {
-      latestMinor: 22,
+      latestMinor: 24,
       versions: {
         0: {
           contract: chatSubscribeV10,
@@ -13375,6 +13598,7 @@ const HOST_STREAM_RPC_REGISTRY_DEFINITION = {
         // (Command Code). No shape of its own: a row context's session anchor
         // takes the live union here and the 1.5.0 one on 1.9-1.20, and the
         // host refuses such a chat to a subscriber below this minor.
+        // Frozen at the pre-page message bodies since @1.23 opened above it.
         21: {
           contract: chatSubscribeV121,
         },
@@ -13386,6 +13610,16 @@ const HOST_STREAM_RPC_REGISTRY_DEFINITION = {
         // refused. The head the peer drives keeps the closed enum.
         22: {
           contract: chatSubscribeV122,
+        },
+        // @1.23 adds agent-page and MCP App stamps; older peers receive neither.
+        23: {
+          contract: chatSubscribeV123,
+        },
+        // @1.24 adds the optional CLI-reported next-run time to cron items.
+        // The host deletes the key for @1.20–1.23 and still omits cron below
+        // @1.20. Older frame shapes are frozen at those boundaries.
+        24: {
+          contract: chatSubscribeV124,
         },
       },
     },

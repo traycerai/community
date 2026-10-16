@@ -83,6 +83,7 @@ import type {
   CertificateTrustScope,
   DisplaySnapshot,
   DisplayTopology,
+  FileDownloadUrlInput,
   FileSaveInput,
   FileSaveResult,
   HostKeyPinMismatch,
@@ -313,6 +314,7 @@ export interface DesktopFileDropsBridge {
   readNativeClipboardFilePaths(): Promise<readonly string[]>;
   saveFile(input: FileSaveInput): Promise<FileSaveResult | null>;
   openSavedFile(path: string): Promise<void>;
+  downloadUrl(input: FileDownloadUrlInput): Promise<FileSaveResult | null>;
 }
 
 /**
@@ -759,6 +761,8 @@ export class DesktopRunnerHost implements IRunnerHost {
   // No OS back request on the desktop: back is the header arrows, the mouse
   // buttons and the keybinding, all of which the GUI owns itself.
   readonly systemBack: null = null;
+  // No status bar to tap on the desktop.
+  readonly statusBarTap: null = null;
   readonly hostControllerStatus: DesktopHostControllerStatusBridge;
   readonly selectionAuthority: SelectionAuthorityClient;
   private readonly refreshSelectionFleet: () => Promise<void>;
@@ -1302,6 +1306,8 @@ function buildDesktopFileSave(bridge: DesktopFileDropsBridge): IFileSaveHost {
     // second, chooser-free route to offer - and nothing here for a surface to
     // split into separate "share" and "download" affordances.
     downloadFile: null,
+    // The same dialog, then the session's download manager writes the bytes.
+    downloadUrl: (request) => bridge.downloadUrl(request),
   };
 }
 
