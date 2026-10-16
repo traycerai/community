@@ -89,6 +89,63 @@ export interface BatchDeleteEpicVariables {
 
 type DeleteNavigationTarget = HeaderTab | null | undefined;
 
+type BatchDeleteEpicResponse = ResponseOfMethod<
+  HostRpcRegistry,
+  "epic.batchDelete"
+>;
+
+/**
+ * Ids per `epic.batchDelete` request. The wire takes any number, but the cloud
+ * deletes ten Tasks per transaction and stops starting new ones when the
+ * request's time budget runs low, answering the rest "not deleted". One
+ * transaction's worth per request keeps a select-all delete of hundreds of
+ * Tasks from failing most of them.
+ */
+export const EPIC_BATCH_DELETE_REQUEST_SIZE = 10;
+
+const EPIC_BATCH_DELETE_UNCONFIRMED_MESSAGE =
+  "This task may not have been deleted. Try deleting it again.";
+
+/**
+ * Sends the ids after the first request in sequential chunks and merges every
+ * answer into one response. A chunk that throws stops the run: its ids and
+ * every later id are answered as failures rather than the whole mutation
+ * erroring, because the earlier chunks DID delete their Tasks and the success
+ * path is what removes them from the caches and tabs. Retrying is safe: the
+ * cloud reports an already-deleted Task as deleted.
+ */
+export async function deleteRemainingEpicChunks(
+  firstResponse: BatchDeleteEpicResponse,
+  remainingIds: ReadonlyArray<string>,
+  dispatch: (ids: string[]) => Promise<BatchDeleteEpicResponse>,
+): Promise<BatchDeleteEpicResponse> {
+  const results = [...firstResponse.results];
+  for (
+    let start = 0;
+    start < remainingIds.length;
+    start += EPIC_BATCH_DELETE_REQUEST_SIZE
+  ) {
+    const chunk = remainingIds.slice(
+      start,
+      start + EPIC_BATCH_DELETE_REQUEST_SIZE,
+    );
+    try {
+      const response = await dispatch(chunk);
+      results.push(...response.results);
+    } catch {
+      for (const taskId of remainingIds.slice(start)) {
+        results.push({
+          taskId,
+          success: false,
+          errorMessage: EPIC_BATCH_DELETE_UNCONFIRMED_MESSAGE,
+        });
+      }
+      break;
+    }
+  }
+  return { ...firstResponse, results };
+}
+
 export function useEpicBatchDelete(): UseMutationResult<
   ResponseOfMethod<HostRpcRegistry, "epic.batchDelete">,
   HostRpcError,
@@ -110,7 +167,18 @@ export function useEpicBatchDelete(): UseMutationResult<
   >({
     client,
     method: "epic.batchDelete",
-    mapVariables: (variables) => ({ ids: [...variables.ids] }),
+    // Sent EPIC_BATCH_DELETE_REQUEST_SIZE ids at a time: the first slice here,
+    // the rest in `resolveResponse`, so every lifecycle arm below sees one
+    // merged answer for the whole selection.
+    mapVariables: (variables) => ({
+      ids: variables.ids.slice(0, EPIC_BATCH_DELETE_REQUEST_SIZE),
+    }),
+    resolveResponse: (firstResponse, variables) =>
+      deleteRemainingEpicChunks(
+        firstResponse,
+        variables.ids.slice(EPIC_BATCH_DELETE_REQUEST_SIZE),
+        (ids) => client.request("epic.batchDelete", { ids }),
+      ),
     options: {
       mutationKey: epicMutationKeys.batchDelete(),
       onMutate: (variables) => {

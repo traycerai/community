@@ -73,6 +73,7 @@ function historyResult(
     // The identity the fixture's rows belong to. The palette source never
     // reads it; it is here so the stub still satisfies the hook's contract.
     currentUserId: "user-1",
+    localContextMatchKey: "[]",
     activityRefreshScope: "fixture-recent-list",
     refetch: () => Promise.resolve(),
     refetchTasks: () => Promise.resolve(),

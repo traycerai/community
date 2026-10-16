@@ -1,5 +1,6 @@
 import "./stub-sweep-dialog-host-hooks";
 
+import userEvent from "@testing-library/user-event";
 import type { ListTasksCompleteness } from "@traycer/protocol/host/epic/unary-schemas";
 import type { ChatSearchMessageMatch } from "@traycer/protocol/host/chat-search/schemas";
 import type { TaskOrganization } from "@traycer/protocol/host/organization/schemas";
@@ -3611,6 +3612,104 @@ describe("<EpicsListPanel />", () => {
     },
   );
 
+  it("keeps Select all running and the selection when only the sort changes", async () => {
+    testState.hasNextPage = true;
+    let complete: ((items: readonly HistoryItem[]) => void) | undefined;
+    testState.fetchAllItems.mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          complete = resolve;
+        }),
+    );
+    const view = renderPanelView("page", "/");
+    const user = userEvent.setup();
+
+    await user.click(
+      await screen.findByRole("button", { name: "Select history items" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Select all" }));
+    await waitFor(() =>
+      expect(testState.fetchAllItems).toHaveBeenCalledTimes(1),
+    );
+
+    // Selection mode hides the sort menu, so a re-sort arrives through the
+    // History search store another History surface shares.
+    await act(async () => {
+      useHistorySearchStore.setState({
+        search: { ...DEFAULT_HISTORY_SEARCH, sort: "oldest", sortExplicit: true },
+      });
+      await Promise.resolve();
+    });
+    expect(testState.fetchAllItems.mock.calls[0]?.[0].aborted).toBe(false);
+
+    testState.items = [
+      historyItem({}),
+      historyItem({
+        id: "history-epic-2",
+        epicId: "epic-two",
+        title: "Second history item",
+      }),
+    ];
+    testState.hasNextPage = false;
+    view.rerender(<RouterProvider router={view.router} />);
+    await act(async () => {
+      complete?.(testState.items);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => {
+      const checkboxes = screen.getAllByTestId("epics-list-row-select");
+      expect(checkboxes).toHaveLength(2);
+      expect(
+        checkboxes.every(
+          (checkbox) => checkbox.getAttribute("aria-checked") === "true",
+        ),
+      ).toBe(true);
+    });
+
+    await act(async () => {
+      useHistorySearchStore.setState({
+        search: {
+          ...DEFAULT_HISTORY_SEARCH,
+          sort: "title-asc",
+          sortExplicit: true,
+        },
+      });
+      await Promise.resolve();
+    });
+    expect(
+      screen
+        .getAllByTestId("epics-list-row-select")
+        .every((checkbox) => checkbox.getAttribute("aria-checked") === "true"),
+    ).toBe(true);
+    expect(screen.getByTestId("epics-list-delete-selected")).toBeTruthy();
+  });
+
+  it("names the task count and the rows off screen when deleting a bulk selection", async () => {
+    testState.items = [
+      historyItem({}),
+      historyItem({
+        id: "history-epic-2",
+        epicId: "epic-two",
+        title: "Second history item",
+      }),
+    ];
+    renderPanel("page", "/");
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Select history items" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+    fireEvent.click(screen.getByTestId("epics-list-delete-selected"));
+
+    expect(await screen.findByText("Delete 2 tasks?")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "This deletes every selected task, including any not on screen. This action cannot be undone.",
+      ),
+    ).toBeTruthy();
+  });
+
   it("retains manual selection when loading all pages fails", async () => {
     testState.hasNextPage = true;
     testState.fetchAllItems.mockResolvedValue(null);
@@ -3767,7 +3866,7 @@ describe("<EpicsListPanel />", () => {
           provenRemovable: true,
         },
       ];
-      const view = renderPanelView("page", "/");
+      renderPanelView("page", "/");
 
       fireEvent.click(
         await screen.findByRole("button", { name: "Select history items" }),
@@ -3815,7 +3914,7 @@ describe("<EpicsListPanel />", () => {
     testState.worktreesByEpicId = new Map([
       ["epic-from-history", [historyWorktree()]],
     ]);
-    const view = renderPanelView("page", "/");
+    renderPanelView("page", "/");
 
     fireEvent.click(
       await screen.findByRole("button", { name: "Select history items" }),

@@ -360,7 +360,7 @@ export function EpicsListNoRows(props: {
   readonly onRetry: () => void;
   readonly hasNextPage: boolean;
   readonly isFetchingNextPage: boolean;
-  readonly isBulkSelectionPending?: boolean;
+  readonly isBulkSelectionPending: boolean;
   readonly onLoadMore: () => void;
 }): ReactNode {
   if (props.cloudPagePending) return <EpicsListLoading />;
@@ -404,7 +404,7 @@ export function EpicsListFilteredEmpty(): ReactNode {
 export interface EpicsListShowMoreProps {
   readonly hasNextPage: boolean;
   readonly isFetchingNextPage: boolean;
-  readonly isBulkSelectionPending?: boolean;
+  readonly isBulkSelectionPending: boolean;
   readonly onLoadMore: () => void;
 }
 

@@ -770,4 +770,82 @@ describe("the delete's progress toast", () => {
       );
     });
   });
+
+  describe("a selection larger than one request", () => {
+    function epicIds(count: number): string[] {
+      return Array.from({ length: count }, (_, index) => `epic-${index}`);
+    }
+
+    function requestedIds(index: number): unknown {
+      const params = hostRequest(index).params;
+      return typeof params === "object" && params !== null && "ids" in params
+        ? params.ids
+        : undefined;
+    }
+
+    it("sends the ids ten at a time, one request after another, and reports once", async () => {
+      const ids = epicIds(23);
+      const view = renderBatchDelete();
+
+      view.dispatch(deleteOf(ids, null));
+
+      await waitFor(() => {
+        expect(host.state.requests).toHaveLength(1);
+      });
+      expect(requestedIds(0)).toEqual(ids.slice(0, 10));
+      await answer(0, deleted(...ids.slice(0, 10)));
+      await waitFor(() => {
+        expect(host.state.requests).toHaveLength(2);
+      });
+      expect(requestedIds(1)).toEqual(ids.slice(10, 20));
+      await answer(1, deleted(...ids.slice(10, 20)));
+      await waitFor(() => {
+        expect(host.state.requests).toHaveLength(3);
+      });
+      expect(requestedIds(2)).toEqual(ids.slice(20));
+      expect(mocks.toastSuccess).not.toHaveBeenCalled();
+      await answer(2, deleted(...ids.slice(20)));
+
+      await waitFor(() => {
+        expect(mocks.toastSuccess).toHaveBeenCalledTimes(1);
+      });
+      expect(host.state.requests).toHaveLength(3);
+      expect(mocks.toastWarning).not.toHaveBeenCalled();
+      expect(mocks.toastError).not.toHaveBeenCalled();
+      expect(mocks.publishDeletedEpicNotification).toHaveBeenCalledWith(
+        expect.objectContaining({ epicIds: ids }),
+      );
+    });
+
+    it("keeps what earlier requests deleted when a later one fails, and stops sending", async () => {
+      const ids = epicIds(23);
+      const view = renderBatchDelete();
+
+      view.dispatch(deleteOf(ids, null));
+
+      await waitFor(() => {
+        expect(host.state.requests).toHaveLength(1);
+      });
+      await answer(0, deleted(...ids.slice(0, 10)));
+      await waitFor(() => {
+        expect(host.state.requests).toHaveLength(2);
+      });
+      await act(async () => {
+        hostRequest(1).reject(new Error("connection dropped"));
+        await Promise.resolve();
+      });
+
+      await waitFor(() => {
+        expect(mocks.toastWarning).toHaveBeenCalledTimes(1);
+      });
+      expect(mocks.toastWarning.mock.calls[0]?.[0]).toBe(
+        "Deleted 10 of 23; 13 failed.",
+      );
+      expect(host.state.requests).toHaveLength(2);
+      expect(mocks.toastFromHostError).not.toHaveBeenCalled();
+      expect(mocks.publishDeletedEpicNotification).toHaveBeenCalledWith(
+        expect.objectContaining({ epicIds: ids.slice(0, 10) }),
+      );
+    });
+  });
 });

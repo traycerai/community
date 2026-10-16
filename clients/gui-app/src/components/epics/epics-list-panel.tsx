@@ -11,7 +11,6 @@ import {
 } from "react";
 import { Link } from "@tanstack/react-router";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { toast } from "sonner";
 import { useShallow } from "zustand/react/shallow";
 import { Check, Paintbrush, Pencil, Search, Trash2, X } from "lucide-react";
 import { ContextMenuItem } from "@/components/ui/context-menu";
@@ -397,7 +396,7 @@ function EpicsListPanelBody(props: EpicsListPanelBodyProps): ReactNode {
     fetchNextPage,
     fetchAllItems,
     hasNextPage,
-    hasUnloadedItems = hasNextPage,
+    hasUnloadedItems,
     isFetchingNextPage,
     cloudPagePending,
     isCountPending,
@@ -472,9 +471,12 @@ function EpicsListPanelBody(props: EpicsListPanelBodyProps): ReactNode {
     () => new Set(),
   );
   const [selectionMode, setSelectionMode] = useState(false);
+  // Keyed on the matching SET, not the whole search: a sort change reorders
+  // the same Tasks, so it must not cancel a select-all or drop the selection.
+  const matchingSetKey = historyMatchingSetKey(search);
   useEffect(
     () => abortSelectAll,
-    [abortSelectAll, search, hostId, currentUserId, localContextMatchKey],
+    [abortSelectAll, matchingSetKey, hostId, currentUserId, localContextMatchKey],
   );
   useEffect(() => {
     if (isFetching) abortSelectAll();
@@ -578,21 +580,21 @@ function EpicsListPanelBody(props: EpicsListPanelBodyProps): ReactNode {
   // candidate.
   const [sweepEpicIds, setSweepEpicIds] =
     useState<ReadonlyArray<string> | null>(null);
-  const previousScope = useRef({ search, hostId, currentUserId });
+  const previousScope = useRef({ matchingSetKey, hostId, currentUserId });
   useEffect(() => {
     if (
-      previousScope.current.search === search &&
+      previousScope.current.matchingSetKey === matchingSetKey &&
       previousScope.current.hostId === hostId &&
       previousScope.current.currentUserId === currentUserId
     )
       return;
-    previousScope.current = { search, hostId, currentUserId };
+    previousScope.current = { matchingSetKey, hostId, currentUserId };
     abortSelectAll();
     setSelectedIds(new Set());
     setSelectionMode(false);
     closeDeleteDialog();
     setSweepEpicIds(null);
-  }, [abortSelectAll, closeDeleteDialog, currentUserId, hostId, search]);
+  }, [abortSelectAll, closeDeleteDialog, currentUserId, hostId, matchingSetKey]);
   const sweepHostClient = useHostClientForHostId(null);
   const requestSweep = useCallback(
     (epicId: string) => {
@@ -874,21 +876,24 @@ function EpicsListPanelBody(props: EpicsListPanelBodyProps): ReactNode {
     selection: selectionMode
       ? {
           kind: "active",
-          canSelect:
-            (selectableItemIds.length > 0 || hasUnloadedItems) &&
-            (!hasUnloadedItems || hasNextPage) &&
-            ![
+          canSelect: canSelectAllHistory({
+            selectableCount: selectableItemIds.length,
+            hasUnloadedItems,
+            hasNextPage,
+            isBusy: [
               isFetching,
               isCountPending,
               cloudPagePending,
               isFetchingNextPage,
             ].some(Boolean),
+          }),
           selectedCount,
           isSelectAllPending: selectAllPending,
-          allVisibleSelected:
-            !hasUnloadedItems &&
-            selectableItemIds.length > 0 &&
-            selectedCount === selectableItemIds.length,
+          allVisibleSelected: isEveryHistoryItemSelected({
+            selectableCount: selectableItemIds.length,
+            selectedCount,
+            hasUnloadedItems,
+          }),
           isDeletePending: deleteMutation.isPending,
           canSweepSelected,
           onSelectAll: selectAllVisible,
@@ -907,10 +912,12 @@ function EpicsListPanelBody(props: EpicsListPanelBodyProps): ReactNode {
         }
       : {
           kind: "idle",
-          canSelect:
-            (selectableItemIds.length > 0 ||
-              (hasUnloadedItems && hasNextPage)) &&
-            !isFetching,
+          canSelect: canEnterHistorySelection({
+            selectableCount: selectableItemIds.length,
+            hasUnloadedItems,
+            hasNextPage,
+            isFetching,
+          }),
           onStart: enterSelectionMode,
         },
     sort: search.sort,
@@ -1013,7 +1020,7 @@ function EpicsListPanelBody(props: EpicsListPanelBodyProps): ReactNode {
           if (!open) closeDeleteDialog();
         }}
         title={describeDeleteTitle(pendingDeleteIds, items)}
-        description="This action cannot be undone."
+        description={describeDeleteDescription(pendingDeleteIds)}
         isCheckingWorktrees={worktreeCandidatesFetching}
         onConfirm={handleConfirmDelete}
         candidates={worktreeCandidates}
@@ -1076,6 +1083,68 @@ function useChatHostFilterGate(
  * sort reorders the task list without removing anything from it, so neither
  * belongs in a label that says the hits below were not filtered the same way.
  */
+/**
+ * Select all needs something to select, and every retained page reachable when
+ * some are not loaded yet, and no page read in flight.
+ */
+function canSelectAllHistory(args: {
+  readonly selectableCount: number;
+  readonly hasUnloadedItems: boolean;
+  readonly hasNextPage: boolean;
+  readonly isBusy: boolean;
+}): boolean {
+  if (args.isBusy) return false;
+  if (args.hasUnloadedItems) return args.hasNextPage;
+  return args.selectableCount > 0;
+}
+
+/** "Deselect all" only once every matching Task is loaded and selected. */
+function isEveryHistoryItemSelected(args: {
+  readonly selectableCount: number;
+  readonly selectedCount: number;
+  readonly hasUnloadedItems: boolean;
+}): boolean {
+  return (
+    !args.hasUnloadedItems &&
+    args.selectableCount > 0 &&
+    args.selectedCount === args.selectableCount
+  );
+}
+
+function canEnterHistorySelection(args: {
+  readonly selectableCount: number;
+  readonly hasUnloadedItems: boolean;
+  readonly hasNextPage: boolean;
+  readonly isFetching: boolean;
+}): boolean {
+  if (args.isFetching) return false;
+  return (
+    args.selectableCount > 0 || (args.hasUnloadedItems && args.hasNextPage)
+  );
+}
+
+/**
+ * Identifies which Tasks the search matches, ignoring how they are ordered.
+ * `sort` and `sortExplicit` are left out on purpose: re-sorting shows the same
+ * Tasks, so it keeps the selection and any select-all in flight.
+ */
+function historyMatchingSetKey(search: HistorySearchState): string {
+  return JSON.stringify({
+    labelNames: search.labelNames ?? null,
+    labelMode: search.labelMode ?? null,
+    groupIds: search.groupIds ?? null,
+    includeUngrouped: search.includeUngrouped ?? null,
+    query: search.query,
+    repos: search.repos,
+    repoMode: search.repoMode,
+    workspaces: search.workspaces,
+    workspaceMode: search.workspaceMode,
+    chatHosts: search.chatHosts,
+    chatHostMode: search.chatHostMode,
+    ownershipScopes: search.ownershipScopes,
+  });
+}
+
 function hasActiveHistoryTaskFilters(search: HistorySearchState): boolean {
   return (
     (search.labelNames?.length ?? 0) > 0 ||
@@ -1235,14 +1304,25 @@ function PanelChromeBar(props: {
   );
 }
 
+/**
+ * Select all can pick Tasks loaded beyond the rows on screen, so a bulk delete
+ * says it reaches them too.
+ */
+function describeDeleteDescription(ids: ReadonlyArray<string> | null): string {
+  if (ids !== null && ids.length > 1) {
+    return "This deletes every selected task, including any not on screen. This action cannot be undone.";
+  }
+  return "This action cannot be undone.";
+}
+
 function describeDeleteTitle(
   ids: ReadonlyArray<string> | null,
   items: ReadonlyArray<HistoryItem>,
 ): string {
   if (ids === null || ids.length === 0) return "";
-  if (ids.length > 1) return `Delete ${ids.length} epics?`;
+  if (ids.length > 1) return `Delete ${ids.length} tasks?`;
   const match = items.find((item) => item.epicId === ids[0]);
-  if (match === undefined) return "Delete 1 epic?";
+  if (match === undefined) return "Delete 1 task?";
   // `match.title` is RAW; apply the source-aware "Untitled task" fallback (prompt
   // slice, else literal) for the rendered confirmation. Phases already carry
   // their own baked fallback.
