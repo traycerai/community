@@ -3643,7 +3643,11 @@ describe("<EpicsListPanel />", () => {
     testState.isCountPending = true;
     await act(async () => {
       useHistorySearchStore.setState({
-        search: { ...DEFAULT_HISTORY_SEARCH, sort: "oldest", sortExplicit: true },
+        search: {
+          ...DEFAULT_HISTORY_SEARCH,
+          sort: "oldest",
+          sortExplicit: true,
+        },
       });
       await Promise.resolve();
     });

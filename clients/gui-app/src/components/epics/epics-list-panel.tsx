@@ -476,7 +476,13 @@ function EpicsListPanelBody(props: EpicsListPanelBodyProps): ReactNode {
   const matchingSetKey = historyMatchingSetKey(search);
   useEffect(
     () => abortSelectAll,
-    [abortSelectAll, matchingSetKey, hostId, currentUserId, localContextMatchKey],
+    [
+      abortSelectAll,
+      matchingSetKey,
+      hostId,
+      currentUserId,
+      localContextMatchKey,
+    ],
   );
   // A refresh of the same request re-reads the set the walk is collecting, so
   // it cancels the walk. A fetch for a new request key (a re-sort, which keeps
@@ -597,7 +603,13 @@ function EpicsListPanelBody(props: EpicsListPanelBodyProps): ReactNode {
     setSelectionMode(false);
     closeDeleteDialog();
     setSweepEpicIds(null);
-  }, [abortSelectAll, closeDeleteDialog, currentUserId, hostId, matchingSetKey]);
+  }, [
+    abortSelectAll,
+    closeDeleteDialog,
+    currentUserId,
+    hostId,
+    matchingSetKey,
+  ]);
   const sweepHostClient = useHostClientForHostId(null);
   const requestSweep = useCallback(
     (epicId: string) => {
