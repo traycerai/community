@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
 
 interface HarnessModelPickerTriggerTooltipProps {
@@ -12,10 +12,22 @@ export function HarnessModelPickerTriggerTooltip(
   props: HarnessModelPickerTriggerTooltipProps,
 ) {
   const { children, label, pickerOpen, ...triggerProps } = props;
+  const [tooltipOpen, setTooltipOpen] = useState(false);
+  const [previousPickerOpen, setPreviousPickerOpen] = useState(pickerOpen);
+
+  // Clear hover state in the same update that opens the picker. The tooltip
+  // trigger stays mounted, so the popover keeps its anchor and focus.
+  if (pickerOpen !== previousPickerOpen) {
+    setPreviousPickerOpen(pickerOpen);
+    if (pickerOpen) setTooltipOpen(false);
+  }
+
   return (
     <TooltipWrapper
       {...triggerProps}
-      label={pickerOpen ? null : label}
+      label={label}
+      open={pickerOpen ? false : tooltipOpen}
+      onOpenChange={setTooltipOpen}
       side="top"
       sideOffset={undefined}
       align={undefined}
