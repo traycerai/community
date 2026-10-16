@@ -515,8 +515,13 @@ function EpicsListPanelBody(props: EpicsListPanelBodyProps): ReactNode {
   // to it, not to whoever is signed in when the dialog opens: a selection made
   // as one account and confirmed as another is refused at send
   // (`admitEpicDeleteRequest`). Stale once the selection empties, and unread
-  // then: only a delete of selected ids takes it.
-  const selectionUserIdRef = useRef<string | null>(null);
+  // then: only a delete of selected ids takes it. `null` is "not bound yet";
+  // a selection started with no account signed in is bound to
+  // `{ userId: null }`, which no request matches, so signing in before the
+  // dialog opens cannot hand that selection to the new account.
+  const selectionAccountRef = useRef<{ readonly userId: string | null } | null>(
+    null,
+  );
   // The account the open delete dialog is bound to.
   const pendingDeleteUserIdRef = useRef<string | null>(null);
   const setPinnedMutation = useEpicSetPinned();
@@ -703,7 +708,7 @@ function EpicsListPanelBody(props: EpicsListPanelBodyProps): ReactNode {
   // selection it lands was still chosen by whoever pressed Select all.
   const bindSelectionAccountIfStarting = useCallback(() => {
     if (selectedIds.size === 0) {
-      selectionUserIdRef.current = readDeleteRequestUserId();
+      selectionAccountRef.current = { userId: readDeleteRequestUserId() };
     }
   }, [readDeleteRequestUserId, selectedIds]);
 
@@ -730,12 +735,12 @@ function EpicsListPanelBody(props: EpicsListPanelBodyProps): ReactNode {
       if (deletableIds.length === 0) return;
       // A delete of the selection keeps the selection's account; a row's own
       // delete is chosen now, under the account signed in now.
-      const fromSelection =
-        selectionUserIdRef.current !== null &&
-        deletableIds.every((id) => selectedIds.has(id));
-      pendingDeleteUserIdRef.current = fromSelection
-        ? selectionUserIdRef.current
-        : readDeleteRequestUserId();
+      const selectionAccount = selectionAccountRef.current;
+      pendingDeleteUserIdRef.current =
+        selectionAccount !== null &&
+        deletableIds.every((id) => selectedIds.has(id))
+          ? selectionAccount.userId
+          : readDeleteRequestUserId();
       setPendingDeleteIds(deletableIds);
     },
     [readDeleteRequestUserId, selectableIdSet, selectedIds, selectionEnabled],

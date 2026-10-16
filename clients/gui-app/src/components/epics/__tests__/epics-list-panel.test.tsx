@@ -4308,6 +4308,42 @@ describe("<EpicsListPanel />", () => {
         screen.queryByText(EPIC_DELETE_ACCOUNT_CHANGED_MESSAGE),
       ).toBeNull();
     });
+
+    it("binds a selection made with no account signed in to no account, not to the one that signs in before the dialog opens", async () => {
+      testState.requestUserId = null;
+      renderPanel("page", "/");
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Select history items" }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+
+      testState.requestUserId = "user-b";
+      fireEvent.click(screen.getByTestId("epics-list-delete-selected"));
+      fireEvent.click(await screen.findByTestId("delete-tasks-confirm"));
+
+      expect(testState.mutate).toHaveBeenCalledTimes(1);
+      expect(sentVariables().boundUserId).toBeNull();
+    });
+
+    it("sends nothing and says why when a selection made with no account signed in is confirmed after signing in", async () => {
+      testState.useRealBatchDelete = true;
+      testState.requestUserId = null;
+      renderPanel("page", "/");
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Select history items" }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+
+      testState.requestUserId = "user-b";
+      fireEvent.click(screen.getByTestId("epics-list-delete-selected"));
+      await screen.findByTestId("delete-tasks-dialog");
+      fireEvent.click(screen.getByTestId("delete-tasks-confirm"));
+
+      expect(
+        await screen.findByText(EPIC_DELETE_ACCOUNT_CHANGED_MESSAGE),
+      ).not.toBeNull();
+      expect(testState.hostRequests).toEqual([]);
+    });
   });
   it("deletes selected history rows from selection mode", async () => {
     testState.items = [
