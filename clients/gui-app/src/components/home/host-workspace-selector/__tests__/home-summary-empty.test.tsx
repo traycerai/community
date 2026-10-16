@@ -524,6 +524,7 @@ function DelayedBranchValidationHarness() {
             editor: editorHandleForPrompt("Investigate the worktree race"),
             slashCatalog: null,
             owner: null,
+            teamSandboxHarnessBlocked: false,
             toolbar: {
               selection: {
                 harnessId: "codex",

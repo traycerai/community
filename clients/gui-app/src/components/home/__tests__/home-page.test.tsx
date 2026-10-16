@@ -319,6 +319,7 @@ vi.mock("@/components/home/composer/landing-composer", () => ({
         editor: editorHandleForPrompt("Plan the GUI migration"),
         slashCatalog: null,
         owner: null,
+        teamSandboxHarnessBlocked: false,
         toolbar: {
           selection: {
             harnessId: "codex",

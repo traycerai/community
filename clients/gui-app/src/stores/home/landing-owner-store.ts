@@ -13,6 +13,8 @@ interface LandingOwnerState {
    * moment the draft is created.
    */
   readonly migrateChoice: (fromKey: string, toDraftId: string) => void;
+  /** Forgets a draft's pick once its create is sent. */
+  readonly clearChoice: (draftKey: string) => void;
 }
 
 /**
@@ -24,6 +26,7 @@ export const useLandingOwnerStore = create<LandingOwnerState>()((set) => ({
   setChoice: (draftId, choice) => {
     set((state) => ({ byDraftId: { ...state.byDraftId, [draftId]: choice } }));
   },
+  clearChoice: () => undefined,
   migrateChoice: (fromKey, toDraftId) => {
     set((state) => {
       if (!Object.hasOwn(state.byDraftId, fromKey)) return state;

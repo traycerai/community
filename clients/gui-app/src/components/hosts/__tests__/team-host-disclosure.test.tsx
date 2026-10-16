@@ -32,11 +32,26 @@ const mocks = vi.hoisted(() => {
   const collaborators: { current: EpicCollaboratorsView | undefined } = {
     current: undefined,
   };
+  // What the collaborators query reports while it is ENABLED: an answered
+  // query (the default) has neither flag; a pending or errored one has data
+  // undefined. A disabled query is always pending with no data, as in
+  // react-query.
+  const queryState: { current: { isPending: boolean; isError: boolean } } = {
+    current: { isPending: false, isError: false },
+  };
   const binding: { current: FakeSandboxBinding | null } = { current: null };
   const entry: { current: RemoteHostDirectoryEntry | null } = {
     current: null,
   };
-  return { viewer, cloudAuthorized, openEpicId, collaborators, binding, entry };
+  return {
+    viewer,
+    cloudAuthorized,
+    openEpicId,
+    collaborators,
+    queryState,
+    binding,
+    entry,
+  };
 });
 
 vi.mock("@/hooks/chats/use-cloud-chat-queries", () => ({
@@ -62,21 +77,25 @@ vi.mock(
     >()),
     // The real hook withholds its data while it may not spend the cloud
     // capability, and has nothing to ask without a task: the mock does the
-    // same.
+    // same, and reports such a query as pending (a disabled react-query query
+    // is pending, with no data).
     useEpicCollaboratorsQuery: (
       epicId: string,
       options: { readonly enabled: boolean },
-    ) => ({
-      data:
-        options.enabled && epicId.length > 0
-          ? mocks.collaborators.current
-          : undefined,
-      query: null,
-      isLoading: false,
-      isFetching: false,
-      isError: false,
-      error: null,
-    }),
+    ) => {
+      const enabled = options.enabled && epicId.length > 0;
+      const isPending = enabled ? mocks.queryState.current.isPending : true;
+      const isError = enabled ? mocks.queryState.current.isError : false;
+      return {
+        data: enabled ? mocks.collaborators.current : undefined,
+        query: null,
+        isPending,
+        isLoading: enabled && isPending,
+        isFetching: enabled && isPending,
+        isError,
+        error: null,
+      };
+    },
   }),
 );
 vi.mock("@/components/epic-canvas/hooks/use-tab-host-id", () => ({
@@ -384,6 +403,7 @@ describe("<TeamHostDisclosure />", () => {
     mocks.cloudAuthorized.current = true;
     mocks.openEpicId.current = "epic-1";
     mocks.collaborators.current = undefined;
+    mocks.queryState.current = { isPending: false, isError: false };
   });
   afterEach(() => {
     cleanup();
@@ -434,7 +454,10 @@ describe("<TeamHostDisclosure />", () => {
     expect(screen.queryByTestId("team-host-disclosure-outside")).toBeNull();
   });
 
-  it("treats collaborators as null without cloud authorization", () => {
+  it("withholds the collaborators without cloud authorization, and says readers may be outside the team", () => {
+    // Ticket E17 checkpoint 6, cold-review fix: an unknown reader list is
+    // not "nobody outside". With an open task and no authorization to ask,
+    // the card names the outside readers rather than claiming there are none.
     mocks.cloudAuthorized.current = false;
     mocks.collaborators.current = view({
       direct: ["user-stranger"],
@@ -443,7 +466,9 @@ describe("<TeamHostDisclosure />", () => {
     renderDisclosure("host-1");
 
     expect(screen.getByTestId("team-host-disclosure")).toBeTruthy();
-    expect(screen.queryByTestId("team-host-disclosure-outside")).toBeNull();
+    expect(screen.getByTestId("team-host-disclosure-outside").textContent).toBe(
+      teamHostOutsideReadersLine(TEAM_NAME),
+    );
   });
 
   it("dismisses on Got it: marks the pair seen and renders nothing", () => {
@@ -493,6 +518,79 @@ describe("<TeamHostDisclosure />", () => {
     renderDisclosure("host-1");
 
     expect(screen.queryByTestId("team-host-disclosure")).toBeNull();
+  });
+});
+
+/**
+ * Ticket E17 checkpoint 6, cold-review fix (the disclosure never claims
+ * "nobody outside" from a reader list it does not have): while the
+ * collaborators query is pending the card waits; when it errored, or cannot be
+ * asked (no cloud authorization), the card shows with the outside-readers
+ * line; with no open task there are no readers to name.
+ */
+describe("<TeamHostDisclosure /> unknown readers", () => {
+  beforeEach(() => {
+    resetSeenStore();
+    mocks.viewer.current = VIEWER;
+    mocks.cloudAuthorized.current = true;
+    mocks.openEpicId.current = "epic-1";
+    mocks.collaborators.current = undefined;
+    mocks.queryState.current = { isPending: false, isError: false };
+  });
+  afterEach(() => {
+    cleanup();
+    resetSeenStore();
+  });
+
+  it("does not render while the collaborators query is pending", () => {
+    mocks.queryState.current = { isPending: true, isError: false };
+
+    renderDisclosure("host-1");
+
+    expect(screen.queryByTestId("team-host-disclosure")).toBeNull();
+  });
+
+  it("renders with the outside-readers line when the collaborators query errored", () => {
+    mocks.queryState.current = { isPending: false, isError: true };
+
+    renderDisclosure("host-1");
+
+    expect(screen.getByTestId("team-host-disclosure")).toBeTruthy();
+    expect(screen.getByTestId("team-host-disclosure-outside").textContent).toBe(
+      teamHostOutsideReadersLine(TEAM_NAME),
+    );
+  });
+
+  it("renders with the outside-readers line when the query is disabled for want of cloud authorization", () => {
+    mocks.cloudAuthorized.current = false;
+
+    renderDisclosure("host-1");
+
+    expect(screen.getByTestId("team-host-disclosure")).toBeTruthy();
+    expect(screen.getByTestId("team-host-disclosure-outside").textContent).toBe(
+      teamHostOutsideReadersLine(TEAM_NAME),
+    );
+  });
+
+  it("renders without the outside-readers line when no task is open", () => {
+    mocks.openEpicId.current = null;
+
+    renderDisclosure("host-1");
+
+    expect(screen.getByTestId("team-host-disclosure")).toBeTruthy();
+    expect(screen.queryByTestId("team-host-disclosure-outside")).toBeNull();
+  });
+
+  it("renders without the outside-readers line once the query answered with no one outside", () => {
+    mocks.collaborators.current = view({
+      direct: [VIEWER],
+      teams: [team(TEAM_ID, [VIEWER])],
+    });
+
+    renderDisclosure("host-1");
+
+    expect(screen.getByTestId("team-host-disclosure")).toBeTruthy();
+    expect(screen.queryByTestId("team-host-disclosure-outside")).toBeNull();
   });
 });
 
@@ -548,6 +646,7 @@ describe("<SandboxTileStateFrame /> team host disclosure", () => {
     mocks.cloudAuthorized.current = true;
     mocks.openEpicId.current = "epic-1";
     mocks.collaborators.current = undefined;
+    mocks.queryState.current = { isPending: false, isError: false };
     mocks.binding.current = createFakeSandboxBinding();
   });
   afterEach(() => {

@@ -656,6 +656,7 @@ export function LandingComposer(props: LandingComposerProps) {
         permission: toolbar.permission,
       },
       owner,
+      teamSandboxHarnessBlocked: false,
     });
     // Nothing was created when a refusal comes back - the draft, its content
     // and its staged workspace are exactly as the user left them, and the
@@ -678,7 +679,12 @@ export function LandingComposer(props: LandingComposerProps) {
 
   const dispatchStartTerminal = useCallback(
     (launch: TerminalAgentLaunch): boolean => {
-      const refusal = actions.selectTerminalAgent(launch, draftId, owner);
+      const refusal = actions.selectTerminalAgent(
+        launch,
+        draftId,
+        owner,
+        false,
+      );
       raiseHostNotice(
         refusal === null ? null : { kind: "refused", message: refusal.message },
       );

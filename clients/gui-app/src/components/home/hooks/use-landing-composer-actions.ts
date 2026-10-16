@@ -179,6 +179,11 @@ export interface LandingComposerSubmitArgs {
    * Belongs to owner, read by the caller at submit; `null` is Personal.
    */
   readonly owner: LandingOwnerTeam | null;
+  /**
+   * Whether the selected harness is one a team sandbox does not offer, on a
+   * team sandbox (ticket E17 checkpoint 6, B5), read by the caller at submit.
+   */
+  readonly teamSandboxHarnessBlocked: boolean;
 }
 
 export interface TerminalAgentLaunch {
@@ -205,6 +210,7 @@ export interface LandingComposerActions {
     launch: TerminalAgentLaunch,
     draftId: string | null,
     owner: LandingOwnerTeam | null,
+    teamSandboxHarnessBlocked: boolean,
   ) => LandingPlacementRefusal | null;
   /**
    * Whether a create started here is still running.
@@ -1528,6 +1534,7 @@ export function useLandingComposerActions(
       launch: TerminalAgentLaunch,
       draftId: string | null,
       owner: LandingOwnerTeam | null,
+      _teamSandboxHarnessBlocked: boolean,
     ): LandingPlacementRefusal | null => {
       const placement = resolveAdmittedPlacement();
       if (placement.kind === "refused") {
