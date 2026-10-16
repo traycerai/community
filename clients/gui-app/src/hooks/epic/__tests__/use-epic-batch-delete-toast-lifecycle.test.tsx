@@ -562,9 +562,6 @@ describe("the delete's progress toast", () => {
       expect(mocks.runWorktreeCleanup).not.toHaveBeenCalled();
     });
 
-    // `toastFromHostError` stays silent for an aborted or recoverable-
-    // unauthorized request. This stand-in is silent for every error, so the
-    // dismissal below can only have come from the hook itself.
     it("says the host is offline, instead of the error toast, when the delete never reached it", async () => {
       const view = renderBatchDelete();
       view.dispatch(deleteOf(["epic-a"], null));
@@ -597,6 +594,9 @@ describe("the delete's progress toast", () => {
       expect(mocks.toastDismiss).toHaveBeenCalledWith(id);
     });
 
+    // `toastFromHostError` stays silent for an aborted or recoverable-
+    // unauthorized request. This stand-in is silent for every error, so the
+    // dismissal below can only have come from the hook itself.
     it("dismisses it even when the error toast says nothing", async () => {
       const view = renderBatchDelete();
       view.dispatch(deleteOf(["epic-a"], null));

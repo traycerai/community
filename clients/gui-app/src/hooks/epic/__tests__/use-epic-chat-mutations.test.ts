@@ -978,4 +978,36 @@ describe("useEpicArchiveChats", () => {
     );
     expect(toast.error).toHaveBeenCalledTimes(1);
   });
+
+  it("reports one offline notice for the batch when an owning host is unreachable", async () => {
+    archiveChatMutateAsync.mockImplementation(
+      (input: ArchiveChatMutationInput) =>
+        input.chatId === "chat-1"
+          ? Promise.resolve({ updated: true })
+          : Promise.reject(hostOffline("epic.setChatArchived")),
+    );
+    const { result } = renderHook(() => useEpicArchiveChats(), {
+      wrapper: makeWrapper(),
+    });
+
+    act(() => {
+      result.current.mutate({
+        epicId: "epic-1",
+        chats: [
+          { chatId: "chat-1", hostId: "host-test" },
+          { chatId: "chat-2", hostId: "remote-host" },
+        ],
+        archived: true,
+      });
+    });
+
+    await waitFor(() => {
+      expect(toast.message).toHaveBeenCalledWith(
+        OFFLINE_NOTICE,
+        expect.anything(),
+      );
+    });
+    expect(toast.message).toHaveBeenCalledTimes(1);
+    expect(toast.error).not.toHaveBeenCalled();
+  });
 });

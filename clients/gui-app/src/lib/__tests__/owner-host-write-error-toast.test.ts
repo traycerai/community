@@ -80,6 +80,27 @@ describe("toastFromOwnerHostWriteError", () => {
     );
   });
 
+  it("does not claim nothing changed for a keyed request that was already sent", () => {
+    // Retryable because a keyed request can be replayed, not because it never
+    // left: the host may have run it before the answer was lost.
+    const keyedPostSend = new RetryableTransportError({
+      replaySafetyFromKey: true,
+      code: "RPC_ERROR",
+      message: "Request timed out",
+      requestId: "req-6",
+      method: "epic.batchDelete",
+      fatalDetails: null,
+    });
+
+    toastFromOwnerHostWriteError(keyedPostSend, "Couldn't delete epics.");
+
+    expect(toast.message).not.toHaveBeenCalled();
+    expect(toastFromHostError).toHaveBeenCalledWith(
+      keyedPostSend,
+      "Couldn't delete epics.",
+    );
+  });
+
   it("leaves a post-send drop to the ambiguous-outcome notice, since the host may have acted", () => {
     const dropped = new HostTransportFailureError({
       code: "RPC_ERROR",

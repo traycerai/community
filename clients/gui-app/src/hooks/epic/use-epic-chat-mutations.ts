@@ -732,7 +732,8 @@ function useEpicArchiveChatMutation(
       },
       onError:
         failurePresentation === "individual"
-          ? (error) => toastFromOwnerHostWriteError(error, "Couldn't archive agent.")
+          ? (error) =>
+              toastFromOwnerHostWriteError(error, "Couldn't archive agent.")
           : undefined,
     },
   });
