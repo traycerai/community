@@ -1,4 +1,11 @@
-import { useEffect, useLayoutEffect, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
+import { Dialog as DialogPrimitive } from "radix-ui";
 import { LAYOUT_REGIONS } from "@/components/layout-editor/regions/layout-regions";
 import { createRoot } from "react-dom/client";
 import { Info } from "lucide-react";
@@ -53,6 +60,8 @@ import {
 } from "@/components/layout/tabs/side-strip/side-strip-tokens";
 import { SampleSceneProvider } from "@/components/sample-workspace/sample-scene-provider";
 import { SampleWorkspaceBody } from "@/components/sample-workspace/sample-workspace-body";
+import { PromotableModalFrame } from "@/components/layout/dialogs/promotable-modal-frame";
+import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import type { HostNotificationsIndicatorStateResponse } from "@traycer/protocol/host/notifications/contracts";
 import type { AgentActivityByEpic } from "@traycer/protocol/host/agent/activity";
@@ -394,6 +403,14 @@ interface LayoutCanvasProbe {
   /** The same for any strip item, the split pair included (`fixture-split`). */
   readonly activateStripItem: (itemId: string) => void;
   /**
+   * Opens one of the app's real modals over the window, or closes it (`null`):
+   * `dialog` is the shared `Dialog`, whose backdrop is `bg-black/10`; `frame`
+   * is `PromotableModalFrame`, the Settings and History modal, whose backdrop
+   * is `bg-black/30`. Both are the production components, so the backdrop a
+   * check measures is the one the product draws. `restoreLoadState` closes it.
+   */
+  readonly openBackdrop: (kind: BackdropKind) => void;
+  /**
    * What the host answered for `host.notifications.indicatorState`, per epic
    * and per agent: the rail badges and the waiting pulse read the epics, the
    * Activity list's waiting chips read the agents.
@@ -674,6 +691,70 @@ function applyFixtureIndicators(): void {
   }
 }
 queryClient.getQueryCache().subscribe(applyFixtureIndicators);
+
+/** Which real modal `openBackdrop` has open, if any. */
+type BackdropKind = "dialog" | "frame" | null;
+let openBackdropKind: BackdropKind = null;
+const backdropListeners = new Set<() => void>();
+function setOpenBackdrop(kind: BackdropKind): void {
+  openBackdropKind = kind;
+  for (const listener of backdropListeners) listener();
+}
+function subscribeBackdrop(listener: () => void): () => void {
+  backdropListeners.add(listener);
+  return () => {
+    backdropListeners.delete(listener);
+  };
+}
+function readOpenBackdrop(): BackdropKind {
+  return openBackdropKind;
+}
+
+/**
+ * The modals `openBackdrop` opens. Both roots stay mounted and only `open`
+ * changes, so closing plays the modal's own exit, as it does in the app.
+ */
+function ProbeBackdrops(): ReactNode {
+  const kind = useSyncExternalStore(subscribeBackdrop, readOpenBackdrop);
+  return (
+    <>
+      <Dialog
+        open={kind === "dialog"}
+        onOpenChange={(open) => {
+          if (!open) setOpenBackdrop(null);
+        }}
+      >
+        <DialogContent aria-describedby={undefined}>
+          <DialogTitle>Backdrop probe</DialogTitle>
+        </DialogContent>
+      </Dialog>
+      <DialogPrimitive.Root
+        open={kind === "frame"}
+        onOpenChange={(open) => {
+          if (!open) setOpenBackdrop(null);
+        }}
+      >
+        <PromotableModalFrame
+          icon={null}
+          title="Backdrop probe"
+          contentClassName="h-1/4 w-1/4"
+          dataAttributes={{}}
+          promoteAriaLabel="Open as tab"
+          promoteTestId="probe-backdrop-promote"
+          closeTestId="probe-backdrop-close"
+          onPromote={() => undefined}
+          onClose={() => {
+            setOpenBackdrop(null);
+          }}
+          onEscapeKeyDown={() => undefined}
+          onOpenAutoFocus={undefined}
+        >
+          {null}
+        </PromotableModalFrame>
+      </DialogPrimitive.Root>
+    </>
+  );
+}
 
 const runnerHost = new MockRunnerHost({
   signInUrl: "http://127.0.0.1:9/sign-in",
@@ -1020,6 +1101,7 @@ function buildProbe(): LayoutCanvasProbe {
     activateStripItem: (itemId) => {
       useTabsStore.setState({ activeItemId: itemId });
     },
+    openBackdrop: setOpenBackdrop,
     // Stands in for the host's reply; `applyFixtureIndicators` keeps every
     // indicator entry answered with it, including ones that appear later.
     setIndicators: (epics, chats) => {
@@ -1066,6 +1148,7 @@ function buildProbe(): LayoutCanvasProbe {
     },
     restoreLoadState: () => {
       const editor = useLayoutEditorStore.getState();
+      setOpenBackdrop(null);
       editor.endSession();
       editor.setDockMode(VARIANT.dock);
       resetLayout();
@@ -1548,6 +1631,7 @@ export function CanvasFixture(): ReactNode {
       ) : (
         <LayoutEditor column={column} />
       )}
+      <ProbeBackdrops />
     </div>
   );
 }

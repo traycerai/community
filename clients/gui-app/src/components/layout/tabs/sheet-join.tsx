@@ -36,6 +36,19 @@ export function SheetJoinScope(props: {
   );
 }
 
+/**
+ * The joined top tab's share of a modal's dim. In the desktop window a
+ * modal's backdrop starts under the title band (`window-chrome.css`), and the
+ * joined tab is in that band, so it stayed bright over the page it joins.
+ * `window-chrome.css` shows this over the tab, anchored like the bridge,
+ * while a backdrop is open, and gives it that backdrop's colour.
+ */
+export function JoinedTabDim(): ReactNode {
+  const join = use(JoinContext);
+  if (join === null) return null;
+  return <span aria-hidden data-joined-tab-dim="" />;
+}
+
 export function SheetJoinBridge(props: {
   readonly edge: "top" | "left" | "right";
 }): ReactNode {

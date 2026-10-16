@@ -39,3 +39,41 @@
   ) {
   top: var(--app-title-band-height);
 }
+
+/* The joined active tab is in that undimmed band, but it is the page's own
+   shape (the sheet join in index.css), so it takes the backdrop's dim:
+   `JoinedTabDim`, beside the join bridge in AppColumnFrame, anchored to the
+   joined tab from its top to the band's bottom, in the open backdrop's own
+   colour - the modal frame's `bg-black/30`, every other `bg-black/10`. With
+   no joined tab there is no anchor, and the fallbacks leave it no width. */
+[data-joined-tab-dim] {
+  display: none;
+}
+
+.wco:has(
+    :is(
+      [data-slot="dialog-overlay"],
+      [data-slot="sheet-overlay"],
+      [data-slot="drawer-overlay"]
+    )[data-state="open"]
+  )
+  [data-joined-tab-dim] {
+  display: block;
+  position: fixed;
+  position-anchor: --sheet-joined;
+  position-visibility: anchors-visible;
+  top: anchor(top, 0px);
+  left: anchor(left, 0px);
+  right: anchor(right, 100%);
+  bottom: calc(100% - var(--app-title-band-height));
+  /* Over the tab and the bridge (z-21), under the backdrop and the modal. */
+  z-index: 22;
+  border-start-start-radius: var(--radius-xl);
+  border-start-end-radius: var(--radius-xl);
+  background-color: color-mix(in oklab, var(--color-black) 10%, transparent);
+  pointer-events: none;
+}
+
+.wco:has([data-backdrop="frame"][data-state="open"]) [data-joined-tab-dim] {
+  background-color: color-mix(in oklab, var(--color-black) 30%, transparent);
+}
