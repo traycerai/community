@@ -4,9 +4,11 @@ import {
 } from "@traycer-clients/shared/host-transport/host-messenger";
 import { toast } from "sonner";
 import {
+  isHostTransportFailure,
   isSilentHostError,
   isUnknownOutcomeTransportFailure,
   toastFromHostError,
+  toastFromHostRefusalsInBatch,
 } from "@/lib/host-error-toast";
 
 /**
@@ -118,7 +120,8 @@ function writeMayHaveApplied(error: HostRpcError): boolean {
  *    notice says so rather than counting it as applied or as failed;
  *  - "nothing on it was changed" holds only for a batch of agents in which
  *    every write never reached its host;
- *  - any other mix says how many applied and how many did not.
+ *  - any other mix says how many applied and how many did not, followed by
+ *    the guidance of a host refusal among them (`toastFromHostRefusalsInBatch`).
  * A batch of one reads like the single write it is.
  */
 export function toastFromOwnerHostBatchWriteFailures(
@@ -153,12 +156,23 @@ export function toastFromOwnerHostBatchWriteFailures(
     );
     return;
   }
-  toast.error(
+  const summary =
     applied === 0
       ? copy.none(counted.length)
-      : copy.partial(applied, failures.length),
-    { id: OWNER_HOST_BATCH_RESULT_TOAST_ID },
+      : copy.partial(applied, failures.length);
+  const refusals = failures.filter(
+    (failure) => !isHostTransportFailure(failure),
   );
+  if (refusals.length > 0) {
+    toastFromHostRefusalsInBatch(
+      refusals,
+      copy.single,
+      summary,
+      OWNER_HOST_BATCH_RESULT_TOAST_ID,
+    );
+    return;
+  }
+  toast.error(summary, { id: OWNER_HOST_BATCH_RESULT_TOAST_ID });
 }
 
 /**

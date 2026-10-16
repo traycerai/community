@@ -236,6 +236,46 @@ export function toastFromHostError(
 }
 
 /**
+ * The one notice for a batch of writes, when some of them were refused by a
+ * host that was reached: `summary` (the batch's counts) leads, followed by the
+ * recovery guidance of the first refusal, in batch order, whose copy says more
+ * than `fallback`. A refusal with only the generic copy adds nothing, so a
+ * batch whose refusals are all generic reads as the counts alone. The toast
+ * keeps the ordinary host-error notification and Report Issue context, under
+ * the caller's one `toastId`.
+ */
+export function toastFromHostRefusalsInBatch(
+  refusals: readonly HostRpcError[],
+  fallback: string,
+  summary: string,
+  toastId: string,
+): void {
+  if (refusals.length === 0) return;
+  const guided =
+    refusals.find(
+      (refusal) => hostErrorToastMessage(refusal, fallback) !== fallback,
+    ) ?? refusals[0];
+  const guidance = hostErrorToastMessage(guided, fallback);
+  const message = guidance === fallback ? summary : `${summary} ${guidance}`;
+  emitHostFatalErrorNotification(guided, message);
+  reportableErrorToast(
+    message,
+    { id: toastId },
+    createReportIssueContext({
+      title: "Host operation failed",
+      message: null,
+      code: guided.code,
+      source: "Host",
+    }),
+  );
+}
+
+/** Whether `toastFromHostError` would narrate this as a transport failure. */
+export function isHostTransportFailure(error: HostRpcError): boolean {
+  return isTransportClassFailure(error);
+}
+
+/**
  * Error policy for background best-effort host mutations - calls fired by
  * presence changes or stream frames rather than a user gesture (e.g. marking
  * the viewed entity's notifications read). These self-heal on reconnect, so a

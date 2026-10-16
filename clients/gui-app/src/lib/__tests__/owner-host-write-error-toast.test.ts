@@ -177,6 +177,29 @@ function keyedSentAndDropped(): RetryableTransportError {
   });
 }
 
+const ARCHIVE_COPY: OwnerHostBatchWriteCopy = {
+  single: "Couldn't archive agent.",
+  partial: (applied, failed) =>
+    `Archived ${applied} of ${applied + failed} selected agents. ${failed} couldn't be archived.`,
+  none: (attempted) =>
+    `Couldn't archive any of the ${attempted} selected agents.`,
+  unconfirmed: (attempted) =>
+    `Couldn't confirm all ${attempted} selected agents were archived. Check them and archive any that weren't.`,
+};
+
+const AGENT_BUSY_GUIDANCE =
+  "This agent is still working. Stopping it ends a turn, but not a running subagent or a scheduled wake. Wait for it to go idle, or stop it, then archive.";
+
+function agentBusy(): HostRpcError {
+  return new HostRpcError({
+    code: "RPC_ERROR",
+    message: "AGENT_BUSY: the agent has a turn in progress",
+    requestId: "req-8",
+    method: "epic.setChatArchived",
+    fatalDetails: null,
+  });
+}
+
 function forbidden(): HostRpcError {
   return new HostRpcError({
     code: "FORBIDDEN",
@@ -212,7 +235,7 @@ describe("toastFromOwnerHostBatchWriteFailures", () => {
 
     expect(toast.error).toHaveBeenCalledTimes(1);
     expect(vi.mocked(toast.error).mock.calls[0][0]).toBe(
-      "Deleted 1 of 3 selected agents. 2 couldn't be deleted.",
+      "Deleted 1 of 3 selected agents. 2 couldn't be deleted. You don't have permission to do that.",
     );
     expect(toastFromHostError).not.toHaveBeenCalled();
     expect(toast.message).not.toHaveBeenCalled();
@@ -230,7 +253,7 @@ describe("toastFromOwnerHostBatchWriteFailures", () => {
 
     expect(toast.error).toHaveBeenCalledTimes(1);
     expect(vi.mocked(toast.error).mock.calls[0][0]).toBe(
-      "Couldn't delete any of the 2 selected agents.",
+      "Couldn't delete any of the 2 selected agents. You don't have permission to do that.",
     );
   });
 
@@ -309,9 +332,39 @@ describe("toastFromOwnerHostBatchWriteFailures", () => {
 
     expect(toast.error).toHaveBeenCalledTimes(1);
     expect(vi.mocked(toast.error).mock.calls[0][0]).toBe(
-      "Couldn't delete any of the 2 selected agents.",
+      "Couldn't delete any of the 2 selected agents. You don't have permission to do that.",
     );
     expect(toast.message).not.toHaveBeenCalled();
+  });
+
+  it("keeps the wait-or-stop guidance when every archive in the batch was refused as busy", () => {
+    toastFromOwnerHostBatchWriteFailures(
+      [
+        { kind: "agent", hostId: "host-a", error: agentBusy() },
+        { kind: "agent", hostId: "host-b", error: agentBusy() },
+      ],
+      ARCHIVE_COPY,
+    );
+
+    expect(toast.error).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(toast.error).mock.calls[0][0]).toBe(
+      `Couldn't archive any of the 2 selected agents. ${AGENT_BUSY_GUIDANCE}`,
+    );
+  });
+
+  it("keeps the wait-or-stop guidance when one archive applied and one was refused as busy", () => {
+    toastFromOwnerHostBatchWriteFailures(
+      [
+        { kind: "agent", hostId: "host-a", error: null },
+        { kind: "agent", hostId: "host-b", error: agentBusy() },
+      ],
+      ARCHIVE_COPY,
+    );
+
+    expect(toast.error).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(toast.error).mock.calls[0][0]).toBe(
+      `Archived 1 of 2 selected agents. 1 couldn't be archived. ${AGENT_BUSY_GUIDANCE}`,
+    );
   });
 
   it("reads one counted write among cancelled ones as that single write", () => {
