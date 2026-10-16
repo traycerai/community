@@ -16,6 +16,7 @@ import {
 import { LANDING_ROUTE } from "@/lib/routes";
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
 import type { EpicMigrationSlice } from "@/stores/epics/open-epic/store";
+import { BackdropDimSource } from "@/components/ui/backdrop-dim-source";
 
 const TITLE_RUNNING = "Migrating your epic";
 const TITLE_ERROR = "Migration didn't finish";
@@ -113,9 +114,12 @@ export function EpicMigrationModal(props: EpicMigrationModalProps): ReactNode {
           data-testid="epic-migration-overlay"
           // Inside the epic surface, below the title band: the window's
           // overlay inset (`window-chrome.css`) would leave its top uncovered.
+          // The joined tab is this surface's own, so it takes the dim too.
           data-overlay-scope="surface"
           className="absolute inset-0 bg-black/40 transition-opacity duration-100 supports-backdrop-filter:backdrop-blur-xs data-open:animate-in data-open:fade-in-0"
-        />
+        >
+          <BackdropDimSource strength="40" />
+        </div>
         <DialogPrimitive.Content
           data-slot="dialog-content"
           data-testid="epic-migration-modal"
