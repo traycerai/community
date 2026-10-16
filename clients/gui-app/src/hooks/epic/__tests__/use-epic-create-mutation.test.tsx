@@ -903,10 +903,11 @@ describe("useEpicCreateForClient seed hold", () => {
       });
     });
 
-    // The poll settles what the episode could not. `absent` says the earlier
-    // send did not create the epic, so the later refusal speaks for the whole
-    // gesture and its guidance is what the person needs; only a poll that
-    // could not tell leaves the outcome unknown.
+    // An `absent` poll is the last observation at the end of its budget, not
+    // proof the earlier send never ran: a create still in flight can publish
+    // after it. So the outcome stays unknown - and the refusal that ended the
+    // retry episode is said beside it, labelled as the retry's, when it
+    // carries guidance of its own.
     function toastText(): string {
       return JSON.stringify([
         vi.mocked(toast).mock.calls,
@@ -924,7 +925,7 @@ describe("useEpicCreateForClient seed hold", () => {
       });
     }
 
-    it("shows the refusal's guidance when the poll finds no epic after a refused retry episode", async () => {
+    it("keeps the outcome unknown and labels the retry's refusal when the poll finds no epic", async () => {
       pollMocks.pollEpicExistence.mockResolvedValue("absent");
       const episodeError = await episodeEndedByRefusal(forbidden());
       const options = renderOptions();
@@ -935,9 +936,39 @@ describe("useEpicCreateForClient seed hold", () => {
       });
 
       await vi.waitFor(() => {
-        expect(toastText()).toContain("You don't have permission to do that.");
+        expect(toastText()).toContain("may or may not have gone through");
       });
-      expect(toastText()).not.toContain("may or may not have gone through");
+      expect(toastText()).toContain("it may still appear");
+      expect(toastText()).toContain(
+        "The retry was refused: You don't have permission to do that.",
+      );
+      // Never the definite failure: nobody verified the create did not run.
+      expect(toastText()).not.toContain("Couldn't create epic.");
+    });
+
+    it("says the uncertainty alone when the retry's refusal is itself an unknown outcome", async () => {
+      pollMocks.pollEpicExistence.mockResolvedValue("absent");
+      const episodeError = await episodeEndedByRefusal(
+        new HostRpcError({
+          code: "E_IDEMPOTENCY_OUTCOME_UNKNOWN",
+          message: "the original attempt's outcome is not known",
+          requestId: "req-2",
+          method: "epic.create",
+          fatalDetails: null,
+        }),
+      );
+      const options = renderOptions();
+
+      options.onError(episodeError, chatVariables, {
+        hostId: "host-1",
+        userId: "user-1",
+      });
+
+      await vi.waitFor(() => {
+        expect(toastText()).toContain("may or may not have gone through");
+      });
+      expect(toastText()).not.toContain("The retry was refused");
+      expect(toastText()).not.toContain("Couldn't create epic.");
     });
 
     it("keeps the outcome unknown when the poll cannot tell after a refused retry episode", async () => {

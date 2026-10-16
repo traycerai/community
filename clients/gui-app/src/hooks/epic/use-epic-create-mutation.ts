@@ -37,7 +37,10 @@ import {
 } from "@/stores/auth/auth-store";
 import { cloudEpicTasksQueryKeyMatchesScope } from "@/lib/cloud-epic-tasks-query/cache";
 import type { ListCloudTasksRequest } from "@/lib/cloud-epic-tasks-query";
-import { toastFromHostError } from "@/lib/host-error-toast";
+import {
+  toastFromHostError,
+  toastUnknownOutcomeAfterRefusedRetry,
+} from "@/lib/host-error-toast";
 import {
   createOutcomeIsDecidable,
   pollEpicExistence,
@@ -291,19 +294,21 @@ export function useEpicCreateForClient(
             // and a poll that could not tell leaves the outcome exactly as
             // ambiguous as it was, which is what this notice describes.
             //
-            // One exception: a retry episode a refusal ended. Its error is
-            // unknown only because an earlier send may have created the epic;
-            // `absent` settles that, so the refusal speaks for the whole
-            // gesture and its guidance (update the host, view-only access) is
-            // what the person needs.
+            // A retry episode a refusal ended keeps those words too: `absent`
+            // is the poll's last look, not proof the earlier send never ran.
+            // It adds the refusal's guidance, labelled as the retry's.
             if (verdict === "exists") return;
-            toastFromHostError(
+            if (
               verdict === "absent" &&
-                error instanceof RetryEpisodeOutcomeUnknownError
-                ? error.finalRefusal
-                : error,
-              "Couldn't create epic.",
-            );
+              error instanceof RetryEpisodeOutcomeUnknownError
+            ) {
+              toastUnknownOutcomeAfterRefusedRetry(
+                error.finalRefusal,
+                "Couldn't create epic.",
+              );
+              return;
+            }
+            toastFromHostError(error, "Couldn't create epic.");
           },
           () => {
             toastFromHostError(error, "Couldn't create epic.");

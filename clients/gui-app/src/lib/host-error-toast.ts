@@ -49,6 +49,9 @@ const TRANSPORT_UNKNOWN_OUTCOME_TOAST_ID = "host-transport-notice-unknown";
 const HOST_UNKNOWN_OUTCOME_NOTICE =
   "No reply came back from the Traycer host, so this may or may not have gone through.";
 
+const HOST_UNKNOWN_OUTCOME_MAY_STILL_APPEAR_NOTICE =
+  "No reply came back from the Traycer host, so this may or may not have gone through, and it may still appear.";
+
 /**
  * Whether this failure is the transport itself, and therefore says nothing
  * about the operation the user asked for.
@@ -215,6 +218,36 @@ export function isSilentHostError(error: HostRpcError): boolean {
     shouldSuppressRecoverableUnauthorized(error) ||
     error instanceof HostRequestAbortedError
   );
+}
+
+/**
+ * The notice for a write whose retry episode a refusal ended (the retrying
+ * messenger's `RetryEpisodeOutcomeUnknownError`) after a poll found no trace
+ * of it.
+ *
+ * The outcome stays unknown: the poll's `absent` is only its last look at the
+ * end of its budget, and an earlier send still in flight can apply after it.
+ * So this never says the write failed. The refusal ended only the retry, and
+ * its guidance (update the host, view-only access) is said beside the
+ * uncertainty, labelled as the retry's, through the same mapper every
+ * refusal goes through - never the host's own text. A refusal with no
+ * guidance of its own, or one that is itself an unknown outcome, adds no
+ * line.
+ */
+export function toastUnknownOutcomeAfterRefusedRetry(
+  finalRefusal: HostRpcError,
+  fallback: string,
+): void {
+  const guidance =
+    finalRefusal.code === "E_IDEMPOTENCY_OUTCOME_UNKNOWN"
+      ? fallback
+      : hostErrorToastMessage(finalRefusal, fallback);
+  toast(HOST_UNKNOWN_OUTCOME_MAY_STILL_APPEAR_NOTICE, {
+    id: TRANSPORT_UNKNOWN_OUTCOME_TOAST_ID,
+    ...(guidance === fallback
+      ? {}
+      : { description: `The retry was refused: ${guidance}` }),
+  });
 }
 
 export function toastFromHostError(
