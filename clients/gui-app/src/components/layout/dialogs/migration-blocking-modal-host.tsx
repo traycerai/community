@@ -12,6 +12,7 @@ import {
   useMigrationRunStore,
   type MigrationRunState,
 } from "@/stores/migration/migration-run-store";
+import { BackdropDimSource } from "@/components/ui/backdrop-dim-source";
 
 const MIGRATION_PROGRESS_LABEL = "Migrating tasks";
 
@@ -42,10 +43,10 @@ export function MigrationBlockingModalHost(): ReactNode {
         <DialogPrimitive.Overlay
           data-slot="dialog-overlay"
           data-testid="migration-blocking-overlay"
-          // The joined tab's dim matches this strength (`window-chrome.css`).
-          data-backdrop-dim="40"
           className="fixed inset-0 isolate z-60 bg-black/40 transition-opacity duration-100 supports-backdrop-filter:backdrop-blur-xs data-open:animate-in data-open:fade-in-0"
-        />
+        >
+          <BackdropDimSource strength="40" />
+        </DialogPrimitive.Overlay>
         <DialogPrimitive.Content
           data-slot="dialog-content"
           data-testid="migration-blocking-modal"

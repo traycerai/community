@@ -28,11 +28,13 @@ import {
 // stayed bright over a dimmed page, so the join read as a lit cut-out. The
 // claim: with a modal open, the joined tab's pixels match the dimmed sheet
 // under it, exactly as they match with no modal. The tab takes the colour of
-// the backdrop beside it: the shared dialog's `bg-black/10` (no attribute),
-// the modal frame's `bg-black/30` and the blocking modals' `bg-black/40`
-// (`data-backdrop-dim`), and stacked modals take both, as the page does. The
-// tab's two concave feet, which flare out of its sides into the title band,
-// are dimmed with it, and the bar's own ground is not.
+// the backdrop beside it: the shared dialog's `bg-black/10`, the modal frame's
+// `bg-black/30` and the blocking modals' `bg-black/40`, and stacked modals take
+// all of theirs, as the page does (a frame under a dialog, and a dialog under
+// a dialog, which is a sheet with a confirm dialog over it). Each backdrop
+// publishes itself (`BackdropDimSource`) and `JoinedTabDim` draws one layer per
+// published backdrop. The tab's two concave feet, which flare out of its sides
+// into the title band, are dimmed with it, and the bar's own ground is not.
 //
 // What decides this is paint: the dim is an element anchored to the tab with
 // CSS anchor positioning and composited over a tab whose fill is a theme
@@ -74,19 +76,30 @@ const FOOT_RISE = 2;
 /** The ground sample sits this far outside the tab's left edge, clear of its feet. */
 const GROUND_DISTANCE = 30;
 
-const DIALOG_OVERLAY = '[data-slot="dialog-overlay"]:not([data-backdrop-dim])';
-const FRAME_OVERLAY = '[data-slot="dialog-overlay"][data-backdrop-dim="30"]';
-const BLOCKING_OVERLAY = '[data-slot="dialog-overlay"][data-backdrop-dim="40"]';
+/** The shared dialog's overlay is the `bg-black/10` one, the modal frame's the `bg-black/30`. */
+const DIALOG_OVERLAY = '[data-slot="dialog-overlay"].bg-black\\/10';
+const FRAME_OVERLAY = '[data-slot="dialog-overlay"].bg-black\\/30';
+const BLOCKING_OVERLAY = '[data-testid="migration-blocking-overlay"]';
+
+interface ExpectedOverlays {
+  readonly selector: string;
+  /** How many of them the probe kind puts on screen. */
+  readonly count: number;
+}
 
 /** The overlays each probe kind puts on screen. */
-const OVERLAYS = {
-  dialog: [DIALOG_OVERLAY],
-  frame: [FRAME_OVERLAY],
-  blocking: [BLOCKING_OVERLAY],
-  "frame+dialog": [FRAME_OVERLAY, DIALOG_OVERLAY],
-} as const;
+const OVERLAYS: Readonly<Record<Kind, readonly ExpectedOverlays[]>> = {
+  dialog: [{ selector: DIALOG_OVERLAY, count: 1 }],
+  frame: [{ selector: FRAME_OVERLAY, count: 1 }],
+  blocking: [{ selector: BLOCKING_OVERLAY, count: 1 }],
+  "frame+dialog": [
+    { selector: FRAME_OVERLAY, count: 1 },
+    { selector: DIALOG_OVERLAY, count: 1 },
+  ],
+  "dialog+dialog": [{ selector: DIALOG_OVERLAY, count: 2 }],
+};
 
-type Kind = keyof typeof OVERLAYS;
+type Kind = "dialog" | "frame" | "blocking" | "frame+dialog" | "dialog+dialog";
 type SingleKind = "dialog" | "frame" | "blocking";
 
 const KIND_NAME: Readonly<Record<SingleKind, string>> = {
@@ -227,14 +240,17 @@ async function sampleTabAndSheet(
 /** Opens `kind` and resolves once every backdrop it puts up is fully faded in. */
 async function openAndSettle(page: Page, kind: Kind): Promise<void> {
   await probe(page, `openBackdrop(${JSON.stringify(kind)})`);
-  for (const selector of OVERLAYS[kind]) {
+  for (const { selector, count } of OVERLAYS[kind]) {
     await waitUntil(
       page,
       `(() => {
-        const overlay = document.querySelector(${JSON.stringify(selector)});
-        return overlay !== null
-          && overlay.getAttribute("data-state") === "open"
-          && getComputedStyle(overlay).opacity === "1";
+        const overlays = [...document.querySelectorAll(${JSON.stringify(selector)})];
+        return overlays.length === ${count}
+          && overlays.every(
+            (overlay) =>
+              overlay.getAttribute("data-state") === "open"
+              && getComputedStyle(overlay).opacity === "1",
+          );
       })()`,
     );
   }
@@ -333,37 +349,56 @@ for (const theme of THEMES) {
       });
     }
 
-    // Settings opens its add-host and danger-zone dialogs over its frame: the
-    // page is darkened by both backdrops, so the tab is too.
-    test("a dialog over the modal frame dims the joined tab like the sheet under both", async () => {
-      const page = getPage();
-      const points = await locateSamplePoints(page);
-      const bare = await sampleTabAndSheet(page, points);
+    // Settings opens its add-host and danger-zone dialogs over its frame, and
+    // a sheet opens a confirm dialog over itself: the page is darkened by both
+    // backdrops, so the tab is too.
+    const STACKED: ReadonlyArray<{
+      readonly name: string;
+      readonly first: Kind;
+      readonly both: Kind;
+    }> = [
+      {
+        name: "a dialog over the modal frame",
+        first: "frame",
+        both: "frame+dialog",
+      },
+      {
+        name: "a dialog over a dialog",
+        first: "dialog",
+        both: "dialog+dialog",
+      },
+    ];
+    for (const { name, first, both } of STACKED) {
+      test(`${name} dims the joined tab like the sheet under both`, async () => {
+        const page = getPage();
+        const points = await locateSamplePoints(page);
+        const bare = await sampleTabAndSheet(page, points);
 
-      await openAndSettle(page, "frame");
-      const frameOnly = await sampleTabAndSheet(page, points);
+        await openAndSettle(page, first);
+        const firstOnly = await sampleTabAndSheet(page, points);
 
-      await openAndSettle(page, "frame+dialog");
-      const stacked = await sampleTabAndSheet(page, points);
-      expect(
-        darkening(frameOnly.sheet, stacked.sheet),
-        `the dialog darkens the sheet further (${rgbText(frameOnly.sheet)} to ${rgbText(stacked.sheet)})`,
-      ).toBeGreaterThanOrEqual(MIN_STACKED_DARKENING);
-      expect(
-        sameRgb(stacked.tab, stacked.sheet, SAME_FILL_TOLERANCE),
-        `stacked modals open: tab ${rgbText(stacked.tab)} is the dimmed sheet's ${rgbText(stacked.sheet)}`,
-      ).toBe(true);
-      expect(
-        darkening(frameOnly.tab, stacked.tab),
-        `the dialog darkens the joined tab further (${rgbText(frameOnly.tab)} to ${rgbText(stacked.tab)})`,
-      ).toBeGreaterThanOrEqual(MIN_STACKED_DARKENING);
+        await openAndSettle(page, both);
+        const stacked = await sampleTabAndSheet(page, points);
+        expect(
+          darkening(firstOnly.sheet, stacked.sheet),
+          `the second backdrop darkens the sheet further (${rgbText(firstOnly.sheet)} to ${rgbText(stacked.sheet)})`,
+        ).toBeGreaterThanOrEqual(MIN_STACKED_DARKENING);
+        expect(
+          sameRgb(stacked.tab, stacked.sheet, SAME_FILL_TOLERANCE),
+          `stacked modals open: tab ${rgbText(stacked.tab)} is the dimmed sheet's ${rgbText(stacked.sheet)}`,
+        ).toBe(true);
+        expect(
+          darkening(firstOnly.tab, stacked.tab),
+          `the second backdrop darkens the joined tab further (${rgbText(firstOnly.tab)} to ${rgbText(stacked.tab)})`,
+        ).toBeGreaterThanOrEqual(MIN_STACKED_DARKENING);
 
-      await closeAndSettle(page);
-      const closed = await sampleTabAndSheet(page, points);
-      expect(
-        sameRgb(closed.tab, bare.tab, SAME_FILL_TOLERANCE),
-        `modals closed: tab ${rgbText(closed.tab)} is back to ${rgbText(bare.tab)}`,
-      ).toBe(true);
-    });
+        await closeAndSettle(page);
+        const closed = await sampleTabAndSheet(page, points);
+        expect(
+          sameRgb(closed.tab, bare.tab, SAME_FILL_TOLERANCE),
+          `modals closed: tab ${rgbText(closed.tab)} is back to ${rgbText(bare.tab)}`,
+        ).toBe(true);
+      });
+    }
   });
 }

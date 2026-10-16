@@ -410,6 +410,8 @@ interface LayoutCanvasProbe {
    * is `PromotableModalFrame`, the Settings and History modal, whose backdrop
    * is `bg-black/30`; `frame+dialog` is that frame with a shared `Dialog`
    * opened over it, as Settings' add-host and danger-zone dialogs are;
+   * `dialog+dialog` is two shared `Dialog`s, the second over the first, as a
+   * confirm dialog opens over a sheet;
    * `blocking` is `MigrationBlockingModalHost`, whose backdrop is `bg-black/40`
    * (the window host modal shares it, but needs a live host narration). All
    * are the production components, so the backdrop a check measures is the
@@ -699,7 +701,13 @@ function applyFixtureIndicators(): void {
 queryClient.getQueryCache().subscribe(applyFixtureIndicators);
 
 /** Which real modal `openBackdrop` has open, if any. */
-type BackdropKind = "dialog" | "frame" | "frame+dialog" | "blocking" | null;
+type BackdropKind =
+  | "dialog"
+  | "frame"
+  | "frame+dialog"
+  | "dialog+dialog"
+  | "blocking"
+  | null;
 let openBackdropKind: BackdropKind = null;
 const backdropListeners = new Set<() => void>();
 function setOpenBackdrop(kind: BackdropKind): void {
@@ -753,13 +761,27 @@ function ProbeBackdrops(): ReactNode {
         </PromotableModalFrame>
       </DialogPrimitive.Root>
       <Dialog
-        open={kind === "dialog" || kind === "frame+dialog"}
+        open={
+          kind === "dialog" ||
+          kind === "frame+dialog" ||
+          kind === "dialog+dialog"
+        }
         onOpenChange={(open) => {
           if (!open) setOpenBackdrop(null);
         }}
       >
         <DialogContent aria-describedby={undefined}>
           <DialogTitle>Backdrop probe</DialogTitle>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={kind === "dialog+dialog"}
+        onOpenChange={(open) => {
+          if (!open) setOpenBackdrop(null);
+        }}
+      >
+        <DialogContent aria-describedby={undefined}>
+          <DialogTitle>Second backdrop probe</DialogTitle>
         </DialogContent>
       </Dialog>
       <MigrationBlockingModalHost />

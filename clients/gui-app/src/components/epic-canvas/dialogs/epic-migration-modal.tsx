@@ -111,6 +111,9 @@ export function EpicMigrationModal(props: EpicMigrationModalProps): ReactNode {
         <div
           data-slot="dialog-overlay"
           data-testid="epic-migration-overlay"
+          // Inside the epic surface, below the title band: the window's
+          // overlay inset (`window-chrome.css`) would leave its top uncovered.
+          data-overlay-scope="surface"
           className="absolute inset-0 bg-black/40 transition-opacity duration-100 supports-backdrop-filter:backdrop-blur-xs data-open:animate-in data-open:fade-in-0"
         />
         <DialogPrimitive.Content

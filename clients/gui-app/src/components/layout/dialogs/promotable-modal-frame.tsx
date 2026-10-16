@@ -7,6 +7,7 @@ import {
   dialogContentInertToPointer,
   interactionStartedOnOverlay,
 } from "@/components/layout/dialogs/dialog-outside-guard";
+import { BackdropDimSource } from "@/components/ui/backdrop-dim-source";
 
 interface PromotableModalFrameProps {
   readonly icon: ReactNode;
@@ -88,16 +89,15 @@ export function PromotableModalFrame(
       <DialogPrimitive.Overlay
         ref={overlayRef}
         data-slot="dialog-overlay"
-        // Its dim is stronger than the shared dialog's: the joined tab's dim
-        // matches it by this (`window-chrome.css`).
-        data-backdrop-dim="30"
         className="fixed inset-0 isolate z-50 bg-black/30 transition-opacity duration-100 supports-backdrop-filter:backdrop-blur-xs data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0"
         onPointerDown={() => {
           nestedLayerOwnedPointerDownRef.current = dialogContentInertToPointer(
             contentRef.current,
           );
         }}
-      />
+      >
+        <BackdropDimSource strength="30" />
+      </DialogPrimitive.Overlay>
       <DialogPrimitive.Content
         ref={contentRef}
         data-slot="dialog-content"
