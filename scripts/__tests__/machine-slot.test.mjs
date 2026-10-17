@@ -1038,6 +1038,9 @@ describe("machine-slot.sh auto admission", () => {
     const holder = await holdFile(join(dir, "traycer-slot-file-one.1.lock"));
     const a = runSlot(["file-one", "auto", ...markerCommand("A", "0.1")], env);
     // Under low memory, with file 1 held, A is not alone and must wait.
+    // Its ticket proves it reached the refusal path, after probing, so the
+    // empty log below is not just a caller that has not started yet.
+    await waitForFiles(dir, (names) => names.some(isTicket));
     await pause(2000);
     expect(readLogLines(logFile)).toEqual([]);
 
@@ -1060,6 +1063,9 @@ describe("machine-slot.sh auto admission", () => {
 
     const holder = await holdFile(join(dir, "traycer-slot-beyond.3.lock"));
     const a = runSlot(["beyond", "auto", ...markerCommand("A", "0.1")], env);
+    // Its ticket proves it reached the refusal path, after probing, so the
+    // empty log below is not just a caller that has not started yet.
+    await waitForFiles(dir, (names) => names.some(isTicket));
     await pause(2000);
     expect(readLogLines(logFile)).toEqual([]);
 
@@ -1081,6 +1087,9 @@ describe("machine-slot.sh auto admission", () => {
     const a = runSlot(["bigpool", "auto", ...markerCommand("A", "0.1")], env);
     // 20 GiB would admit a lone caller (16 GiB), but with that holder counted
     // the threshold is 28 GiB.
+    // Its ticket proves it reached the refusal path, after probing, so the
+    // empty log below is not just a caller that has not started yet.
+    await waitForFiles(dir, (names) => names.some(isTicket));
     await pause(2000);
     expect(readLogLines(logFile)).toEqual([]);
 
