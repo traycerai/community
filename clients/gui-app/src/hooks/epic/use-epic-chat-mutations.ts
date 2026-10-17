@@ -781,11 +781,27 @@ function useEpicArchiveChatMutation(
           );
         }
       },
-      onError:
-        failurePresentation === "individual"
-          ? (error) =>
-              toastFromOwnerHostWriteError(error, "Couldn't archive agent.")
-          : undefined,
+      onError: (error, variables, ctx) => {
+        // The host may have committed the write before its answer was lost,
+        // so refresh every list it could have changed - the routed owner's,
+        // the viewer's, the host the call went to and the visible session's -
+        // whichever way the failure is presented.
+        if (ctx !== undefined) {
+          const handle = getOpenEpicRegistry().peek(variables.epicId);
+          for (const hostId of new Set([
+            ctx.hostId,
+            ctx.viewerHostId,
+            ctx.servingHostId,
+            handle?.hostId ?? null,
+          ])) {
+            invalidateEpicChatRecords(queryClient, hostId);
+            invalidateEpicTuiAgentRecords(queryClient, hostId);
+          }
+        }
+        if (failurePresentation === "individual") {
+          toastFromOwnerHostWriteError(error, "Couldn't archive agent.");
+        }
+      },
     },
   });
 }
@@ -1123,21 +1139,24 @@ function useEpicDeleteChatMutation(
         // Cleanup can reject after the host committed the tombstone. Release
         // the provisional hide for genuine refusals, but also refresh so a
         // committed deletion does not leave the old cloud answer visible.
-        if (ctx !== undefined && ctx.viewerUserId !== null) {
+        if (ctx !== undefined) {
           const handle = getOpenEpicRegistry().peek(variables.epicId);
+          const viewerUserId = ctx.viewerUserId;
           // The stand-in too: it may have committed the delete before the
-          // response or the cleanup failed, exactly as the owner may.
+          // response or the cleanup failed, exactly as the owner may. The
+          // record lists and the cloud chat lists, as success refreshes both.
           for (const hostId of new Set([
             ctx.hostId,
             ctx.viewerHostId,
             ctx.servingHostId,
             handle?.hostId ?? null,
           ])) {
-            if (hostId === null) continue;
+            invalidateEpicChatRecords(queryClient, hostId);
+            if (hostId === null || viewerUserId === null) continue;
             void queryClient.invalidateQueries({
               queryKey: cloudChatListQueryKey({
                 hostId,
-                viewerUserId: ctx.viewerUserId,
+                viewerUserId,
                 taskId: variables.epicId,
               }),
             });

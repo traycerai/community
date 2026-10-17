@@ -172,15 +172,27 @@ function useEpicDeleteTuiAgentMutation(
           });
         }
       },
-      onError:
-        failurePresentation === "individual"
-          ? (error) => {
-              toastFromOwnerHostWriteError(
-                error,
-                "Couldn't delete terminal agent.",
-              );
-            }
-          : undefined,
+      onError: (error, _variables, ctx) => {
+        // The host may have committed the delete before its answer was lost,
+        // so refresh every list it could have changed - the routed owner's,
+        // the viewer's and the host the call went to - whichever way the
+        // failure is presented.
+        if (ctx !== undefined) {
+          for (const hostId of new Set([
+            ctx.hostId,
+            ctx.viewerHostId,
+            ctx.servingHostId,
+          ])) {
+            invalidateEpicTuiAgentRecords(queryClient, hostId);
+          }
+        }
+        if (failurePresentation === "individual") {
+          toastFromOwnerHostWriteError(
+            error,
+            "Couldn't delete terminal agent.",
+          );
+        }
+      },
     },
   });
 }

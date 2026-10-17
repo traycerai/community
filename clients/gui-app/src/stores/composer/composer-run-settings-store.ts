@@ -90,6 +90,15 @@ interface ComposerRunSettingsStore {
     hostId: string | null,
   ) => ChatRunSettings | null;
   clearEpicRunSettings: (epicIds: ReadonlyArray<string>) => void;
+  /**
+   * Clear these epics' settings on one host only: for a Task deleted on that
+   * host alone (a local-homed Task), whose id another host may still serve.
+   * The host-less legacy entries are left, since they name no host.
+   */
+  clearEpicRunSettingsForHost: (
+    epicIds: ReadonlyArray<string>,
+    hostId: string,
+  ) => void;
   resetForTests: () => void;
 }
 
@@ -303,6 +312,23 @@ export const useComposerRunSettingsStore = create<ComposerRunSettingsStore>()(
                 epicRunSettingsByEpicHost: nextByEpicHost,
                 legacyEpicRunSettingsByEpicId: nextLegacy,
               }
+            : state;
+        });
+      },
+      clearEpicRunSettingsForHost: (epicIds, hostId) => {
+        if (epicIds.length === 0) return;
+        const epicIdSet = new Set(epicIds);
+        set((state) => {
+          let changed = false;
+          const nextByEpicHost = { ...state.epicRunSettingsByEpicHost };
+          for (const key of Object.keys(nextByEpicHost)) {
+            if (!epicIdSet.has(epicIdOfKey(key))) continue;
+            if (hostIdOfKey(key) !== hostId) continue;
+            delete nextByEpicHost[key];
+            changed = true;
+          }
+          return changed
+            ? { epicRunSettingsByEpicHost: nextByEpicHost }
             : state;
         });
       },

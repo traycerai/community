@@ -192,7 +192,15 @@ describe("agent-record write outcome minors", () => {
         ownerHostId: "",
       }).success,
     ).toBe(false);
-    // The frozen lines strip it, as they strip `outcome`.
+    // Each frozen predecessor line strips it, as it strips `outcome`.
+    expect(
+      deleteChatResponseSchemaV11.parse({
+        deleted: true,
+        publicationChatId: null,
+        outcome: "requested",
+        ownerHostId: "host-b",
+      }),
+    ).toEqual({ deleted: true, publicationChatId: null });
     expect(
       setChatArchivedResponseSchemaV10.parse({
         updated: true,
@@ -200,6 +208,22 @@ describe("agent-record write outcome minors", () => {
         ownerHostId: "host-b",
       }),
     ).toEqual({ updated: true });
+    expect(
+      deleteTuiAgentResponseSchemaV10.parse({
+        deleted: true,
+        outcome: "requested",
+        ownerHostId: "host-b",
+      }),
+    ).toEqual({ deleted: true });
+    expect(
+      agentArchiveResponseSchemaV10.parse({
+        agentId: "agent-1",
+        archived: true,
+        updated: true,
+        outcome: "requested",
+        ownerHostId: "host-b",
+      }),
+    ).toEqual({ agentId: "agent-1", archived: true, updated: true });
   });
 
   it("each upgrade path leaves the request alone and answers `applied`", () => {

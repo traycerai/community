@@ -1091,7 +1091,10 @@ describe("useEpicArchiveChats", () => {
     });
     const childOptions = getCapturedMutation("epic.setChatArchived")
       .options as { readonly onError: unknown };
-    expect(childOptions.onError).toBeUndefined();
+    // The per-row callback only refreshes the lists a failed write could
+    // have changed; the batch reports the failure once (asserted below, and
+    // with a real per-row mutation in the archive-routing stand-in suite).
+    expect(typeof childOptions.onError).toBe("function");
 
     act(() => {
       result.current.mutate({
