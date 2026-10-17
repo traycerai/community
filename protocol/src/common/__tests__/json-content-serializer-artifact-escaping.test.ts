@@ -337,3 +337,42 @@ describe("artifact list items with several blocks", () => {
     expect(artifact(list)).toBe("- a\n  > q\n  >\n  > r");
   });
 });
+
+describe("artifact hard breaks", () => {
+  const hardBreak: JsonContent = { type: "hardBreak" };
+  const brokenParagraph = (): JsonContent =>
+    paragraph([plain("First"), hardBreak, plain("Second")]);
+
+  it("writes a hard break as a backslash and newline in an artifact and a bare newline in a prompt", () => {
+    const content = doc([brokenParagraph()]);
+    expect(artifact(content)).toBe("First\\\nSecond");
+    expect(prompt(content)).toBe("First\nSecond");
+  });
+
+  it("indents the line after a hard break under the bullet item's marker", () => {
+    const content = doc([bulletList([listItem([brokenParagraph()])])]);
+    expect(artifact(content)).toBe("- First\\\n  Second");
+  });
+
+  it("keeps the bare newline in a task item, whose parser would keep the backslash as text", () => {
+    const content = doc([
+      {
+        type: "taskList",
+        content: [
+          {
+            type: "taskItem",
+            attrs: { checked: false },
+            content: [brokenParagraph()],
+          },
+        ],
+      },
+    ]);
+    expect(artifact(content)).toBe("- [ ] First\n  Second");
+  });
+
+  it("keeps the bare newline in a table cell, as the prompt serializer does", () => {
+    const content = tableDoc([plain("First"), hardBreak, plain("Second")]);
+    expect(artifact(content)).toBe(prompt(content));
+    expect(artifact(content)).not.toContain("\\");
+  });
+});

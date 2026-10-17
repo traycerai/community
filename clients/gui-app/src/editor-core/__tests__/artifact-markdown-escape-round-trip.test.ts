@@ -20,41 +20,90 @@ const { markdownManager, schema } = artifactDocumentBundle;
 
 const OPTIONS = { mentionFormat: "llm", platform: "POSIX" } as const;
 
-const CORPUS: ReadonlyArray<{ readonly name: string; readonly md: string }> = [
+const CORPUS: ReadonlyArray<{
+  readonly name: string;
+  readonly md: string;
+  readonly hasHardBreak: boolean;
+}> = [
   {
     name: "identifier with underscores",
     md: "foo_bar_baz and snake_case_name",
+    hasHardBreak: false,
   },
-  { name: "bare URL with underscores", md: "see https://example.com/a_b_c" },
-  { name: "autolink with underscores", md: "<https://example.com/a_b>" },
-  { name: "inline code holding markup", md: "`a*b_c[d]`" },
-  { name: "escaped asterisk", md: "2 \\* 3" },
-  { name: "escaped backtick", md: "a \\` b" },
-  { name: "escaped open bracket", md: "\\[x\\]" },
-  { name: "escaped close bracket", md: "a \\] b" },
-  { name: "escaped angle brackets", md: "\\<b\\>" },
-  { name: "escaped leading underscore", md: "\\_leading" },
-  { name: "escaped tildes", md: "\\~tilde\\~" },
-  { name: "escaped entity", md: "\\&amp;" },
-  { name: "backslash before punctuation", md: "a \\\\* b" },
-  { name: "escaped heading marker", md: "\\# not a heading" },
-  { name: "escaped bullet marker", md: "\\- not a list" },
-  { name: "escaped ordered marker", md: "1\\. not ordered" },
-  { name: "escaped quote marker", md: "\\> not a quote" },
-  { name: "escaped thematic break", md: "\\---" },
+  {
+    name: "bare URL with underscores",
+    md: "see https://example.com/a_b_c",
+    hasHardBreak: false,
+  },
+  {
+    name: "autolink with underscores",
+    md: "<https://example.com/a_b>",
+    hasHardBreak: false,
+  },
+  { name: "inline code holding markup", md: "`a*b_c[d]`", hasHardBreak: false },
+  { name: "escaped asterisk", md: "2 \\* 3", hasHardBreak: false },
+  { name: "escaped backtick", md: "a \\` b", hasHardBreak: false },
+  { name: "escaped open bracket", md: "\\[x\\]", hasHardBreak: false },
+  { name: "escaped close bracket", md: "a \\] b", hasHardBreak: false },
+  { name: "escaped angle brackets", md: "\\<b\\>", hasHardBreak: false },
+  { name: "escaped leading underscore", md: "\\_leading", hasHardBreak: false },
+  { name: "escaped tildes", md: "\\~tilde\\~", hasHardBreak: false },
+  { name: "escaped entity", md: "\\&amp;", hasHardBreak: false },
+  {
+    name: "backslash before punctuation",
+    md: "a \\\\* b",
+    hasHardBreak: false,
+  },
+  {
+    name: "escaped heading marker",
+    md: "\\# not a heading",
+    hasHardBreak: false,
+  },
+  { name: "escaped bullet marker", md: "\\- not a list", hasHardBreak: false },
+  {
+    name: "escaped ordered marker",
+    md: "1\\. not ordered",
+    hasHardBreak: false,
+  },
+  { name: "escaped quote marker", md: "\\> not a quote", hasHardBreak: false },
+  { name: "escaped thematic break", md: "\\---", hasHardBreak: false },
   {
     name: "link with underscores",
     md: "[text_with_underscore](https://example.com/x_y)",
+    hasHardBreak: false,
   },
   {
     name: "table with asterisk and underscore in a cell",
     md: "| h | i |\n| --- | --- |\n| a\\*b | c\\_d |",
+    hasHardBreak: false,
   },
-  { name: "blockquote with bold", md: "> quoted **bold**" },
+  {
+    name: "blockquote with bold",
+    md: "> quoted **bold**",
+    hasHardBreak: false,
+  },
   // A list item's later paragraph is traycerai/traycer#2574's fixed point.
-  { name: "heading with asterisk", md: "# Title with \\* star" },
-  { name: "bold containing underscore", md: "**bold \\_ text**" },
-  { name: "italic containing underscore", md: "*italic \\_ text*" },
+  { name: "backslash hard break", md: "First\\\nSecond", hasHardBreak: true },
+  {
+    name: "backslash hard break in a bullet item",
+    md: "- First\\\n  Second",
+    hasHardBreak: true,
+  },
+  {
+    name: "heading with asterisk",
+    md: "# Title with \\* star",
+    hasHardBreak: false,
+  },
+  {
+    name: "bold containing underscore",
+    md: "**bold \\_ text**",
+    hasHardBreak: false,
+  },
+  {
+    name: "italic containing underscore",
+    md: "*italic \\_ text*",
+    hasHardBreak: false,
+  },
 ];
 
 function parseJson(md: string): JsonContent {
@@ -92,6 +141,13 @@ function serialize(fragment: Y.XmlFragment): string {
   return jsonContentToArtifactMarkdown(proseMirrorJsonOf(fragment), OPTIONS);
 }
 
+function containsHardBreak(node: JsonContent): boolean {
+  return (
+    node.type === "hardBreak" ||
+    (node.content ?? []).some((child) => containsHardBreak(child))
+  );
+}
+
 function textOf(node: JsonContent): string {
   const own = node.text ?? "";
   const children = (node.content ?? []).map(textOf).join("\n");
@@ -99,7 +155,7 @@ function textOf(node: JsonContent): string {
 }
 
 describe("artifact markdown escaping round trip (traycer#1563)", () => {
-  describe.each(CORPUS)("$name", ({ md }) => {
+  describe.each(CORPUS)("$name", ({ md, hasHardBreak }) => {
     const json1 = parseJson(md);
     const fragment1 = fragmentOf(json1);
     const md1 = serialize(fragment1);
@@ -116,6 +172,11 @@ describe("artifact markdown escaping round trip (traycer#1563)", () => {
       expect(proseMirrorJsonOf(fragment2)).toEqual(
         proseMirrorJsonOf(fragment1),
       );
+    });
+
+    it("parses a hard break node where the markdown has one", () => {
+      expect(containsHardBreak(json1)).toBe(hasHardBreak);
+      expect(containsHardBreak(json2)).toBe(hasHardBreak);
     });
 
     it("keeps the text content and leaks no escape backslash into it", () => {

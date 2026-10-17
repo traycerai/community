@@ -65,6 +65,10 @@ export interface ValidationResult {
 interface SerializerContext {
   options: SerializerOptions;
   listDepth: number;
+  // The column the current list's item markers start at. A nested list starts
+  // at its parent item's content column, which is past an ordered marker's
+  // width (`1. ` is three columns), not at `listDepth * listIndent`.
+  listColumn: number;
   orderedListIndex: number;
   inListItem: boolean;
   // True while rendering the content of a GFM table cell: inline text is
@@ -78,6 +82,10 @@ interface SerializerContext {
   // (`jsonContentToMarkdown`), because a model or a person reads those
   // directly and gains nothing from a backslash.
   escapeText: boolean;
+  // True while rendering the content of a task item (not of a list nested in
+  // one). The parser splits a task item's lines into paragraphs, so a hard
+  // break there cannot be written as one; see `serializeHardBreak`.
+  inTaskItem: boolean;
 }
 
 function createContext(
@@ -91,10 +99,12 @@ function createContext(
       ...options,
     },
     listDepth: 0,
+    listColumn: 0,
     orderedListIndex: 0,
     inListItem: false,
     inTableCell: false,
     escapeText,
+    inTaskItem: false,
   };
 }
 
@@ -443,6 +453,8 @@ const TABLE_CELL_CONTAINER_TYPES: ReadonlySet<string> = new Set([
   "bulletList",
   "orderedList",
   "listItem",
+  "taskList",
+  "taskItem",
   "table",
 ]);
 
@@ -948,8 +960,14 @@ function serializeText(node: JsonContent): string {
   return serializeTextRun([node]);
 }
 
-function serializeHardBreak(): string {
-  return "\n";
+// A bare newline is a soft break to the parser: in artifact Markdown, which
+// is parsed back, the hard break would come back as a newline inside the
+// text. A backslash before the newline is CommonMark's hard break, and reads
+// back as one. Two places keep the bare newline: a table cell, which cannot
+// hold a line break at all, and a task item, whose parser splits the item's
+// lines into paragraphs and would keep the backslash as text.
+function serializeHardBreak(ctx: SerializerContext): string {
+  return ctx.escapeText && !ctx.inTableCell && !ctx.inTaskItem ? "\\\n" : "\n";
 }
 
 function serializeCodeBlock(node: JsonContent, ctx: SerializerContext): string {
@@ -1128,16 +1146,67 @@ function serializeOrderedList(
   return items.join("\n");
 }
 
+function serializeTaskList(node: JsonContent, ctx: SerializerContext): string {
+  const items: string[] = [];
+  const childCtx: SerializerContext = {
+    ...ctx,
+    listDepth: ctx.listDepth + 1,
+  };
+
+  if (node.content) {
+    for (const child of node.content) {
+      if (child.type === "taskItem") {
+        items.push(serializeTaskItem(child, childCtx));
+      }
+    }
+  }
+
+  return items.join("\n");
+}
+
+// `- [ ] ` / `- [x] `, the GFM task list item the artifact parser reads back
+// as `taskItem` with `checked`. Continuation lines indent to the bullet's
+// content column, not past the checkbox: four more columns would re-parse
+// them as an indented code block.
+function serializeTaskItem(node: JsonContent, ctx: SerializerContext): string {
+  const checked = node.attrs?.checked === true;
+  return serializeListItemWithMarker(
+    node,
+    ctx,
+    ctx.options.bulletMarker ?? "-",
+    checked ? "[x] " : "[ ] ",
+  );
+}
+
 function serializeListItem(
   node: JsonContent,
   ctx: SerializerContext,
   ordered: boolean,
   index: number,
 ): string {
-  const baseIndent = " ".repeat(
-    (ctx.listDepth - 1) * (ctx.options.listIndent ?? 2),
-  );
   const marker = ordered ? `${index}.` : (ctx.options.bulletMarker ?? "-");
+  return serializeListItemWithMarker(node, ctx, marker, "");
+}
+
+const LIST_BLOCK_TYPES: ReadonlySet<string> = new Set([
+  "bulletList",
+  "orderedList",
+  "taskList",
+]);
+
+const SELF_INDENTING_BLOCK_TYPES: ReadonlySet<string> = new Set([
+  "codeBlock",
+  "mermaidBlock",
+  "uiPreviewBlock",
+]);
+
+function serializeListItemWithMarker(
+  node: JsonContent,
+  ctx: SerializerContext,
+  marker: string,
+  checkbox: string,
+): string {
+  const baseIndent = " ".repeat(ctx.listColumn);
 
   const lines: string[] = [];
   let firstLine = true;
@@ -1145,50 +1214,71 @@ function serializeListItem(
   const itemCtx: SerializerContext = {
     ...ctx,
     inListItem: true,
+    inTaskItem: checkbox !== "",
   };
 
   const continuationIndent = " ".repeat(baseIndent.length + marker.length + 1);
-
-  if (ctx.escapeText) {
-    // Artifact Markdown is parsed back into the document, so every line of
-    // the item has to read as the item's content: a nested list indents
-    // itself by its own depth, every other block's lines sit under the
-    // marker (the first block's later lines too), and a blank line stays
-    // blank rather than becoming trailing whitespace.
-    const continued = (line: string, child: JsonContent): string =>
-      line.length === 0 ||
-      child.type === "bulletList" ||
-      child.type === "orderedList"
-        ? line
-        : `${continuationIndent}${line}`;
-    for (const child of node.content ?? []) {
-      const childLines = serializeNode(child, itemCtx).split("\n");
-      if (firstLine) {
-        lines.push(`${baseIndent}${marker} ${childLines[0] ?? ""}`);
-        for (const line of childLines.slice(1)) {
-          lines.push(continued(line, child));
-        }
-        firstLine = false;
-        continue;
-      }
-      for (const line of childLines) {
-        lines.push(continued(line, child));
-      }
-    }
-    return lines.join("\n");
-  }
+  // A nested list starts at this item's content column, never short of it:
+  // under `1. ` a list at two columns is not inside the item, and a parser
+  // that strips the content column from it moves it on every pass.
+  const nestedListCtx: SerializerContext = {
+    ...itemCtx,
+    listColumn:
+      baseIndent.length +
+      Math.max(ctx.options.listIndent ?? 2, marker.length + 1),
+  };
 
   if (node.content) {
     for (const child of node.content) {
-      const serialized = serializeNode(child, itemCtx);
+      // A fenced block indents itself by list depth; under an item it takes
+      // the continuation indent below instead, or every round trip would
+      // push it one level deeper. As the item's FIRST child it still starts
+      // on the line after the marker: the ordered and task item parsers read
+      // an item's first line as a paragraph, so a fence opened on the marker
+      // line comes back as text. The empty marker line is also exactly what
+      // an item whose first paragraph is empty writes, so both shapes read
+      // back the same.
+      const fenced = SELF_INDENTING_BLOCK_TYPES.has(child.type ?? "");
+      const serialized = serializeNode(
+        child,
+        fenced
+          ? { ...itemCtx, listDepth: 0 }
+          : LIST_BLOCK_TYPES.has(child.type ?? "")
+            ? nestedListCtx
+            : itemCtx,
+      );
 
       if (firstLine) {
-        lines.push(`${baseIndent}${marker} ${serialized}`);
+        if (fenced) {
+          lines.push(`${baseIndent}${marker} ${checkbox}`);
+          for (const line of serialized.split("\n")) {
+            lines.push(`${continuationIndent}${line}`);
+          }
+        } else if (ctx.escapeText) {
+          // Artifact Markdown is parsed back into the document, so a first
+          // block's later lines (a multi-line quote, say) sit at the item's
+          // content column too: at column zero they leave the item.
+          const [head = "", ...rest] = serialized.split("\n");
+          lines.push(`${baseIndent}${marker} ${checkbox}${head}`);
+          for (const line of rest) {
+            lines.push(
+              LIST_BLOCK_TYPES.has(child.type ?? "")
+                ? line
+                : `${continuationIndent}${line}`,
+            );
+          }
+        } else {
+          lines.push(`${baseIndent}${marker} ${checkbox}${serialized}`);
+        }
         firstLine = false;
       } else {
+        // A later paragraph is its own paragraph only behind a blank line:
+        // directly under the line before, it reads back as that line's
+        // continuation, and on the next pass falls out of the item.
+        if (child.type === "paragraph") lines.push("");
         const childLines = serialized.split("\n");
         for (const line of childLines) {
-          if (child.type === "bulletList" || child.type === "orderedList") {
+          if (LIST_BLOCK_TYPES.has(child.type ?? "")) {
             lines.push(line);
           } else {
             lines.push(`${continuationIndent}${line}`);
@@ -1197,6 +1287,11 @@ function serializeListItem(
       }
     }
   }
+
+  // An item with no children still holds its place: the ordered item parser
+  // gives `2. ` with nothing after it no paragraph, and dropping the line
+  // would split the list around it.
+  if (lines.length === 0) lines.push(`${baseIndent}${marker} ${checkbox}`);
 
   return lines.join("\n");
 }
@@ -1338,7 +1433,7 @@ function serializeNode(node: JsonContent, ctx: SerializerContext): string {
     case "text":
       return serializeText(node);
     case "hardBreak":
-      return serializeHardBreak();
+      return serializeHardBreak(ctx);
     case "image":
       return serializeImage(node);
     case "heading":
@@ -1349,6 +1444,10 @@ function serializeNode(node: JsonContent, ctx: SerializerContext): string {
       return serializeOrderedList(node, ctx);
     case "listItem":
       return serializeListItem(node, ctx, false, 0);
+    case "taskList":
+      return serializeTaskList(node, ctx);
+    case "taskItem":
+      return serializeTaskItem(node, ctx);
     case "codeBlock":
       return serializeCodeBlock(node, ctx);
     case "mermaidBlock":
@@ -1387,11 +1486,25 @@ function serializeDocument(node: JsonContent, ctx: SerializerContext): string {
   return blocks.join("\n\n");
 }
 
+// An empty task or ordered item keeps the one space after its marker, on the
+// last line too. `- [ ]` alone re-parses as a bullet item whose text is
+// `[ ]`, losing the checkbox, and `1.` alone is not an ordered item to the
+// artifact parser, which needs whitespace after the number.
+const EMPTY_ITEM_MARKER_LINE = /^[ \t]*(?:[-*+] \[[ xX]\]|\d+[.)])$/;
+
 function normalizeMarkdown(md: string): string {
-  return md
+  const normalized = md
     .replace(/\n{3,}/g, "\n\n")
-    .replace(/[ \t]+$/gm, "")
-    .trim();
+    .replace(/^(.*?)[ \t]+$/gm, (_line: string, kept: string) =>
+      EMPTY_ITEM_MARKER_LINE.test(kept) ? `${kept} ` : kept,
+    )
+    .trimStart();
+  const trimmed = normalized.trimEnd();
+  const lastLine = trimmed.slice(trimmed.lastIndexOf("\n") + 1);
+  return normalized.charAt(trimmed.length) === " " &&
+    EMPTY_ITEM_MARKER_LINE.test(lastLine)
+    ? `${trimmed} `
+    : trimmed;
 }
 
 export function jsonContentToMarkdown(

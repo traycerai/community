@@ -123,6 +123,13 @@ const LOSSY_NODE_TYPES: ReadonlyMap<string, ContentRecoveryLoss> = new Map([
   // table node and no paste can rebuild one from markdown table text. The
   // grid comes back as rows of prose.
   ["table", "table"],
+  // A checklist is ARTIFACT-only too: `buildComposerExtensions` has no task
+  // list extension, so the composer schema cannot hold either node and a
+  // paste cannot rebuild one. Classified so the serializer's arms are covered,
+  // and as `unknown` - the generic qualification such a node already earned
+  // unclassified - because no specific loss kind names it.
+  ["taskList", "unknown"],
+  ["taskItem", "unknown"],
 ]);
 
 /**
@@ -254,15 +261,15 @@ const BULLET_MARKER = "-";
 const LIST_INDENT = 2;
 
 /**
- * Blocks the serializer indents by DEPTH even inside a list item.
+ * Blocks the serializer places by the ITEM, not by depth, inside a list item.
  *
- * `getIndent` is `listDepth * listIndent`, and the three fence serializers
- * apply it to every line - the opening fence, the body, and the closing fence.
- * `serializeParagraph` deliberately does NOT (`inListItem` collapses its indent
- * to ""), so this is fence-specific rather than a property of block children in
- * general. Our seam emits fences at column zero, so the depth indent has to be
- * put back here or a continuation fence goes out two columns short of what the
- * agent received.
+ * The three fence serializers indent every line by `getIndent` (`listDepth *
+ * listIndent`) on their own, but `serializeListItemWithMarker` renders a fence
+ * child at depth zero and indents it itself: the first line goes behind the
+ * marker when the fence is the item's first child, and every other line takes
+ * the continuation indent. Our seam emits fences at column zero, which is
+ * exactly what the serializer starts from, so the item's indents are the only
+ * ones to add.
  */
 const FENCE_NODE_TYPES: ReadonlySet<string> = new Set([
   "codeBlock",
@@ -511,7 +518,20 @@ function prepareForProjection(
  * exactly what this module counts as a loss.
  */
 function numberedListItems(list: JsonContent): ReadonlyArray<JsonContent> {
-  return listItemLines(list, 1).map((line) => ({
+  // A blank line inside the list (the one before a later paragraph) rides on
+  // the line after it: a paragraph of its own would project to nothing and be
+  // dropped, closing up a gap the serializer sends.
+  const lines: string[] = [];
+  let pendingBlank = "";
+  for (const line of listItemLines(list, 0)) {
+    if (line === "") {
+      pendingBlank += "\n";
+      continue;
+    }
+    lines.push(`${pendingBlank}${line}`);
+    pendingBlank = "";
+  }
+  return lines.map((line) => ({
     type: "paragraph",
     content: [{ type: "text", text: line }],
   }));
@@ -532,22 +552,20 @@ function numberedListItems(list: JsonContent): ReadonlyArray<JsonContent> {
  * received, and a nested bullet followed by a continuation paragraph came back
  * as two identically-indented lines with no way to tell which was which.
  *
- * The two indents are DIFFERENT and both come from the serializer. A
- * continuation paragraph is indented past its own marker
- * (`baseIndent + marker + 1`), but a NESTED LIST is indented by DEPTH alone -
- * `serializeListItem` pushes a nested list's lines unchanged, and the nested
- * level computes its own `baseIndent` from `listDepth`. Accumulating marker
- * widths instead put a sub-list under `1. ` at three columns where the
- * serializer puts it at two.
+ * Both indents come from the serializer. A continuation paragraph is indented
+ * past its own marker (`baseIndent + marker + 1`), and a NESTED LIST starts at
+ * that same content column, never short of the list indent - so a sub-list
+ * under `1. ` is at three columns and under `- ` at two. `column` is where
+ * this level's markers start.
  */
 function listItemLines(
   list: JsonContent,
-  depth: number,
+  column: number,
 ): ReadonlyArray<string> {
   const rawStart = list.attrs?.start;
   const ordered = list.type === "orderedList";
   const start = typeof rawStart === "number" ? rawStart : 1;
-  const baseIndent = " ".repeat((depth - 1) * LIST_INDENT);
+  const baseIndent = " ".repeat(column);
   return (list.content ?? []).flatMap((item, index) => {
     const marker = ordered ? `${start + index}.` : BULLET_MARKER;
     const continuationIndent = " ".repeat(
@@ -566,37 +584,48 @@ function listItemLines(
     // `- foo\n  bar` - a continuation indent the agent never received.
     // Continuation indent belongs to LATER blocks only, per line, and a nested
     // list passes through unchanged because it already carries its own depth.
-    // Applied BEFORE the first-child/continuation split, because the
-    // serializer bakes it into the block's own text: a fence is already
-    // indented when `serializeListItem` sees it, and the continuation indent
-    // then goes on top of that.
-    const fenceIndent = " ".repeat(depth * LIST_INDENT);
+    // A fence as the FIRST block starts on the line after an empty marker
+    // line, every line at the continuation indent, as
+    // `serializeListItemWithMarker` writes it. The serializer's normalization
+    // keeps the space after an empty ORDERED marker and drops it after a
+    // bullet, so this does the same.
     const lines: string[] = [];
     let firstBlock = true;
     for (const block of item.content ?? []) {
       const nested = isListNode(block);
-      const projected = nested
-        ? listItemLines(block, depth + 1).join("\n")
+      const serialized = nested
+        ? listItemLines(
+            block,
+            baseIndent.length + Math.max(LIST_INDENT, marker.length + 1),
+          ).join("\n")
         : extractPlainTextFromComposerJSONContent({
             type: "doc",
             content: [...prepareForProjection([block])],
           });
-      const serialized = FENCE_NODE_TYPES.has(block.type ?? "")
-        ? projected
-            .split("\n")
-            .map((line) => `${fenceIndent}${line}`)
-            .join("\n")
-        : projected;
       if (firstBlock) {
-        lines.push(`${baseIndent}${marker} ${serialized}`);
+        if (FENCE_NODE_TYPES.has(block.type ?? "")) {
+          lines.push(
+            ordered ? `${baseIndent}${marker} ` : `${baseIndent}${marker}`,
+          );
+          for (const line of serialized.split("\n")) {
+            lines.push(`${continuationIndent}${line}`);
+          }
+        } else {
+          lines.push(`${baseIndent}${marker} ${serialized}`);
+        }
         firstBlock = false;
         continue;
       }
+      // The serializer puts a blank line before every later paragraph.
+      if (block.type === "paragraph") lines.push("");
       for (const line of serialized.split("\n")) {
         lines.push(nested ? line : `${continuationIndent}${line}`);
       }
     }
-    if (lines.length === 0) return [`${baseIndent}${marker}`];
+    // The serializer keeps the space after an empty ORDERED marker.
+    if (lines.length === 0) {
+      return [ordered ? `${baseIndent}${marker} ` : `${baseIndent}${marker}`];
+    }
     return lines;
   });
 }
