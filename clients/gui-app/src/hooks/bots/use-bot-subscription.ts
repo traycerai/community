@@ -38,7 +38,8 @@ export interface BotSubscriptionSnapshot {
    * view has not published yet; the pin shipping today always sends a number. */
   readonly openRequestCount: number | null;
   readonly boundHost: {
-    readonly hostId: string;
+    /** `null` when no host runs the bot. */
+    readonly hostId: string | null;
     readonly epoch: number;
     readonly isThisHost: boolean;
   };

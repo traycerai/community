@@ -135,7 +135,7 @@ const BOT: BotRecord = {
 };
 
 function snapshotBoundTo(
-  hostId: string,
+  hostId: string | null,
   isThisHost: boolean,
 ): BotSubscriptionSnapshot {
   return {
@@ -220,6 +220,25 @@ describe("<BotTabSurface /> bound elsewhere", () => {
         .getByTestId("stub-under-the-hood")
         .getAttribute("data-offline-host-label"),
     ).toBe("Studio Mac");
+  });
+
+  it("says no host runs the bot and offers only Move it here when its bound host is null", () => {
+    mocks.state.snapshot = snapshotBoundTo(null, false);
+    // Even before the directory answers: a bot no host runs is never dialable.
+    mocks.state.connectable = { hostIds: [], resolved: false };
+    render(surface());
+
+    const banner = screen.getByTestId("bot-tab-bound-elsewhere");
+    expect(banner.getAttribute("data-offline")).toBe("true");
+    expect(banner.textContent).toContain("No host runs this bot");
+    expect(banner.textContent).not.toContain("delivered when it is back");
+    expect(screen.queryByRole("button", { name: /^View on/ })).toBeNull();
+    expect(screen.getByTestId("bot-tab-move-here")).toBeTruthy();
+    expect(
+      screen
+        .getByTestId("stub-conversation")
+        .getAttribute("data-offline-host-label"),
+    ).toBe("No host");
   });
 
   it("does not call the host offline before the directory has answered", () => {
