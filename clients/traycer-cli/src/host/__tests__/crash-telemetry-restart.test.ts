@@ -271,6 +271,7 @@ describe("host crash reports across supervisor restarts", () => {
     });
     try {
       await flushStarted;
+      await new Promise<void>((resolve) => setImmediate(resolve));
       expect(summaries()).toEqual([{ suppressedCount: 3 }]);
       expect(sentryMocks.flushes).toContain(
         mod.HOST_CRASH_TRANSPORT_TIMEOUT_MS,
