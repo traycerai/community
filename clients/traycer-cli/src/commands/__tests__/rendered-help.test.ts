@@ -541,6 +541,7 @@ const EXPECTED_PUBLIC_SURFACE: readonly ExpectedSurfaceEntry[] = [
     path: "host uninstall",
     options: [
       { flags: "--all", mandatory: false },
+      { flags: "--force", mandatory: false },
       { flags: "--json", mandatory: false },
       { flags: "--no-progress", mandatory: false },
       { flags: "--quiet", mandatory: false },

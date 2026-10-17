@@ -789,6 +789,41 @@ describe("startHostHealthMonitor", () => {
     monitor.dispose();
   });
 
+  it("withdraws the force-restart offer once when the lifecycle snapshot goes away after an offer was made (traycer#1563 D3a)", async () => {
+    // A stop, an uninstall or a respawn takes the published snapshot away
+    // while the host was still silent. The prompt was about that host, so it
+    // has to go, and only once.
+    let current: DesktopPublishedHostSnapshot | null = SNAPSHOT;
+    const onHostUnresponsive = vi.fn();
+    const monitor = startHostHealthMonitor({
+      host: fakeHost({ getSnapshot: () => current }),
+      intervalMs: INTERVAL_MS,
+      probe: vi.fn(async () => false),
+      readMetadata: vi.fn(async () => SNAPSHOT),
+      respawn: vi.fn(async () => {}),
+      automaticRecoverySuspended: () => false,
+      governor: createHostRecoveryGovernor({
+        readLiveness: ALIVE,
+        now: undefined,
+      }),
+      readLiveness: ALIVE,
+      readLiveSupervisorPid: () => Promise.resolve(null),
+      onHostUnresponsive,
+    });
+
+    await ticks(700);
+    expect(onHostUnresponsive).toHaveBeenCalledTimes(1);
+
+    current = null;
+    await ticks(3);
+    expect(onHostUnresponsive).toHaveBeenCalledTimes(2);
+    expect(onHostUnresponsive).toHaveBeenLastCalledWith(null);
+
+    await ticks(20);
+    expect(onHostUnresponsive).toHaveBeenCalledTimes(2);
+    monitor.dispose();
+  });
+
   it("throttles the liveness re-read while holding a live host busy", async () => {
     // The hold is now unbounded, so the cost guard that used to live behind the
     // demote has to live inside the hold itself: each liveness probe spawns a

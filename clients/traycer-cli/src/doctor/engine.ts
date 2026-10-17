@@ -46,7 +46,10 @@ import {
 } from "../host/pid-metadata";
 import { callHostRpcAtEndpoint } from "../internal/host-rpc";
 import { resolveHostAuth } from "../internal/host-auth";
-import { HostRpcError } from "../../../shared/host-transport/host-messenger";
+import {
+  HostRpcError,
+  HostTransportFailureError,
+} from "../../../shared/host-transport/host-messenger";
 import type { HostTransportEndpoint } from "../../../shared/host-transport/ws-rpc-client";
 import {
   readHostInstallRecord,
@@ -1614,16 +1617,29 @@ async function probeHostRpc(
       if (err.code === "INCOMPATIBLE" || err.code === "DOWNGRADE_UNSUPPORTED") {
         return incompatibleRpcIssue(websocketUrl, err, environment);
       }
-      // RPC_ERROR / transport: the process is alive (checked before this
+      // A transport failure: the process is alive (checked before this
       // probe) and its port accepted a TCP connection, but nothing answered -
       // the host's main thread is blocked. A cooperative restart asks that
       // same thread, so the fix is the forced one.
-      return unresponsiveHostIssue(
-        pid,
-        await minutesSinceHostLogWrite(environment),
-        websocketUrl,
-        err.code,
-      );
+      if (err instanceof HostTransportFailureError) {
+        return unresponsiveHostIssue(
+          pid,
+          await minutesSinceHostLogWrite(environment),
+          websocketUrl,
+          err.code,
+        );
+      }
+      // The host answered, with an error: it is serving, so nothing here
+      // justifies killing its work.
+      return {
+        code: DOCTOR_ISSUE_CODES.PORT_UNREACHABLE,
+        severity: "error",
+        title: "Host endpoint not answering RPC",
+        message: `The host's port is open but it did not complete an RPC handshake (${err.code}). Restart the service.`,
+        fixAction: "host-restart",
+        terminalCommand: "traycer host restart",
+        details: { websocketUrl, rpcCode: err.code },
+      };
     }
     return {
       code: DOCTOR_ISSUE_CODES.PORT_UNREACHABLE,

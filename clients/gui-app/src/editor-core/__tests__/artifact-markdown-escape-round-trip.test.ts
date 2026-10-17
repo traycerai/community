@@ -82,6 +82,11 @@ const CORPUS: ReadonlyArray<{
     md: "> quoted **bold**",
     hasHardBreak: false,
   },
+  {
+    name: "bullet list in a quote in a third-level list item",
+    md: "- a\n  - b\n    - c\n      > - x",
+    hasHardBreak: false,
+  },
   // A list item's later paragraph is traycerai/traycer#2574's fixed point.
   { name: "backslash hard break", md: "First\\\nSecond", hasHardBreak: true },
   {

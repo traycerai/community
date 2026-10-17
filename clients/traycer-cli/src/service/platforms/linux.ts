@@ -599,17 +599,32 @@ async function stopService(
     // same grace `--force` gives it before escalating (by then systemd's own
     // `TimeoutStopSec` kill has landed on a unit-managed host), and if it is
     // still there, say so and name the one stop that ends it.
-    if (
-      before.kind === "read" &&
-      !publishedHostProcessGone(before.metadata) &&
-      !(await waitForSignalledHostGone(before, restartStopGraces().sigtermMs))
-    ) {
-      throw cliError({
-        code: CLI_ERROR_CODES.SERVICE_CONTROL_FAILED,
-        message: `host ${operation}: the host (pid=${before.metadata.pid}) is still running after the stop request; stop did not take effect. Re-run with --force to stop it anyway (running terminal sessions and in-flight agent work will be killed).`,
-        details: { unit: unitName(label), pid: before.metadata.pid },
-        exitCode: 1,
-      });
+    if (before.kind === "read" && !publishedHostProcessGone(before.metadata)) {
+      let runningPid: number | null = null;
+      if (
+        !(await waitForSignalledHostGone(before, restartStopGraces().sigtermMs))
+      ) {
+        runningPid = before.metadata.pid;
+      } else {
+        // The old process being gone is not the host being gone: a stop job
+        // that timed out leaves the unit failed, and `Restart=on-failure`
+        // starts a replacement. Ask what is published now.
+        const after = await readHostPidMetadataEvidence(label.environment);
+        if (
+          after.kind === "read" &&
+          !publishedHostProcessGone(after.metadata)
+        ) {
+          runningPid = after.metadata.pid;
+        }
+      }
+      if (runningPid !== null) {
+        throw cliError({
+          code: CLI_ERROR_CODES.SERVICE_CONTROL_FAILED,
+          message: `host ${operation}: the host (pid=${runningPid}) is still running after the stop request; stop did not take effect. Re-run with --force to stop it anyway (running terminal sessions and in-flight agent work will be killed).`,
+          details: { unit: unitName(label), pid: runningPid },
+          exitCode: 1,
+        });
+      }
     }
     return;
   }

@@ -260,8 +260,9 @@ const ENTITY_REFERENCE =
  * strikethrough, HTML or an entity: the content changes on the next pass.
  * Each character is escaped only where it can form markup:
  *
- * - `\` before ASCII punctuation, or last in its segment (where a mark
- *   delimiter or a line end follows it and it would escape that instead);
+ * - `\` before ASCII punctuation or a newline, or last in its segment (where
+ *   a mark delimiter or a line end follows it and it would escape that
+ *   instead, or turn the line end into a hard break);
  * - `*`, `` ` `` and `~` always (emphasis, code, strikethrough);
  * - `_` unless it sits between two word characters, where it cannot open or
  *   close emphasis, so `foo_bar_baz` stays as written;
@@ -307,7 +308,8 @@ function escapesArtifactChar(
   const next = text[i + 1];
   if (ALWAYS_ESCAPED_ARTIFACT_CHARS.has(char)) return true;
   if (char === "\\") {
-    return next === undefined || ASCII_PUNCTUATION.test(next);
+    // Before a newline a lone backslash is CommonMark's hard break.
+    return next === undefined || next === "\n" || ASCII_PUNCTUATION.test(next);
   }
   if (char === "]") return inLink;
   if (char === "|") return inTableCell;
@@ -1020,8 +1022,33 @@ function serializeHeading(node: JsonContent, ctx: SerializerContext): string {
   return `${prefix} ${content}`;
 }
 
+// The host keeps an artifact image it cannot resolve yet (a missing file, a
+// failed download) as a paragraph holding the image's own Markdown as plain
+// text, `![alt](dest)` with `dest` bracketed as `<src>` when the source holds
+// whitespace or parentheses (`rawArtifactImageText` in the host's
+// epic-file-sync). Written back verbatim, the next read parses it as an image
+// again, which is how a later write retries it. Escaped, it would stay text
+// for good, so exactly that shape - and nothing looser - is left raw.
+const UNRESOLVED_IMAGE_SOURCE_TEXT =
+  /^!\[[^\n]*\]\((?:<[^<>\n]*>|[^\s()<>]*)\)$/;
+
+function unresolvedImageSourceText(node: JsonContent): string | null {
+  const only = node.content?.length === 1 ? node.content[0] : undefined;
+  if (
+    only?.type !== "text" ||
+    typeof only.text !== "string" ||
+    (only.marks?.length ?? 0) > 0
+  ) {
+    return null;
+  }
+  return UNRESOLVED_IMAGE_SOURCE_TEXT.test(only.text) ? only.text : null;
+}
+
 function serializeParagraph(node: JsonContent, ctx: SerializerContext): string {
   const indent = ctx.inListItem ? "" : getIndent(ctx);
+  const unresolvedImage =
+    ctx.escapeText && !ctx.inTableCell ? unresolvedImageSourceText(node) : null;
+  if (unresolvedImage !== null) return `${indent}${unresolvedImage}`;
   const children = serializeChildren(node.content, ctx);
   const content =
     ctx.escapeText && !ctx.inTableCell
@@ -1054,9 +1081,12 @@ function serializeArtifactBlockquote(
   node: JsonContent,
   ctx: SerializerContext,
 ): string {
+  // The quote's own `> ` prefix starts its lines afresh, so a list inside it
+  // starts at column zero whatever list the quote itself sits in.
   const quoteCtx: SerializerContext = {
     ...ctx,
     listDepth: 0,
+    listColumn: 0,
     inListItem: false,
   };
   const blocks = (node.content ?? [])

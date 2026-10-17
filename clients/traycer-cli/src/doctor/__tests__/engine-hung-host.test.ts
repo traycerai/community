@@ -76,7 +76,13 @@ afterEach(async () => {
   vi.doUnmock("../../internal/host-rpc");
 });
 
-function stageWedgedHost(websocketUrl: string): void {
+type ProbeFailure = "transport" | "envelope";
+
+/**
+ * `transport`: nothing answered (the wedged host). `envelope`: the host
+ * answered the RPC with an error, so it is serving.
+ */
+function stageWedgedHost(websocketUrl: string, failure: ProbeFailure): void {
   vi.doMock("../../manifest/host-install", () => ({
     readHostInstallRecord: () => ({
       version: "1.0.0",
@@ -137,17 +143,19 @@ function stageWedgedHost(websocketUrl: string): void {
     }),
   }));
   // The dial and frame budgets take tens of seconds against a silent
-  // listener; the probe's outcome is the same transport failure, delivered now.
+  // listener; the probe's outcome is the same failure, delivered now.
   vi.doMock("../../internal/host-rpc", async () => {
     const actual = await vi.importActual<
       typeof import("../../internal/host-rpc")
     >("../../internal/host-rpc");
-    const { HostRpcError } =
+    const { HostRpcError, HostTransportFailureError } =
       await import("../../../../shared/host-transport/host-messenger");
+    const FailureError =
+      failure === "transport" ? HostTransportFailureError : HostRpcError;
     return {
       ...actual,
       callHostRpcAtEndpoint: async () => {
-        throw new HostRpcError({
+        throw new FailureError({
           code: "RPC_ERROR",
           message: "frame timeout",
           requestId: "r1",
@@ -161,7 +169,7 @@ function stageWedgedHost(websocketUrl: string): void {
 
 describe("runDoctor against a wedged host (traycer#1563 D3c)", () => {
   it("control: the harness reaches the RPC branch (today's generic verdict)", async () => {
-    stageWedgedHost(`ws://127.0.0.1:${port}/rpc`);
+    stageWedgedHost(`ws://127.0.0.1:${port}/rpc`, "transport");
     const { runDoctor } = await import("../engine");
     const result = await runDoctor({
       environment: "production",
@@ -183,7 +191,7 @@ describe("runDoctor against a wedged host (traycer#1563 D3c)", () => {
   });
 
   it("reports the pid alive with its RPC unresponsive for N min, and names the force restart", async () => {
-    stageWedgedHost(`ws://127.0.0.1:${port}/rpc`);
+    stageWedgedHost(`ws://127.0.0.1:${port}/rpc`, "transport");
     // The wedged host stopped writing its log twelve minutes ago.
     const { hostLogPath } = await import("../../store/paths");
     const logPath = hostLogPath("production");
@@ -213,7 +221,7 @@ describe("runDoctor against a wedged host (traycer#1563 D3c)", () => {
   });
 
   it("still reports the unresponsive host, without a duration, when its log cannot be read", async () => {
-    stageWedgedHost(`ws://127.0.0.1:${port}/rpc`);
+    stageWedgedHost(`ws://127.0.0.1:${port}/rpc`, "transport");
     const { runDoctor } = await import("../engine");
     const result = await runDoctor({
       environment: "production",
@@ -229,5 +237,27 @@ describe("runDoctor against a wedged host (traycer#1563 D3c)", () => {
     expect(hung?.message).toContain(`pid=${process.pid}`);
     expect(hung?.message).toContain("is not responding");
     expect(hung?.terminalCommand).toBe("traycer host restart --force");
+  });
+
+  it("keeps the generic restart advice when the host answered the RPC with an error", async () => {
+    stageWedgedHost(`ws://127.0.0.1:${port}/rpc`, "envelope");
+    const { runDoctor } = await import("../engine");
+    const result = await runDoctor({
+      environment: "production",
+      portConflictDeps: {
+        platform: "darwin",
+        runCommand: async () => null,
+      },
+    });
+
+    expect(
+      result.issues.find((issue) => issue.code === "HOST_RPC_UNRESPONSIVE"),
+    ).toBeUndefined();
+    const generic = result.issues.find(
+      (issue) => issue.title === "Host endpoint not answering RPC",
+    );
+    expect(generic?.code).toBe("PORT_UNREACHABLE");
+    expect(generic?.terminalCommand).toBe("traycer host restart");
+    expect(generic?.message).not.toContain("--force");
   });
 });

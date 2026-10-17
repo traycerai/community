@@ -473,6 +473,110 @@ describe("runHostUninstall", () => {
     expect(result.human ?? "").toContain("traycer host stop --force");
   });
 
+  // The boundary read of the published record is the last evidence about
+  // whether a host is still there. A record that cannot be read (a live host
+  // mid-write, a permission error) is no evidence of absence; "nothing
+  // published" is.
+  it("keeps the install when the published record cannot be read at the boundary, without --force", async () => {
+    const receivedOptions: UninstallHostOptions[] = [];
+    const base = commandDeps({
+      stop: async () => undefined,
+      receivedOptions,
+      status: async () => NOT_INSTALLED_STATUS,
+      liveness: "dead",
+      successorAfterTeardown: null,
+      publishedPid: null,
+    });
+    let reads = 0;
+    const deps: RunHostUninstallDeps = {
+      ...base,
+      readPublishedHost: async (environment) => {
+        reads += 1;
+        if (reads > 1) throw new Error("EACCES: permission denied");
+        return base.readPublishedHost(environment);
+      },
+    };
+
+    await expect(
+      runHostUninstall(
+        { all: true, force: false },
+        COMMAND_CONTEXT,
+        deps,
+        testActuators(deps),
+      ),
+    ).rejects.toMatchObject({
+      code: CLI_ERROR_CODES.HOST_UNINSTALL_HOST_RUNNING,
+      exitCode: 1,
+      details: {
+        environment: "dev",
+        removedInstallDir: false,
+        serviceDeregistrationRequested: true,
+      },
+    });
+    expect(receivedOptions).toEqual([]);
+  });
+
+  it("with --force, removes the install although the published record cannot be read at the boundary", async () => {
+    const receivedOptions: UninstallHostOptions[] = [];
+    const base = commandDeps({
+      stop: async () => undefined,
+      receivedOptions,
+      status: async () => NOT_INSTALLED_STATUS,
+      liveness: "dead",
+      successorAfterTeardown: null,
+      publishedPid: null,
+    });
+    let reads = 0;
+    const deps: RunHostUninstallDeps = {
+      ...base,
+      readPublishedHost: async (environment) => {
+        reads += 1;
+        if (reads > 1) throw new Error("EACCES: permission denied");
+        return base.readPublishedHost(environment);
+      },
+    };
+    const result = await runHostUninstall(
+      { all: true, force: true },
+      COMMAND_CONTEXT,
+      deps,
+      testActuators(deps),
+    );
+
+    expect(receivedOptions).toEqual([
+      expect.objectContaining({
+        environment: "dev",
+        purgeChannelRuntime: false,
+      }),
+    ]);
+    expect(result.data).toMatchObject({ removedInstallDir: true });
+  });
+
+  it("removes the install when the boundary read answers that nothing is published and the stop resolved", async () => {
+    const receivedOptions: UninstallHostOptions[] = [];
+    const deps = commandDeps({
+      stop: async () => undefined,
+      receivedOptions,
+      status: async () => NOT_INSTALLED_STATUS,
+      liveness: "unpublished",
+      successorAfterTeardown: null,
+      publishedPid: null,
+    });
+    const result = await runHostUninstall(
+      { all: true, force: false },
+      COMMAND_CONTEXT,
+      deps,
+      testActuators(deps),
+    );
+
+    expect(receivedOptions).toEqual([
+      expect.objectContaining({
+        environment: "dev",
+        purgeChannelRuntime: false,
+      }),
+    ]);
+    expect(result.data).toMatchObject({ removedInstallDir: true });
+  });
+
   it("reads --all's registration back from the platform rather than assuming the deregister landed", async () => {
     const deps = commandDeps({
       stop: async () => undefined,

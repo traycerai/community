@@ -354,6 +354,20 @@ describe("artifact hard breaks", () => {
     expect(artifact(content)).toBe("- First\\\n  Second");
   });
 
+  it("escapes a block marker at the start of the line after a hard break", () => {
+    const after = (value: string): string =>
+      artifact(
+        doc([paragraph([plain("First"), { type: "hardBreak" }, plain(value)])]),
+      );
+    expect(after("# not a heading")).toBe("First\\\n\\# not a heading");
+    expect(after("- x")).toBe("First\\\n\\- x");
+    expect(after("> q")).toBe("First\\\n\\> q");
+  });
+
+  it("escapes a literal backslash before a newline in text so it is not read back as a hard break", () => {
+    expect(artifactOf("a\\\nb")).toBe("a\\\\\nb");
+  });
+
   it("keeps the bare newline in a task item, whose parser would keep the backslash as text", () => {
     const content = doc([
       {
@@ -374,5 +388,79 @@ describe("artifact hard breaks", () => {
     const content = tableDoc([plain("First"), hardBreak, plain("Second")]);
     expect(artifact(content)).toBe(prompt(content));
     expect(artifact(content)).not.toContain("\\");
+  });
+});
+
+describe("artifact unresolved image source text", () => {
+  // What the host writes for an image it cannot resolve yet; kept raw so the
+  // next read parses it as an image again and retries it.
+  const verbatim = (value: string): void => {
+    expect(artifactOf(value)).toBe(value);
+  };
+
+  it("writes an image whose source is not a portable name verbatim", () => {
+    verbatim("![not-portable](images/not-a-64hex-name.png)");
+  });
+
+  it("writes the bracketed destination form verbatim", () => {
+    verbatim("![a b](<images/a b (1).png>)");
+  });
+
+  it("writes an image with an empty alt verbatim and leaves its underscore alone", () => {
+    verbatim("![](https://example.com/x_y.png)");
+  });
+
+  it("keeps it verbatim behind a bullet item's marker", () => {
+    const content = doc([
+      bulletList([listItem([paragraph([plain("![a](b.png)")])])]),
+    ]);
+    expect(artifact(content)).toBe("- ![a](b.png)");
+  });
+
+  it("still escapes the text when more text follows in the same node", () => {
+    expect(artifactOf("![a](b.png) tail")).toBe("!\\[a](b.png) tail");
+  });
+
+  it("still escapes the text when it carries a mark", () => {
+    const content = paragraphDoc([text("![a](b.png)", [{ type: "bold" }])]);
+    expect(artifact(content)).toBe("**!\\[a](b.png)**");
+  });
+
+  it("still escapes the text when the paragraph holds another text node", () => {
+    const content = paragraphDoc([
+      plain("![a](b.png)"),
+      text("x", [{ type: "italic" }]),
+    ]);
+    expect(artifact(content)).toBe("!\\[a](b.png)*x*");
+  });
+
+  it("still escapes a bare destination that contains a space", () => {
+    expect(artifactOf("![a](b c.png)")).toBe("!\\[a](b c.png)");
+  });
+
+  it("leaves the prompt serializer's output for the image text unchanged", () => {
+    const content = paragraphDoc([plain("![not-portable](images/x_y.png)")]);
+    expect(prompt(content)).toBe("![not-portable](images/x_y.png)");
+  });
+});
+
+describe("artifact block quote inside nested list items", () => {
+  it("writes a list inside a quote in a third-level item right after the quote marker", () => {
+    const innerList = bulletList([listItem([paragraph([plain("x")])])]);
+    const quote: JsonContent = { type: "blockquote", content: [innerList] };
+    const content = doc([
+      bulletList([
+        listItem([
+          paragraph([plain("a")]),
+          bulletList([
+            listItem([
+              paragraph([plain("b")]),
+              bulletList([listItem([paragraph([plain("c")]), quote])]),
+            ]),
+          ]),
+        ]),
+      ]),
+    ]);
+    expect(artifact(content)).toBe("- a\n  - b\n    - c\n      > - x");
   });
 });

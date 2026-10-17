@@ -440,13 +440,20 @@ async function runHostUninstallWithActuators(
     // pid record, so every reinstall deferred to it and nothing could replace
     // it. The deregistration above stands; the bytes go once the host is
     // stopped, or now with `--force`.
-    if (!args.force && (!stopResolved || liveness === "live")) {
+    // An unreadable record at the boundary is no evidence the host is gone
+    // (it may be mid-write by a live one), so it keeps the install as well.
+    // "Nothing published" is that evidence, and a stopped host uninstalls.
+    if (
+      !args.force &&
+      (!stopResolved || liveness === "live" || !successorRead.answered)
+    ) {
       ctx.logger.warn(
         "Host uninstall kept the install because the host did not stop",
         {
           environment: ctx.environment,
           stopResolved,
           liveness,
+          publishedRecordReadable: successorRead.answered,
         },
       );
       throw cliError({
