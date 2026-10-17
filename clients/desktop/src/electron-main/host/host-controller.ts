@@ -6355,9 +6355,14 @@ export class HostController {
     });
     // A deferred removal did not happen: a terminal run that began after the
     // check above (the CLI refuses it under its own lock), a busy lock, an
-    // update attempt in progress. Take back the sentinel this call wrote, so
-    // a machine whose host is still installed is not reported removed.
-    if (outcome.kind === "deferred" && !sentinelWasSet) {
+    // update attempt in progress. Neither did a busy one, where the host
+    // declined to stop over work in progress. Take back the sentinel this call
+    // wrote, so a machine whose host is still installed is not reported
+    // removed.
+    if (
+      (outcome.kind === "deferred" || outcome.kind === "busy") &&
+      !sentinelWasSet
+    ) {
       await clearHostRemovedByUser();
     }
     return outcome;

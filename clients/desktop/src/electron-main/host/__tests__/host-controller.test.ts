@@ -5897,6 +5897,31 @@ describe("RM: Remove Traycer and uninstall --all refuse first over a terminal-st
     expect(await isHostRemovedByUser()).toBe(false);
   });
 
+  // traycer#1563 R5: the uninstall's stop was declined because the host has
+  // work in progress, and the CLI rethrows the host's own `E_HOST_BUSY`.
+  // Nothing was removed, so it is the busy outcome with a Force to offer, and
+  // the device must not stay marked removed.
+  it("removeTraycer reports busy with a Force to offer when the CLI rethrows the host's E_HOST_BUSY, and takes the sentinel back", async () => {
+    readSupervisorRunMock.mockResolvedValue({
+      state: "not-running",
+      supervisorPid: null,
+      admittedAs: null,
+    });
+    vi.mocked(streamBundledTraycerCliJson).mockRejectedValueOnce(
+      new TraycerCliError("E_HOST_BUSY", "host busy"),
+    );
+    const controller = newController("production");
+    expect(await isHostRemovedByUser()).toBe(false);
+
+    const outcome = await controller.removeTraycer();
+
+    expect(outcome).toMatchObject({
+      kind: "busy",
+      continuation: "retry-with-force",
+    });
+    expect(await isHostRemovedByUser()).toBe(false);
+  });
+
   it("removeTraycer proceeds over a packaged-macOS host running as a service", async () => {
     vi.mocked(hostManagesHostLoginItem).mockResolvedValue(true);
     readSupervisorRunMock.mockResolvedValue({

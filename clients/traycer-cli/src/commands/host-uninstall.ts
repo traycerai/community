@@ -4,7 +4,7 @@ import {
   type UninstallHostResult,
 } from "../installer";
 import type { ILogger } from "../logger";
-import { CLI_ERROR_CODES, cliError } from "../runner/errors";
+import { CLI_ERROR_CODES, CliError, cliError } from "../runner/errors";
 import type { CommandFn, CommandResult } from "../runner/runner";
 import type { Environment } from "../runner/environment";
 import type { ProgressInfo } from "../runner/output";
@@ -30,7 +30,7 @@ import {
   discardAttemptRecordWithCapability,
   type UpdateMutationCapability,
 } from "@traycer-clients/shared/host-update";
-import { readHostPidMetadata } from "../host/pid-metadata";
+import { readHostPidMetadataEvidence } from "../host/pid-metadata";
 import {
   readServiceRegistrationOwnership,
   serviceTaskLeftInPlaceWarning,
@@ -219,11 +219,18 @@ export function buildHostUninstallCommand(
             createServiceController,
             uninstallHost,
             readPublishedHost: async (environment) => {
-              const metadata = await readHostPidMetadata(environment);
-              if (metadata === null) return null;
+              // An unreadable record is not "nothing published": it throws, so
+              // the read reports that it did not answer.
+              const evidence = await readHostPidMetadataEvidence(environment);
+              if (evidence.kind === "absent") return null;
+              if (evidence.kind === "unreadable") {
+                throw new Error(
+                  `host pid metadata is unreadable: ${evidence.cause}`,
+                );
+              }
               return {
-                pid: metadata.pid,
-                startIdentity: metadata.processStartIdentity,
+                pid: evidence.metadata.pid,
+                startIdentity: evidence.metadata.processStartIdentity,
               };
             },
             probeProcessExited: getPublishedProcessIdentityVerdict,
@@ -368,8 +375,19 @@ async function runHostUninstallWithActuators(
       label,
       logger: ctx.logger,
     };
-    const stopResolved = await stopServiceBeforeRuntimePurge(stopArgs, () =>
-      actuators.stop(controller, label, { force: args.force }),
+    // Kept so a refused stop can say WHY below: a host that declined
+    // because it has work in progress is not one that stopped responding.
+    let stopError: unknown = null;
+    const stopResolved = await stopServiceBeforeRuntimePurge(
+      stopArgs,
+      async () => {
+        try {
+          await actuators.stop(controller, label, { force: args.force });
+        } catch (err) {
+          stopError = err;
+          throw err;
+        }
+      },
     );
     // The resolved `stop()` is necessary but NOT sufficient - see
     // `findLiveHost`. Both halves are required: a stop that threw means the
@@ -456,6 +474,14 @@ async function runHostUninstallWithActuators(
           publishedRecordReadable: successorRead.answered,
         },
       );
+      // The host answered and declined: it is busy, not wedged. Its own
+      // refusal names the work and the `--force` that would end it.
+      if (
+        stopError instanceof CliError &&
+        stopError.code === CLI_ERROR_CODES.HOST_BUSY
+      ) {
+        throw stopError;
+      }
       throw cliError({
         code: CLI_ERROR_CODES.HOST_UNINSTALL_HOST_RUNNING,
         message:

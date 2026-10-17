@@ -372,7 +372,13 @@ const artifactTableCellEscaping: TextRunEscaping = {
  * so the same rules apply there. A line start inside an inline code span is
  * left alone: code text is literal.
  */
-function escapeParagraphLineStarts(rendered: string): string {
+function escapeParagraphLineStarts(paragraph: string): string {
+  // Up to three leading spaces read back as the paragraph's own text, and the
+  // marker behind them is escaped below. Four or more (or a tab) would make
+  // the line an indented code block instead, so that whitespace is dropped.
+  const rendered = /^(?: {4}| {0,3}\t)/.test(paragraph)
+    ? paragraph.replace(/^[ \t]+/, "")
+    : paragraph;
   let out = "";
   let codeRun = 0;
   let insertAt = -1;
@@ -423,23 +429,27 @@ const TABLE_DELIMITER_ROW =
 // the whole paragraph line; the inserted backslash always precedes any code
 // span on it, because every rule reads only the line's opening characters.
 function lineStartEscapeOffset(line: string, firstLine: boolean): number {
+  // Block syntax may sit behind up to three spaces, so the escape goes in
+  // front of the marker, not in front of the line.
+  const indent = (/^ {0,3}/.exec(line)?.[0] ?? "").length;
+  const rest = line.slice(indent);
   if (
-    ATX_HEADING_START.test(line) ||
-    BULLET_START.test(line) ||
-    DASH_BREAK_OR_UNDERLINE.test(line) ||
-    line.startsWith(">")
+    ATX_HEADING_START.test(rest) ||
+    BULLET_START.test(rest) ||
+    DASH_BREAK_OR_UNDERLINE.test(rest) ||
+    rest.startsWith(">")
   ) {
-    return 0;
+    return indent;
   }
-  const ordered = ORDERED_START.exec(line);
+  const ordered = ORDERED_START.exec(rest);
   // Only a list starting at 1 can interrupt a paragraph, so a later line
   // needs the escape only for that one.
   if (ordered !== null && (firstLine || ordered[1] === "1")) {
-    return ordered[1].length;
+    return indent + ordered[1].length;
   }
-  if (!firstLine && EQUALS_UNDERLINE.test(line)) return 0;
-  if (!firstLine && line.includes("|") && TABLE_DELIMITER_ROW.test(line)) {
-    return line.indexOf("-");
+  if (!firstLine && EQUALS_UNDERLINE.test(rest)) return indent;
+  if (!firstLine && rest.includes("|") && TABLE_DELIMITER_ROW.test(rest)) {
+    return indent + rest.indexOf("-");
   }
   return -1;
 }
@@ -1082,12 +1092,14 @@ function serializeArtifactBlockquote(
   ctx: SerializerContext,
 ): string {
   // The quote's own `> ` prefix starts its lines afresh, so a list inside it
-  // starts at column zero whatever list the quote itself sits in.
+  // starts at column zero whatever list the quote itself sits in, and its
+  // content is not a task item's even when the quote is inside one.
   const quoteCtx: SerializerContext = {
     ...ctx,
     listDepth: 0,
     listColumn: 0,
     inListItem: false,
+    inTaskItem: false,
   };
   const blocks = (node.content ?? [])
     .map((child) => serializeNode(child, quoteCtx))

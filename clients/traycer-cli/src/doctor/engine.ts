@@ -1661,12 +1661,15 @@ function unresponsiveHostIssue(
   websocketUrl: string | null,
   rpcCode: string,
 ): DoctorIssue {
+  // How long the log has been quiet, said as exactly that: a healthy host can
+  // go quiet for hours, so it is a clue to how long the host has been stuck,
+  // not a measure of it.
   const silence =
     silentMinutes === null
       ? "is not responding"
       : silentMinutes < 1
-        ? "has been unresponsive for under 1 min"
-        : `has been unresponsive for ${String(silentMinutes)} min`;
+        ? "is not responding (its log last changed under 1 min ago)"
+        : `is not responding (its log last changed ${String(silentMinutes)} min ago)`;
   return {
     code: DOCTOR_ISSUE_CODES.HOST_RPC_UNRESPONSIVE,
     severity: "error",
@@ -1681,7 +1684,7 @@ function unresponsiveHostIssue(
 
 // How long ago the host last wrote its log, in whole minutes. A host whose
 // main thread is blocked writes nothing - not even its own stall warning - so
-// the log's last write is when it went silent. `null` when the log cannot be
+// it has been stuck for at most this long. `null` when the log cannot be
 // read; the issue is reported either way.
 async function minutesSinceHostLogWrite(
   environment: Environment,

@@ -190,7 +190,7 @@ describe("runDoctor against a wedged host (traycer#1563 D3c)", () => {
     ).toBeDefined();
   });
 
-  it("reports the pid alive with its RPC unresponsive for N min, and names the force restart", async () => {
+  it("reports the pid alive not responding and its log last changed N min ago, and names the force restart", async () => {
     stageWedgedHost(`ws://127.0.0.1:${port}/rpc`, "transport");
     // The wedged host stopped writing its log twelve minutes ago.
     const { hostLogPath } = await import("../../store/paths");
@@ -215,9 +215,34 @@ describe("runDoctor against a wedged host (traycer#1563 D3c)", () => {
     );
     expect(hung).toBeDefined();
     expect(hung?.code).toBe("HOST_RPC_UNRESPONSIVE");
-    expect(hung?.message).toMatch(/unresponsive for 12 min/i);
+    expect(hung?.message).toContain(
+      "is not responding (its log last changed 12 min ago)",
+    );
     expect(hung?.terminalCommand).toBe("traycer host restart --force");
     expect(hung?.fixAction).toBe("host-restart");
+  });
+
+  it("says the log changed under a minute ago when it was just written", async () => {
+    stageWedgedHost(`ws://127.0.0.1:${port}/rpc`, "transport");
+    const { hostLogPath } = await import("../../store/paths");
+    const logPath = hostLogPath("production");
+    mkdirSync(dirname(logPath), { recursive: true });
+    writeFileSync(logPath, "last line\n");
+    const { runDoctor } = await import("../engine");
+    const result = await runDoctor({
+      environment: "production",
+      portConflictDeps: {
+        platform: "darwin",
+        runCommand: async () => null,
+      },
+    });
+
+    const hung = result.issues.find(
+      (issue) => issue.code === "HOST_RPC_UNRESPONSIVE",
+    );
+    expect(hung?.message).toContain(
+      "is not responding (its log last changed under 1 min ago)",
+    );
   });
 
   it("still reports the unresponsive host, without a duration, when its log cannot be read", async () => {
@@ -236,6 +261,7 @@ describe("runDoctor against a wedged host (traycer#1563 D3c)", () => {
     );
     expect(hung?.message).toContain(`pid=${process.pid}`);
     expect(hung?.message).toContain("is not responding");
+    expect(hung?.message).not.toContain("log last changed");
     expect(hung?.terminalCommand).toBe("traycer host restart --force");
   });
 

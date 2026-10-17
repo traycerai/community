@@ -464,3 +464,76 @@ describe("artifact block quote inside nested list items", () => {
     expect(artifact(content)).toBe("- a\n  - b\n    - c\n      > - x");
   });
 });
+
+describe("artifact block markers behind leading spaces", () => {
+  it("escapes in front of the marker on a later line indented one to three spaces", () => {
+    expect(artifactOf("a\n  # h")).toBe("a\n  \\# h");
+    expect(artifactOf("a\n  - x")).toBe("a\n  \\- x");
+    expect(artifactOf("a\n   > q")).toBe("a\n   \\> q");
+    expect(artifactOf("a\n  1. x")).toBe("a\n  1\\. x");
+    expect(artifactOf("a\n  ===")).toBe("a\n  \\===");
+  });
+
+  it("keeps one to three leading spaces on a paragraph's first line and escapes the marker behind them", () => {
+    const second = (value: string): string =>
+      artifact(doc([paragraph([plain("first")]), paragraph([plain(value)])]));
+    expect(second("  # h")).toBe("first\n\n  \\# h");
+    expect(second("   - x")).toBe("first\n\n   \\- x");
+    expect(second("  plain")).toBe("first\n\n  plain");
+  });
+
+  // `normalizeMarkdown` trims the start of the whole document, so a paragraph
+  // that opens the document loses its leading spaces whatever they are.
+  it("trims the leading spaces of a paragraph that opens the document", () => {
+    expect(artifactOf("  # h")).toBe("\\# h");
+  });
+
+  // The whole document's start is trimmed by `normalizeMarkdown`, so a first
+  // paragraph cannot show this: the indented paragraph has to come second.
+  it("drops the leading whitespace of a later paragraph that would make an indented code block", () => {
+    const second = (value: string): string =>
+      artifact(doc([paragraph([plain("first")]), paragraph([plain(value)])]));
+    expect(second("    code-looking")).toBe("first\n\ncode-looking");
+    expect(second("\tcode-looking")).toBe("first\n\ncode-looking");
+    expect(second("  # h")).toBe("first\n\n  \\# h");
+  });
+
+  it("drops it in a bullet item's second paragraph too", () => {
+    const item = (value: string): string =>
+      artifact(
+        doc([
+          bulletList([
+            listItem([paragraph([plain("a")]), paragraph([plain(value)])]),
+          ]),
+        ]),
+      );
+    expect(item("    code-looking")).toBe("- a\n\n  code-looking");
+    expect(item("  # h")).toBe("- a\n\n    \\# h");
+  });
+});
+
+describe("artifact hard breaks in a quote inside a task item", () => {
+  it("writes the break as a backslash and newline, because the quote is not the task item's text", () => {
+    const quote: JsonContent = {
+      type: "blockquote",
+      content: [
+        paragraph([plain("First"), { type: "hardBreak" }, plain("Second")]),
+      ],
+    };
+    const content = doc([
+      {
+        type: "taskList",
+        content: [
+          {
+            type: "taskItem",
+            attrs: { checked: false },
+            content: [quote],
+          },
+        ],
+      },
+    ]);
+    // Exact string to be confirmed by the first run: the quote's lines carry
+    // `> ` and sit under the task marker.
+    expect(artifact(content)).toBe("- [ ] > First\\\n  > Second");
+  });
+});

@@ -87,6 +87,16 @@ const CORPUS: ReadonlyArray<{
     md: "- a\n  - b\n    - c\n      > - x",
     hasHardBreak: false,
   },
+  {
+    name: "escaped marker behind leading spaces on a later line",
+    md: "a\n  \\# h",
+    hasHardBreak: false,
+  },
+  {
+    name: "escaped marker behind leading spaces on a later paragraph's first line",
+    md: "first\n\n  \\# h",
+    hasHardBreak: false,
+  },
   // A list item's later paragraph is traycerai/traycer#2574's fixed point.
   { name: "backslash hard break", md: "First\\\nSecond", hasHardBreak: true },
   {
@@ -187,5 +197,70 @@ describe("artifact markdown escaping round trip (traycer#1563)", () => {
     it("keeps the text content and leaks no escape backslash into it", () => {
       expect(textOf(json2)).toBe(textOf(json1));
     });
+  });
+});
+
+/**
+ * The parser keeps one to three spaces in front of a marker as paragraph text,
+ * and the serializer keeps them, escaping the marker behind them. Four spaces
+ * (or a tab) cannot be kept - written back they would be an indented code
+ * block - so they are dropped once. A paragraph that opens the document loses
+ * its spaces too, because `normalizeMarkdown` trims the whole document's start.
+ */
+describe("leading spaces before an escaped block marker", () => {
+  it("keeps a later line's indent in front of the escaped marker, as a paragraph", () => {
+    const json = parseJson("a\n  \\# h");
+    expect((json.content ?? []).map((node) => node.type)).toEqual([
+      "paragraph",
+    ]);
+    expect(textOf(json)).toBe("a\n  # h");
+    expect(serialize(fragmentOf(json))).toBe("a\n  \\# h");
+  });
+
+  it("keeps a later paragraph's first-line indent, stable in one pass", () => {
+    const json1 = parseJson("first\n\n  \\# h");
+    expect((json1.content ?? []).map((node) => node.type)).toEqual([
+      "paragraph",
+      "paragraph",
+    ]);
+    expect(textOf(json1.content?.[1] ?? {})).toBe("  # h");
+    expect(serialize(fragmentOf(json1))).toBe("first\n\n  \\# h");
+  });
+
+  it("drops the indent of a paragraph that opens the document, once, and is stable after", () => {
+    const json1 = parseJson("  \\# h");
+    expect(textOf(json1)).toBe("  # h");
+
+    const md1 = serialize(fragmentOf(json1));
+    expect(md1).toBe("\\# h");
+
+    const json2 = parseJson(md1);
+    expect((json2.content ?? []).map((node) => node.type)).toEqual([
+      "paragraph",
+    ]);
+    expect(textOf(json2)).toBe("# h");
+    expect(serialize(fragmentOf(json2))).toBe(md1);
+  });
+
+  it("drops the four-space indent of a later paragraph once, as a paragraph, and is stable after", () => {
+    const paragraphOf = (value: string): JsonContent => ({
+      type: "paragraph",
+      content: [{ type: "text", text: value }],
+    });
+    const json1: JsonContent = {
+      type: "doc",
+      content: [paragraphOf("first"), paragraphOf("    code-looking")],
+    };
+
+    const md1 = serialize(fragmentOf(json1));
+    expect(md1).toBe("first\n\ncode-looking");
+
+    const json2 = parseJson(md1);
+    expect((json2.content ?? []).map((node) => node.type)).toEqual([
+      "paragraph",
+      "paragraph",
+    ]);
+    expect(textOf(json2.content?.[1] ?? {})).toBe("code-looking");
+    expect(serialize(fragmentOf(json2))).toBe(md1);
   });
 });

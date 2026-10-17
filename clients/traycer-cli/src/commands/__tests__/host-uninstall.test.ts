@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { noopLogger } from "../../logger";
-import { CLI_ERROR_CODES } from "../../runner/errors";
+import { CLI_ERROR_CODES, cliError } from "../../runner/errors";
 import {
   serviceLabelFor,
   type ServiceStatus,
@@ -471,6 +471,39 @@ describe("runHostUninstall", () => {
     });
     expect(result.human ?? "").toContain("STILL RUNNING");
     expect(result.human ?? "").toContain("traycer host stop --force");
+  });
+
+  // The host answered the stop and declined because it has work in progress:
+  // it is busy, not wedged. Its own refusal is the one worth surfacing, since
+  // it names the work and the `--force` that would end it.
+  it("rethrows the host's own E_HOST_BUSY when the --all stop was declined for work in progress, keeping the install", async () => {
+    const receivedOptions: UninstallHostOptions[] = [];
+    const busy = cliError({
+      code: CLI_ERROR_CODES.HOST_BUSY,
+      message: "host stop: the host has work in progress",
+      details: null,
+      exitCode: 1,
+    });
+    const deps = commandDeps({
+      stop: async () => {
+        throw busy;
+      },
+      receivedOptions,
+      status: async () => NOT_INSTALLED_STATUS,
+      liveness: "current",
+      successorAfterTeardown: null,
+      publishedPid: null,
+    });
+
+    await expect(
+      runHostUninstall(
+        { all: true, force: false },
+        COMMAND_CONTEXT,
+        deps,
+        testActuators(deps),
+      ),
+    ).rejects.toMatchObject({ code: "E_HOST_BUSY" });
+    expect(receivedOptions).toEqual([]);
   });
 
   // The boundary read of the published record is the last evidence about
