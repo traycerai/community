@@ -144,6 +144,8 @@ describe("StderrCaptureBuffer", () => {
         "assertion",
       ],
       ["Error: spawn EBUSY\n", "other"],
+      // `console.assert` writes this bare phrase; it is not a native abort.
+      ["Assertion failed: config ok\nError: boom\n", "other"],
     ])("sorts %j as %s", (text, expected) => {
       expect(capture(text).classifyFatal(true)).toBe(expected);
     });

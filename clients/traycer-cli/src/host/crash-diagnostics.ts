@@ -102,8 +102,14 @@ export type StderrFatalKind = (typeof STDERR_FATAL_KINDS)[number];
 /** Heap-exhaustion wording in a `FATAL ERROR:` line (V8 and Node's own). */
 const HEAP_OOM_LINE = /heap out of memory|heap limit/;
 
-/** Node `CHECK`, MSVC CRT and macOS `assert`: `Assertion failed: <expr>`. */
-const ASSERTION_FAILED_FORM = "Assertion failed:";
+/**
+ * Node `CHECK` (`  #  Assertion failed: <expr>`), and the MSVC CRT / libuv on
+ * Windows and macOS `assert` (`Assertion failed: <expr>, [function f, ]file
+ * <path>, line N`). Never the bare phrase: `console.assert` writes
+ * `Assertion failed: <msg>` to stderr too, and so can any log line.
+ */
+const ASSERTION_FAILED_FORM =
+  /^[ \t]*#[ \t]*Assertion failed:|Assertion failed: [^\n]{0,512}, file [^\n]{1,512}, line \d+/m;
 /** glibc `assert` and Node's `CHECK`: ``Assertion `expr' failed.``. */
 const ASSERTION_QUOTED_FORM = /Assertion `[^\n]{0,512}' failed\./;
 
@@ -366,7 +372,7 @@ export class StderrCaptureBuffer {
         "\n" +
         Buffer.concat(this.tailChunks).toString("utf8");
       if (
-        held.includes(ASSERTION_FAILED_FORM) ||
+        ASSERTION_FAILED_FORM.test(held) ||
         ASSERTION_QUOTED_FORM.test(held)
       ) {
         return "assertion";

@@ -1685,6 +1685,11 @@ describe("runHostStart - signal/exit propagation", () => {
         ],
         expected: "assertion",
       },
+      {
+        name: "a console.assert line (the bare phrase, no native location)",
+        chunks: ["Assertion failed: config ok\nError: boom\n"],
+        expected: "other",
+      },
       { name: "no stderr at all", chunks: [], expected: "none" },
       {
         name: "output that matches nothing",
