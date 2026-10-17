@@ -28,6 +28,7 @@ export function useProvidersSettingsFileStatus(
 ): UseQueryResult<ProvidersSettingsFileStatusResponse, HostRpcError> {
   const client = useHostClient();
   return useHostQuery({
+    cacheKeyIdentity: undefined,
     client,
     method: "providers.settingsFile.status",
     params: SETTINGS_FILE_STATUS_PARAMS,

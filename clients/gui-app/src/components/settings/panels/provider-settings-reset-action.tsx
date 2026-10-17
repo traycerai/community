@@ -43,7 +43,13 @@ export function ProviderSettingsResetAction(): ReactNode {
         disabled={reset.isPending}
       >
         {PROVIDER_SETTINGS_RESET_LABEL}
-        {reset.isPending ? <AgentSpinningDots /> : null}
+        {reset.isPending ? (
+          <AgentSpinningDots
+            className={undefined}
+            testId={undefined}
+            variant={undefined}
+          />
+        ) : null}
       </Button>
       <ConfirmDestructiveDialog
         open={open}
