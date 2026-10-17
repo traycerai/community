@@ -16,18 +16,18 @@ import { pathInsideRoot } from "../external-actions/ledger";
  * editor left in a managed worktree, an external tool running a provider
  * binary from the root.
  *
- * Fail closed: a probe that cannot run, cannot be parsed, or cannot inspect a
- * process that could write the root yields `unprovable`, never `clear`.
+ * Fail closed: a probe that cannot run or cannot be parsed yields
+ * `unprovable`, never `clear`. A process found using the root blocks.
  *
  * Which processes are relevant: this account's, on every platform. POSIX
  * requires the root to be mode 0700 and owned by the account (checked here),
- * so no other ordinary account can reach it. Windows decides on the processes
- * the OS attributes to this account; another account's process, and one whose
- * account cannot be read, does not decide the result (see
- * `WINDOWS_ROOT_CENSUS_SCRIPT`). Those processes are covered instead by the
- * root's private ACL, and a writer the census cannot see is caught by the
- * source re-walk at copying, repairing and revalidation (`assertSourceUnchanged`),
- * which stops the run before the switch.
+ * so no other ordinary account can reach it. On Windows, what the census
+ * cannot inspect never decides the result: another account's process, one
+ * whose account cannot be read, and one of this account whose handles or
+ * image cannot be read (see `WINDOWS_ROOT_CENSUS_SCRIPT`). A write by any of
+ * them is caught by the source re-walk at copying, repairing and revalidation
+ * (`assertSourceUnchanged`), which stops the run as `source-*` before the
+ * switch; the root's private ACL keeps other ordinary accounts out.
  *
  * What a snapshot cannot see, on any platform: a process that holds NO handle
  * inside the root now but opens a path later (an editor that saves by absolute
@@ -274,14 +274,17 @@ export type WindowsCensusOutput = z.infer<typeof windowsCensusOutputSchema>;
  * The Windows census: one PowerShell process compiling a small C# helper
  * (`Add-Type`).
  *
- * It decides on this account's processes only, as POSIX does. On real
- * Windows (718-8 P1, non-admin account) every other account's process,
- * SYSTEM services included, read as "account could not be read", so a rule
- * that refused on them refused every migration on every machine. Those
- * processes are reported (`foreign`, `unattributed`) but never decide the
- * result; the root's private ACL (718-8 P2) and the source re-walk before
- * the switch cover them. The same run found this account's working-directory,
- * open-file and image holders.
+ * It decides on the holders it finds among this account's processes; what
+ * it cannot inspect is reported (`uninspectable`, `foreign`, `unattributed`)
+ * but never decides the result. On real Windows, a non-admin account read
+ * every other account's process, SYSTEM services included, as "account could
+ * not be read" (718-8 P1), and a normal desktop session always holds some of
+ * its own processes it cannot inspect (718-8 P4: ctfmon.exe with UIAccess and
+ * DefenderSessionHelper.exe as a protected process refuse handle
+ * duplication; taskhostw.exe holds a raw-disk handle with no path). A rule
+ * that refused on either refused every migration. The source re-walk before
+ * the switch and the root's private ACL (718-8 P2) cover them. The same runs
+ * found this account's working-directory, open-file and image holders.
  *
  * Who a process runs as is read from the OS, never inferred from where it
  * runs or what its image is:
@@ -289,9 +292,8 @@ export type WindowsCensusOutput = z.infer<typeof windowsCensusOutputSchema>;
  *   (`WTSEnumerateProcessesExW`, level 1) or, failing that, the process token
  *   (`TokenUser`);
  * - this account's SID: inspected in full;
- * - the two readings disagree: inspected as this account's when either
- *   reading is this account (`uninspectable`, so the census fails closed),
- *   otherwise `unattributed`;
+ * - the two readings disagree: `uninspectable` when either reading is this
+ *   account, otherwise `unattributed`;
  * - the OS service and virtual accounts (S-1-5-18 SYSTEM, -19 LOCAL SERVICE,
  *   -20 NETWORK SERVICE, S-1-5-90-0-* Window Manager, S-1-5-96-0-* Font
  *   Driver Host): skipped, by authenticated principal;
@@ -302,8 +304,9 @@ export type WindowsCensusOutput = z.infer<typeof windowsCensusOutputSchema>;
  *
  * For each process of this account, with its creation time taken at
  * enumeration:
- * - the image (`QueryFullProcessImageNameW`) inside the root is a user; a
- *   failed query is uninspectable unless the process is proven gone;
+ * - the image (`QueryFullProcessImageNameW`) inside the root is a user, even
+ *   when some of its handles cannot be read; a failed query is uninspectable
+ *   unless the process is proven gone;
  * - every handle of the kernel `File` type (`NtQuerySystemInformation`,
  *   `SystemExtendedHandleInformation`; the type index learned from a handle
  *   this helper holds) is duplicated and resolved: `GetFileType` (disk only;
@@ -531,10 +534,7 @@ try {
   foreach ($p in $mine.Values) {
     if ($null -eq $p.Evidence -and $null -eq $p.Unread) { continue }
     if ([TraycerRootCensus]::Gone($p)) { continue }
-    # A handle inside the root blocks on its own; an image does not, so a process
-    # whose handles were not all read stays uninspectable even with an image
-    # inside (otherwise the coordinator's image exemption would hide them).
-    if ($p.Evidence -eq 'handle' -or ($null -ne $p.Evidence -and $null -eq $p.Unread)) { $out.users += @{ pid = $p.Pid; name = $p.Name; evidence = $p.Evidence } }
+    if ($null -ne $p.Evidence) { $out.users += @{ pid = $p.Pid; name = $p.Name; evidence = $p.Evidence } }
     else { $out.uninspectable += @{ pid = $p.Pid; name = $p.Name; reason = $p.Unread } }
   }
 } catch { $out.error = $_.Exception.Message }
@@ -543,9 +543,8 @@ try {
 
 /**
  * Decides the census result from the helper's JSON: `unprovable` when the
- * helper did not run cleanly or a process of this account could not be fully
- * inspected; otherwise this account's users. `foreign` and `unattributed`
- * processes never decide it. Exported for tests.
+ * helper did not run cleanly; otherwise this account's users. `uninspectable`,
+ * `foreign` and `unattributed` processes never decide it. Exported for tests.
  */
 export function interpretWindowsCensusOutput(
   stdout: string,
@@ -576,12 +575,6 @@ export function interpretWindowsCensusOutput(
   }
   if (parsed.error !== null)
     return { kind: "unprovable", reason: "the process census failed" };
-  if (parsed.uninspectable.length > 0) {
-    return {
-      kind: "unprovable",
-      reason: `${parsed.uninspectable.length} processes of this account (for example one run as administrator) could not be fully inspected`,
-    };
-  }
   const users = new Map<number, RootUser>();
   for (const user of parsed.users)
     if (!users.has(user.pid)) users.set(user.pid, user);

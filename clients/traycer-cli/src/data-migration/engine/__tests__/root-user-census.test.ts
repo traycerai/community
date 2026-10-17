@@ -187,25 +187,40 @@ describe("interpretWindowsCensusOutput", () => {
     ).toEqual({ kind: "clear" });
   });
 
-  it("the P1 shape plus one own-account uninspectable process is unprovable, naming this account", () => {
+  it("the P1 shape plus own-account uninspectable processes (ctfmon, DefenderSessionHelper, taskhostw) reads as clear", () => {
     const result = interpretWindowsCensusOutput(
       windowsOutput({
         ...clearBody,
         unattributed: manyUnattributed,
-        uninspectable: [{ pid: 2, name: "elevated", reason: "denied" }],
+        uninspectable: [
+          {
+            pid: 2100,
+            name: "ctfmon",
+            reason: "its handles could not be opened for inspection",
+          },
+          {
+            pid: 2200,
+            name: "DefenderSessionHelper",
+            reason: "its handles could not be opened for inspection",
+          },
+          {
+            pid: 2300,
+            name: "taskhostw",
+            reason: "a handle's path could not be resolved",
+          },
+        ],
       }),
       0,
     );
-    expect(result.kind).toBe("unprovable");
-    expect(result.kind === "unprovable" ? result.reason : "").toContain(
-      "of this account",
-    );
+    expect(result).toEqual({ kind: "clear" });
   });
 
-  it("is unprovable when a same-account process could not be inspected, even with users found", () => {
-    const withUsers = interpretWindowsCensusOutput(
+  it("uninspectable processes plus a found holder report exactly that holder as users", () => {
+    const holder = { pid: 1, name: "a", evidence: "handle" };
+    const result = interpretWindowsCensusOutput(
       windowsOutput({
-        users: [{ pid: 1, name: "a", evidence: "handle" }],
+        ...clearBody,
+        users: [holder],
         uninspectable: [
           {
             pid: 2,
@@ -213,24 +228,21 @@ describe("interpretWindowsCensusOutput", () => {
             reason: "its handles could not all be inspected",
           },
         ],
-        foreign: [],
-        unattributed: [],
-        error: null,
       }),
       0,
     );
-    expect(withUsers.kind).toBe("unprovable");
-    const single = interpretWindowsCensusOutput(
+    expect(result).toEqual({ kind: "users", users: [holder] });
+  });
+
+  it("a single uninspectable object (ConvertTo-Json's one-element form) reads as clear", () => {
+    const result = interpretWindowsCensusOutput(
       windowsOutput({
-        users: [],
+        ...clearBody,
         uninspectable: { pid: 2, name: null, reason: "denied" },
-        foreign: [],
-        unattributed: [],
-        error: null,
       }),
       0,
     );
-    expect(single.kind).toBe("unprovable");
+    expect(result).toEqual({ kind: "clear" });
   });
 
   it("is unprovable when the helper reported an error", () => {
@@ -319,6 +331,18 @@ describe("Windows census transport", () => {
 
   it("the script is ASCII-only, so its encoding on stdin cannot be mangled", () => {
     expect(/^[\x00-\x7F]*$/u.test(WINDOWS_ROOT_CENSUS_SCRIPT)).toBe(true);
+  });
+
+  // The script runs only on Windows, so its final classification is pinned by
+  // text: a process with image (or any) evidence is a user even when some of
+  // its handles could not be read, since an unread handle never decides.
+  it("the script reports any found evidence as a user, even with handles left unread", () => {
+    expect(WINDOWS_ROOT_CENSUS_SCRIPT).toContain(
+      "if ($null -ne $p.Evidence) { $out.users += @{ pid = $p.Pid; name = $p.Name; evidence = $p.Evidence } }",
+    );
+    expect(WINDOWS_ROOT_CENSUS_SCRIPT).not.toContain(
+      "$null -eq $p.Unread)) { $out.users",
+    );
   });
 });
 
