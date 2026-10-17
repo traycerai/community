@@ -654,6 +654,9 @@ function hostRpcToCliError(err: unknown): unknown {
  *   - `WORKTREE_MISSING` / `WORKSPACE_BINDING_REQUIRED` / `E_HOST_STORAGE_FULL`
  *     → the CLI code of the same name: the person's own folder, workspace
  *     choice or disk stops the request, and the host's message names the fix.
+ *   - `PROVIDER_DISABLED` → `PROVIDER_DISABLED`: the person turned that
+ *     provider off in Settings → Providers; the host's message names it and the
+ *     setting, and is passed through unchanged.
  *   - `E_INVALID_ARGUMENT` / `MESSAGE_TOO_LARGE`, and an `RPC_ERROR` carrying one
  *     of the host's four profile-selection messages → `INVALID_ARGUMENT`: the
  *     caller's own input.
@@ -745,6 +748,18 @@ function mapHostRpcError(err: HostRpcError): CliError {
     return cliError({
       code: CLI_ERROR_CODES.HOST_STORAGE_FULL,
       message: `traycer: ${err.message}`,
+      details: null,
+      exitCode: 1,
+    });
+  }
+  // A provider the person disabled in Settings → Providers is their own
+  // setting, not a CLI defect. The host's message ("<Provider> is disabled.
+  // Enable it in Settings → Providers.") already names the remedy and is kept
+  // as the fall-through printed it.
+  if (err.code === "PROVIDER_DISABLED") {
+    return cliError({
+      code: CLI_ERROR_CODES.PROVIDER_DISABLED,
+      message: err.message,
       details: null,
       exitCode: 1,
     });
