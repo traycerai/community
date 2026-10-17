@@ -381,6 +381,22 @@ export const botCheckinSectionsSchema = lazySchema(() =>
        * check could not be completed, so the task counted as running.
        */
       state: z.enum(["idle", "running", "unknown"]),
+      /**
+       * Why the task counts as running; `null` exactly when it is idle.
+       * `working`: the agents and shells listed here; `owed-release-work`: an
+       * agent still owes release work (a shell it stopped has not finished);
+       * `resumed-while-composing`: the task resumed between the reads, so
+       * nothing is listed; `check-failed`: the idle check could not be
+       * completed (`state: unknown`).
+       */
+      reason: z
+        .enum([
+          "working",
+          "owed-release-work",
+          "resumed-while-composing",
+          "check-failed",
+        ])
+        .nullable(),
       agents: z.array(
         z.object({
           agentId: z.string().min(1),
