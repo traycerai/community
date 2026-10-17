@@ -331,6 +331,8 @@ export function waitForBotReply(input: {
       }
     };
     session.onServerFrame((envelope) => {
+      // A frame already in flight when the wait ended asks for nothing more.
+      if (settled) return;
       const parsed = openChatSubscribeWindowedServerFrameSchema.safeParse(
         envelope,
       );
