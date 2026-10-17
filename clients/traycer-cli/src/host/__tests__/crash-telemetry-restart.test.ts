@@ -75,8 +75,27 @@ vi.mock("../../sentry-transport", () => ({
   destroySentryTransportRequests: () => 0,
 }));
 
+const pidMetadata = vi.hoisted(() => ({
+  hostId: null as string | null,
+}));
+
 vi.mock("../pid-metadata", () => ({
-  readHostPidMetadata: () => Promise.resolve(null),
+  readHostPidMetadata: () =>
+    Promise.resolve(
+      pidMetadata.hostId === null
+        ? null
+        : {
+            pid: 4243,
+            hostId: pidMetadata.hostId,
+            version: "1.5.1",
+            websocketUrl: "ws://127.0.0.1:1",
+            startedAt: "2026-10-17T00:00:00.000Z",
+            processStartIdentity: null,
+            processStartIdentityRead: "absent",
+            layer0: null,
+            layer0Slot: null,
+          },
+    ),
 }));
 
 const RELAUNCHES_PER_SUPERVISOR_LIFE = 5;
@@ -124,6 +143,7 @@ beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "traycer-crash-restart-test-"));
   osHome.current = home;
   sentryMocks.messages.length = 0;
+  pidMetadata.hostId = null;
   nowMs = Date.UTC(2026, 9, 17, 0, 0, 0);
   vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
   vi.setSystemTime(nowMs);
@@ -245,8 +265,9 @@ describe("host crash reports across supervisor restarts", () => {
     expect(fullReports()).toBe(1);
   });
 
-  it("writes no account identifier, path or stderr into the state file", async () => {
-    await superviseLife(2, 1);
+  it("writes only the closed set of fields, with the host id and nothing else that identifies a person or a machine path", async () => {
+    pidMetadata.hostId = "host-known-id";
+    await superviseLife(RELAUNCHES_PER_SUPERVISOR_LIFE + 1, 1);
     const stateDir = join(home, ".traycer", "cli");
     const files = readdirSync(stateDir).filter((name) =>
       name.startsWith("host-crash-throttle"),
@@ -254,5 +275,61 @@ describe("host crash reports across supervisor restarts", () => {
     expect(files).toHaveLength(1);
     const text = readFileSync(join(stateDir, files[0]), "utf8");
     expect(text).not.toContain(home);
+
+    const parsed: unknown = JSON.parse(text);
+    if (!isKinds(parsed)) throw new Error("state file has no kinds");
+    expect(Object.keys(parsed).sort()).toEqual(["kinds", "version"]);
+    expect(Object.keys(parsed.kinds)).toHaveLength(1);
+    const kind = Object.values(parsed.kinds)[0];
+    expect(Object.keys(kind).sort()).toEqual([
+      "lastCrashAt",
+      "lastSuppressed",
+      "reported",
+      "suppressedCount",
+      "windowStartedAt",
+    ]);
+    const held = kind.lastSuppressed;
+    expect(held).not.toBeNull();
+    expect(Object.keys(held ?? {}).sort()).toEqual([
+      "fingerprint",
+      "hostId",
+      "level",
+      "message",
+      "tags",
+    ]);
+    expect(held?.hostId).toBe("host-known-id");
+    expect(Object.keys(held?.tags ?? {}).sort()).toEqual([
+      "arch",
+      "cli_version",
+      "crash_kind",
+      "host_environment",
+      "host_output",
+      "host_phase",
+      "host_running_version",
+      "host_version",
+      "os_release",
+      "platform",
+      "stop_requested",
+      "uptime_bucket",
+    ]);
   });
 });
+
+interface StoredKind {
+  readonly lastSuppressed: {
+    readonly hostId: string | null;
+    readonly tags: Record<string, string>;
+  } | null;
+}
+
+function isKinds(value: unknown): value is {
+  readonly kinds: Record<string, StoredKind>;
+} {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    "kinds" in value &&
+    typeof value.kinds === "object" &&
+    value.kinds !== null
+  );
+}

@@ -1100,6 +1100,7 @@ export async function runHostStart(
         supervisorPid,
       },
     );
+    await settlePendingCrashTelemetry();
     return deps.exit(0);
   }
 
@@ -3863,9 +3864,10 @@ const pendingCrashTelemetry = new Set<Promise<void>>();
 /** Wait, for at most the report bound, for the reports still in flight. */
 async function settlePendingCrashTelemetry(): Promise<void> {
   if (pendingCrashTelemetry.size === 0) return;
+  const waiting = [...pendingCrashTelemetry];
   let timer: NodeJS.Timeout | undefined;
   await Promise.race([
-    Promise.allSettled([...pendingCrashTelemetry]),
+    Promise.allSettled(waiting),
     new Promise<void>((resolve) => {
       // Referenced on purpose: with the report's own timer unref'd, this is
       // what keeps the process alive until the wait ends.
@@ -3873,6 +3875,8 @@ async function settlePendingCrashTelemetry(): Promise<void> {
     }),
   ]);
   clearTimeout(timer);
+  // Waited for, or given up on: either way nothing is left to wait for.
+  for (const task of waiting) pendingCrashTelemetry.delete(task);
 }
 
 /** The report's memory numbers, every field `null` when there was no report. */

@@ -1624,7 +1624,7 @@ describe("runHostStart - signal/exit propagation", () => {
     // Two contracts. The supervisor's EXIT waits for a report still in flight,
     // because the report writes the throttle state the next supervisor starts
     // from, but never past HOST_CRASH_REPORT_TIMEOUT_MS (this test). A RELAUNCH
-    // never waits for it (the next test). Real timers.
+    // never waits for it (see "crash-report settling at exit"). Real timers.
     const exec = "/opt/traycer/host/install/traycer-host";
     const { child, recorded, deps } = makeRunStubs(sampleRecord(exec), null);
     recorded.reportHostCrashHangs = true;
@@ -1654,133 +1654,249 @@ describe("runHostStart - signal/exit propagation", () => {
     // timeout below, and a tight bound would only measure CI event-loop delay.
   }, 10_000);
 
-  it("never holds a relaunch on a crash report that never resolves", async () => {
+  // The supervisor's EXIT waits, for at most HOST_CRASH_REPORT_TIMEOUT_MS, for a
+  // crash report and the start-up throttle-state resume still in flight (the
+  // state they write is what the next supervisor starts from). A RELAUNCH never
+  // waits for either. The tests below hold a dependency on a gate the test
+  // opens and fake only setTimeout/clearTimeout, so the bound is crossed by
+  // advancing a fake clock and no assertion reads a wall clock.
+  describe("crash-report settling at exit", () => {
     const exec = "/opt/traycer/host/install/traycer-host";
-    const { recorded, deps } = makeRunStubs(sampleRecord(exec), null);
-    recorded.reportHostCrashHangs = true;
-    const scripted = withScriptedAttempts(deps, [
-      { code: 9, signal: null },
-      { code: 0, signal: null },
-    ]);
-    const originalSpawn = scripted.deps.spawn;
-    if (originalSpawn === undefined) {
-      throw new Error("test spawn dependency missing");
+
+    interface Gate {
+      readonly promise: Promise<void>;
+      readonly open: () => void;
     }
-    const startedAtMs = Date.now();
-    const spawnedAtMs: number[] = [];
 
-    await runUntilExit(
-      () =>
-        runHostStart(
-          { environment: "production", cwd: null },
-          {
-            ...scripted.deps,
-            maxRelaunches: 1,
-            spawn: (command, args, options) => {
-              spawnedAtMs.push(Date.now() - startedAtMs);
-              return originalSpawn(command, args, options);
-            },
+    function gate(): Gate {
+      let open: () => void = () => undefined;
+      const promise = new Promise<void>((resolve) => {
+        open = resolve;
+      });
+      return { promise, open };
+    }
+
+    async function flushUntil(condition: () => boolean): Promise<void> {
+      for (let turn = 0; turn < 200 && !condition(); turn += 1) {
+        await new Promise<void>((resolve) => setImmediate(resolve));
+      }
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    });
+
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("lets the last crash report land before the supervisor exits", async () => {
+      const { child, recorded, deps } = makeRunStubs(sampleRecord(exec), null);
+      const reporting = gate();
+      let reportStarted = false;
+      let landed = false;
+      let landedAtExit: boolean | null = null;
+      const slowReporting: RunHostStartDeps = {
+        ...deps,
+        reportHostCrash: async () => {
+          reportStarted = true;
+          await reporting.promise;
+          landed = true;
+        },
+        exit: (code) => {
+          landedAtExit = landed;
+          return deps.exit(code);
+        },
+      };
+
+      const run = runHostStart(
+        { environment: "production", cwd: null },
+        withChildExit(slowReporting, child, 7, null),
+      );
+      await flushUntil(() => reportStarted);
+      await flushUntil(() => recorded.exited !== null);
+      // The bound has not passed, so the exit is still waiting.
+      expect(recorded.exited).toBeNull();
+      reporting.open();
+      await run;
+
+      expect(recorded.exited).toBe(7);
+      expect(landedAtExit).toBe(true);
+    }, 10_000);
+
+    it("does not wait past the report bound for a crash report that is merely slow", async () => {
+      const { child, recorded, deps } = makeRunStubs(sampleRecord(exec), null);
+      const reporting = gate();
+      let reportStarted = false;
+      let landed = false;
+      let landedAtExit: boolean | null = null;
+      const slowReporting: RunHostStartDeps = {
+        ...deps,
+        reportHostCrash: async () => {
+          reportStarted = true;
+          await reporting.promise;
+          landed = true;
+        },
+        exit: (code) => {
+          landedAtExit = landed;
+          return deps.exit(code);
+        },
+      };
+
+      const run = runHostStart(
+        { environment: "production", cwd: null },
+        withChildExit(slowReporting, child, 7, null),
+      );
+      await flushUntil(() => reportStarted);
+      await vi.advanceTimersByTimeAsync(HOST_CRASH_REPORT_TIMEOUT_MS - 1);
+      expect(recorded.exited).toBeNull();
+      await vi.advanceTimersByTimeAsync(1);
+      await run;
+
+      expect(recorded.exited).toBe(7);
+      expect(landedAtExit).toBe(false);
+      reporting.open();
+    }, 10_000);
+
+    it("never holds a relaunch on a crash report that never resolves", async () => {
+      const { recorded, deps } = makeRunStubs(sampleRecord(exec), null);
+      const reporting = gate();
+      const scripted = withScriptedAttempts(
+        {
+          ...deps,
+          reportHostCrash: async () => reporting.promise,
+        },
+        [
+          { code: 9, signal: null },
+          { code: 0, signal: null },
+        ],
+      );
+      const originalSpawn = scripted.deps.spawn;
+      if (originalSpawn === undefined) {
+        throw new Error("test spawn dependency missing");
+      }
+      let spawns = 0;
+
+      const run = runHostStart(
+        { environment: "production", cwd: null },
+        {
+          ...scripted.deps,
+          maxRelaunches: 1,
+          spawn: (command, args, options) => {
+            spawns += 1;
+            return originalSpawn(command, args, options);
           },
-        ),
-      recorded,
-    );
+        },
+      );
+      // No timer is advanced: a relaunch that waited on the report would be
+      // waiting on its bound timer and never spawn the second attempt.
+      await flushUntil(() => spawns >= 2);
+      expect(spawns).toBe(2);
+      reporting.open();
+      await vi.advanceTimersByTimeAsync(HOST_CRASH_REPORT_TIMEOUT_MS);
+      await run;
+      expect(recorded.exited).toBe(0);
+    }, 10_000);
 
-    expect(spawnedAtMs).toHaveLength(2);
-    // Awaiting the stalled reporter would put the relaunch at the report bound
-    // (1.5 s) or later; the margin is for a slow runner, not for the contract.
-    expect(spawnedAtMs[1]).toBeLessThan(HOST_CRASH_REPORT_TIMEOUT_MS - 500);
-  }, 10_000);
+    it("lets a throttle-state resume still in flight finish before a supervisor exit", async () => {
+      const { child, recorded, deps } = makeRunStubs(sampleRecord(exec), null);
+      const resuming = gate();
+      let resumeStarted = false;
+      let resumed = false;
+      let resumedAtExit: boolean | null = null;
+      const slowResume: RunHostStartDeps = {
+        ...deps,
+        resumeCrashReports: async () => {
+          resumeStarted = true;
+          await resuming.promise;
+          resumed = true;
+        },
+        exit: (code) => {
+          resumedAtExit = resumed;
+          return deps.exit(code);
+        },
+      };
 
-  it("lets the last crash report land before the supervisor exits, so the throttle state it writes is on disk for the next supervisor", async () => {
-    const exec = "/opt/traycer/host/install/traycer-host";
-    const { child, recorded, deps } = makeRunStubs(sampleRecord(exec), null);
-    let landed = false;
-    let landedAtExit: boolean | null = null;
-    const slowReporting: RunHostStartDeps = {
-      ...deps,
-      reportHostCrash: async () => {
-        await new Promise<void>((resolve) => setTimeout(resolve, 300));
-        landed = true;
-      },
-      exit: (code) => {
-        landedAtExit = landed;
-        return deps.exit(code);
-      },
-    };
+      const run = runHostStart(
+        { environment: "production", cwd: null },
+        withChildExit(slowResume, child, 7, null),
+      );
+      await flushUntil(() => resumeStarted);
+      await flushUntil(() => recorded.exited !== null);
+      expect(recorded.exited).toBeNull();
+      resuming.open();
+      await run;
 
-    await runUntilExit(
-      () =>
-        runHostStart(
-          { environment: "production", cwd: null },
-          withChildExit(slowReporting, child, 7, null),
-        ),
-      recorded,
-    );
+      expect(resumedAtExit).toBe(true);
+    }, 10_000);
 
-    expect(recorded.exited).toBe(7);
-    expect(landedAtExit).toBe(true);
-  }, 10_000);
+    it("lets a throttle-state resume still in flight finish before the exit that declines for a live incumbent", async () => {
+      const { recorded, deps } = makeRunStubs(sampleRecord(exec), null);
+      const resuming = gate();
+      let resumeStarted = false;
+      let resumed = false;
+      let resumedAtExit: boolean | null = null;
+      const guarded: RunHostStartDeps = {
+        ...deps,
+        findIncumbentHost: async () => ({
+          pid: 40769,
+          version: "1.1.8",
+          websocketUrl: "ws://127.0.0.1:58036/rpc",
+        }),
+        resumeCrashReports: async () => {
+          resumeStarted = true;
+          await resuming.promise;
+          resumed = true;
+        },
+        exit: (code) => {
+          resumedAtExit = resumed;
+          return deps.exit(code);
+        },
+      };
 
-  it("does not wait past the report bound for a crash report that is merely slow", async () => {
-    const exec = "/opt/traycer/host/install/traycer-host";
-    const { child, recorded, deps } = makeRunStubs(sampleRecord(exec), null);
-    let landed = false;
-    let landedAtExit: boolean | null = null;
-    const verySlowReporting: RunHostStartDeps = {
-      ...deps,
-      reportHostCrash: async () => {
-        await new Promise<void>((resolve) =>
-          setTimeout(resolve, HOST_CRASH_REPORT_TIMEOUT_MS + 1_500),
-        );
-        landed = true;
-      },
-      exit: (code) => {
-        landedAtExit = landed;
-        return deps.exit(code);
-      },
-    };
+      const run = runHostStart(
+        { environment: "production", cwd: null },
+        guarded,
+      );
+      await flushUntil(() => resumeStarted);
+      await flushUntil(() => recorded.exited !== null);
+      expect(recorded.exited).toBeNull();
+      resuming.open();
+      await run;
 
-    await runUntilExit(
-      () =>
-        runHostStart(
-          { environment: "production", cwd: null },
-          withChildExit(verySlowReporting, child, 7, null),
-        ),
-      recorded,
-    );
+      expect(recorded.exited).toBe(0);
+      expect(resumedAtExit).toBe(true);
+    }, 10_000);
 
-    expect(recorded.exited).toBe(7);
-    expect(landedAtExit).toBe(false);
-  }, 10_000);
+    it("stops waiting for a throttle-state resume that never resolves at the report bound", async () => {
+      const { recorded, deps } = makeRunStubs(sampleRecord(exec), null);
+      let resumeStarted = false;
+      const stuck: RunHostStartDeps = {
+        ...deps,
+        findIncumbentHost: async () => ({
+          pid: 40769,
+          version: "1.1.8",
+          websocketUrl: "ws://127.0.0.1:58036/rpc",
+        }),
+        resumeCrashReports: async () => {
+          resumeStarted = true;
+          return new Promise<void>(() => undefined);
+        },
+      };
 
-  it("lets a throttle-state resume still in flight finish before the supervisor exits", async () => {
-    const exec = "/opt/traycer/host/install/traycer-host";
-    const { child, recorded, deps } = makeRunStubs(sampleRecord(exec), null);
-    let resumed = false;
-    let resumedAtExit: boolean | null = null;
-    const slowResume: RunHostStartDeps = {
-      ...deps,
-      resumeCrashReports: async () => {
-        await new Promise<void>((resolve) => setTimeout(resolve, 300));
-        resumed = true;
-      },
-      exit: (code) => {
-        resumedAtExit = resumed;
-        return deps.exit(code);
-      },
-    };
+      const run = runHostStart(
+        { environment: "production", cwd: null },
+        stuck,
+      );
+      await flushUntil(() => resumeStarted);
+      await vi.advanceTimersByTimeAsync(HOST_CRASH_REPORT_TIMEOUT_MS - 1);
+      expect(recorded.exited).toBeNull();
+      await vi.advanceTimersByTimeAsync(1);
+      await run;
 
-    await runUntilExit(
-      () =>
-        runHostStart(
-          { environment: "production", cwd: null },
-          withChildExit(slowResume, child, 7, null),
-        ),
-      recorded,
-    );
-
-    expect(resumedAtExit).toBe(true);
-  }, 10_000);
+      expect(recorded.exited).toBe(0);
+    }, 10_000);
+  });
 
   it("spawn() throw is translated into HOST_SPAWN_FAILED + exit 66", async () => {
     const exec = "/opt/traycer/host/install/traycer-host";
