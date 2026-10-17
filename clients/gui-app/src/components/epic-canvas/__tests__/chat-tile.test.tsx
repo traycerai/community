@@ -2188,6 +2188,52 @@ describe("<ChatTile />", () => {
     });
   });
 
+  it("returns to the reopened editor when an edit from scrollback is rejected", async () => {
+    renderChatTile();
+    await waitForChatTileLoaded();
+    const scrollNode = screen.getByTestId("chat-messages-scroll");
+    setLegendListScrollContainerScrollHeightOverride(36_000);
+    scrollNode.scrollTop = 1_000;
+    fireEvent.scroll(scrollNode);
+    fireEvent.wheel(scrollNode, { deltaY: -80 });
+    scrollNode.scrollTop = 900;
+    fireEvent.scroll(scrollNode);
+    await waitFor(() => {
+      expect(scrollNode.dataset.scrollMode).toBe("free-scrolling");
+    });
+
+    fireEvent.click(getButtonByAriaLabel("Edit message"));
+    fireEvent.click(getButtonByAriaLabel("Send edit"));
+    await waitFor(() => {
+      expect(scrollNode.dataset.scrollMode).toBe("following-end");
+    });
+    const frame = chatHarness.sent[0];
+    if (frame.kind !== "editUserMessage") {
+      throw new Error("expected editUserMessage frame");
+    }
+
+    act(() => {
+      chatHarness.callbacks().onActionAck({
+        kind: "actionAck",
+        hasBinaryPayload: false,
+        epicId: EPIC_ID,
+        chatId: CHAT_ARTIFACT.id,
+        clientActionId: frame.clientActionId,
+        action: "editUserMessage",
+        status: "rejected",
+        reason: "The host refused the edit.",
+        code: null,
+        backgroundStopTaskIds: [],
+        token: null,
+      });
+    });
+
+    await waitFor(() => {
+      expect(getButtonByAriaLabel("Send edit")).not.toBeNull();
+      expect(scrollNode.dataset.scrollMode).toBe("free-scrolling");
+    });
+  });
+
   it("seeds composer settings from last-used local settings", async () => {
     useComposerRunSettingsStore.setState({
       globalLastRunSettingsByHostId: { [HOST_ID]: SESSION_SETTINGS },

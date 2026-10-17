@@ -1107,7 +1107,10 @@ export function ChatTileSessionView(props: ChatTileSessionViewProps) {
     });
   }, []);
   const pendingInlineEditMessageId = view.pendingInlineEditMessageId;
+  const reopenedInlineEditTargetMessageId =
+    view.reopenedInlineEditTargetMessageId;
   const followedInlineEditMessageIdRef = useRef<string | null>(null);
+  const restoredInlineEditMessageIdRef = useRef<string | null>(null);
   useLayoutEffect(() => {
     if (
       pendingInlineEditMessageId === null ||
@@ -1123,6 +1126,24 @@ export function ChatTileSessionView(props: ChatTileSessionViewProps) {
     // before the host's reindex can change the list geometry.
     scrollToTranscriptEnd(false);
   }, [pendingInlineEditMessageId, scrollToTranscriptEnd]);
+  useLayoutEffect(() => {
+    if (
+      pendingInlineEditMessageId === null ||
+      reopenedInlineEditTargetMessageId === null ||
+      pendingInlineEditMessageId !== followedInlineEditMessageIdRef.current ||
+      pendingInlineEditMessageId === restoredInlineEditMessageIdRef.current
+    ) {
+      return;
+    }
+    restoredInlineEditMessageIdRef.current = pendingInlineEditMessageId;
+    // A rejected send keeps the original row and reopens its editor. Return
+    // there after the speculative move to the tail so the draft stays visible.
+    scrollToMessage(reopenedInlineEditTargetMessageId);
+  }, [
+    pendingInlineEditMessageId,
+    reopenedInlineEditTargetMessageId,
+    scrollToMessage,
+  ]);
   // Cross-tile transcript jumps (today: the communication-graph timeline).
   // Parked in a store rather than called directly because the jump is issued
   // from another tile, possibly before this one exists - `openTile`
@@ -3730,6 +3751,11 @@ function useChatTileSessionViewModel(
     restoreContext,
     messages: pinnedTodoRenderState.messages,
     pendingInlineEditMessageId: uiState.inlineEdit?.pendingMessageId ?? null,
+    reopenedInlineEditTargetMessageId:
+      uiState.inlineEdit?.pendingMessageId &&
+      activeInlineEdit?.pendingMessageId === null
+        ? activeInlineEdit.targetMessageId
+        : null,
     activeTurnId,
     // Same line discriminator as the revert-scope resolution above: on the
     // legacy line the window is an inert empty value whose `rowCount` of 0
