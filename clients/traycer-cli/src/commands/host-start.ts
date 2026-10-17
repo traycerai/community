@@ -3481,9 +3481,13 @@ async function finalizeAttemptProbe(input: {
 async function flushAttemptStderr(input: {
   readonly stderrEnded: Promise<void>;
   readonly stderrTee: StderrTee;
-}): Promise<void> {
-  await withDeadline(input.stderrEnded, STDERR_END_WAIT_TIMEOUT_MS);
+}): Promise<boolean> {
+  const ended = await withDeadline(
+    input.stderrEnded,
+    STDERR_END_WAIT_TIMEOUT_MS,
+  );
   await input.stderrTee.flush(STDERR_FLUSH_TIMEOUT_MS);
+  return ended;
 }
 
 /**
@@ -3561,7 +3565,7 @@ async function persistChildExit(input: {
     bundle,
     deps,
   } = input;
-  await flushAttemptStderr({
+  const stderrStreamEnded = await flushAttemptStderr({
     stderrEnded: input.stderrEnded,
     stderrTee: input.stderrTee,
   });
@@ -3668,6 +3672,7 @@ async function persistChildExit(input: {
         ),
         stopRequested: input.stopRequested,
         stderrEmpty: input.stderrTee.capture.isEmpty(),
+        stderrFatal: input.stderrTee.capture.classifyFatal(stderrStreamEnded),
       });
     }
     return outcome;
@@ -3821,6 +3826,7 @@ async function persistChildExit(input: {
     uptimeMs: Math.max(0, input.childEndedMonoMs - input.childSpawnedMonoMs),
     stopRequested: input.stopRequested,
     stderrEmpty: input.stderrTee.capture.isEmpty(),
+    stderrFatal: input.stderrTee.capture.classifyFatal(stderrStreamEnded),
   });
   return outcome;
 }
@@ -3933,21 +3939,22 @@ function boundedCrashReportScan(input: {
 }
 
 /**
- * Resolves when `promise` settles or `timeoutMs` elapses, whichever is first.
- * Never rejects: every caller here is on the exit path, where the only
- * acceptable outcome is "continue and write the marker".
+ * Resolves when `promise` settles or `timeoutMs` elapses, whichever is first:
+ * `true` when it settled, `false` when the deadline won. Never rejects: every
+ * caller here is on the exit path, where the only acceptable outcome is
+ * "continue and write the marker".
  */
 function withDeadline(
   promise: Promise<void>,
   timeoutMs: number,
-): Promise<void> {
+): Promise<boolean> {
   return Promise.race([
     promise.then(
-      () => undefined,
-      () => undefined,
+      () => true,
+      () => true,
     ),
-    new Promise<void>((resolve) => {
-      const timer = setTimeout(resolve, timeoutMs);
+    new Promise<boolean>((resolve) => {
+      const timer = setTimeout(() => resolve(false), timeoutMs);
       timer.unref?.();
     }),
   ]);
