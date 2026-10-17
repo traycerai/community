@@ -282,6 +282,31 @@ const ORDERED_PARENT_SUBLIST_DOC: JsonContent = {
   ],
 };
 
+/** A later paragraph of an item sits behind a blank line. */
+const TWO_PARAGRAPH_ORDERED_ITEM_DOC: JsonContent = {
+  type: "doc",
+  content: [
+    {
+      type: "orderedList",
+      content: [
+        {
+          type: "listItem",
+          content: [
+            {
+              type: "paragraph",
+              content: [{ type: "text", text: "First item" }],
+            },
+            {
+              type: "paragraph",
+              content: [{ type: "text", text: "Second paragraph" }],
+            },
+          ],
+        },
+      ],
+    },
+  ],
+};
+
 /** An item with no children still writes its marker line, space included. */
 const EMPTY_ORDERED_ITEM_DOC: JsonContent = {
   type: "doc",
@@ -1603,7 +1628,7 @@ describe("content recovery classification", () => {
       ],
     });
 
-    expect(text).toBe("1. step\n   - detail\n   after");
+    expect(text).toBe("1. step\n   - detail\n\n   after");
   });
 
   // The parity claim, checked against the REAL serializer rather than against
@@ -1627,6 +1652,7 @@ describe("content recovery classification", () => {
       ORDERED_PARENT_SUBLIST_DOC,
       FENCE_UNDER_TWO_DIGIT_MARKER_DOC,
       EMPTY_ORDERED_ITEM_DOC,
+      TWO_PARAGRAPH_ORDERED_ITEM_DOC,
       TABLE_WITH_HARD_BREAK_CELL_DOC,
       TABLE_WITH_MULTI_BLOCK_CELL_DOC,
       HEADING_LEVELS_DOC,

@@ -515,7 +515,20 @@ function prepareForProjection(
  * exactly what this module counts as a loss.
  */
 function numberedListItems(list: JsonContent): ReadonlyArray<JsonContent> {
-  return listItemLines(list, 0).map((line) => ({
+  // A blank line inside the list (the one before a later paragraph) rides on
+  // the line after it: a paragraph of its own would project to nothing and be
+  // dropped, closing up a gap the serializer sends.
+  const lines: string[] = [];
+  let pendingBlank = "";
+  for (const line of listItemLines(list, 0)) {
+    if (line === "") {
+      pendingBlank += "\n";
+      continue;
+    }
+    lines.push(`${pendingBlank}${line}`);
+    pendingBlank = "";
+  }
+  return lines.map((line) => ({
     type: "paragraph",
     content: [{ type: "text", text: line }],
   }));
@@ -600,6 +613,8 @@ function listItemLines(
         firstBlock = false;
         continue;
       }
+      // The serializer puts a blank line before every later paragraph.
+      if (block.type === "paragraph") lines.push("");
       for (const line of serialized.split("\n")) {
         lines.push(nested ? line : `${continuationIndent}${line}`);
       }

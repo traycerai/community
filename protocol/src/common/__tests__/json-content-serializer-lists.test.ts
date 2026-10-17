@@ -352,6 +352,82 @@ describe("jsonContentToMarkdown ordered lists", () => {
       ),
     ).toBe("- [ ] a\n- [ ] ");
   });
+
+  it.each([
+    [1, "   "],
+    [10, "    "],
+    [100, "     "],
+  ])(
+    "puts a blank line before a later paragraph of an ordered item numbered %i and none before the fence after it",
+    (start, pad) => {
+      expect(
+        toMarkdown(
+          docOf(
+            orderedBlock(
+              [
+                listItem([
+                  textParagraph("First item"),
+                  textParagraph("Second paragraph"),
+                  codeBlock("js", "x"),
+                ]),
+              ],
+              start,
+            ),
+          ),
+        ),
+      ).toBe(
+        `${start}. First item\n\n${pad}Second paragraph\n${pad}\`\`\`js\n${pad}x\n${pad}\`\`\``,
+      );
+    },
+  );
+
+  it("puts a blank line before a later paragraph of a task item", () => {
+    expect(
+      toMarkdown(
+        docOf(
+          taskBlock([
+            taskEntry([
+              textParagraph("First item"),
+              textParagraph("Second paragraph"),
+              codeBlock("js", "x"),
+            ]),
+          ]),
+        ),
+      ),
+    ).toBe("- [ ] First item\n\n  Second paragraph\n  ```js\n  x\n  ```");
+  });
+
+  it("puts a blank line before a later paragraph of a bullet item", () => {
+    expect(
+      toMarkdown(
+        docOf(
+          bulletList([
+            listItem([
+              textParagraph("First item"),
+              textParagraph("Second paragraph"),
+              codeBlock("js", "x"),
+            ]),
+          ]),
+        ),
+      ),
+    ).toBe("- First item\n\n  Second paragraph\n  ```js\n  x\n  ```");
+  });
+
+  it("puts a blank line before a paragraph that follows a nested list", () => {
+    expect(
+      toMarkdown(
+        docOf(
+          bulletList([
+            listItem([
+              textParagraph("a"),
+              bulletList([listItem([textParagraph("x")])]),
+              textParagraph("c"),
+            ]),
+          ]),
+        ),
+      ),
+    ).toBe("- a\n  - x\n\n  c");
+  });
 });
 
 function orderedList(

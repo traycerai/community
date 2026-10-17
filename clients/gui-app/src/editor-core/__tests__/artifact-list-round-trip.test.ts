@@ -27,6 +27,10 @@ function shapes(marker: string): ReadonlyArray<readonly [string, string]> {
       `${marker} a\n${p}\`\`\`\n${p}code\n${p}\`\`\``,
     ],
     [
+      "a second paragraph and a fence in an ordered item",
+      `${marker} First item\n\n${p}Second paragraph\n${p}\`\`\`js\n${p}x\n${p}\`\`\``,
+    ],
+    [
       "a fence-first ordered item",
       `${marker} \n${p}\`\`\`\n${p}code\n${p}\`\`\``,
     ],
@@ -46,6 +50,8 @@ function shapes(marker: string): ReadonlyArray<readonly [string, string]> {
 }
 
 const FIXED_POINTS: ReadonlyArray<readonly [string, string]> = [
+  ["a second paragraph in a task item", "- [ ] First\n\n  Second"],
+  ["a paragraph after a nested list", "- a\n  - x\n\n  c"],
   ["a fence-first task item", "- [ ] \n  ```\n  code\n  ```"],
   ["an empty ordered item mid-list", "1. a\n2. \n3. c"],
   ["an empty last ordered item", "1. a\n2. "],
@@ -69,4 +75,12 @@ describe("artifact markdown list round trip", () => {
       });
     }
   }
+});
+
+describe("artifact markdown paren-delimited ordered item", () => {
+  it("keeps the second paragraph inside the item over two passes", () => {
+    const first = roundTrip("1) First item\n\n   Second paragraph");
+    expect(first).toBe("1. First item\n\n   Second paragraph");
+    expect(roundTrip(first)).toBe(first);
+  });
 });

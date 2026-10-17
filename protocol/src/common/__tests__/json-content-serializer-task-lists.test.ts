@@ -89,7 +89,7 @@ describe("jsonContentToMarkdown task lists", () => {
     }
   });
 
-  it("writes a second paragraph at the bullet's content column", () => {
+  it("writes a second paragraph behind a blank line at the bullet's content column", () => {
     expect(
       toMarkdown(
         doc([
@@ -98,7 +98,7 @@ describe("jsonContentToMarkdown task lists", () => {
           ]),
         ]),
       ),
-    ).toBe("- [ ] First\n  Second");
+    ).toBe("- [ ] First\n\n  Second");
   });
 
   it("writes a code block under a task item at the item's content column", () => {

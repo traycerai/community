@@ -1003,6 +1003,10 @@ function serializeListItemWithMarker(
         }
         firstLine = false;
       } else {
+        // A later paragraph is its own paragraph only behind a blank line:
+        // directly under the line before, it reads back as that line's
+        // continuation, and on the next pass falls out of the item.
+        if (child.type === "paragraph") lines.push("");
         const childLines = serialized.split("\n");
         for (const line of childLines) {
           if (LIST_BLOCK_TYPES.has(child.type ?? "")) {
