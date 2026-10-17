@@ -2337,6 +2337,9 @@ export const HOST_METHOD_POLL_TABLE = {
     joinResponseTimeoutMs: null,
     poll: null,
   },
+  // The user's team environments, cached by the host for the signed-in
+  // session; no GUI reads them yet.
+  "environment.list": { ...LATEST_SCHEDULING, poll: null },
   "diagnostics.logs.list": { ...LATEST_SCHEDULING, poll: null },
   "diagnostics.logs.tail": { ...LATEST_SCHEDULING, poll: null },
   // A bounded read over settled facts (Usage page + epic cost badge). The
