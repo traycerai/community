@@ -824,6 +824,84 @@ describe("startHostHealthMonitor", () => {
     monitor.dispose();
   });
 
+  it("restarts the outage for a different published host: withdraws the old offer and offers the new host only after its own window (traycer#1563 D3a)", async () => {
+    // Another published pid is another host. The offer was about host A, and
+    // host B has not been silent for ten minutes just because A was.
+    const hostB: DesktopPublishedHostSnapshot = {
+      ...SNAPSHOT,
+      pid: SNAPSHOT.pid + 1,
+    };
+    let current: DesktopPublishedHostSnapshot = SNAPSHOT;
+    const onHostUnresponsive = vi.fn();
+    const monitor = startHostHealthMonitor({
+      host: fakeHost({ getSnapshot: () => current }),
+      intervalMs: INTERVAL_MS,
+      probe: vi.fn(async () => false),
+      readMetadata: vi.fn(async () => current),
+      respawn: vi.fn(async () => {}),
+      automaticRecoverySuspended: () => false,
+      governor: createHostRecoveryGovernor({
+        readLiveness: ALIVE,
+        now: undefined,
+      }),
+      readLiveness: ALIVE,
+      readLiveSupervisorPid: () => Promise.resolve(null),
+      onHostUnresponsive,
+    });
+
+    await ticks(700);
+    expect(onHostUnresponsive).toHaveBeenCalledTimes(1);
+    expect(onHostUnresponsive).toHaveBeenLastCalledWith(
+      expect.objectContaining({ pid: SNAPSHOT.pid }),
+    );
+
+    // Host B takes over, also alive and unreachable. A's offer is withdrawn
+    // and B is NOT offered at once: its outage clock starts here.
+    current = hostB;
+    await ticks(3);
+    expect(onHostUnresponsive).toHaveBeenCalledTimes(2);
+    expect(onHostUnresponsive).toHaveBeenLastCalledWith(null);
+    await ticks(300);
+    expect(onHostUnresponsive).toHaveBeenCalledTimes(2);
+
+    // Past B's own window: one new offer, measured from B's outage.
+    await ticks(320);
+    expect(onHostUnresponsive).toHaveBeenCalledTimes(3);
+    const offered = onHostUnresponsive.mock.calls[2]?.[0];
+    expect(offered).toEqual({
+      pid: hostB.pid,
+      unreachableForMs: expect.any(Number),
+    });
+    expect(offered?.unreachableForMs).toBeGreaterThanOrEqual(600_000);
+    expect(offered?.unreachableForMs).toBeLessThan(615_000);
+    monitor.dispose();
+  });
+
+  it("offers an unchanged host once per stall, and does not repeat the offer (traycer#1563 D3a)", async () => {
+    const onHostUnresponsive = vi.fn();
+    const monitor = startHostHealthMonitor({
+      host: fakeHost({}),
+      intervalMs: INTERVAL_MS,
+      probe: vi.fn(async () => false),
+      readMetadata: vi.fn(async () => SNAPSHOT),
+      respawn: vi.fn(async () => {}),
+      automaticRecoverySuspended: () => false,
+      governor: createHostRecoveryGovernor({
+        readLiveness: ALIVE,
+        now: undefined,
+      }),
+      readLiveness: ALIVE,
+      readLiveSupervisorPid: () => Promise.resolve(null),
+      onHostUnresponsive,
+    });
+
+    await ticks(700);
+    expect(onHostUnresponsive).toHaveBeenCalledTimes(1);
+    await ticks(1200);
+    expect(onHostUnresponsive).toHaveBeenCalledTimes(1);
+    monitor.dispose();
+  });
+
   it("throttles the liveness re-read while holding a live host busy", async () => {
     // The hold is now unbounded, so the cost guard that used to live behind the
     // demote has to live inside the hold itself: each liveness probe spawns a

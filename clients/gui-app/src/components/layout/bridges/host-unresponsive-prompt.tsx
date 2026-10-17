@@ -1,4 +1,4 @@
-import { useEffect, useEffectEvent } from "react";
+import { useCallback, useEffect } from "react";
 import { toast } from "sonner";
 import type { LocalHostUnresponsive } from "@traycer-clients/shared/platform/runner-host";
 import { ActionToastContent } from "@/components/layout/bridges/action-toast-content";
@@ -25,10 +25,12 @@ function hostUnresponsiveDescription(state: LocalHostUnresponsive): string {
  */
 export function HostUnresponsivePrompt() {
   const runnerHost = useRunnerHost();
-  const respawn = useRunnerRequestHostRespawn();
-  const forceRestart = useEffectEvent(() => {
-    respawn.mutate();
-  });
+  // `mutate` is stable across renders, so the subscription below is not torn
+  // down (dismissing an open offer) each time the mutation's state changes.
+  const { mutate: respawnHost } = useRunnerRequestHostRespawn();
+  const forceRestart = useCallback(() => {
+    respawnHost();
+  }, [respawnHost]);
 
   useEffect(() => {
     const subscription = runnerHost.onLocalHostUnresponsive((state) => {
@@ -58,7 +60,7 @@ export function HostUnresponsivePrompt() {
       subscription.dispose();
       toast.dismiss(HOST_UNRESPONSIVE_TOAST_ID);
     };
-  }, [runnerHost]);
+  }, [forceRestart, runnerHost]);
 
   return null;
 }

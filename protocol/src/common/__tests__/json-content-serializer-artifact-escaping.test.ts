@@ -364,6 +364,16 @@ describe("artifact hard breaks", () => {
     expect(after("> q")).toBe("First\\\n\\> q");
   });
 
+  it("keeps one to three spaces after a hard break and escapes the marker behind them", () => {
+    const after = (value: string): string =>
+      artifact(
+        doc([paragraph([plain("First"), { type: "hardBreak" }, plain(value)])]),
+      );
+    expect(after("  - x")).toBe("First\\\n  \\- x");
+    expect(after("  # x")).toBe("First\\\n  \\# x");
+    expect(after("   > x")).toBe("First\\\n   \\> x");
+  });
+
   it("escapes a literal backslash before a newline in text so it is not read back as a hard break", () => {
     expect(artifactOf("a\\\nb")).toBe("a\\\\\nb");
   });

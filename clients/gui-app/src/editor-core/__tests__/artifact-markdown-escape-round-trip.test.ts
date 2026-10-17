@@ -297,6 +297,11 @@ const LINES_AFTER_BREAK: ReadonlyArray<string> = [
   "===",
   "```",
   "<div>",
+  "Second",
+  // One to three spaces before a marker are text, kept, with the marker escaped.
+  "  - x",
+  "  # x",
+  "  > x",
 ];
 
 function textParagraph(content: JsonContent[]): JsonContent {
@@ -364,12 +369,22 @@ interface ListCase {
 
 const LIST_CASES: ReadonlyArray<ListCase> = [
   ...ITEM_KINDS.flatMap((kind) =>
-    LINES_AFTER_BREAK.map((line) => ({
+    LINES_AFTER_BREAK.filter(
+      // A task item's parse drops these spaces: see
+      // `artifact-list-hard-break-2574-pending.test.ts`.
+      (line) => !(kind.startsWith("task") && line.startsWith("  ")),
+    ).map((line) => ({
       name: `${kind} item, line after the break ${JSON.stringify(line)}`,
       doc: { type: "doc", content: [listOf(kind, [brokenParagraph(line)])] },
       breaks: 1,
     })),
   ),
+  // The same lines after a hard break in a top-level paragraph.
+  ...LINES_AFTER_BREAK.map((line) => ({
+    name: `paragraph, line after the break ${JSON.stringify(line)}`,
+    doc: { type: "doc", content: [brokenParagraph(line)] },
+    breaks: 1,
+  })),
   // The same kinds nested once: a bullet item holding a nested list of that
   // kind, with the hard break in the nested item.
   ...ITEM_KINDS.map((kind) => ({
@@ -379,21 +394,6 @@ const LIST_CASES: ReadonlyArray<ListCase> = [
       content: [
         listOf("bullet", [
           textParagraph([plainText("a")]),
-          listOf(kind, [brokenParagraph("- s")]),
-        ]),
-      ],
-    },
-    breaks: 1,
-  })),
-  // traycer#2574 shape C: an item whose first line is empty, then a nested
-  // list whose item has the hard break.
-  ...ITEM_KINDS.map((kind) => ({
-    name: `${kind} item nested in an item with an empty first line`,
-    doc: {
-      type: "doc",
-      content: [
-        listOf("bullet", [
-          textParagraph([]),
           listOf(kind, [brokenParagraph("- s")]),
         ]),
       ],
@@ -445,20 +445,6 @@ const LIST_CASES: ReadonlyArray<ListCase> = [
     },
     breaks: 1,
   },
-  // Control for shape C: the same empty-first-line item with no hard break.
-  {
-    name: "bullet item nested in an item with an empty first line, no hard break",
-    doc: {
-      type: "doc",
-      content: [
-        listOf("bullet", [
-          textParagraph([]),
-          listOf("bullet", [textParagraph([plainText("s")])]),
-        ]),
-      ],
-    },
-    breaks: 0,
-  },
   // Control: the same nesting with no hard break at all.
   {
     name: "ordered item under a task item inside an ordered item, no hard break",
@@ -509,6 +495,71 @@ describe("a hard break inside a list item keeps its next line as text (traycer#1
       expect(hardBreakCount(proseMirrorJsonOf(fragment0))).toBe(breaks);
       expect(hardBreakCount(json1)).toBe(breaks);
     });
+  });
+});
+
+/**
+ * An item whose first paragraph is empty is written as an empty marker line.
+ * Markdown cannot tell that from an item that simply starts with a blank line,
+ * so the parse drops the empty paragraph: the document changes once, then is
+ * stable. What must hold is that the next paragraph, whose text would open a
+ * block, stays that item's text.
+ */
+describe("an item with an empty first paragraph keeps a block-looking second paragraph as text (traycer#1563)", () => {
+  const kinds = [
+    "bullet",
+    "task",
+    "ordered-1",
+    "ordered-10",
+    "ordered-100",
+  ] as const;
+  const lines = ["# h", "- s", "> q"] as const;
+  const cases = kinds.flatMap((kind) =>
+    lines.map((line) => [kind, line] as const),
+  );
+
+  function typesOf(node: JsonContent): string[] {
+    return [node.type ?? "", ...(node.content ?? []).flatMap(typesOf)];
+  }
+
+  it.each(cases)("%s item, then %j", (kind, line) => {
+    const doc: JsonContent = {
+      type: "doc",
+      content: [
+        listOf(kind, [textParagraph([]), textParagraph([plainText(line)])]),
+      ],
+    };
+    const md1 = serialize(fragmentOf(doc));
+    const json1 = parseJson(md1);
+    const types = typesOf(json1);
+
+    // The line is the item's text, not a heading, quote or nested list.
+    expect(textOf(json1)).toBe(line);
+    expect(types.filter((type) => type === "paragraph")).toHaveLength(1);
+    expect(types).not.toContain("heading");
+    expect(types).not.toContain("blockquote");
+    expect(
+      types.filter((type) => type === "bulletList" || type === "orderedList"),
+    ).toHaveLength(kind.startsWith("task") ? 0 : 1);
+
+    // The empty paragraph is dropped once; from then on it is stable.
+    const md2 = serialize(fragmentOf(json1));
+    const md3 = serialize(fragmentOf(parseJson(md2)));
+    expect(md3).toBe(md2);
+  });
+});
+
+describe("a hard break in an ordered item writes the next line at the content column (traycer#1563)", () => {
+  it.each([
+    ["ordered-1", "1. First\\\n   Second"],
+    ["ordered-10", "10. First\\\n    Second"],
+    ["ordered-100", "100. First\\\n     Second"],
+  ] as const)("%s", (kind, expected) => {
+    const doc: JsonContent = {
+      type: "doc",
+      content: [listOf(kind, [brokenParagraph("Second")])],
+    };
+    expect(serialize(fragmentOf(doc))).toBe(expected);
   });
 });
 

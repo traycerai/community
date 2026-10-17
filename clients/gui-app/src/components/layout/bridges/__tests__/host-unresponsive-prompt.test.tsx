@@ -8,6 +8,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import { MockRunnerHost } from "@traycer-clients/shared/host-client/mock/mock-runner-host";
+import type { ReactElement } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { HostUnresponsivePrompt } from "@/components/layout/bridges/host-unresponsive-prompt";
 import { Toaster } from "@/components/ui/sonner";
@@ -31,18 +32,20 @@ function createRunnerHost(): MockRunnerHost {
   });
 }
 
-function renderPrompt(host: MockRunnerHost): void {
+function renderPrompt(host: MockRunnerHost): { readonly rerender: () => void } {
   const queryClient = new QueryClient({
     defaultOptions: { mutations: { retry: false } },
   });
-  render(
+  const tree = (): ReactElement => (
     <QueryClientProvider client={queryClient}>
       <RunnerHostContext.Provider value={host}>
         <HostUnresponsivePrompt />
         <Toaster />
       </RunnerHostContext.Provider>
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const view = render(tree());
+  return { rerender: () => view.rerender(tree()) };
 }
 
 afterEach(() => {
@@ -116,6 +119,30 @@ describe("<HostUnresponsivePrompt />", () => {
       expect(
         screen.queryByRole("button", { name: "Force restart" }),
       ).toBeNull();
+    });
+  });
+
+  it("keeps an open offer through a re-render, and Force restart still requests one respawn", async () => {
+    const host = createRunnerHost();
+    const view = renderPrompt(host);
+    act(() => {
+      host.setLocalHostUnresponsive({
+        pid: 4242,
+        unreachableForMs: 12 * 60_000,
+      });
+    });
+    expect(await screen.findByText(TITLE)).not.toBeNull();
+
+    act(() => {
+      view.rerender();
+    });
+    expect(screen.queryByText(TITLE)).not.toBeNull();
+
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Force restart" }),
+    );
+    await waitFor(() => {
+      expect(host.requestHostRespawnCalls).toBe(1);
     });
   });
 });

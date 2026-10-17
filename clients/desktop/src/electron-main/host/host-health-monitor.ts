@@ -288,6 +288,10 @@ export function startHostHealthMonitor(
   // any reachable observation, so only a continuously unreachable host reaches
   // the demote window.
   let unreachableSince: number | null = null;
+  // The pid of the host the current outage is about. Another published pid
+  // is another host: the outage clock, the once-per-stall latches and any
+  // force-restart offer describe the old one, so they start over.
+  let outageHostPid: number | null = null;
   // Earliest tick that may ask the governor again after an `alive` denial. See
   // ALIVE_RECHECK_INTERVAL_MS: this throttles the ONE path that would otherwise
   // re-probe a demoted-but-living host forever.
@@ -530,6 +534,15 @@ export function startHostHealthMonitor(
         }
         await attemptRecovery(metadata);
         return;
+      }
+      if (outageHostPid !== snapshot.pid) {
+        outageHostPid = snapshot.pid;
+        consecutiveFailures = 0;
+        unreachableSince = null;
+        busyLogged = false;
+        longStallLogged = false;
+        nextLivenessCheckAt = 0;
+        clearUnresponsive();
       }
       const published = await readPublishedMetadata(deps.host.pidMetadataFile);
       if (
