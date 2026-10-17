@@ -456,4 +456,64 @@ describe("botTaskEntrySchema lastCheckin", () => {
       }).success,
     ).toBe(false);
   });
+
+  describe("the still-running section's reason", () => {
+    /** The entry with its last check-in's still-running section replaced by `fields` over the fixture's. */
+    function withStillRunning(fields: Record<string, unknown>): unknown {
+      return {
+        ...TRACKING_EVERY,
+        lastCheckin: {
+          ...LAST_CHECKIN,
+          sections: {
+            ...LAST_CHECKIN.sections,
+            stillRunning: { ...LAST_CHECKIN.sections.stillRunning, ...fields },
+          },
+        },
+      };
+    }
+
+    it.each([
+      "working",
+      "owed-release-work",
+      "resumed-while-composing",
+      "check-failed",
+    ])("accepts the reason %s", (reason) => {
+      expect(
+        botTaskEntrySchema.safeParse(withStillRunning({ reason })).success,
+      ).toBe(true);
+    });
+
+    it("accepts a null reason, as an idle task has", () => {
+      expect(
+        botTaskEntrySchema.safeParse(
+          withStillRunning({ state: "idle", reason: null }),
+        ).success,
+      ).toBe(true);
+    });
+
+    it("refuses a reason it does not know", () => {
+      expect(
+        botTaskEntrySchema.safeParse(withStillRunning({ reason: "stalled" }))
+          .success,
+      ).toBe(false);
+    });
+
+    it("refuses a still-running section with no reason field", () => {
+      const { reason: _omitted, ...withoutReason } =
+        LAST_CHECKIN.sections.stillRunning;
+
+      expect(
+        botTaskEntrySchema.safeParse({
+          ...TRACKING_EVERY,
+          lastCheckin: {
+            ...LAST_CHECKIN,
+            sections: {
+              ...LAST_CHECKIN.sections,
+              stillRunning: withoutReason,
+            },
+          },
+        }).success,
+      ).toBe(false);
+    });
+  });
 });
