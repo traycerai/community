@@ -185,6 +185,18 @@ vi.mock("@/components/epic-canvas/hooks/use-tab-host-id", () => ({
   useTabHostId: () => "active-host-1",
 }));
 
+const hostDirectoryMocks = vi.hoisted(() => ({
+  labels: new Map<string, string>(),
+}));
+
+vi.mock("@/hooks/host/use-host-directory-entry", () => ({
+  useHostDirectoryEntry: (hostId: string | null) => {
+    if (hostId === null) return null;
+    const label = hostDirectoryMocks.labels.get(hostId);
+    return label === undefined ? null : { hostId, label };
+  },
+}));
+
 interface OpenA2ASendButtonProps {
   readonly label: string;
   readonly segmentId: string;
@@ -244,6 +256,7 @@ describe("<ToolSegment /> A2A send-message rendering", () => {
         }}
         managedCommand={null}
         agentMessageReceipt={null}
+        agentMessageDelivery={null}
         isStreaming={false}
         endState={null}
         stopped={false}
@@ -307,6 +320,7 @@ describe("<ToolSegment /> A2A send-message rendering", () => {
           }}
           managedCommand={null}
           agentMessageReceipt={null}
+          agentMessageDelivery={null}
           isStreaming={false}
           endState={null}
           stopped={false}
@@ -347,6 +361,7 @@ describe("<ToolSegment /> A2A send-message rendering", () => {
           }}
           managedCommand={null}
           agentMessageReceipt={null}
+          agentMessageDelivery={null}
           isStreaming={false}
           endState={null}
           stopped={false}
@@ -380,6 +395,7 @@ describe("<ToolSegment /> A2A send-message rendering", () => {
         agentMessageSend={null}
         managedCommand={null}
         agentMessageReceipt={null}
+        agentMessageDelivery={null}
         isStreaming={false}
         endState={null}
         stopped={false}
@@ -412,6 +428,7 @@ describe("<ToolSegment /> A2A send-message rendering", () => {
         }}
         managedCommand={null}
         agentMessageReceipt={null}
+        agentMessageDelivery={null}
         isStreaming={false}
         endState={null}
         stopped={false}
@@ -447,6 +464,7 @@ describe("<ToolSegment /> A2A send-message rendering", () => {
         }}
         managedCommand={null}
         agentMessageReceipt={null}
+        agentMessageDelivery={null}
         isStreaming={false}
         endState={null}
         stopped={false}
@@ -504,6 +522,7 @@ describe("<ToolSegment /> A2A send-message rendering", () => {
           receiverAgentId: "agent-receiver-1",
           messageId: "receiver-message-1",
         }}
+        agentMessageDelivery={null}
         isStreaming={false}
         endState={null}
         stopped={false}
@@ -556,6 +575,7 @@ describe("<ToolSegment /> A2A send-message rendering", () => {
         }}
         managedCommand={null}
         agentMessageReceipt={null}
+        agentMessageDelivery={null}
         isStreaming={false}
         endState={null}
         stopped={false}
@@ -609,6 +629,7 @@ describe("<ToolSegment /> A2A send-message rendering", () => {
           receiverAgentId: "agent-receiver-tui-1",
           messageId: "receiver-message-1",
         }}
+        agentMessageDelivery={null}
         isStreaming={false}
         endState={null}
         stopped={false}
@@ -669,6 +690,7 @@ describe("<ToolSegment /> A2A send-message rendering", () => {
           }}
           managedCommand={null}
           agentMessageReceipt={receipt}
+          agentMessageDelivery={null}
           isStreaming={false}
           endState={null}
           stopped={false}
@@ -788,6 +810,88 @@ describe("<ToolSegment /> A2A send-message rendering", () => {
   });
 });
 
+describe("<ToolSegment /> cross-host send delivery", () => {
+  afterEach(() => {
+    useToolOpenStore.getState().reset("default");
+    hostDirectoryMocks.labels = new Map();
+    cleanup();
+  });
+
+  function renderDelivery(
+    state: "queued" | "delivered" | "expired" | "failed" | null,
+  ) {
+    hostDirectoryMocks.labels = new Map([["host-2", "Work Laptop"]]);
+    render(
+      <ToolSegment
+        headerFindUnitId={null}
+        id="a2a-send-delivery"
+        toolName="traycer_a2a/traycer_send_message"
+        {...inputProps("traycer_a2a/traycer_send_message", {})}
+        error={null}
+        agentMessageSend={{
+          receiverAgentId: "agent-receiver-1",
+          message: "Please pick this up.",
+          responseId: null,
+          expectReply: false,
+        }}
+        managedCommand={null}
+        agentMessageReceipt={null}
+        agentMessageDelivery={
+          state === null
+            ? null
+            : { targetHostId: "host-2", eventId: "evt-1", state }
+        }
+        isStreaming={false}
+        endState={null}
+        stopped={false}
+        progress={null}
+        backgroundOutput={null}
+        backgroundTask={false}
+        startedAt={0}
+        durationMs={null}
+        variant="card"
+      />,
+    );
+  }
+
+  it("renders a queued send as queued for the host, not a plain sent card", () => {
+    renderDelivery("queued");
+    expect(screen.getByText(/Queued for Work Laptop/)).toBeTruthy();
+    expect(screen.getByText("queued")).toBeTruthy();
+    expect(screen.getByText("Queued message").className).toContain("sr-only");
+    expect(screen.queryByText("Sent message")).toBeNull();
+  });
+
+  it("renders a delivered send as delivered on the host", () => {
+    renderDelivery("delivered");
+    expect(screen.getByText(/Delivered on Work Laptop/)).toBeTruthy();
+    expect(screen.queryByText("queued")).toBeNull();
+    expect(screen.queryByText(/Not delivered/)).toBeNull();
+  });
+
+  it.each(["expired", "failed"] as const)(
+    "renders a %s send as not delivered with destructive styling",
+    (state) => {
+      renderDelivery(state);
+      const note = screen.getByText(/Not delivered: Work Laptop/);
+      expect(note.className).toContain("text-destructive");
+      expect(screen.getByText("not delivered").className).toContain(
+        "text-destructive",
+      );
+      expect(screen.queryByText("queued")).toBeNull();
+    },
+  );
+
+  it("renders a null delivery exactly as the plain sent card", () => {
+    renderDelivery(null);
+    expect(screen.getByText("Sent message")).toBeTruthy();
+    expect(screen.queryByText(/Queued for/)).toBeNull();
+    expect(screen.queryByText(/Delivered on/)).toBeNull();
+    expect(screen.queryByText(/Not delivered/)).toBeNull();
+    expect(screen.queryByText("queued")).toBeNull();
+  });
+});
+
 describe("<ToolSegment /> input rendering", () => {
   afterEach(() => {
     useToolOpenStore.getState().reset("default");
@@ -808,6 +912,7 @@ describe("<ToolSegment /> input rendering", () => {
         agentMessageSend={null}
         managedCommand={null}
         agentMessageReceipt={null}
+        agentMessageDelivery={null}
         isStreaming={false}
         endState={null}
         stopped={false}
@@ -843,6 +948,7 @@ describe("<ToolSegment /> input rendering", () => {
         agentMessageSend={null}
         managedCommand={null}
         agentMessageReceipt={null}
+        agentMessageDelivery={null}
         isStreaming={false}
         endState={null}
         stopped={false}
@@ -878,6 +984,7 @@ describe("<ToolSegment /> input rendering", () => {
         agentMessageSend={null}
         managedCommand={null}
         agentMessageReceipt={null}
+        agentMessageDelivery={null}
         isStreaming={false}
         endState={null}
         stopped={false}
@@ -911,6 +1018,7 @@ describe("<ToolSegment /> input rendering", () => {
         agentMessageSend={null}
         managedCommand={null}
         agentMessageReceipt={null}
+        agentMessageDelivery={null}
         isStreaming={false}
         endState={null}
         stopped={false}
@@ -945,6 +1053,7 @@ describe("<ToolSegment /> input rendering", () => {
         agentMessageSend={null}
         managedCommand={null}
         agentMessageReceipt={null}
+        agentMessageDelivery={null}
         isStreaming={false}
         endState={null}
         stopped={false}
@@ -977,6 +1086,7 @@ describe("<ToolSegment /> input rendering", () => {
         agentMessageSend={null}
         managedCommand={null}
         agentMessageReceipt={null}
+        agentMessageDelivery={null}
         isStreaming={false}
         endState={null}
         stopped={false}
@@ -1008,6 +1118,7 @@ describe("<ToolSegment /> input rendering", () => {
         agentMessageSend={null}
         managedCommand={null}
         agentMessageReceipt={null}
+        agentMessageDelivery={null}
         isStreaming={false}
         endState={null}
         stopped={false}
@@ -1047,6 +1158,7 @@ describe("<ToolSegment /> input rendering", () => {
         agentMessageSend={null}
         managedCommand={null}
         agentMessageReceipt={null}
+        agentMessageDelivery={null}
         isStreaming={false}
         endState={null}
         stopped={false}
@@ -1079,6 +1191,7 @@ describe("<ToolSegment /> input rendering", () => {
         agentMessageSend={null}
         managedCommand={null}
         agentMessageReceipt={null}
+        agentMessageDelivery={null}
         isStreaming={false}
         endState={null}
         stopped={false}
@@ -1113,6 +1226,7 @@ describe("<ToolSegment /> input rendering", () => {
         agentMessageSend={null}
         managedCommand={null}
         agentMessageReceipt={null}
+        agentMessageDelivery={null}
         isStreaming={false}
         endState={null}
         stopped
@@ -1155,6 +1269,7 @@ describe("<ToolSegment /> streaming heartbeat", () => {
         agentMessageSend={null}
         managedCommand={null}
         agentMessageReceipt={null}
+        agentMessageDelivery={null}
         isStreaming
         endState={null}
         stopped={false}
@@ -1191,6 +1306,7 @@ describe("<ToolSegment /> streaming heartbeat", () => {
         agentMessageSend={null}
         managedCommand={null}
         agentMessageReceipt={null}
+        agentMessageDelivery={null}
         isStreaming
         endState={null}
         stopped={false}
@@ -1242,6 +1358,7 @@ describe("<ToolSegment /> streaming heartbeat", () => {
         agentMessageSend={null}
         managedCommand={null}
         agentMessageReceipt={null}
+        agentMessageDelivery={null}
         isStreaming
         endState={null}
         stopped={false}
@@ -1287,6 +1404,7 @@ describe("<ToolSegment /> streaming heartbeat", () => {
         agentMessageSend={null}
         managedCommand={null}
         agentMessageReceipt={null}
+        agentMessageDelivery={null}
         isStreaming={false}
         endState={null}
         stopped={false}
@@ -1316,6 +1434,7 @@ describe("<ToolSegment /> streaming heartbeat", () => {
         agentMessageSend={null}
         managedCommand={null}
         agentMessageReceipt={null}
+        agentMessageDelivery={null}
         isStreaming={false}
         endState="interrupted"
         stopped={false}
@@ -1339,6 +1458,7 @@ describe("<ToolSegment /> streaming heartbeat", () => {
         agentMessageSend={null}
         managedCommand={null}
         agentMessageReceipt={null}
+        agentMessageDelivery={null}
         isStreaming={false}
         endState="superseded"
         stopped={false}

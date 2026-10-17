@@ -44,6 +44,7 @@ import {
   type HostPidMetadata,
 } from "../host/pid-metadata";
 import { callHostRpcAtEndpoint } from "../internal/host-rpc";
+import type { HostStatusCrossHostMessaging } from "@traycer/protocol/host/status/contracts";
 import { resolveHostAuth } from "../internal/host-auth";
 import { HostRpcError } from "../../../shared/host-transport/host-messenger";
 import type { HostTransportEndpoint } from "../../../shared/host-transport/ws-rpc-client";
@@ -1592,8 +1593,8 @@ async function probeHostRpc(
     };
   }
   try {
-    await callHostRpcAtEndpoint("host.status", {}, endpoint);
-    return null;
+    const status = await callHostRpcAtEndpoint("host.status", {}, endpoint);
+    return crossHostMessagingIssue(status.crossHostMessaging);
   } catch (err) {
     if (err instanceof HostRpcError) {
       if (err.code === "UNAUTHORIZED") {
@@ -1635,6 +1636,36 @@ async function probeHostRpc(
       details: { websocketUrl },
     };
   }
+}
+
+// The host answered, so it is reachable - but its cross-host messages can
+// still be paused. `null` is a host older than `host.status@1.8`, which never
+// said; that is not a claim either way, so it raises nothing.
+export function crossHostMessagingIssue(
+  messaging: HostStatusCrossHostMessaging | null,
+): DoctorIssue | null {
+  if (messaging === null || messaging.state === "ok") return null;
+  const since =
+    messaging.pausedSince === null
+      ? ""
+      : ` Paused since ${new Date(messaging.pausedSince).toISOString()}.`;
+  const retry =
+    messaging.nextRetryAt === null
+      ? " It retries on its own."
+      : ` It retries on its own; next attempt at ${new Date(messaging.nextRetryAt).toISOString()}.`;
+  return {
+    code: DOCTOR_ISSUE_CODES.HOST_CROSS_HOST_MESSAGES_PAUSED,
+    severity: "warning",
+    title: "Degraded: cross-host messages paused",
+    message: `The host is running, but messages to and from agents on your other devices are paused.${since}${retry}`,
+    fixAction: null,
+    terminalCommand: null,
+    details: {
+      pausedSince: messaging.pausedSince,
+      nextRetryAt: messaging.nextRetryAt,
+      cause: messaging.cause,
+    },
+  };
 }
 
 // Route a handshake `INCOMPATIBLE` (or cross-major `DOWNGRADE_UNSUPPORTED`) to

@@ -4,7 +4,11 @@ import { runMonitor } from "../monitor";
 import { buildProgramWithAgentRoles } from "../../index";
 import { resolveHostAuth } from "../../internal/host-auth";
 import { readHostPidMetadata } from "../../host/pid-metadata";
-import { callHostRpc } from "../../internal/host-rpc";
+import {
+  callHostRpc,
+  callHostRpcWithDispatch,
+  PLAIN_DISPATCH,
+} from "../../internal/host-rpc";
 import { createOutput } from "../../runner/output";
 import type { CommandContext } from "../../runner/runner";
 import { resolveRuntimeContext } from "../../runner/runtime";
@@ -122,6 +126,7 @@ vi.mock("../../internal/host-rpc", async (importOriginal) => {
   return {
     ...actual,
     callHostRpc: vi.fn(),
+    callHostRpcWithDispatch: vi.fn(),
   };
 });
 
@@ -137,6 +142,7 @@ vi.mock("../../host/pid-metadata", async (importOriginal) => {
 const resolveAuthMock = vi.mocked(resolveHostAuth);
 const pidMock = vi.mocked(readHostPidMetadata);
 const callHostRpcMock = vi.mocked(callHostRpc);
+const callHostRpcWithDispatchMock = vi.mocked(callHostRpcWithDispatch);
 
 function makeCommandContext(): CommandContext {
   const runtime = resolveRuntimeContext(
@@ -194,6 +200,8 @@ beforeEach(() => {
   disposeMock.mockClear();
   callHostRpcMock.mockReset();
   callHostRpcMock.mockResolvedValue({});
+  callHostRpcWithDispatchMock.mockReset();
+  callHostRpcWithDispatchMock.mockResolvedValue({});
   resolveAuthMock.mockResolvedValue({
     token: "tok-1",
     authnBaseUrl: "https://authn.test",
@@ -639,7 +647,7 @@ describe("follow-up inactivity notices (negotiated @1.3)", () => {
           throw new Error("parsed agent send options had unexpected types");
         }
         const returnedResponseId = "response-follow-up";
-        callHostRpcMock.mockResolvedValue({
+        callHostRpcWithDispatchMock.mockResolvedValue({
           responseId: returnedResponseId,
         });
         const command = buildAgentSendCommand({
@@ -649,6 +657,7 @@ describe("follow-up inactivity notices (negotiated @1.3)", () => {
           message: selectedMessage,
           expectReply: selectedExpectReply,
           responseId: selectedResponseId ?? null,
+          workspace: null,
         });
         const commandResult = await command(makeCommandContext());
 
@@ -658,7 +667,7 @@ describe("follow-up inactivity notices (negotiated @1.3)", () => {
         expect(commandResult.human).toContain(
           `responseId: ${returnedResponseId}`,
         );
-        expect(callHostRpcMock).toHaveBeenCalledWith(
+        expect(callHostRpcWithDispatchMock).toHaveBeenCalledWith(
           "agent.sendMessage",
           expect.objectContaining({
             senderAgentId: "a1",
@@ -667,7 +676,9 @@ describe("follow-up inactivity notices (negotiated @1.3)", () => {
             prompt: "<follow-up>",
             expectReply: true,
             responseId: null,
+            workspace: null,
           }),
+          PLAIN_DISPATCH,
         );
         expect(output).toContain("omit --response-id for this follow-up");
         expect(output).toContain(

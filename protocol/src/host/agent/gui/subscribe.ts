@@ -109,6 +109,7 @@ import {
   openChatEventSchema,
   openChatSchema,
   openRuntimeEventSchema,
+  openRuntimeEventSchemaPreDelivery,
   openRuntimeEventSchemaPrePage,
   openUserMessageSchema,
   openUserMessageSchemaPreConversation,
@@ -148,8 +149,10 @@ import {
   chatTranscriptWindowSchemaPreMessageDelivery,
   openChatRangeResponseSchema,
   openChatRangeResponseSchemaPreConversation,
+  openChatRangeResponseSchemaPreDelivery,
   openChatRangeResponseSchemaPrePage,
   openChatTranscriptWindowSchemaPreConversation,
+  openChatTranscriptWindowSchemaPreDelivery,
   openChatTranscriptWindowSchemaPrePage,
   openChatTranscriptWindowSchema,
   chatTranscriptWindowSchemaPreBrowser,
@@ -3507,16 +3510,24 @@ const chatSubscribeSharedServerFrameSchemas = [
   ...chatSubscribeCommonServerFrameSchemas,
   blockDeltaServerFrameSchema(runtimeEventSchema),
 ];
-// The shared frames `chat.subscribe@1.22` through `@1.24` ship: the
+// The shared frames `chat.subscribe@1.23` and `@1.24` ship: the
 // open-harness common set, pre-conversation, over the `blockDelta` whose seven
-// harness-bearing events are reopened.
+// harness-bearing events are reopened and whose `tool_call.completed` carries
+// no `1.26` delivery stamp. (`1.22` binds its own pre-page `blockDelta`.)
 const chatSubscribeSharedServerFrameSchemasOpenHarnessPreConversation = [
   messageDeliveryChangedServerFrameSchema,
   ...chatSubscribeCommonServerFrameSchemasOpenHarnessPreConversation,
-  blockDeltaServerFrameSchema(openRuntimeEventSchema),
+  blockDeltaServerFrameSchema(openRuntimeEventSchemaPreDelivery),
 ];
-// The live shared frames (`chat.subscribe@1.25`): the live open-harness common
-// set over the same `blockDelta`.
+// The shared frames `chat.subscribe@1.25` ships: the live open-harness common
+// set over the pre-delivery `blockDelta`. Frozen since `1.26` opened above it.
+const chatSubscribeSharedServerFrameSchemasOpenHarnessPreDelivery = [
+  messageDeliveryChangedServerFrameSchema,
+  ...chatSubscribeCommonServerFrameSchemasOpenHarness,
+  blockDeltaServerFrameSchema(openRuntimeEventSchemaPreDelivery),
+];
+// The live shared frames (`chat.subscribe@1.26`): the live open-harness common
+// set over the live `blockDelta`.
 const chatSubscribeSharedServerFrameSchemasOpenHarness = [
   messageDeliveryChangedServerFrameSchema,
   ...chatSubscribeCommonServerFrameSchemasOpenHarness,
@@ -5876,6 +5887,18 @@ const chatSubscribeRangeServerFrameSchemaOpenHarnessPreConversation =
     }),
   );
 
+// The same frame as `1.25` ships it: the live user row, the tool block without
+// `1.26`'s delivery stamp, frozen for the reason the snapshot's `tail` is.
+const chatSubscribeRangeServerFrameSchemaOpenHarnessPreDelivery = lazySchema(
+  () =>
+    z.object({
+      kind: z.literal("range"),
+      ...textFrameFields,
+      ...chatReferenceFields,
+      range: openChatRangeResponseSchemaPreDelivery,
+    }),
+);
+
 // The same frame as `1.18`-`1.20` ship it: the live range with the row
 // context's anchor union as the 1.5.0 tags shipped it, frozen for the reason
 // the snapshot's `tail` is.
@@ -6236,7 +6259,32 @@ const chatSubscribeServerFrameSchemaV124 = lazySchema(() =>
 );
 
 /**
- * The live windowed union as a READER decodes it (`chat.subscribe@1.25`): the
+ * Frozen 1.25: the bot-conversation request row and queue item are live; the
+ * tool block and `tool_call.completed` carry no `agentMessageDelivery` stamp
+ * (`1.26`). Frozen since `1.26` opened above it.
+ */
+const chatSubscribeServerFrameSchemaV125 = lazySchema(() =>
+  z.discriminatedUnion("kind", [
+    chatSubscribeWindowedSnapshotServerFrameSchemaOpenHarness.extend({
+      snapshot: openChatWindowedSnapshotSchema.extend({
+        tail: openChatTranscriptWindowSchemaPreDelivery,
+      }),
+    }),
+    chatSubscribeSkeletonChunkServerFrameSchemaV119,
+    chatSubscribeAccumulatedChangesServerFrameSchema,
+    chatSubscribeIndexChangedServerFrameSchema,
+    chatSubscribeRangeServerFrameSchemaOpenHarnessPreDelivery,
+    chatSubscribeTurnStateChangedServerFrameSchema,
+    chatSubscribeManagedCommandsChangedServerFrameSchema,
+    chatSubscribePortForwardsChangedServerFrameSchema,
+    chatSubscribeHeldUpdatesChangedServerFrameSchema,
+    chatSubscribeThinkingTokensServerFrameSchema,
+    ...chatSubscribeSharedServerFrameSchemasOpenHarnessPreDelivery,
+  ]),
+);
+
+/**
+ * The live windowed union as a READER decodes it (`chat.subscribe@1.26`): the
  * union above with the snapshot, the `range` response, the three
  * sender-bearing common frames and the `blockDelta` bound to their
  * open-harness copies. The frames a peer DRIVES through - `turnStateChanged`
@@ -7168,6 +7216,36 @@ export const chatSubscribeV124 = defineStreamRpcContract({
 export const chatSubscribeV125 = defineStreamRpcContract({
   method: "chat.subscribe",
   schemaVersion: { major: 1, minor: 25 } as const,
+  openRequestSchema: chatSubscribeOpenRequestSchemaV119,
+  serverFrameSchema: chatSubscribeServerFrameSchemaV125,
+  clientFrameSchema: chatSubscribeWindowedClientFrameSchema,
+});
+
+/**
+ * The cross-host send-state line.
+ *
+ * `1.26` adds one key and no frame, union member or enum value:
+ * `agentMessageDelivery` on a `tool_call` block (`agentMessageDeliverySchema`)
+ * and on its `tool_call.completed` event. A send to an agent on another host
+ * is queued rather than delivered while the call runs; the key says so, and
+ * moves to delivered, expired or failed as the receiving host answers.
+ *
+ * PROJECTION, not tolerance, like `1.23`'s page stamps: every line from `1.23`
+ * through `1.25` binds the hand-frozen `toolCallBlockSchemaPreDelivery` /
+ * `toolCallCompletedEventSchemaPreDelivery` on every body channel (the tail, a
+ * `range` response and `blockDelta`), and the host deletes the key by name for
+ * every peer below `1.26` (`CHAT_SUBSCRIBE_AGENT_MESSAGE_DELIVERY_MINOR`). A
+ * peer below it renders the send as the plain sent card it always did.
+ *
+ * Defaulted `null` on the block and optional on the event: a block persisted
+ * before the key reads as "no send state", and an adapter that never stamps
+ * simply omits it from the event.
+ *
+ * The open request and the client frames are `1.25`'s, unchanged.
+ */
+export const chatSubscribeV126 = defineStreamRpcContract({
+  method: "chat.subscribe",
+  schemaVersion: { major: 1, minor: 26 } as const,
   openRequestSchema: chatSubscribeOpenRequestSchemaV119,
   serverFrameSchema: openChatSubscribeWindowedServerFrameSchema,
   clientFrameSchema: chatSubscribeWindowedClientFrameSchema,

@@ -112,7 +112,9 @@ import {
   agentSelectionGuideGlobalOnboardingDraftGetV10,
   agentSelectionGuideGlobalResetV10,
   agentSelectionGuideGlobalSetV10,
+  agentSendMessageUpgradeV10ToV11,
   agentSendMessageV10,
+  agentSendMessageV11,
   agentStopV10,
   agentForkV10,
 } from "@traycer/protocol/host/agent/contracts";
@@ -350,6 +352,7 @@ import {
   chatSubscribeV123,
   chatSubscribeV124,
   chatSubscribeV125,
+  chatSubscribeV126,
 } from "@traycer/protocol/host/agent/gui/contracts";
 import {
   agentTuiGenerateTitleV10,
@@ -383,9 +386,11 @@ import {
   hostStatusUpgradeV14ToV15,
   hostStatusUpgradeV15ToV16,
   hostStatusUpgradeV16ToV17,
+  hostStatusUpgradeV17ToV18,
   hostStatusV15,
   hostStatusV16,
   hostStatusV17,
+  hostStatusV18,
 } from "@traycer/protocol/host/status/contracts";
 import {
   hostRestartUpgradeV10ToV11,
@@ -6113,7 +6118,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   },
   "host.status": {
     1: {
-      latestMinor: 7,
+      latestMinor: 8,
       versions: {
         0: {
           contract: hostStatusV10,
@@ -6146,6 +6151,12 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
         7: {
           contract: hostStatusV17,
           upgradeFromPreviousVersion: hostStatusUpgradeV16ToV17,
+        },
+        // @1.8 adds `crossHostMessaging`: whether messages to and from agents
+        // on the account's other hosts are flowing (traycer#2421).
+        8: {
+          contract: hostStatusV18,
+          upgradeFromPreviousVersion: hostStatusUpgradeV17ToV18,
         },
       },
       downgradePathsFromLatest: {},
@@ -7372,11 +7383,17 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   },
   "agent.sendMessage": {
     1: {
-      latestMinor: 0,
+      latestMinor: 1,
       versions: {
         0: {
           contract: agentSendMessageV10,
           upgradeFromPreviousVersion: null,
+        },
+        // @1.1 adds the optional receiving-host `workspace` that binds an
+        // unbound receiver (traycer#2421).
+        1: {
+          contract: agentSendMessageV11,
+          upgradeFromPreviousVersion: agentSendMessageUpgradeV10ToV11,
         },
       },
       downgradePathsFromLatest: {},
@@ -13710,7 +13727,7 @@ const HOST_STREAM_RPC_REGISTRY_DEFINITION = {
   ...HOST_STREAM_RPC_REGISTRY_OTHER_DEFINITION,
   "chat.subscribe": {
     1: {
-      latestMinor: 25,
+      latestMinor: 26,
       versions: {
         0: {
           contract: chatSubscribeV10,
@@ -13867,8 +13884,16 @@ const HOST_STREAM_RPC_REGISTRY_DEFINITION = {
         // row (tolerance: optional, stripped by older peers) and the
         // `conversation-message` queue item on the bot's trunk (projection:
         // the host omits it below @1.25, as it omits port-forward below @1.14).
+        // Frozen at the pre-delivery tool block and `tool_call.completed`
+        // since @1.26 opened above it.
         25: {
           contract: chatSubscribeV125,
+        },
+        // @1.26 adds `agentMessageDelivery` to the `tool_call` block and its
+        // completed event: where a cross-host send stands (queued, delivered,
+        // expired, failed). Projection: the host deletes the key below @1.26.
+        26: {
+          contract: chatSubscribeV126,
         },
       },
     },

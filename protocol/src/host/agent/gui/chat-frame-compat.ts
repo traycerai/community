@@ -143,6 +143,17 @@ export const CHAT_SUBSCRIBE_OPEN_HARNESS_MINOR = 22;
 export const CHAT_SUBSCRIBE_CONVERSATION_MESSAGE_MINOR = 25;
 
 /**
+ * The first minor whose `tool_call` block and `tool_call.completed` event may
+ * carry `agentMessageDelivery` (where a cross-host send stands). A literal for
+ * the reason the constants above are. The host deletes the key by name from
+ * every block and completed event it sends a peer below this minor
+ * (`chat-frame-projection.ts`), the way it deletes the page stamps below
+ * `1.23`; the client needs no predicate on it, since a `1.26` peer parses with
+ * the schemas its line binds.
+ */
+export const CHAT_SUBSCRIBE_AGENT_MESSAGE_DELIVERY_MINOR = 26;
+
+/**
  * Typed against the live enum on purpose: a rename of the mode breaks this
  * compile rather than leaving a string literal that silently matches nothing.
  *

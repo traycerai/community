@@ -7,6 +7,7 @@ import {
   openChatEventSchema,
   openMessageSchema,
   openMessageSchemaPreConversation,
+  openMessageSchemaPreDelivery,
   openMessageSchemaPrePage,
 } from "@traycer/protocol/host/agent/gui/open-harness-wire";
 import {
@@ -1632,6 +1633,25 @@ export const openChatTranscriptWindowSchemaPreConversation = lazySchema(() =>
 export const openChatRangeResponseSchemaPreConversation = lazySchema(() =>
   chatRangeResponseSchema.extend({
     messages: z.array(openMessageSchemaPreConversation),
+    events: z.array(openChatEventSchema),
+  }),
+);
+
+/**
+ * The tail as `chat.subscribe@1.25` ships it: the live user row, the tool block
+ * without `1.26`'s `agentMessageDelivery`.
+ */
+export const openChatTranscriptWindowSchemaPreDelivery = lazySchema(() =>
+  chatTranscriptWindowSchema.extend({
+    messages: z.array(openMessageSchemaPreDelivery),
+    events: z.array(openChatEventSchema),
+  }),
+);
+
+/** The `1.25` range, with the same pre-delivery body as its tail. */
+export const openChatRangeResponseSchemaPreDelivery = lazySchema(() =>
+  chatRangeResponseSchema.extend({
+    messages: z.array(openMessageSchemaPreDelivery),
     events: z.array(openChatEventSchema),
   }),
 );

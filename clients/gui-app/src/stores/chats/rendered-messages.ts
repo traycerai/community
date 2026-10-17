@@ -5021,6 +5021,7 @@ const BLOCK_HANDLERS: {
     agentMessageSend: block.agentMessageSend,
     managedCommand: block.managedCommand,
     agentMessageReceipt: block.agentMessageReceipt,
+    agentMessageDelivery: block.agentMessageDelivery,
     isStreaming: block.status === "streaming",
     endState: segmentEndState(block.status),
     stopped: block.stopped,

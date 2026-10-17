@@ -1,6 +1,7 @@
 import { useState, type ComponentPropsWithRef, type ReactNode } from "react";
 import { ChevronsUpDown, LogIn } from "lucide-react";
 import type { HostLeaseStatus } from "@traycer-clients/shared/host-selection/selection-authority-contract";
+import type { HostStatusCrossHostMessaging } from "@traycer/protocol/host/status/contracts";
 import { UserMenu, UserMenuAvatar } from "@/components/auth/user-menu";
 import { AppUpdateHeaderButton } from "@/components/layout/header/app-update-button";
 import {
@@ -22,6 +23,7 @@ import {
 import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
 import { useAuthSignInMutation } from "@/hooks/auth/use-auth-sign-in-mutation";
 import { useEffectiveHostId } from "@/hooks/host/use-effective-host-id";
+import { useHostCrossHostMessaging } from "@/hooks/host/use-host-cross-host-messaging";
 import { useHostDirectoryEntry } from "@/hooks/host/use-host-directory-entry";
 import { useHostLease } from "@/hooks/host/use-host-lease";
 import { cn } from "@/lib/utils";
@@ -283,6 +285,14 @@ function AccountRowButton(
                 {host.hostName}
               </span>
             )}
+            {host.health === "degraded" ? (
+              <span
+                data-testid="side-strip-host-degraded"
+                className="truncate text-ui-xs text-warning-foreground"
+              >
+                {HOST_DEGRADED_LINE}
+              </span>
+            ) : null}
           </span>
           <ChevronsUpDown
             aria-hidden
@@ -294,10 +304,16 @@ function AccountRowButton(
   );
 }
 
-type HostHealth = "ready" | "pending" | "down" | "unknown";
+// `degraded` is a host that is serving - connected, running agents - whose
+// messages to and from agents on the account's other hosts are paused. It is
+// never shown as unavailable: everything on this host still works.
+type HostHealth = "ready" | "degraded" | "pending" | "down" | "unknown";
+
+const HOST_DEGRADED_LINE = "Degraded: cross-host messages paused";
 
 const HOST_HEALTH_FILL: Readonly<Record<HostHealth, string>> = {
   ready: "bg-success",
+  degraded: "bg-warning",
   pending: "bg-warning",
   down: "bg-destructive",
   unknown: "bg-muted-foreground",
@@ -305,15 +321,19 @@ const HOST_HEALTH_FILL: Readonly<Record<HostHealth, string>> = {
 
 const HOST_HEALTH_LABEL: Readonly<Record<HostHealth, string>> = {
   ready: "Host connected",
+  degraded: `Host connected. ${HOST_DEGRADED_LINE}`,
   pending: "Host connecting",
   down: "Host unavailable",
   unknown: "No host",
 };
 
-function hostHealthOf(status: HostLeaseStatus | null): HostHealth {
+function hostHealthOf(
+  status: HostLeaseStatus | null,
+  messaging: HostStatusCrossHostMessaging | null,
+): HostHealth {
   switch (status) {
     case "ready":
-      return "ready";
+      return messaging?.state === "paused" ? "degraded" : "ready";
     case "connecting":
     case "degraded":
     case "restarting-expected":
@@ -333,8 +353,11 @@ function useAccountHostReading(): {
   const hostId = useEffectiveHostId();
   const entry = useHostDirectoryEntry(hostId);
   const lease = useHostLease(hostId);
+  // `null` follows the effective host: the same machine `hostId` names, read
+  // through the requester the selection layer pins for it.
+  const messaging = useHostCrossHostMessaging(null);
   return {
-    health: hostHealthOf(lease?.status ?? null),
+    health: hostHealthOf(lease?.status ?? null, messaging),
     hostName: entry?.label ?? null,
   };
 }
