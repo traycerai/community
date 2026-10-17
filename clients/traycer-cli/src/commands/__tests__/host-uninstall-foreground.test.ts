@@ -270,6 +270,7 @@ describe("buildHostUninstallCommand --all - refusal over a foreground run (deskt
       buildHostUninstallCommand as typeof BuildHostUninstallCommandType
     )({
       all: true,
+      force: false,
       lifecycleOrigin: "desktop",
     } as Parameters<typeof buildHostUninstallCommand>[0]);
     const caught: unknown = await command(fakeCtx()).then(
@@ -306,6 +307,7 @@ describe("buildHostUninstallCommand --all - refusal over a foreground run (deskt
       buildHostUninstallCommand as typeof BuildHostUninstallCommandType
     )({
       all: true,
+      force: false,
       lifecycleOrigin: "terminal",
     } as Parameters<typeof buildHostUninstallCommand>[0]);
     const result = await command(fakeCtx());
@@ -329,6 +331,7 @@ describe("buildHostUninstallCommand --all - refusal over a foreground run (deskt
       buildHostUninstallCommand as typeof BuildHostUninstallCommandType
     )({
       all: true,
+      force: false,
       lifecycleOrigin: "desktop",
     } as Parameters<typeof buildHostUninstallCommand>[0]);
     const result = await command(fakeCtx());
@@ -350,6 +353,7 @@ describe("buildHostUninstallCommand --all - refusal over a foreground run (deskt
       buildHostUninstallCommand as typeof BuildHostUninstallCommandType
     )({
       all: false,
+      force: false,
       lifecycleOrigin: "desktop",
     } as Parameters<typeof buildHostUninstallCommand>[0]);
     const result = await command(fakeCtx());

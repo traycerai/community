@@ -222,6 +222,7 @@ import {
 } from "../config/desktop-config";
 import { installHostWakeRecovery } from "./host-wake-recovery";
 import { startHostHealthMonitor } from "../host/host-health-monitor";
+import { publishLocalHostUnresponsive } from "../host/local-host-unresponsive";
 import { startPendingLoginItemRevisionMonitor } from "../host/pending-login-item-revision-monitor";
 import { hostManagesHostLoginItem } from "../app/host-login-item";
 import { retireCompetingCliRegistrationWithContender } from "../host/launch-repair-contender";
@@ -1162,6 +1163,7 @@ function localHostLaneStarters(
           readLiveness: undefined,
           readLiveSupervisorPid: () =>
             services.hostLifecycle.readIdentifiedSupervisorPid(),
+          onHostUnresponsive: publishLocalHostUnresponsive,
         });
         state.bridge?.disposeFns.push(() => healthMonitor.dispose());
       });

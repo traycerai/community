@@ -591,7 +591,28 @@ async function stopService(
     timeoutMs: 15_000,
     tolerateNonZeroExit: true,
   });
-  if (!force) return;
+  if (!force) {
+    // The plain stop asks and never escalates, but it must not report a stop
+    // that did not happen. A host whose event loop is wedged ignores SIGTERM
+    // and outlives the 15 s subprocess; one running outside the unit is not
+    // touched by `systemctl stop` at all. Give the published instance the
+    // same grace `--force` gives it before escalating (by then systemd's own
+    // `TimeoutStopSec` kill has landed on a unit-managed host), and if it is
+    // still there, say so and name the one stop that ends it.
+    if (
+      before.kind === "read" &&
+      !publishedHostProcessGone(before.metadata) &&
+      !(await waitForSignalledHostGone(before, restartStopGraces().sigtermMs))
+    ) {
+      throw cliError({
+        code: CLI_ERROR_CODES.SERVICE_CONTROL_FAILED,
+        message: `host ${operation}: the host (pid=${before.metadata.pid}) is still running after the stop request; stop did not take effect. Re-run with --force to stop it anyway (running terminal sessions and in-flight agent work will be killed).`,
+        details: { unit: unitName(label), pid: before.metadata.pid },
+        exitCode: 1,
+      });
+    }
+    return;
+  }
   // `--force` promises the host is DOWN when this returns, and the plain
   // stop above cannot promise that: the runner caps the subprocess at 15s
   // while the stop job may run for the unit's whole `TimeoutStopSec` (37s,

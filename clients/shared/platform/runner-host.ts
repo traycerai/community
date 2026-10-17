@@ -496,6 +496,20 @@ export interface IRunnerHost {
   ): Disposable;
 
   /**
+   * Subscribes to the shell's verdict that the local host has stopped
+   * responding: its process is alive, but its endpoint has not answered for
+   * longer than a busy host plausibly stays silent. The handler fires
+   * synchronously on subscribe with the current state (or `null`), then again
+   * whenever it changes; `null` means the host answered again, died, or was
+   * never unresponsive. The shell kills nothing on this verdict - restarting
+   * is the person's call (`requestHostRespawn`). Shells without a local host
+   * emit a single `null` on subscribe and never transition.
+   */
+  onLocalHostUnresponsive(
+    handler: (state: LocalHostUnresponsive | null) => void,
+  ): Disposable;
+
+  /**
    * The `hostId` this machine's local host most recently published, read from
    * durable host metadata rather than from a live connection - so it still
    * answers while the host is stopped, restarting, or unreachable.
@@ -1902,6 +1916,16 @@ export interface IWorkspaceFoldersHost {
    */
   readonly canPickNatively: boolean;
   pickFolders(): Promise<readonly string[]>;
+}
+
+/**
+ * A local host whose process is alive but whose endpoint has gone unanswered
+ * past the shell's busy window. See `IRunnerHost.onLocalHostUnresponsive`.
+ */
+export interface LocalHostUnresponsive {
+  readonly pid: number;
+  /** How long the endpoint had gone unanswered when the verdict was reached. */
+  readonly unreachableForMs: number;
 }
 
 /**

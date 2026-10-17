@@ -1928,7 +1928,7 @@ async function stopDesktopManagedHost(
     case "hung":
       throw cliError({
         code: CLI_ERROR_CODES.SERVICE_CONTROL_FAILED,
-        message: `host stop: the host acknowledged the shutdown claim but pid=${outcome.pid} did not exit within the shutdown grace; stop did not take effect.`,
+        message: `host stop: the host acknowledged the shutdown claim but pid=${outcome.pid} did not exit within the shutdown grace; stop did not take effect. Re-run with --force to stop it anyway (running terminal sessions and in-flight agent work will be killed).`,
         details: {
           label: label.id,
           agentLabel: agent.agentLabelId,
@@ -1939,7 +1939,7 @@ async function stopDesktopManagedHost(
     case "unreachable":
       throw cliError({
         code: CLI_ERROR_CODES.SERVICE_CONTROL_FAILED,
-        message: `host stop: Traycer Desktop owns host registration on this machine (SMAppService agent '${agent.agentLabelId}' loaded from ${agent.loadedPath}) and the running host's RPC endpoint is unreachable (${outcome.cause}); stopping it from the CLI would deregister Desktop's agent. Use the Traycer app to stop it, or take over management with 'traycer host service uninstall' followed by 'traycer host service install', then retry.`,
+        message: `host stop: Traycer Desktop owns host registration on this machine (SMAppService agent '${agent.agentLabelId}' loaded from ${agent.loadedPath}) and the running host's RPC endpoint is unreachable (${outcome.cause}); stopping it from the CLI would deregister Desktop's agent. If the host is not responding, re-run with --force to stop it anyway (running terminal sessions and in-flight agent work will be killed). Otherwise use the Traycer app to stop it, or take over management with 'traycer host service uninstall' followed by 'traycer host service install', then retry.`,
         details: {
           label: label.id,
           agentLabel: agent.agentLabelId,

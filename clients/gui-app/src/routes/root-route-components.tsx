@@ -3,6 +3,7 @@ import { OrganizationProvider } from "@/hooks/organization/organization-provider
 import type { ReactNode } from "react";
 import { Outlet, useRouterState } from "@tanstack/react-router";
 import { HostTrayCommandListener } from "@/components/layout/bridges/host-tray-command-listener";
+import { HostUnresponsivePrompt } from "@/components/layout/bridges/host-unresponsive-prompt";
 import { HostLifecycleAnalyticsBridge } from "@/components/layout/bridges/host-lifecycle-analytics-bridge";
 import { HostQuitDecisionBridge } from "@/components/layout/bridges/host-quit-decision-bridge";
 import { DesktopDialogHost } from "@/components/layout/dialogs/desktop-dialog-host";
@@ -97,6 +98,10 @@ export function RootComponent() {
           without a ready host. */}
       <MenuCommandListener />
       <HostTrayCommandListener />
+      {/* Offers a force restart while the shell reports this machine's host
+          alive but not responding; outside the gate, which a wedged host
+          keeps closed. */}
+      <HostUnresponsivePrompt />
       <DesktopDialogHost />
       {/* The host quit modal: on every route, signed in or not, so a quit is
           always answered in-window rather than by main's native prompt. */}

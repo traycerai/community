@@ -2140,6 +2140,43 @@ printf '%s\\n' "$@" > ${JSON.stringify(newArgs)}
       expect(calls.map((c) => c.args[0])).toEqual(["print"]);
     });
 
+    // traycer#1563 D3a: a host whose event loop is wedged listens but never
+    // answers, so the cooperative stop ends `unreachable` (or `hung` once the
+    // claim was acknowledged). `--force` is the one stop that works on it
+    // (`forceStopDesktopManagedHost` kills the pid without touching launchd),
+    // so the failure line has to name it, as the busy denial already does.
+    it("stop names --force as the escalation when the Desktop-managed host's RPC is unreachable", async () => {
+      const { controller } = stageDesktopManagedRunner();
+      MOCKS.requestCooperativeShutdown.mockResolvedValue({
+        kind: "unreachable",
+        cause: "dial timeout",
+      });
+
+      await expect(
+        controller.stop(label, { force: false }),
+      ).rejects.toMatchObject({
+        code: CLI_ERROR_CODES.SERVICE_CONTROL_FAILED,
+        message: expect.stringContaining("--force"),
+      });
+      expect(MOCKS.forceStopHostProcess).not.toHaveBeenCalled();
+    });
+
+    it("stop names --force as the escalation when the Desktop-managed host outlives the shutdown grace", async () => {
+      const { controller } = stageDesktopManagedRunner();
+      MOCKS.requestCooperativeShutdown.mockResolvedValue({
+        kind: "hung",
+        pid: 4242,
+      });
+
+      await expect(
+        controller.stop(label, { force: false }),
+      ).rejects.toMatchObject({
+        code: CLI_ERROR_CODES.SERVICE_CONTROL_FAILED,
+        message: expect.stringContaining("--force"),
+      });
+      expect(MOCKS.forceStopHostProcess).not.toHaveBeenCalled();
+    });
+
     it("start kickstarts the AGENT label - the job launchd can actually start", async () => {
       const { calls, controller } = stageDesktopManagedRunner();
 

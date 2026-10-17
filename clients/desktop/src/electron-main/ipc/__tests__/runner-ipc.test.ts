@@ -614,6 +614,7 @@ describe("RunnerIpcBridge", () => {
           RunnerHostInvoke.requestHostRespawn,
           RunnerHostInvoke.lastKnownLocalHostId,
           RunnerHostInvoke.localHostSnapshot,
+          RunnerHostInvoke.localHostUnresponsive,
           RunnerHostInvoke.traySetIndicator,
           RunnerHostInvoke.traySetEpics,
           RunnerHostInvoke.setUnsyncedEditsSnapshot,
@@ -4446,6 +4447,10 @@ describe("RunnerIpcBridge", () => {
 
     expect(windowA.sentMessages).toEqual([
       { channel: RunnerHostEvent.localHostChange, payload: null },
+      {
+        channel: RunnerHostEvent.localHostUnresponsiveChange,
+        payload: null,
+      },
       {
         channel: RunnerHostEvent.windowsChange,
         payload: [

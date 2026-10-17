@@ -80,6 +80,7 @@ function startMonitor(deps: {
     }),
     readLiveness: DEAD,
     readLiveSupervisorPid: () => Promise.resolve(null),
+    onHostUnresponsive: () => undefined,
   });
 }
 
@@ -169,6 +170,7 @@ describe("startHostHealthMonitor", () => {
       }),
       readLiveness: DEAD,
       readLiveSupervisorPid: () => Promise.resolve(null),
+      onHostUnresponsive: () => undefined,
     });
     await ticks(6);
     expect(respawn).toHaveBeenCalledTimes(0);
@@ -239,6 +241,7 @@ describe("startHostHealthMonitor", () => {
       }),
       readLiveness: ALIVE,
       readLiveSupervisorPid: () => Promise.resolve(null),
+      onHostUnresponsive: () => undefined,
     });
 
     await ticks(2);
@@ -629,6 +632,7 @@ describe("startHostHealthMonitor", () => {
       }),
       readLiveness: liveness,
       readLiveSupervisorPid: () => Promise.resolve(null),
+      onHostUnresponsive: () => undefined,
     });
 
     await ticks(60);
@@ -661,12 +665,127 @@ describe("startHostHealthMonitor", () => {
       }),
       readLiveness: ALIVE,
       readLiveSupervisorPid: () => Promise.resolve(null),
+      onHostUnresponsive: () => undefined,
     });
 
     // Well past the old ten-minute escalation, and then some.
     await ticks(700);
     expect(reload).not.toHaveBeenCalled();
     expect(respawn).not.toHaveBeenCalled();
+    monitor.dispose();
+  });
+
+  it("offers the person a force restart once a live host stays unreachable past the busy window, and kills nothing itself (traycer#1563 D3a)", async () => {
+    // The hold above stays: no demote, no respawn, no kill. What the owner
+    // decided on 2026-10-17 is that the person is TOLD, once the host has been
+    // alive but silent past the same ten-minute boundary the long-stall WARN
+    // uses: "Host is not responding. Force restart?". Today the WARN is the
+    // only output, so nothing reaches the renderer and the only way out is a
+    // Tray/Help "Restart Host" the person has to know about. The signal name
+    // is this test's; the build names the real seam.
+    const respawn = vi.fn(async () => {});
+    const reload = vi.fn(async () => null);
+    const onHostUnresponsive = vi.fn();
+    const deps = {
+      host: fakeHost({ reloadSnapshotFromDisk: reload }),
+      intervalMs: INTERVAL_MS,
+      probe: vi.fn(async () => false),
+      readMetadata: vi.fn(async () => SNAPSHOT),
+      respawn,
+      automaticRecoverySuspended: () => false,
+      governor: createHostRecoveryGovernor({
+        readLiveness: ALIVE,
+        now: undefined,
+      }),
+      readLiveness: ALIVE,
+      readLiveSupervisorPid: () => Promise.resolve(null),
+      onHostUnresponsive,
+    };
+    const monitor = startHostHealthMonitor(deps);
+
+    // Inside the window: an epic-open stall, nothing offered.
+    await ticks(300);
+    expect(onHostUnresponsive).not.toHaveBeenCalled();
+
+    // Past it: offered once, with the pid and how long it has been silent.
+    await ticks(400);
+    expect(onHostUnresponsive).toHaveBeenCalledTimes(1);
+    expect(onHostUnresponsive).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pid: SNAPSHOT.pid,
+        unreachableForMs: expect.any(Number),
+      }),
+    );
+    expect(respawn).not.toHaveBeenCalled();
+    expect(reload).not.toHaveBeenCalled();
+    monitor.dispose();
+  });
+
+  it("withdraws the force-restart offer exactly once when the host answers again, and never withdraws one that was not made (traycer#1563 D3a)", async () => {
+    // The offer is about a host that is silent right now. When it answers, the
+    // renderer's prompt has to go, once; and a host that was never silent past
+    // the window must not send a `null` for an offer nobody saw.
+    let reachable = false;
+    const probe = vi.fn(async () => reachable);
+    const onHostUnresponsive = vi.fn();
+    const monitor = startHostHealthMonitor({
+      host: fakeHost({}),
+      intervalMs: INTERVAL_MS,
+      probe,
+      readMetadata: vi.fn(async () => SNAPSHOT),
+      respawn: vi.fn(async () => {}),
+      automaticRecoverySuspended: () => false,
+      governor: createHostRecoveryGovernor({
+        readLiveness: ALIVE,
+        now: undefined,
+      }),
+      readLiveness: ALIVE,
+      readLiveSupervisorPid: () => Promise.resolve(null),
+      onHostUnresponsive,
+    });
+
+    // Inside the window nothing was offered, so nothing may be withdrawn.
+    await ticks(300);
+    expect(onHostUnresponsive).not.toHaveBeenCalled();
+
+    await ticks(400);
+    expect(onHostUnresponsive).toHaveBeenCalledTimes(1);
+    expect(onHostUnresponsive).toHaveBeenLastCalledWith(
+      expect.objectContaining({ pid: SNAPSHOT.pid }),
+    );
+
+    // The host answers: the offer is withdrawn, once.
+    reachable = true;
+    await ticks(2);
+    expect(onHostUnresponsive).toHaveBeenCalledTimes(2);
+    expect(onHostUnresponsive).toHaveBeenLastCalledWith(null);
+
+    // Further healthy ticks add nothing.
+    await ticks(20);
+    expect(onHostUnresponsive).toHaveBeenCalledTimes(2);
+    monitor.dispose();
+  });
+
+  it("never reports a host that was healthy throughout, not even a null", async () => {
+    const onHostUnresponsive = vi.fn();
+    const monitor = startHostHealthMonitor({
+      host: fakeHost({}),
+      intervalMs: INTERVAL_MS,
+      probe: vi.fn(async () => true),
+      readMetadata: vi.fn(async () => SNAPSHOT),
+      respawn: vi.fn(async () => {}),
+      automaticRecoverySuspended: () => false,
+      governor: createHostRecoveryGovernor({
+        readLiveness: ALIVE,
+        now: undefined,
+      }),
+      readLiveness: ALIVE,
+      readLiveSupervisorPid: () => Promise.resolve(null),
+      onHostUnresponsive,
+    });
+
+    await ticks(700);
+    expect(onHostUnresponsive).not.toHaveBeenCalled();
     monitor.dispose();
   });
 
@@ -692,6 +811,7 @@ describe("startHostHealthMonitor", () => {
       }),
       readLiveness,
       readLiveSupervisorPid: () => Promise.resolve(null),
+      onHostUnresponsive: () => undefined,
     });
 
     // Settle into the hold.
@@ -801,6 +921,7 @@ describe("startHostHealthMonitor", () => {
       }),
       readLiveness,
       readLiveSupervisorPid: () => Promise.resolve(null),
+      onHostUnresponsive: () => undefined,
     });
 
     await ticks(10);
@@ -850,6 +971,7 @@ describe("startHostHealthMonitor", () => {
       governor: createHostRecoveryGovernor({ readLiveness, now: undefined }),
       readLiveness,
       readLiveSupervisorPid: () => Promise.resolve(null),
+      onHostUnresponsive: () => undefined,
     });
 
     try {
@@ -905,6 +1027,7 @@ describe("startHostHealthMonitor", () => {
       governor: createHostRecoveryGovernor({ readLiveness, now: undefined }),
       readLiveness,
       readLiveSupervisorPid: () => Promise.resolve(null),
+      onHostUnresponsive: () => undefined,
     });
 
     try {
@@ -958,6 +1081,7 @@ describe("startHostHealthMonitor", () => {
       governor: createHostRecoveryGovernor({ readLiveness, now: undefined }),
       readLiveness,
       readLiveSupervisorPid: () => Promise.resolve(null),
+      onHostUnresponsive: () => undefined,
     });
 
     try {
@@ -1027,6 +1151,7 @@ describe("startHostHealthMonitor", () => {
       governor: createHostRecoveryGovernor({ readLiveness, now: undefined }),
       readLiveness,
       readLiveSupervisorPid: () => Promise.resolve(null),
+      onHostUnresponsive: () => undefined,
     });
 
     try {
@@ -1089,6 +1214,7 @@ describe("startHostHealthMonitor", () => {
       governor: createHostRecoveryGovernor({ readLiveness, now: undefined }),
       readLiveness,
       readLiveSupervisorPid: () => Promise.resolve(null),
+      onHostUnresponsive: () => undefined,
     });
 
     try {
@@ -1168,6 +1294,7 @@ describe("startHostHealthMonitor", () => {
       governor: createHostRecoveryGovernor({ readLiveness, now: undefined }),
       readLiveness,
       readLiveSupervisorPid: () => Promise.resolve(null),
+      onHostUnresponsive: () => undefined,
     });
 
     try {
@@ -1259,6 +1386,7 @@ describe("startHostHealthMonitor", () => {
       governor: createHostRecoveryGovernor({ readLiveness, now: undefined }),
       readLiveness,
       readLiveSupervisorPid,
+      onHostUnresponsive: () => undefined,
     });
 
     try {
@@ -1337,6 +1465,7 @@ describe("startHostHealthMonitor", () => {
       governor: createHostRecoveryGovernor({ readLiveness, now: undefined }),
       readLiveness,
       readLiveSupervisorPid: () => Promise.resolve(null),
+      onHostUnresponsive: () => undefined,
     });
 
     try {

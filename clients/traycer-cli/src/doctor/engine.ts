@@ -18,6 +18,7 @@ import {
   hostHomeDir,
   hostIdentityNeedsReauthPath,
   hostNeedsReauthPath,
+  hostLogPath,
   hostUpdateProgressMarkerLockPath,
 } from "../store/paths";
 import { lockHolderLivenessGivenPublisher } from "@traycer-clients/shared/host-lock/cross-process-lock";
@@ -424,6 +425,7 @@ export async function runDoctor(opts: RunDoctorOptions): Promise<DoctorResult> {
           websocketUrl: pidMetadata.websocketUrl,
         },
         opts.environment,
+        pidMetadata.pid,
       );
       if (rpcIssue !== null) {
         issues.push(rpcIssue);
@@ -1574,6 +1576,7 @@ function probeWebsocketUrl(url: string): Promise<boolean> {
 async function probeHostRpc(
   endpoint: HostTransportEndpoint,
   environment: Environment,
+  pid: number,
 ): Promise<DoctorIssue | null> {
   const { websocketUrl } = endpoint;
   const auth = await resolveHostAuth();
@@ -1611,17 +1614,16 @@ async function probeHostRpc(
       if (err.code === "INCOMPATIBLE" || err.code === "DOWNGRADE_UNSUPPORTED") {
         return incompatibleRpcIssue(websocketUrl, err, environment);
       }
-      // RPC_ERROR / transport: the port accepted a TCP connection but the
-      // RPC layer didn't answer (wedged listener, dial/frame timeout).
-      return {
-        code: DOCTOR_ISSUE_CODES.PORT_UNREACHABLE,
-        severity: "error",
-        title: "Host endpoint not answering RPC",
-        message: `The host's port is open but it did not complete an RPC handshake (${err.code}). Restart the service.`,
-        fixAction: "host-restart",
-        terminalCommand: "traycer host restart",
-        details: { websocketUrl, rpcCode: err.code },
-      };
+      // RPC_ERROR / transport: the process is alive (checked before this
+      // probe) and its port accepted a TCP connection, but nothing answered -
+      // the host's main thread is blocked. A cooperative restart asks that
+      // same thread, so the fix is the forced one.
+      return unresponsiveHostIssue(
+        pid,
+        await minutesSinceHostLogWrite(environment),
+        websocketUrl,
+        err.code,
+      );
     }
     return {
       code: DOCTOR_ISSUE_CODES.PORT_UNREACHABLE,
@@ -1634,6 +1636,45 @@ async function probeHostRpc(
       terminalCommand: "traycer host restart",
       details: { websocketUrl },
     };
+  }
+}
+
+function unresponsiveHostIssue(
+  pid: number,
+  silentMinutes: number | null,
+  websocketUrl: string | null,
+  rpcCode: string,
+): DoctorIssue {
+  const silence =
+    silentMinutes === null
+      ? "is not responding"
+      : silentMinutes < 1
+        ? "has been unresponsive for under 1 min"
+        : `has been unresponsive for ${String(silentMinutes)} min`;
+  return {
+    code: DOCTOR_ISSUE_CODES.HOST_RPC_UNRESPONSIVE,
+    severity: "error",
+    title: "Host is not responding",
+    message: `The host (pid=${String(pid)}) is running but ${silence}. Force restart it with 'traycer host restart --force' (running terminal sessions and in-flight agent work will be killed).`,
+    // The Doctor card's "Restart host" repair is already the forced respawn.
+    fixAction: "host-restart",
+    terminalCommand: "traycer host restart --force",
+    details: { pid, websocketUrl, rpcCode, silentMinutes },
+  };
+}
+
+// How long ago the host last wrote its log, in whole minutes. A host whose
+// main thread is blocked writes nothing - not even its own stall warning - so
+// the log's last write is when it went silent. `null` when the log cannot be
+// read; the issue is reported either way.
+async function minutesSinceHostLogWrite(
+  environment: Environment,
+): Promise<number | null> {
+  try {
+    const { mtimeMs } = await stat(hostLogPath(environment));
+    return Math.max(0, Math.floor((Date.now() - mtimeMs) / 60_000));
+  } catch {
+    return null;
   }
 }
 

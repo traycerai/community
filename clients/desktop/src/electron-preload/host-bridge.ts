@@ -5,6 +5,7 @@ import {
 } from "../ipc-contracts/ipc-channels";
 import type {
   DesktopPublishedHostSnapshot,
+  LocalHostUnresponsive,
   RegisteredHostsPush,
 } from "../ipc-contracts/host-types";
 import type { HostRestartRequestResult } from "../ipc-contracts/host-management-types";
@@ -99,11 +100,76 @@ function subscribeLocalHost(
   };
 }
 
+/**
+ * The health monitor's "alive but not responding" verdict, cached the same
+ * way as the snapshot above and for the same reason: the push is
+ * edge-triggered, so a window that subscribes after it pulls once instead.
+ * A missed `null` here is harmless (no prompt), but a missed state would hide
+ * the one offer a person with a wedged host has, so the pull is not optional.
+ */
+let cachedUnresponsive: LocalHostUnresponsive | null = null;
+let unresponsivePushGeneration = 0;
+let unresponsivePullStarted = false;
+const unresponsiveHandlers = new Set<Listener<LocalHostUnresponsive | null>>();
+
+ipcRenderer.on(
+  RunnerHostEvent.localHostUnresponsiveChange,
+  (_event: unknown, payload: unknown): void => {
+    const state = payload as LocalHostUnresponsive | null;
+    unresponsivePushGeneration += 1;
+    cachedUnresponsive = state;
+    for (const handler of unresponsiveHandlers) {
+      handler(state);
+    }
+  },
+);
+
+function pullUnresponsiveOnce(): void {
+  if (unresponsivePullStarted) return;
+  unresponsivePullStarted = true;
+  const generationAtRequest = unresponsivePushGeneration;
+  void (
+    ipcRenderer.invoke(
+      RunnerHostInvoke.localHostUnresponsive,
+    ) as Promise<unknown>
+  )
+    .then((payload: unknown) => {
+      if (unresponsivePushGeneration !== generationAtRequest) return;
+      const state = payload as LocalHostUnresponsive | null;
+      if (state === null && cachedUnresponsive === null) return;
+      cachedUnresponsive = state;
+      for (const handler of unresponsiveHandlers) {
+        handler(state);
+      }
+    })
+    .catch(() => {
+      // As for the snapshot pull: a failed attempt frees the slot so the next
+      // subscriber tries again.
+      unresponsivePullStarted = false;
+    });
+}
+
+function subscribeUnresponsive(
+  handler: Listener<LocalHostUnresponsive | null>,
+): Disposable {
+  unresponsiveHandlers.add(handler);
+  handler(cachedUnresponsive);
+  pullUnresponsiveOnce();
+  return {
+    dispose: () => {
+      unresponsiveHandlers.delete(handler);
+    },
+  };
+}
+
 export interface HostBridgeSurface {
   onLocalHostChange(
     handler: Listener<DesktopPublishedHostSnapshot | null>,
   ): Disposable;
   onRegisteredHostsChange(handler: Listener<RegisteredHostsPush>): Disposable;
+  onLocalHostUnresponsive(
+    handler: Listener<LocalHostUnresponsive | null>,
+  ): Disposable;
   onSystemResumed(handler: () => void): Disposable;
   requestHostRespawn(): Promise<HostRestartRequestResult>;
   getLastKnownLocalHostId(): Promise<string | null>;
@@ -112,6 +178,8 @@ export interface HostBridgeSurface {
 export function buildHostBridge(): HostBridgeSurface {
   return {
     onLocalHostChange: (handler) => subscribeLocalHost(handler),
+
+    onLocalHostUnresponsive: (handler) => subscribeUnresponsive(handler),
 
     // Main's one registry read, pushed to every window (P4.1/F22). Routed
     // through the generic per-event subscription rather than the cached shape

@@ -811,6 +811,30 @@ describe("linux service stop --force", () => {
     expect(MOCKS.forceStopHostProcess).not.toHaveBeenCalled();
   });
 
+  // traycer#1563 D3a: a wedged host ignores SIGTERM and outlives the 15 s
+  // `systemctl stop` subprocess. The plain stop must not report success while
+  // the published host is still alive; it fails and names `--force`, the one
+  // stop that escalates to SIGKILL.
+  it("without --force, a stop that leaves the published host alive fails and names --force", async () => {
+    PID.evidence = { kind: "read", metadata: { pid: 4242 } };
+    PID.gone = false;
+    // The plain stop waits the SIGTERM grace before it gives up on the host;
+    // at production timing that is the host's own ~32 s force-exit watchdog.
+    setRestartStopGracesForTests({ sigtermMs: 5, sigkillMs: 5 });
+    const { runner } = recordingRunner(() => false);
+
+    try {
+      await expect(
+        createLinuxController(runner).stop(label, { force: false }),
+      ).rejects.toMatchObject({
+        message: expect.stringContaining("--force"),
+      });
+    } finally {
+      setRestartStopGracesForTests(null);
+    }
+    expect(MOCKS.forceStopHostProcess).not.toHaveBeenCalled();
+  });
+
   // Branch-1 re-confirmation: the FIRST settle (right after the plain stop)
   // can itself be a crash - `failed` - whose Restart=on-failure replacement
   // is already coming back up by the time the cancel runs. The cancel's own

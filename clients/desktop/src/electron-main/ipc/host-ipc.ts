@@ -2,7 +2,10 @@ import {
   RunnerHostEvent,
   RunnerHostInvoke,
 } from "../../ipc-contracts/ipc-channels";
-import type { DesktopPublishedHostSnapshot } from "../../ipc-contracts/host-types";
+import type {
+  DesktopPublishedHostSnapshot,
+  LocalHostUnresponsive,
+} from "../../ipc-contracts/host-types";
 import type {
   HostRestartRequestResult,
   HostServiceRestartResult,
@@ -10,6 +13,10 @@ import type {
 import type { GuardedMutationOutcome } from "../host/host-controller-types";
 import { readLastKnownLocalHostId } from "../host/local-host-identity";
 import { appliedLocalHostCapability } from "../host/local-host-capability";
+import {
+  onLocalHostUnresponsiveChange,
+  readLocalHostUnresponsive,
+} from "../host/local-host-unresponsive";
 import type { RunnerIpcBridge } from "./runner-ipc-bridge";
 
 // Collapses a restart-intent outcome to the wire result every restart
@@ -128,5 +135,16 @@ export function registerHostIpc(bridge: RunnerIpcBridge): void {
   bridge.fanOut(
     RunnerHostEvent.localHostChange,
     bridge.options.host.getSnapshot(),
+  );
+
+  bridge.handleInvoke(
+    RunnerHostInvoke.localHostUnresponsive,
+    (): Promise<LocalHostUnresponsive | null> =>
+      Promise.resolve(readLocalHostUnresponsive()),
+  );
+  bridge.disposeFns.push(
+    onLocalHostUnresponsiveChange((state) => {
+      bridge.fanOut(RunnerHostEvent.localHostUnresponsiveChange, state);
+    }),
   );
 }

@@ -4,6 +4,7 @@ import {
   type UninstallHostResult,
 } from "../installer";
 import type { ILogger } from "../logger";
+import { CLI_ERROR_CODES, cliError } from "../runner/errors";
 import type { CommandFn, CommandResult } from "../runner/runner";
 import type { Environment } from "../runner/environment";
 import type { ProgressInfo } from "../runner/output";
@@ -62,6 +63,12 @@ import {
 // is never removed - there is no destructive "purge" path.
 export interface HostUninstallArgs {
   readonly all: boolean;
+  /**
+   * `--force` (with `--all`): stop the host with the forced stop, which
+   * escalates to SIGKILL, and remove the install even if it is still running.
+   * Without it a stop that did not take effect keeps the install.
+   */
+  readonly force: boolean;
 }
 
 /** The command's own arguments: who asked, beside what to remove. */
@@ -362,7 +369,7 @@ async function runHostUninstallWithActuators(
       logger: ctx.logger,
     };
     const stopResolved = await stopServiceBeforeRuntimePurge(stopArgs, () =>
-      actuators.stop(controller, label, { force: false }),
+      actuators.stop(controller, label, { force: args.force }),
     );
     // The resolved `stop()` is necessary but NOT sufficient - see
     // `findLiveHost`. Both halves are required: a stop that threw means the
@@ -427,6 +434,34 @@ async function runHostUninstallWithActuators(
       successorPublished: successor !== null,
       reason: "supervisor-quiescence-unproven",
     });
+    // A stop that did not take effect keeps the install. A wedged host
+    // ignores the stop request, and removing its install directory left it
+    // running from deleted bytes, still holding the lifecycle lock and the
+    // pid record, so every reinstall deferred to it and nothing could replace
+    // it. The deregistration above stands; the bytes go once the host is
+    // stopped, or now with `--force`.
+    if (!args.force && (!stopResolved || liveness === "live")) {
+      ctx.logger.warn(
+        "Host uninstall kept the install because the host did not stop",
+        {
+          environment: ctx.environment,
+          stopResolved,
+          liveness,
+        },
+      );
+      throw cliError({
+        code: CLI_ERROR_CODES.HOST_UNINSTALL_HOST_RUNNING,
+        message:
+          "host uninstall: the host did not stop, so its install was kept. If it is not responding, run 'traycer host uninstall --all --force' to stop it and remove the install (running terminal sessions and in-flight agent work will be killed).",
+        details: {
+          environment: ctx.environment,
+          hostStillRunning: liveness === "live" ? true : null,
+          removedInstallDir: false,
+          serviceDeregistrationRequested: serviceUninstalled,
+        },
+        exitCode: 1,
+      });
+    }
   }
   // The boundary re-read, on BOTH paths now: `published` describes the child
   // captured at entry; this asks what is publishing at the moment the bytes go.

@@ -1971,7 +1971,11 @@ function registerHostCommands(program: Command): void {
       )
       .option(
         "--all",
-        "Deregister the OS service first, then ask the running host to stop, then remove the bytes - so nothing is left registered. The stop is cooperative and best-effort: a host that denies or outlives the shutdown claim is left running, and its pid metadata and log are preserved rather than purged.",
+        "Deregister the OS service first, then ask the running host to stop, then remove the bytes - so nothing is left registered. The stop is cooperative: if the host does not stop, its install is kept and the command fails, naming --force.",
+      )
+      .option(
+        "--force",
+        "With --all: stop the host even if it is not responding (escalates to SIGKILL; running terminal sessions and in-flight agent work are killed), then remove the install.",
       )
       .addHelpText(
         "after",
@@ -1994,13 +1998,14 @@ function registerHostCommands(program: Command): void {
           "           null means nothing could confirm either way.",
           "           WINDOWS: deregistration force-kills the host process tree",
           "           first - there is no busy check, so running terminal sessions and",
-          "           in-flight agent work are lost. macOS/Linux: the stop is cooperative and",
-          "           best-effort, so a host that denies the claim or outlives it keeps",
-          "           serving while the bytes are removed anyway, with its pid metadata and",
-          "           log preserved by this command. `hostStillRunning` in the result (and",
-          "           the summary line) reports what the probe could establish; it is null",
-          "           when nothing could be. Re-run with 'traycer host stop --force' if a",
-          "           host is still up. Runtime state is never purged here - removing it is",
+          "           in-flight agent work are lost. macOS/Linux: the stop is cooperative, so",
+          "           a host that denies the claim or outlives it keeps serving - and then",
+          "           its install is KEPT and the command fails, because removing it would",
+          "           leave that host running from deleted bytes with nothing able to",
+          "           replace it. Re-run with --force to stop it anyway and remove the",
+          "           install. `hostStillRunning` in the result (and the summary line)",
+          "           reports what the probe could establish; it is null when nothing",
+          "           could be. Runtime state is never purged here - removing it is",
           "           only safe once the supervisor is confirmed stopped, which needs a",
           "           backend completion contract that does not exist yet.",
           "Neither mode touches your data or credentials under ~/.traycer.",
@@ -2011,6 +2016,7 @@ function registerHostCommands(program: Command): void {
     (opts) =>
       buildHostUninstallCommand({
         all: opts.all === true,
+        force: opts.force === true,
         lifecycleOrigin: hostStartOriginFromOption(opts.lifecycleOrigin),
       }),
   );

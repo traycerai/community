@@ -108,6 +108,7 @@ import {
   AUTOMATIC_INTENTS_QUIESCED_MESSAGE,
   HOST_NOT_SERVICE_RUN_MESSAGE,
   HOST_REMOVED_BY_USER_MESSAGE,
+  HOST_UNINSTALL_HOST_RUNNING_MESSAGE,
   HOST_UPDATE_SERVICE_DISABLED_MESSAGE,
   SERVICE_REGISTRATION_DISABLED_CODE,
   SERVICE_TASK_NOT_OWNED_CODE,
@@ -201,6 +202,7 @@ const CLI_LOCK_BUSY_CODE = "E_CLI_LOCK_BUSY";
 const HOST_BUSY_CODE = "E_HOST_BUSY";
 const HOST_UPDATE_ATTEMPT_ACTIVE_CODE = "E_HOST_UPDATE_ATTEMPT_ACTIVE";
 const HOST_NOT_SERVICE_RUN_CODE = "E_HOST_NOT_SERVICE_RUN";
+const HOST_UNINSTALL_HOST_RUNNING_CODE = "E_HOST_UNINSTALL_HOST_RUNNING";
 // `host service start` could not start the service: on a packaged Mac whose
 // job launchd no longer has loaded, the start that is left is a register.
 const SERVICE_CONTROL_FAILED_CODE = "E_SERVICE_CONTROL_FAILED";
@@ -3977,6 +3979,22 @@ export class HostController {
           code: err.code,
         });
         return { kind: "deferred", message: HOST_NOT_SERVICE_RUN_MESSAGE };
+      }
+      if (err.code === HOST_UNINSTALL_HOST_RUNNING_CODE) {
+        // `host uninstall --all` asked the host to stop, it did not, and the
+        // CLI kept the install rather than remove it from under a running
+        // host. Nothing was removed, so this is a deferral: `removeTraycer`
+        // takes back the removed-by-user sentinel on it, and the person is
+        // told to force-restart the host first.
+        log.info("[host-controller] host mutation refused", {
+          kind: this.mutationStatus?.kind ?? null,
+          reason: "host-did-not-stop",
+          code: err.code,
+        });
+        return {
+          kind: "deferred",
+          message: HOST_UNINSTALL_HOST_RUNNING_MESSAGE,
+        };
       }
       if (err.code === SERVICE_TASK_NOT_OWNED_CODE) {
         // The host's Scheduled Task is not this account's - another Windows

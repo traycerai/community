@@ -306,6 +306,7 @@ import {
 import {
   HOST_NOT_SERVICE_RUN_MESSAGE,
   HOST_REMOVED_BY_USER_MESSAGE,
+  HOST_UNINSTALL_HOST_RUNNING_MESSAGE,
   HOST_UPDATE_SERVICE_DISABLED_MESSAGE,
   HOST_UPDATED_SERVICE_DISABLED_MESSAGE,
   SERVICE_TASK_LEFT_IN_PLACE_MESSAGE,
@@ -5864,6 +5865,36 @@ describe("RM: Remove Traycer and uninstall --all refuse first over a terminal-st
     expect(outcome.kind).toBe("ok");
     expect(await isHostRemovedByUser()).toBe(true);
     expect(uninstallSpawnCount()).toBe(1);
+  });
+
+  // traycer#1563 D3e: the stop inside `host uninstall --all` did not take
+  // effect on a host that is not responding, so the CLI kept the install and
+  // refused (`E_HOST_UNINSTALL_HOST_RUNNING`). Nothing was removed, so the
+  // device must not stay marked removed - that sentinel is what made every
+  // later automatic ensure refuse with `removed-by-user` over a host that
+  // never went away. The person is told to force-restart the host first.
+  it("removeTraycer defers and takes the sentinel back when the CLI kept the install because the host did not stop (traycer#1563 D3e)", async () => {
+    readSupervisorRunMock.mockResolvedValue({
+      state: "not-running",
+      supervisorPid: null,
+      admittedAs: null,
+    });
+    vi.mocked(streamBundledTraycerCliJson).mockRejectedValueOnce(
+      new TraycerCliError(
+        "E_HOST_UNINSTALL_HOST_RUNNING",
+        "host uninstall: the host did not stop, so its install was kept.",
+      ),
+    );
+    const controller = newController("production");
+    expect(await isHostRemovedByUser()).toBe(false);
+
+    const outcome = await controller.removeTraycer();
+
+    expect(outcome).toEqual({
+      kind: "deferred",
+      message: HOST_UNINSTALL_HOST_RUNNING_MESSAGE,
+    });
+    expect(await isHostRemovedByUser()).toBe(false);
   });
 
   it("removeTraycer proceeds over a packaged-macOS host running as a service", async () => {
