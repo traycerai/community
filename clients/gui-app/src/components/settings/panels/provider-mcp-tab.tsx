@@ -994,7 +994,10 @@ export function ProviderMcpTab(props: {
         }}
       />
 
-      <McpCoverageLine coverage={listData?.coverage ?? null} />
+      <McpCoverageLine
+        providerId={providerId}
+        coverage={listData?.coverage ?? null}
+      />
 
       {!projectNeedsWorkspace ? (
         <ProviderListSearch
@@ -1256,6 +1259,7 @@ function McpCapabilityNotices(props: {
 }
 
 function McpCoverageLine(props: {
+  readonly providerId: ProviderId;
   readonly coverage: ProviderMcpCoverage | null;
 }): ReactNode {
   const coverage = props.coverage;
@@ -1263,14 +1267,20 @@ function McpCoverageLine(props: {
   const notRead = coverage.sources.filter(
     (source) => source.outcome !== "read" && source.outcome !== "absent",
   );
+  const description =
+    props.providerId === "kilocode"
+      ? "Showing servers from the Kilo config files Traycer can read."
+      : "This server list may be incomplete.";
+  const unreadPrefix =
+    props.providerId === "kilocode" ? " Not read: " : " Check: ";
   return (
     <p
       className="text-ui-xs text-muted-foreground"
       data-testid="mcp-coverage-line"
     >
-      This server list may be incomplete.
+      {description}
       {notRead.length > 0
-        ? ` Check: ${notRead.map((source) => `${source.label}${source.reason === null ? "" : ` (${source.reason})`}`).join(", ")}.`
+        ? `${unreadPrefix}${notRead.map((source) => `${source.label}${source.reason === null ? "" : ` (${source.reason})`}`).join(", ")}.`
         : null}
     </p>
   );

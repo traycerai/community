@@ -548,7 +548,9 @@ describe("<ProviderMcpTab /> KiloCode origin, coverage and notices", () => {
     const view = renderKilo();
 
     const line = screen.getByTestId("mcp-coverage-line");
-    expect(line.textContent).toContain("Managed settings (Not readable here)");
+    expect(line.textContent).toBe(
+      "Showing servers from the Kilo config files Traycer can read. Not read: Managed settings (Not readable here).",
+    );
     expect(line.textContent).not.toContain("Global settings");
 
     setLists({
@@ -564,6 +566,38 @@ describe("<ProviderMcpTab /> KiloCode origin, coverage and notices", () => {
       />,
     );
     expect(screen.queryByTestId("mcp-coverage-line")).toBeNull();
+  });
+
+  it("U3: a non-Kilo provider's incomplete coverage gets the generic line, not Kilo copy", () => {
+    setLists({
+      global: [connectedServer({})],
+      coverage: {
+        complete: false,
+        sources: [
+          {
+            label: "Managed settings",
+            path: null,
+            scope: "managed",
+            outcome: "unsupported",
+            reason: "Not readable here",
+          },
+        ],
+      },
+    });
+    render(
+      <ProviderMcpTab
+        providerId="codex"
+        capabilities={FULL_CAPS}
+        providerLabel="Codex"
+        cliBinaryResolved
+      />,
+    );
+
+    const line = screen.getByTestId("mcp-coverage-line");
+    expect(line.textContent).toBe(
+      "This server list may be incomplete. Check: Managed settings (Not readable here).",
+    );
+    expect(line.textContent).not.toContain("Kilo");
   });
 
   it("U3: a tool decided by a rule shows the rule and its file", () => {
