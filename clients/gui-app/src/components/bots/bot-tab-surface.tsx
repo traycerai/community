@@ -65,10 +65,12 @@ export function BotTabSurface(props: {
   if (support === null) return null;
   if (!support) {
     const hostLabel =
-      directory.data?.find((entry) => entry.hostId === hostId)?.label ??
-      hostId;
+      directory.data?.find((entry) => entry.hostId === hostId)?.label ?? hostId;
     return (
-      <div className="flex h-full flex-col justify-center" data-testid="bot-tab">
+      <div
+        className="flex h-full flex-col justify-center"
+        data-testid="bot-tab"
+      >
         <BotsUnavailableNotice
           hostLabel={hostLabel}
           testId="bot-tab-unavailable"
