@@ -196,6 +196,7 @@ function buildFakeBridge(
         },
       };
     },
+    onLocalHostUnresponsive: () => ({ dispose: () => undefined }),
     onSystemResumed: (handler: () => void) => {
       systemResumedHandlers.add(handler);
       return {

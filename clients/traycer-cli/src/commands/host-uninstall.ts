@@ -4,6 +4,7 @@ import {
   type UninstallHostResult,
 } from "../installer";
 import type { ILogger } from "../logger";
+import { CLI_ERROR_CODES, CliError, cliError } from "../runner/errors";
 import type { CommandFn, CommandResult } from "../runner/runner";
 import type { Environment } from "../runner/environment";
 import type { ProgressInfo } from "../runner/output";
@@ -29,7 +30,7 @@ import {
   discardAttemptRecordWithCapability,
   type UpdateMutationCapability,
 } from "@traycer-clients/shared/host-update";
-import { readHostPidMetadata } from "../host/pid-metadata";
+import { readHostPidMetadataEvidence } from "../host/pid-metadata";
 import {
   readServiceRegistrationOwnership,
   serviceTaskLeftInPlaceWarning,
@@ -62,6 +63,12 @@ import {
 // is never removed - there is no destructive "purge" path.
 export interface HostUninstallArgs {
   readonly all: boolean;
+  /**
+   * `--force` (with `--all`): stop the host with the forced stop, which
+   * escalates to SIGKILL, and remove the install even if it is still running.
+   * Without it a stop that did not take effect keeps the install.
+   */
+  readonly force: boolean;
 }
 
 /** The command's own arguments: who asked, beside what to remove. */
@@ -212,11 +219,18 @@ export function buildHostUninstallCommand(
             createServiceController,
             uninstallHost,
             readPublishedHost: async (environment) => {
-              const metadata = await readHostPidMetadata(environment);
-              if (metadata === null) return null;
+              // An unreadable record is not "nothing published": it throws, so
+              // the read reports that it did not answer.
+              const evidence = await readHostPidMetadataEvidence(environment);
+              if (evidence.kind === "absent") return null;
+              if (evidence.kind === "unreadable") {
+                throw new Error(
+                  `host pid metadata is unreadable: ${evidence.cause}`,
+                );
+              }
               return {
-                pid: metadata.pid,
-                startIdentity: metadata.processStartIdentity,
+                pid: evidence.metadata.pid,
+                startIdentity: evidence.metadata.processStartIdentity,
               };
             },
             probeProcessExited: getPublishedProcessIdentityVerdict,
@@ -361,8 +375,19 @@ async function runHostUninstallWithActuators(
       label,
       logger: ctx.logger,
     };
-    const stopResolved = await stopServiceBeforeRuntimePurge(stopArgs, () =>
-      actuators.stop(controller, label, { force: false }),
+    // Kept so a refused stop can say WHY below: a host that declined
+    // because it has work in progress is not one that stopped responding.
+    let stopError: unknown = null;
+    const stopResolved = await stopServiceBeforeRuntimePurge(
+      stopArgs,
+      async () => {
+        try {
+          await actuators.stop(controller, label, { force: args.force });
+        } catch (err) {
+          stopError = err;
+          throw err;
+        }
+      },
     );
     // The resolved `stop()` is necessary but NOT sufficient - see
     // `findLiveHost`. Both halves are required: a stop that threw means the
@@ -427,6 +452,49 @@ async function runHostUninstallWithActuators(
       successorPublished: successor !== null,
       reason: "supervisor-quiescence-unproven",
     });
+    // A stop that did not take effect keeps the install. A wedged host
+    // ignores the stop request, and removing its install directory left it
+    // running from deleted bytes, still holding the lifecycle lock and the
+    // pid record, so every reinstall deferred to it and nothing could replace
+    // it. The deregistration above stands; the bytes go once the host is
+    // stopped, or now with `--force`.
+    // An unreadable record at the boundary is no evidence the host is gone
+    // (it may be mid-write by a live one), so it keeps the install as well.
+    // "Nothing published" is that evidence, and a stopped host uninstalls.
+    if (
+      !args.force &&
+      (!stopResolved || liveness === "live" || !successorRead.answered)
+    ) {
+      ctx.logger.warn(
+        "Host uninstall kept the install because the host did not stop",
+        {
+          environment: ctx.environment,
+          stopResolved,
+          liveness,
+          publishedRecordReadable: successorRead.answered,
+        },
+      );
+      // The host answered and declined: it is busy, not wedged. Its own
+      // refusal names the work and the `--force` that would end it.
+      if (
+        stopError instanceof CliError &&
+        stopError.code === CLI_ERROR_CODES.HOST_BUSY
+      ) {
+        throw stopError;
+      }
+      throw cliError({
+        code: CLI_ERROR_CODES.HOST_UNINSTALL_HOST_RUNNING,
+        message:
+          "host uninstall: the host did not stop, so its install was kept. If it is not responding, run 'traycer host uninstall --all --force' to stop it and remove the install (running terminal sessions and in-flight agent work will be killed).",
+        details: {
+          environment: ctx.environment,
+          hostStillRunning: liveness === "live" ? true : null,
+          removedInstallDir: false,
+          serviceDeregistrationRequested: serviceUninstalled,
+        },
+        exitCode: 1,
+      });
+    }
   }
   // The boundary re-read, on BOTH paths now: `published` describes the child
   // captured at entry; this asks what is publishing at the moment the bytes go.

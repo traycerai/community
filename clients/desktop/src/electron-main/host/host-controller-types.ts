@@ -227,6 +227,11 @@ export const AUTOMATIC_INTENTS_HELD_MESSAGE =
 // `--force` is refused the same way, so no surface offers one. The health
 // monitor's recovery (`respawnIfDown`) matches on it to leave that run alone
 // until it is gone, and a surface shows it as it is.
+// `host uninstall --all` kept the install because the host did not stop (a
+// host that is not responding ignores the stop request). Nothing was removed.
+export const HOST_UNINSTALL_HOST_RUNNING_MESSAGE =
+  "Traycer was not removed because the host is not responding. Force restart the host, then try again.";
+
 export const HOST_NOT_SERVICE_RUN_MESSAGE =
   "A host you started in a terminal is running, and Traycer leaves it alone. Stop it there to continue.";
 

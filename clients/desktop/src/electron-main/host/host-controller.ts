@@ -108,6 +108,7 @@ import {
   AUTOMATIC_INTENTS_QUIESCED_MESSAGE,
   HOST_NOT_SERVICE_RUN_MESSAGE,
   HOST_REMOVED_BY_USER_MESSAGE,
+  HOST_UNINSTALL_HOST_RUNNING_MESSAGE,
   HOST_UPDATE_SERVICE_DISABLED_MESSAGE,
   SERVICE_REGISTRATION_DISABLED_CODE,
   SERVICE_TASK_NOT_OWNED_CODE,
@@ -201,6 +202,7 @@ const CLI_LOCK_BUSY_CODE = "E_CLI_LOCK_BUSY";
 const HOST_BUSY_CODE = "E_HOST_BUSY";
 const HOST_UPDATE_ATTEMPT_ACTIVE_CODE = "E_HOST_UPDATE_ATTEMPT_ACTIVE";
 const HOST_NOT_SERVICE_RUN_CODE = "E_HOST_NOT_SERVICE_RUN";
+const HOST_UNINSTALL_HOST_RUNNING_CODE = "E_HOST_UNINSTALL_HOST_RUNNING";
 // `host service start` could not start the service: on a packaged Mac whose
 // job launchd no longer has loaded, the start that is left is a register.
 const SERVICE_CONTROL_FAILED_CODE = "E_SERVICE_CONTROL_FAILED";
@@ -3978,6 +3980,22 @@ export class HostController {
         });
         return { kind: "deferred", message: HOST_NOT_SERVICE_RUN_MESSAGE };
       }
+      if (err.code === HOST_UNINSTALL_HOST_RUNNING_CODE) {
+        // `host uninstall --all` asked the host to stop, it did not, and the
+        // CLI kept the install rather than remove it from under a running
+        // host. Nothing was removed, so this is a deferral: `removeTraycer`
+        // takes back the removed-by-user sentinel on it, and the person is
+        // told to force-restart the host first.
+        log.info("[host-controller] host mutation refused", {
+          kind: this.mutationStatus?.kind ?? null,
+          reason: "host-did-not-stop",
+          code: err.code,
+        });
+        return {
+          kind: "deferred",
+          message: HOST_UNINSTALL_HOST_RUNNING_MESSAGE,
+        };
+      }
       if (err.code === SERVICE_TASK_NOT_OWNED_CODE) {
         // The host's Scheduled Task is not this account's - another Windows
         // user's, or one whose owner the CLI could not confirm - and the CLI
@@ -6337,9 +6355,14 @@ export class HostController {
     });
     // A deferred removal did not happen: a terminal run that began after the
     // check above (the CLI refuses it under its own lock), a busy lock, an
-    // update attempt in progress. Take back the sentinel this call wrote, so
-    // a machine whose host is still installed is not reported removed.
-    if (outcome.kind === "deferred" && !sentinelWasSet) {
+    // update attempt in progress. Neither did a busy one, where the host
+    // declined to stop over work in progress. Take back the sentinel this call
+    // wrote, so a machine whose host is still installed is not reported
+    // removed.
+    if (
+      (outcome.kind === "deferred" || outcome.kind === "busy") &&
+      !sentinelWasSet
+    ) {
       await clearHostRemovedByUser();
     }
     return outcome;

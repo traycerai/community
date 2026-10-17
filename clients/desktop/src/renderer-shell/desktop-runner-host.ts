@@ -61,6 +61,7 @@ import type {
   IZoomHost,
   LocalHostCapability,
   LocalHostSnapshot,
+  LocalHostUnresponsive,
   MigrationRunningSnapshot,
   RegisteredHostsChange,
   SystemResumeEvent,
@@ -258,6 +259,9 @@ export interface DesktopPreloadBridge {
   onRegisteredHostsChange(handler: (push: RegisteredHostsChange) => void): {
     dispose: () => void;
   };
+  onLocalHostUnresponsive(
+    handler: (state: LocalHostUnresponsive | null) => void,
+  ): { dispose: () => void };
   onSystemResumed(handler: () => void): { dispose: () => void };
   requestHostRespawn(): Promise<HostRestartRequestResult>;
   getLastKnownLocalHostId(): Promise<string | null>;
@@ -1114,6 +1118,13 @@ export class DesktopRunnerHost implements IRunnerHost {
 
   getLastKnownLocalHostId(): Promise<string | null> {
     return this.bridge.getLastKnownLocalHostId();
+  }
+
+  onLocalHostUnresponsive(
+    handler: (state: LocalHostUnresponsive | null) => void,
+  ): Disposable {
+    // The preload caches the state and replays it on subscribe.
+    return toDisposable(this.bridge.onLocalHostUnresponsive(handler));
   }
 
   onSystemResumed(handler: (event: SystemResumeEvent) => void): Disposable {

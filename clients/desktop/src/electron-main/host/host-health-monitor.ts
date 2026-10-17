@@ -96,8 +96,10 @@ import type { DesktopLocalHostSnapshot } from "../../ipc-contracts/host-types";
  * renderer RPCs in milliseconds. "Unreachable for a long time" is still not
  * "dead", and a live host is now reported as `busy` for as long as it stays
  * live - a degraded badge, not a tombstone. Restarting a wedged host remains
- * the user's call and remains reachable, through Settings -> Host rather than
- * through a card this watchdog fabricates by lying about liveness.
+ * the user's call: past `UNREACHABLE_WARN_MS` the monitor tells the renderer
+ * (`onHostUnresponsive`), which asks the person whether to force a restart,
+ * and Settings -> Host stays the other way there. Neither path is a card this
+ * watchdog fabricates by lying about liveness.
  */
 
 const HEALTH_POLL_INTERVAL_MS = 15_000;
@@ -108,12 +110,13 @@ const CONFIRMED_DOWN_AFTER_FAILURES = 2;
  * How long the endpoint may stay continuously unreachable - with the process
  * demonstrably alive - before this monitor says so at WARN.
  *
- * Diagnostics only. It used to gate a demote (show the renderer the
- * unavailable card so manual Retry became reachable); int #48 removed that,
- * because a demote asserts the host is gone and a process we just proved is
- * alive is not gone. The line stays because "alive but silent for ten minutes"
- * is genuinely worth finding in a support report - it is the signature of a
- * real deadlock, as opposed to the epic-open stall this shield exists for.
+ * It used to gate a demote (show the renderer the unavailable card so manual
+ * Retry became reachable); int #48 removed that, because a demote asserts the
+ * host is gone and a process we just proved is alive is not gone. "Alive but
+ * silent for ten minutes" is the signature of a real deadlock, as opposed to
+ * the epic-open stall this shield exists for, so past it the monitor logs a
+ * WARN and offers the person a force restart (`onHostUnresponsive`). It still
+ * demotes and kills nothing.
  */
 const UNREACHABLE_WARN_MS = 600_000;
 
@@ -210,6 +213,16 @@ export interface HostHealthMonitorDeps {
    * recovery while it still answers the same.
    */
   readonly readLiveSupervisorPid: () => Promise<number | null>;
+  /**
+   * Told once a live host has stayed unreachable past `UNREACHABLE_WARN_MS`,
+   * with its pid and how long it has been silent, and told `null` when that
+   * ends (it answers again, or dies). Production publishes it to the renderer,
+   * which offers the person a force restart. The monitor itself still kills
+   * nothing.
+   */
+  readonly onHostUnresponsive: (
+    state: { readonly pid: number; readonly unreachableForMs: number } | null,
+  ) => void;
 }
 
 export interface HostHealthMonitor {
@@ -263,10 +276,22 @@ export function startHostHealthMonitor(
   let busyLogged = false;
   // Same once-per-stall rate limit as `busyLogged`, for the long-stall WARN.
   let longStallLogged = false;
+  // Whether `onHostUnresponsive` was last told a state rather than `null`, so
+  // the end of a stall is announced once and a healthy host announces nothing.
+  let unresponsiveReported = false;
+  const clearUnresponsive = (): void => {
+    if (!unresponsiveReported) return;
+    unresponsiveReported = false;
+    deps.onHostUnresponsive(null);
+  };
   // When the endpoint first became unreachable in the CURRENT outage. Reset by
   // any reachable observation, so only a continuously unreachable host reaches
   // the demote window.
   let unreachableSince: number | null = null;
+  // The pid of the host the current outage is about. Another published pid
+  // is another host: the outage clock, the once-per-stall latches and any
+  // force-restart offer describe the old one, so they start over.
+  let outageHostPid: number | null = null;
   // Earliest tick that may ask the governor again after an `alive` denial. See
   // ALIVE_RECHECK_INTERVAL_MS: this throttles the ONE path that would otherwise
   // re-probe a demoted-but-living host forever.
@@ -420,6 +445,7 @@ export function startHostHealthMonitor(
       // so fall through to the existing dead-host handling.
       busyLogged = false;
       longStallLogged = false;
+      clearUnresponsive();
       return false;
     }
     if (longStall) {
@@ -435,6 +461,10 @@ export function startHostHealthMonitor(
         "[host-health] host process alive but unreachable for a long time - holding it busy, not dead",
         { pid: snapshot.pid, unreachableForMs },
       );
+      // The hold stays; what changes is that the person is told, and offered
+      // the force restart that only they may choose.
+      unresponsiveReported = true;
+      deps.onHostUnresponsive({ pid: snapshot.pid, unreachableForMs });
     }
     if (!busyLogged) {
       busyLogged = true;
@@ -454,6 +484,10 @@ export function startHostHealthMonitor(
     try {
       const snapshot = deps.host.getSnapshot();
       if (snapshot === null) {
+        // No host is published, so an offer to force-restart one describes
+        // nothing - whatever took the snapshot away (a stop, an uninstall, a
+        // respawn in progress).
+        clearUnresponsive();
         // A deferred recovery intentionally demotes the snapshot before the
         // foreign lock holder finishes. Keep ownership across that null
         // state; otherwise every later tick returns here and the dead host
@@ -501,6 +535,15 @@ export function startHostHealthMonitor(
         await attemptRecovery(metadata);
         return;
       }
+      if (outageHostPid !== snapshot.pid) {
+        outageHostPid = snapshot.pid;
+        consecutiveFailures = 0;
+        unreachableSince = null;
+        busyLogged = false;
+        longStallLogged = false;
+        nextLivenessCheckAt = 0;
+        clearUnresponsive();
+      }
       const published = await readPublishedMetadata(deps.host.pidMetadataFile);
       if (
         published !== null &&
@@ -515,6 +558,7 @@ export function startHostHealthMonitor(
         consecutiveFailures = 0;
         busyLogged = false;
         longStallLogged = false;
+        clearUnresponsive();
         unreachableSince = null;
         // The endpoint answered. Hand that straight to the lifecycle, which
         // owns the renderer-facing verdict and may still be publishing `busy`
@@ -561,6 +605,9 @@ export function startHostHealthMonitor(
         return;
       }
       if (isDisposed()) return;
+      // No longer holding this host busy - it died, or disk names another - so
+      // a force-restart offer made about it no longer describes anything.
+      clearUnresponsive();
 
       // Reload FIRST, then decide. The advertised endpoint is dead, but the
       // disk may already name a healthy replacement (launchd/systemd respawned
@@ -582,6 +629,7 @@ export function startHostHealthMonitor(
         // cleared.
         busyLogged = false;
         longStallLogged = false;
+        clearUnresponsive();
         nextLivenessCheckAt = 0;
         // One reachable observation starts the sustained-health clock; it does
         // not by itself forgive the attempt budget. A freshly spawned host

@@ -81,6 +81,7 @@ import type {
   ITrayState,
   IWorkspaceFoldersHost,
   LocalHostSnapshot,
+  LocalHostUnresponsive,
   NotificationShowOutcome,
   PushPermissionState,
   RegisteredHostsChange,
@@ -693,6 +694,13 @@ export class MobileRunnerHost implements IRunnerHost {
 
   onLocalHostChange(
     handler: (snapshot: LocalHostSnapshot | null) => void,
+  ): Disposable {
+    handler(null);
+    return disposable();
+  }
+
+  onLocalHostUnresponsive(
+    handler: (state: LocalHostUnresponsive | null) => void,
   ): Disposable {
     handler(null);
     return disposable();
