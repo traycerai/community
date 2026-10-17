@@ -50,7 +50,11 @@ describe("providers.settingsFile.reset protocol contract", () => {
 
   it("answers the file name the old document was moved to, or that it was readable", () => {
     for (const response of [
-      { outcome: "reset", movedAsideFileName: MOVED_ASIDE_FILE_NAME },
+      {
+        outcome: "reset",
+        movedAsideFileName: MOVED_ASIDE_FILE_NAME,
+        providersNotRestarted: [],
+      },
       { outcome: "readable" },
     ]) {
       expect(
@@ -61,10 +65,61 @@ describe("providers.settingsFile.reset protocol contract", () => {
 
   it("rejects a reset with no file name, an empty one, and an unknown outcome", () => {
     for (const bad of [
-      { outcome: "reset" },
-      { outcome: "reset", movedAsideFileName: "" },
-      { outcome: "deleted", movedAsideFileName: MOVED_ASIDE_FILE_NAME },
+      { outcome: "reset", providersNotRestarted: [] },
+      {
+        outcome: "reset",
+        movedAsideFileName: "",
+        providersNotRestarted: [],
+      },
+      {
+        outcome: "deleted",
+        movedAsideFileName: MOVED_ASIDE_FILE_NAME,
+        providersNotRestarted: [],
+      },
       {},
+    ]) {
+      expect(
+        providersSettingsFileResetV10.responseSchema.safeParse(bad).success,
+      ).toBe(false);
+    }
+  });
+
+  it("parses a reset naming the providers that could not be restarted, including an id this build does not know", () => {
+    for (const providersNotRestarted of [
+      [],
+      ["opencode"],
+      ["opencode", "some-future-provider"],
+      ["some-future-provider"],
+    ]) {
+      const response = {
+        outcome: "reset",
+        movedAsideFileName: MOVED_ASIDE_FILE_NAME,
+        providersNotRestarted,
+      };
+      expect(
+        providersSettingsFileResetV10.responseSchema.parse(response),
+      ).toEqual(response);
+    }
+  });
+
+  it("rejects a reset that omits providersNotRestarted or carries an empty provider id", () => {
+    for (const bad of [
+      { outcome: "reset", movedAsideFileName: MOVED_ASIDE_FILE_NAME },
+      {
+        outcome: "reset",
+        movedAsideFileName: MOVED_ASIDE_FILE_NAME,
+        providersNotRestarted: [""],
+      },
+      {
+        outcome: "reset",
+        movedAsideFileName: MOVED_ASIDE_FILE_NAME,
+        providersNotRestarted: ["opencode", ""],
+      },
+      {
+        outcome: "reset",
+        movedAsideFileName: MOVED_ASIDE_FILE_NAME,
+        providersNotRestarted: "opencode",
+      },
     ]) {
       expect(
         providersSettingsFileResetV10.responseSchema.safeParse(bad).success,

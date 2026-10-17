@@ -43,6 +43,7 @@ vi.mock("sonner", () => ({
     error: vi.fn(),
     info: vi.fn(),
     message: vi.fn(),
+    warning: vi.fn(),
   },
 }));
 
@@ -82,6 +83,7 @@ function setUpHarness(): Harness {
   let response: ResetResponse = {
     outcome: "reset",
     movedAsideFileName: MOVED_ASIDE,
+    providersNotRestarted: [],
   };
   const host = { ...mockLocalHostEntry, hostId: HOST_ID };
   const spine = new HostClient<HostRpcRegistry>({
@@ -175,6 +177,7 @@ describe("<ProviderSettingsResetAction />", () => {
     vi.mocked(toast.success).mockClear();
     vi.mocked(toast.info).mockClear();
     vi.mocked(toast.error).mockClear();
+    vi.mocked(toast.warning).mockClear();
     harness = setUpHarness();
     // Let the two stand-in reads run once so a reset's refetch is countable.
     await waitFor(() => {
@@ -224,6 +227,7 @@ describe("<ProviderSettingsResetAction />", () => {
       MOVED_ASIDE,
     );
     expect(toast.info).not.toHaveBeenCalled();
+    expect(toast.warning).not.toHaveBeenCalled();
     await waitFor(() => {
       expect(harness.reads.get("providers.list")).toBe(2);
       expect(harness.reads.get("providers.settingsFile.status")).toBe(2);
@@ -233,6 +237,31 @@ describe("<ProviderSettingsResetAction />", () => {
       expect(
         screen.queryByRole("dialog", { name: PROVIDER_SETTINGS_RESET_TITLE }),
       ).toBeNull();
+    });
+  });
+
+  it("a committed reset whose providers could not all be restarted shows the backup name and to restart Traycer, and refreshes what the panel shows", async () => {
+    harness.respondWith({
+      outcome: "reset",
+      movedAsideFileName: MOVED_ASIDE,
+      providersNotRestarted: ["opencode"],
+    });
+    renderAction(harness);
+
+    confirm(openDialog());
+
+    await waitFor(() => {
+      expect(toast.warning).toHaveBeenCalledTimes(1);
+    });
+    const message = vi.mocked(toast.warning).mock.calls.at(0)?.[0];
+    expect(message).toContain(MOVED_ASIDE);
+    expect(message).toContain("Restart Traycer");
+    expect(toast.success).not.toHaveBeenCalled();
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(harness.resetRequests).toEqual([{}]);
+    await waitFor(() => {
+      expect(harness.reads.get("providers.list")).toBe(2);
+      expect(harness.reads.get("providers.settingsFile.status")).toBe(2);
     });
   });
 

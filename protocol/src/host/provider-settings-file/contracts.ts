@@ -72,6 +72,15 @@ export const providersSettingsFileResetResponseSchema = lazySchema(() =>
        * panel only needs to say what to look for.
        */
       movedAsideFileName: z.string().min(1),
+      /**
+       * Providers whose running processes could not be restarted on the new
+       * settings. The reset itself is committed either way; a non-empty list
+       * means those providers keep what they were started with until the
+       * host restarts, and the panel says to restart Traycer. Plain ids, not
+       * the provider-id enum, so a newer host's provider never fails an
+       * older panel's parse.
+       */
+      providersNotRestarted: z.array(z.string().min(1)),
     }),
     // The document was readable when the host acted, so nothing was moved.
     z.object({ outcome: z.literal("readable") }),

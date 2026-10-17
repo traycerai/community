@@ -11,11 +11,10 @@ import { PROVIDER_INVALIDATIONS } from "@/hooks/providers/invalidations";
 import { providersMutationKeys } from "@/lib/query-keys";
 
 // Every provider row comes back to its default at once, so everything a
-// provider mutation refreshes is refreshed, plus the status this reset changes.
-const RESET_INVALIDATIONS: ReadonlyArray<keyof HostRpcRegistry & string> = [
-  ...PROVIDER_INVALIDATIONS,
-  "providers.settingsFile.status",
-];
+// provider mutation refreshes is refreshed - the file status this reset
+// changes among them (`PROVIDER_INVALIDATIONS` names it).
+const RESET_INVALIDATIONS: ReadonlyArray<keyof HostRpcRegistry & string> =
+  PROVIDER_INVALIDATIONS;
 
 /**
  * Sets the scoped host's unusable provider settings document aside and starts
@@ -42,6 +41,15 @@ export function useProvidersSettingsFileReset(): UseMutationResult<
       if (data.outcome === "readable") {
         toast.info(
           "Provider settings can be read again, so nothing was reset.",
+        );
+        return;
+      }
+      // A committed reset whose providers could not all be restarted is still
+      // a reset: the file has moved and every query above is invalidated. The
+      // user needs the set-aside name and the one thing left to do.
+      if (data.providersNotRestarted.length > 0) {
+        toast.warning(
+          `Provider settings reset. The old file was kept as ${data.movedAsideFileName}. Restart Traycer to finish applying the new settings.`,
         );
         return;
       }
