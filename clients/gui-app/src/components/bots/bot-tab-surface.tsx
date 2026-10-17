@@ -170,17 +170,20 @@ function BotTabContent(props: {
   const boundHostId = snapshot.boundHost.hostId;
   const boundHostLabel = useMemo(
     () =>
-      directory.data?.find((entry) => entry.hostId === boundHostId)?.label ??
-      boundHostId,
+      boundHostId === null
+        ? "No host"
+        : (directory.data?.find((entry) => entry.hostId === boundHostId)
+            ?.label ?? boundHostId),
     [boundHostId, directory.data],
   );
   // Offline means: not this host, and not dialable right now. Until the
   // directory has answered the host counts as reachable, so a tab does not
   // flash the offline state on every open.
+  // A bot no host runs (`boundHostId` null) is offline outright.
   const boundOffline =
     !boundHere &&
-    connectable.resolved &&
-    !connectable.hostIds.includes(boundHostId);
+    (boundHostId === null ||
+      (connectable.resolved && !connectable.hostIds.includes(boundHostId)));
   const offlineHostLabel = boundOffline ? boundHostLabel : null;
 
   return (
@@ -330,16 +333,31 @@ function BotTabHeader(props: {
   );
 }
 
+function boundElsewhereText(
+  boundHostId: string | null,
+  boundHostLabel: string,
+  offline: boolean,
+): string {
+  if (boundHostId === null) {
+    return "No host runs this bot. Move it here to message it.";
+  }
+  if (offline) {
+    return `This bot runs on ${boundHostLabel}, which is offline. A message you send now is saved and delivered when it is back.`;
+  }
+  return `This bot runs on ${boundHostLabel}. Its conversation is read there.`;
+}
+
 /**
  * The bot's trunk runs on another host. Reachable: view it through that host
  * (the tab rebinds and remounts there), or move it here, which makes THIS
  * host the bound one and re-reads the stream. Offline: say so, say what a
  * send does meanwhile, and offer the move alone - there is nothing to view
- * through until the host is back.
+ * through until the host is back. No host (`boundHostId` null): nothing
+ * queues a send, so the move is the only way to message it.
  */
 function BoundElsewhereBanner(props: {
   readonly botId: string;
-  readonly boundHostId: string;
+  readonly boundHostId: string | null;
   readonly boundHostLabel: string;
   readonly offline: boolean;
   readonly onMoved: () => void;
@@ -355,13 +373,9 @@ function BoundElsewhereBanner(props: {
       data-offline={offline ? "true" : "false"}
       className="mx-4 mb-2 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-info/30 bg-info/10 px-4 py-3 text-ui-sm text-info-foreground"
     >
-      <span>
-        {offline
-          ? `This bot runs on ${boundHostLabel}, which is offline. A message you send now is saved and delivered when it is back.`
-          : `This bot runs on ${boundHostLabel}. Its conversation is read there.`}
-      </span>
+      <span>{boundElsewhereText(boundHostId, boundHostLabel, offline)}</span>
       <span className="flex items-center gap-2">
-        {offline ? null : (
+        {offline || boundHostId === null ? null : (
           <Button
             type="button"
             variant="outline"
