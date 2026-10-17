@@ -30,6 +30,7 @@ import {
   WsRpcClient,
 } from "../../../shared/host-transport/ws-rpc-client";
 import { createWhatwgWebSocketFactory } from "../../../shared/host-transport/whatwg-ws-factory";
+import { isProfileLifecycleRejection } from "../../../shared/host-transport/profile-lifecycle-rejection";
 import { config } from "../config";
 import { createCliLogger, errorFromUnknown } from "../logger";
 import {
@@ -656,6 +657,9 @@ function hostRpcToCliError(err: unknown): unknown {
  *   - `PROVIDER_DISABLED` → `PROVIDER_DISABLED`: the person turned that
  *     provider off in Settings → Providers; the host's message names it and the
  *     setting, and is passed through unchanged.
+ *   - `E_INVALID_ARGUMENT` / `MESSAGE_TOO_LARGE`, and an `RPC_ERROR` carrying one
+ *     of the host's four profile-selection messages → `INVALID_ARGUMENT`: the
+ *     caller's own input.
  *   - `E_HOST_UNSUPPORTED` → `HOST_UNSUPPORTED`: per-feature unsupported on
  *     this host, actionable by updating the host.
  *   - `INCOMPATIBLE` / `DOWNGRADE_UNSUPPORTED` → `HOST_INCOMPATIBLE`: host/CLI
@@ -760,7 +764,16 @@ function mapHostRpcError(err: HostRpcError): CliError {
       exitCode: 1,
     });
   }
-  if (err.code === "E_INVALID_ARGUMENT" || err.code === "MESSAGE_TOO_LARGE") {
+  // A request that names a managed profile the host cannot use (removed, not
+  // registered, still being set up, wrong provider) is the person's own
+  // selection and expected. The host sends it as `RPC_ERROR` with a fixed
+  // message, so it is recognized by message; if the host later sends the same
+  // refusal as `E_INVALID_ARGUMENT`, the output below does not change.
+  if (
+    err.code === "E_INVALID_ARGUMENT" ||
+    err.code === "MESSAGE_TOO_LARGE" ||
+    isProfileLifecycleRejection(err.code, err.message)
+  ) {
     return cliError({
       code: CLI_ERROR_CODES.INVALID_ARGUMENT,
       message: `traycer: ${err.message}`,
