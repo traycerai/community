@@ -1269,6 +1269,55 @@ describe("RoutingDestinationPicker", () => {
         });
       });
 
+      it("uses the directory catalog slot for a managed failed profile and keeps its tier label", async () => {
+        const failedManagedTuple = {
+          ...ULTRA_FAILED,
+          profileId: FAILED_PROFILE,
+        };
+        kit.listData = listingOf({
+          failedTuple: failedManagedTuple,
+          profileTargets: [],
+          modelTargets: [],
+        });
+        mount({
+          kind: "failed-turn",
+          attempt: failedAttempt(["switch"]),
+          seedTuple: failedManagedTuple,
+        });
+        await open();
+        fireEvent.click(screen.getByRole("tab", { name: "Codex" }));
+        fireEvent.click(option(/GPT-6-Sol/));
+
+        expect(
+          kit.fallbackCatalogueCalls.some(
+            (call) => call.enabled && call.harnessIds.includes("codex"),
+          ),
+        ).toBe(true);
+        expect(kit.modelRequests.length).toBeGreaterThan(0);
+        expect(
+          kit.modelRequests.every(
+            (request) => request.workingDirectory === null,
+          ),
+        ).toBe(true);
+        expect(
+          screen.getByText(
+            "Ultrafast isn't available on GPT-6-Sol. This runs at Standard.",
+          ),
+        ).not.toBeNull();
+      });
+
+      it("uses no profile id as a model-query directory when the failed tuple has no tier", async () => {
+        mount(failedTurn(["switch"]));
+        await open();
+
+        expect(kit.modelRequests.length).toBeGreaterThan(0);
+        expect(
+          kit.modelRequests.every(
+            (request) => request.workingDirectory === null,
+          ),
+        ).toBe(true);
+      });
+
       it("never substitutes another paid tier: a Claude fast tuple on a Codex destination runs Standard", async () => {
         kit.listData = listingOf({
           failedTuple: { ...FAILED, serviceTier: "fast" },

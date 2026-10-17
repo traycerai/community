@@ -59,6 +59,7 @@ export function ServiceTierMenuButton(props: ServiceTierMenuButtonProps) {
         <button
           ref={triggerRef}
           type="button"
+          data-picker-speed-menu=""
           aria-label={pickerLeaderControlLabel(
             `Speed: ${selectedName}`,
             9,
@@ -101,6 +102,7 @@ export function ServiceTierMenuButton(props: ServiceTierMenuButtonProps) {
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="start"
+        data-picker-speed-menu=""
         className="w-[min(85vw,20rem)]"
         onKeyDown={(event) => {
           if (event.key === "Escape") event.stopPropagation();

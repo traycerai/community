@@ -226,6 +226,15 @@ interface CatalogCall {
 export const kit = {
   // Every `client` a host-backed read was handed, and whether it was enabled.
   catalogCalls: [] as CatalogCall[],
+  fallbackCatalogueCalls: [] as Array<{
+    readonly harnessIds: ReadonlyArray<string | null>;
+    readonly enabled: boolean;
+  }>,
+  modelRequests: [] as Array<{
+    readonly harnessId: string;
+    readonly workingDirectory: string | null;
+    readonly enabled: boolean;
+  }>,
   providerCalls: [] as Array<string | null>,
   labelCalls: [] as Array<string | null>,
   // The listing.
@@ -271,6 +280,8 @@ export const kit = {
 
 export function resetKit(): void {
   kit.catalogCalls = [];
+  kit.fallbackCatalogueCalls = [];
+  kit.modelRequests = [];
   kit.providerCalls = [];
   kit.labelCalls = [];
   kit.listCalls = [];
@@ -412,6 +423,10 @@ export function hostClientModule() {
 }
 
 /** `@/hooks/harnesses/use-gui-harness-catalog`. */
+function modelsOf(harnessId: string): ReadonlyArray<ModelOption> {
+  return harnessId === "claude" ? CLAUDE_MODELS : CODEX_MODELS;
+}
+
 export function catalogModule() {
   const catalog = [
     { ...CLAUDE_HARNESS, models: CLAUDE_MODELS },
@@ -422,8 +437,6 @@ export function catalogModule() {
     modelsError: null,
   }));
   const harnesses = [CLAUDE_HARNESS, CODEX_HARNESS];
-  const modelsOf = (harnessId: string): ReadonlyArray<ModelOption> =>
-    harnessId === "claude" ? CLAUDE_MODELS : CODEX_MODELS;
   return {
     harnessCatalogEntryNeedsRefresh: () => true,
     useGuiHarnessesQueryForClient: (
@@ -445,9 +458,14 @@ export function catalogModule() {
     useGuiHarnessModelsQueryForClient: (
       client: KitClient | null,
       harnessId: string,
-      _workingDirectory: string | null,
+      workingDirectory: string | null,
       activity: { readonly enabled: boolean },
     ) => {
+      kit.modelRequests.push({
+        harnessId,
+        workingDirectory,
+        enabled: activity.enabled,
+      });
       kit.catalogCalls.push({
         hook: "models",
         clientId: idOf(client),
@@ -728,10 +746,39 @@ export function registryModule<T extends object>(actual: T) {
   };
 }
 
-/** `@/components/chat/fallback/fallback-identity`: the labels resolver only. */
+/** `@/components/chat/fallback/fallback-identity`: routing identity/catalogue resolvers. */
 export function identityModule<T extends object>(actual: T) {
   return {
     ...actual,
+    useFallbackModelCatalogues: (
+      client: KitClient | null,
+      harnessIds: ReadonlyArray<string | null>,
+      enabled: boolean,
+    ) => {
+      kit.labelCalls.push(idOf(client));
+      kit.fallbackCatalogueCalls.push({ harnessIds, enabled });
+      const harnessIdSet = new Set(harnessIds.filter((id) => id !== null));
+      return {
+        labelFor: (harnessId: string, slug: string): string =>
+          kit.modelLabels === null
+            ? slug
+            : (kit.modelLabels.get(`${harnessId}:${slug}`) ?? slug),
+        modelFor: (harnessId: string, slug: string): ModelOption | null => {
+          if (
+            !enabled ||
+            !harnessIdSet.has(harnessId) ||
+            harnessId === kit.modelsQueryUnavailableFor
+          ) {
+            return null;
+          }
+          return (
+            modelsOf(harnessId).find((candidate) => candidate.slug === slug) ??
+            null
+          );
+        },
+        settledFor: () => true,
+      };
+    },
     useFallbackModelLabels: (client: KitClient | null) => {
       kit.labelCalls.push(idOf(client));
       return (harnessId: string, model: string): string =>

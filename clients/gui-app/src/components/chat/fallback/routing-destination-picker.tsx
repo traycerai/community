@@ -64,7 +64,7 @@ import {
 } from "./fallback-copy";
 import {
   fallbackDestinationOfTuple,
-  useFallbackModelLabels,
+  useFallbackModelCatalogues,
   useFallbackProfileLabels,
   type FallbackModelLabelResolver,
   type FallbackProfileLabelResolver,
@@ -201,17 +201,13 @@ export function RoutingDestinationPicker(props: {
     open,
     enabled: canAct,
   });
-  const { data, failedTuple, labelFor, modelLabelFor } = listing;
-  const failedModelsQuery = useGuiHarnessModelsQueryForClient(
-    client,
-    failedTuple.harnessId,
-    failedTuple.profileId,
-    { enabled: open, subscribed: open },
-  );
+  const { data, failedTuple, labelFor, modelLabelFor, modelFor } = listing;
+  // The existing fallback catalogue is availability-gated and uses the same
+  // null-directory cache slot as the picker. A profile id is not a directory.
   const failedModel =
-    failedModelsQuery.data?.models.find(
-      (model) => model.slug === failedTuple.model,
-    ) ?? null;
+    failedTuple.serviceTier === null
+      ? null
+      : modelFor(failedTuple.harnessId, failedTuple.model);
   const failedTierName =
     selectedServiceTierOption(failedTuple.serviceTier ?? "", failedModel)
       ?.label ?? failedTuple.serviceTier;
@@ -437,7 +433,7 @@ function useRoutingListing(input: {
   const labelFor = useFallbackProfileLabels(client, open);
   // The failed tuple's harness, plus one per equivalent-model row: the
   // destinations a listed target can name.
-  const modelLabelFor = useFallbackModelLabels(
+  const modelCatalogues = useFallbackModelCatalogues(
     client,
     [
       failedTuple.harnessId,
@@ -447,7 +443,13 @@ function useRoutingListing(input: {
     ],
     open,
   );
-  return { data, failedTuple, labelFor, modelLabelFor };
+  return {
+    data,
+    failedTuple,
+    labelFor,
+    modelLabelFor: modelCatalogues.labelFor,
+    modelFor: modelCatalogues.modelFor,
+  };
 }
 
 /**
