@@ -65,7 +65,11 @@ export function buildBotListCommand(): CommandFn {
           }
           // Deleted between the list and the read: not a bot any more.
           if (snapshot === null) return null;
-          return toRow(snapshot.bot, snapshot.openRequestCount, endpoint.hostId);
+          return toRow(
+            snapshot.bot,
+            snapshot.openRequestCount,
+            endpoint.hostId,
+          );
         }),
       );
     } finally {
