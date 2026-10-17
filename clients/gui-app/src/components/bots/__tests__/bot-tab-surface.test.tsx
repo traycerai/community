@@ -189,9 +189,9 @@ describe("<BotTabSurface /> on a host without bots", () => {
     mocks.state.snapshot = snapshotBoundTo(BOUND_HOST, false);
     render(surface());
 
-    expect(
-      screen.getByTestId("bot-tab-unavailable").textContent,
-    ).toContain("Bots aren't available on Laptop yet");
+    expect(screen.getByTestId("bot-tab-unavailable").textContent).toContain(
+      "Bots aren't available on Laptop yet",
+    );
     expect(screen.queryByTestId("bot-tab-bound-elsewhere")).toBeNull();
     expect(screen.queryByTestId("bot-tab-move-here")).toBeNull();
     expect(screen.queryByTestId("stub-conversation")).toBeNull();
