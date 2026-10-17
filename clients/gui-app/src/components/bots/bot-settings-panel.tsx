@@ -36,7 +36,9 @@ export function BotSettingsPanel(props: {
   const { bot, canEdit } = props;
   return (
     <div className="flex flex-col gap-6 overflow-y-auto p-4">
-      <BotTitleForm bot={bot} canEdit={canEdit} />
+      {/* Keyed by the stream's title: a rename made elsewhere remounts the
+          form on the new name instead of leaving the field on the old one. */}
+      <BotTitleForm key={bot.title} bot={bot} canEdit={canEdit} />
       <BotRunSettingsForm bot={bot} canEdit={canEdit} />
       <BotDeleteSection bot={bot} canEdit={canEdit} />
     </div>

@@ -4,13 +4,17 @@
  */
 import { useId, type ReactNode } from "react";
 import { Check } from "lucide-react";
+import type { HostClient } from "@traycer-clients/shared/host-client/host-client";
+import type { EnvironmentDescriptor } from "@traycer/protocol/host/environment/contracts";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
 import { Badge } from "@/components/ui/badge";
 import { useHostMethodSupport } from "@/hooks/host/use-host-supports-method";
 import { useEnvironmentListQuery } from "@/hooks/bots/use-environment-list-query";
 import { useEnvironmentHostReadQuery } from "@/hooks/bots/use-environment-host-read-query";
 import { useEnvironmentHostBindMutation } from "@/hooks/bots/use-environment-host-bind-mutation";
+import { isHostScopeUsable } from "@/components/settings/host-scope/host-scope-status";
 import type { HostScope } from "@/components/settings/host-scope/use-host-scope";
+import type { HostRpcRegistry } from "@/lib/host";
 import { cn } from "@/lib/utils";
 
 /**
@@ -23,21 +27,21 @@ import { cn } from "@/lib/utils";
  * refusal from the host is shown in place, beside the list.
  *
  * Reads and writes go through the Settings scope's client, the host the
- * sidebar has selected, never the app-wide one.
+ * sidebar has selected, never the app-wide one. `following` (the scope is
+ * the active host, through the ambient client) is as usable as `ready`.
  */
 export function HostEnvironmentSection(props: {
   readonly scope: HostScope;
 }): ReactNode {
   const { scope } = props;
   const headingId = useId();
-  const ready = scope.status === "ready" && scope.client !== null;
+  const usable = isHostScopeUsable(scope.status) && scope.client !== null;
   const support = useHostMethodSupport(scope.hostId, "environment.host.read");
-  const enabled = ready && support === true;
+  const enabled = usable && support === true;
   const environments = useEnvironmentListQuery(scope.client, enabled);
   const binding = useEnvironmentHostReadQuery(scope.client, enabled);
-  const bind = useEnvironmentHostBindMutation(scope.client, scope.hostId);
 
-  if (!ready || support === null) return null;
+  if (!usable || support === null) return null;
 
   let body: ReactNode;
   if (!support) {
@@ -64,64 +68,18 @@ export function HostEnvironmentSection(props: {
       </div>
     );
   } else {
-    const currentId = binding.data.environment.environmentId;
-    const pendingId = bind.isPending ? bind.variables.environmentId : null;
     body = (
-      <>
-        <ul
-          className="flex flex-wrap gap-2"
-          aria-labelledby={headingId}
-          data-testid="host-environment-list"
-        >
-          {environments.data.environments.map((environment) => {
-            const current = environment.environmentId === currentId;
-            return (
-              <li key={environment.environmentId}>
-                <button
-                  type="button"
-                  aria-pressed={current}
-                  data-testid="host-environment-option"
-                  data-environment-id={environment.environmentId}
-                  disabled={current || bind.isPending}
-                  className={cn(
-                    "flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-ui-xs transition-colors focus-visible:outline-2 focus-visible:outline-ring focus-visible:-outline-offset-2 disabled:cursor-default",
-                    current
-                      ? "border-foreground/20 bg-foreground/8 text-foreground"
-                      : "border-border/60 text-muted-foreground hover:bg-foreground/6 hover:text-foreground",
-                  )}
-                  onClick={() =>
-                    bind.mutate({ environmentId: environment.environmentId })
-                  }
-                >
-                  {current ? (
-                    <Check className="size-3.5" aria-hidden="true" />
-                  ) : null}
-                  <span>{environment.label}</span>
-                  <Badge variant="muted" size="xs">
-                    {environment.ownerKind === "organization" ? "Team" : "Personal"}
-                  </Badge>
-                  {pendingId === environment.environmentId ? (
-                    <AgentSpinningDots
-                      className={undefined}
-                      testId={undefined}
-                      variant={undefined}
-                    />
-                  ) : null}
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-        {bind.error === null ? null : (
-          <p
-            role="alert"
-            className="text-ui-xs text-destructive"
-            data-testid="host-environment-refusal"
-          >
-            {bind.error.message}
-          </p>
-        )}
-      </>
+      // Keyed by host: the bind mutation's pending and error state belong to
+      // the host that received the bind, so switching the scope to another
+      // host mounts a fresh picker with no feedback carried over.
+      <HostEnvironmentPicker
+        key={scope.hostId}
+        client={scope.client}
+        hostId={scope.hostId}
+        environments={environments.data.environments}
+        currentEnvironmentId={binding.data.environment.environmentId}
+        labelledBy={headingId}
+      />
     );
   }
 
@@ -142,5 +100,75 @@ export function HostEnvironmentSection(props: {
       </div>
       {body}
     </section>
+  );
+}
+
+function HostEnvironmentPicker(props: {
+  readonly client: HostClient<HostRpcRegistry> | null;
+  readonly hostId: string | null;
+  readonly environments: ReadonlyArray<EnvironmentDescriptor>;
+  readonly currentEnvironmentId: string;
+  readonly labelledBy: string;
+}): ReactNode {
+  const { client, hostId, environments, currentEnvironmentId, labelledBy } =
+    props;
+  const bind = useEnvironmentHostBindMutation(client, hostId);
+  const pendingId = bind.isPending ? bind.variables.environmentId : null;
+  return (
+    <>
+      <ul
+        className="flex flex-wrap gap-2"
+        aria-labelledby={labelledBy}
+        data-testid="host-environment-list"
+      >
+        {environments.map((environment) => {
+          const current = environment.environmentId === currentEnvironmentId;
+          return (
+            <li key={environment.environmentId}>
+              <button
+                type="button"
+                aria-pressed={current}
+                data-testid="host-environment-option"
+                data-environment-id={environment.environmentId}
+                disabled={current || bind.isPending}
+                className={cn(
+                  "flex items-center gap-1.5 rounded-md border px-2.5 py-1 text-ui-xs transition-colors focus-visible:outline-2 focus-visible:outline-ring focus-visible:-outline-offset-2 disabled:cursor-default",
+                  current
+                    ? "border-foreground/20 bg-foreground/8 text-foreground"
+                    : "border-border/60 text-muted-foreground hover:bg-foreground/6 hover:text-foreground",
+                )}
+                onClick={() =>
+                  bind.mutate({ environmentId: environment.environmentId })
+                }
+              >
+                {current ? (
+                  <Check className="size-3.5" aria-hidden="true" />
+                ) : null}
+                <span>{environment.label}</span>
+                <Badge variant="muted" size="xs">
+                  {environment.ownerKind === "organization" ? "Team" : "Personal"}
+                </Badge>
+                {pendingId === environment.environmentId ? (
+                  <AgentSpinningDots
+                    className={undefined}
+                    testId={undefined}
+                    variant={undefined}
+                  />
+                ) : null}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+      {bind.error === null ? null : (
+        <p
+          role="alert"
+          className="text-ui-xs text-destructive"
+          data-testid="host-environment-refusal"
+        >
+          {bind.error.message}
+        </p>
+      )}
+    </>
   );
 }

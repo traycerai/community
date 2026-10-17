@@ -60,7 +60,7 @@ export function BotConversationView(props: {
       <div
         role="status"
         data-testid="bot-conversation-error"
-        className="m-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-ui-sm text-destructive-foreground"
+        className="m-4 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-ui-sm text-destructive"
       >
         <span>Couldn&apos;t load this bot&apos;s conversation.</span>
         <Button
@@ -74,7 +74,7 @@ export function BotConversationView(props: {
       </div>
     );
   }
-  if (conversation === null) {
+  if (conversations.data === undefined) {
     return (
       <div
         className="flex flex-1 items-center justify-center py-10 text-muted-foreground"
@@ -83,6 +83,20 @@ export function BotConversationView(props: {
       >
         <AgentSpinningDots className={undefined} testId={undefined} variant={undefined} />
       </div>
+    );
+  }
+  if (conversation === null) {
+    // `bot.create` opens the app conversation with the bot, so an answered
+    // list is never empty for a live bot; this is the host disagreeing, and
+    // it is said rather than spun on.
+    return (
+      <p
+        role="status"
+        data-testid="bot-conversation-empty"
+        className="m-4 text-ui-sm text-muted-foreground"
+      >
+        This bot has no conversation yet.
+      </p>
     );
   }
   return (

@@ -104,7 +104,6 @@ export const useBotTabsStore = create<BotTabsState>()(
   ),
 );
 
-/** Every open bot tab, oldest first - the order a restore places them in. */
 /**
  * The record for `botId`, or `null`. An own-property check rather than an
  * index read: the tabs record is typed by its values, so a bare index reads
@@ -117,6 +116,7 @@ export function lookupBotTab(
   return Object.hasOwn(tabs, botId) ? tabs[botId] : null;
 }
 
+/** Every open bot tab, oldest first - the order a restore places them in. */
 export function botTabRecords(
   tabs: Readonly<Record<string, BotTabRecord>>,
 ): ReadonlyArray<BotTabRecord> {

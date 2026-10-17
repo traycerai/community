@@ -20,10 +20,12 @@ const mocks = vi.hoisted(() => ({
     }) => void
   >(),
   state: {
+    // `null` is an unanswered list (the query has no data yet); `[]` is an
+    // answered, empty one - the two states the view tells apart.
     conversations: [] as Array<{
       conversationId: string;
       createdAt: number;
-    }>,
+    }> | null,
     isError: false,
     delivery: "written",
   },
@@ -34,7 +36,10 @@ vi.mock("@/hooks/host/use-tab-host-client", () => ({
 }));
 vi.mock("@/hooks/bots/use-bot-conversation-list-query", () => ({
   useBotConversationListQuery: () => ({
-    data: { conversations: mocks.state.conversations },
+    data:
+      mocks.state.conversations === null
+        ? undefined
+        : { conversations: mocks.state.conversations },
     isError: mocks.state.isError,
     refetch: vi.fn(() => Promise.resolve()),
   }),
@@ -142,10 +147,11 @@ describe("<BotConversationView /> composer", () => {
       conversationId: "conversation-app",
       text: "Please check the release",
     });
-    expect(
-      (screen.getByTestId("bot-conversation-input"))
-        .value,
-    ).toBe("");
+    const input = screen.getByTestId("bot-conversation-input");
+    if (!(input instanceof HTMLTextAreaElement)) {
+      throw new Error("the composer input is a textarea");
+    }
+    expect(input.value).toBe("");
   });
 
   it("says the message was saved when the host answers queued", async () => {
@@ -189,11 +195,21 @@ describe("<BotConversationView /> composer", () => {
 });
 
 describe("<BotConversationView /> states", () => {
-  it("shows the loading state until a conversation exists", () => {
-    mocks.state.conversations = [];
+  it("shows the loading state while the conversation list has not answered", () => {
+    mocks.state.conversations = null;
     mountView(null);
 
     expect(screen.getByTestId("bot-conversation-loading")).toBeTruthy();
+    expect(screen.queryByTestId("bot-conversation-empty")).toBeNull();
+    expect(screen.queryByTestId("bot-conversation-composer")).toBeNull();
+  });
+
+  it("tells an answered, empty list apart from a pending one", () => {
+    mocks.state.conversations = [];
+    mountView(null);
+
+    expect(screen.getByTestId("bot-conversation-empty")).toBeTruthy();
+    expect(screen.queryByTestId("bot-conversation-loading")).toBeNull();
     expect(screen.queryByTestId("bot-conversation-composer")).toBeNull();
   });
 

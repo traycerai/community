@@ -8,6 +8,7 @@ import {
   type LandingDraftTab,
 } from "@/stores/home/landing-draft-store";
 import {
+  lookupBotTab,
   useBotTabsStore,
   type BotTabRecord,
 } from "@/stores/bots/bot-tabs-store";
@@ -339,7 +340,7 @@ export function useHeaderTabForRef(ref: TabRef | null): HeaderTab | null {
     return null;
   });
   const bot = useBotTabsStore((state) =>
-    ref?.kind === "bot" ? (state.tabs[ref.id] ?? null) : null,
+    ref?.kind === "bot" ? lookupBotTab(state.tabs, ref.id) : null,
   );
   // Subscribe to the value itself so compiler caching sees registry-only moves.
   const hostId = useSyncExternalStore(

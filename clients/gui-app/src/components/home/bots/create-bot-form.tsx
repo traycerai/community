@@ -41,6 +41,10 @@ export function CreateBotForm(props: {
   readonly boundHostIds: ReadonlyArray<string>;
   /** Every connectable host has answered; false while one is still asked. */
   readonly bindingsResolved: boolean;
+  /** Connectable hosts whose environment could not be read: not offered, and
+   * said so, since a host that could not be asked may well run this one. */
+  readonly failedHostIds: ReadonlyArray<string>;
+  readonly onRetryFailedHosts: () => void;
   readonly hostLabels: ReadonlyMap<string, string>;
   readonly onDone: () => void;
 }): ReactNode {
@@ -49,6 +53,8 @@ export function CreateBotForm(props: {
     environmentLabel,
     boundHostIds,
     bindingsResolved,
+    failedHostIds,
+    onRetryFailedHosts,
     hostLabels,
     onDone,
   } = props;
@@ -82,31 +88,37 @@ export function CreateBotForm(props: {
   const submit = (): void => {
     if (!canSubmit) return;
     const toolbar = toolbarStore.getState();
-    create.mutate(
-      {
+    // `mutateAsync`, not per-call `mutate` callbacks: those are dropped once
+    // the component unmounts, and a form that is closed (or whose group
+    // re-renders away) mid-create would still create the bot and never open
+    // its tab. The continuation below holds no component state - the store
+    // action and the router navigate are both module-level - so it runs
+    // whatever happened to the form. A failure is already surfaced by the
+    // mutation's own error channel (toast + the inline line), so the
+    // rejection is swallowed here.
+    void create
+      .mutateAsync({
         environmentId,
         title: trimmedTitle,
         harness: toolbar.selection.harnessId,
         model: toolbar.selection.modelSlug,
         effort: toolbar.reasoning.length === 0 ? null : toolbar.reasoning,
         profile: toolbar.selection.profileId,
-      },
-      {
-        onSuccess: (response) => {
-          openBotTab({
-            botId: response.bot.botId,
-            hostId,
-            title: response.bot.title,
-          });
-          onDone();
-          navigateToTabIntent(
-            navigate,
-            botTabIntent(response.bot.botId),
-            undefined,
-          );
-        },
-      },
-    );
+      })
+      .then((response) => {
+        openBotTab({
+          botId: response.bot.botId,
+          hostId,
+          title: response.bot.title,
+        });
+        onDone();
+        navigateToTabIntent(
+          navigate,
+          botTabIntent(response.bot.botId),
+          undefined,
+        );
+      })
+      .catch(() => undefined);
   };
 
   return (
@@ -139,6 +151,26 @@ export function CreateBotForm(props: {
         disabled={create.isPending}
         onPick={setPickedHostId}
       />
+      {failedHostIds.length === 0 ? null : (
+        <p
+          role="status"
+          className="text-ui-xs text-muted-foreground"
+          data-testid="create-bot-failed-hosts"
+        >
+          Couldn&apos;t read which environment{" "}
+          {failedHostIds.map((id) => hostLabels.get(id) ?? id).join(", ")}{" "}
+          {failedHostIds.length === 1 ? "runs" : "run"}, so{" "}
+          {failedHostIds.length === 1 ? "it is" : "they are"} not offered.{" "}
+          <Button
+            type="button"
+            variant="link"
+            size="xs"
+            onClick={onRetryFailedHosts}
+          >
+            Retry
+          </Button>
+        </p>
+      )}
       <div className="flex flex-col gap-1">
         <span className="text-ui-xs text-muted-foreground">Model</span>
         <div className="flex min-w-0">

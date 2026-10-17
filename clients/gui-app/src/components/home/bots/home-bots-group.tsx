@@ -70,6 +70,8 @@ export function HomeBotsGroupCard(props: {
           environmentLabel={group.label}
           boundHostIds={boundHostIds}
           bindingsResolved={environmentBindings.resolved}
+          failedHostIds={environmentBindings.failedHostIds}
+          onRetryFailedHosts={environmentBindings.retryFailed}
           hostLabels={hostLabels}
           onDone={() => setCreating(false)}
         />

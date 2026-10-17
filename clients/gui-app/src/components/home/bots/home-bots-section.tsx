@@ -11,7 +11,6 @@ import { useConnectableHostIds } from "@/hooks/host/use-connectable-host-ids";
 import { useEnvironmentListQuery } from "@/hooks/bots/use-environment-list-query";
 import { useBotListQuery } from "@/hooks/bots/use-bot-list-query";
 import { useHostEnvironmentBindings } from "@/hooks/bots/use-host-environment-bindings-query";
-import { UNKNOWN_HOST_PLACEHOLDER } from "@/lib/host/constants";
 import {
   buildHomeBotsModel,
   EMPTY_HOME_BOTS_MODEL,
@@ -68,8 +67,9 @@ export function HomeBotsSection(): ReactNode {
   // that flashes "unavailable" before every connect is worse than a late one.
   if (support === null) return null;
 
-  const hostLabel =
-    (hostId === null ? null : hostLabels.get(hostId)) ?? UNKNOWN_HOST_PLACEHOLDER;
+  // The directory's label, else the raw id; never the placeholder constant,
+  // which is a sentinel and not a word for a person.
+  const hostLabel = hostId === null ? null : (hostLabels.get(hostId) ?? hostId);
 
   let body: ReactNode;
   if (!support) {
@@ -79,7 +79,7 @@ export function HomeBotsSection(): ReactNode {
       <div
         role="status"
         data-testid="home-bots-error"
-        className="mx-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-ui-sm text-destructive-foreground"
+        className="mx-3 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-ui-sm text-destructive"
       >
         <span>Couldn&apos;t load your bots.</span>
         <Button
@@ -144,7 +144,9 @@ export function HomeBotsSection(): ReactNode {
  * The same notice anatomy as Settings ▸ Usage's: the host answered, and the
  * answer is that it predates bots. Nothing else on Home depends on this.
  */
-function BotsUnavailableNotice(props: { readonly hostLabel: string }): ReactNode {
+function BotsUnavailableNotice(props: {
+  readonly hostLabel: string | null;
+}): ReactNode {
   return (
     <div
       role="status"
@@ -156,7 +158,9 @@ function BotsUnavailableNotice(props: { readonly hostLabel: string }): ReactNode
       </span>
       <div className="max-w-[60ch] space-y-1">
         <p className="font-medium text-ui-sm text-foreground">
-          Bots aren&apos;t available on {props.hostLabel} yet
+          {props.hostLabel === null
+            ? "Bots aren't available on this host yet"
+            : `Bots aren't available on ${props.hostLabel} yet`}
         </p>
         <p className="text-ui-sm text-muted-foreground">
           This host predates bots. Update it to create and run them from here.

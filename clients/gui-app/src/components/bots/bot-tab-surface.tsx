@@ -253,7 +253,7 @@ function StreamErrorNotice(props: {
       role="alert"
       data-testid="bot-tab-error"
       className={cn(
-        "flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-ui-sm text-destructive-foreground",
+        "flex flex-wrap items-center justify-between gap-3 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-ui-sm text-destructive",
         props.className,
       )}
     >

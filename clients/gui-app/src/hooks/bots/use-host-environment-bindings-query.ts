@@ -21,9 +21,18 @@ const BINDING_STALE_MS = 30_000;
 export interface HostEnvironmentBindings {
   /** Each answering host's binding, keyed by the host it was asked of. */
   readonly byHostId: ReadonlyMap<string, EnvironmentHostBinding>;
+  /**
+   * Hosts whose read FAILED (refused, timed out, unreachable mid-read). They
+   * are not in `byHostId`, and a surface that lists candidates by binding
+   * says so rather than silently leaving them out - a host that could not be
+   * asked is not a host that runs some other environment.
+   */
+  readonly failedHostIds: ReadonlyArray<string>;
   /** Every listed host has answered or refused; false while one is still
    * being asked, and false while the reads are disabled. */
   readonly resolved: boolean;
+  /** Asks the failed hosts again. A no-op when none failed. */
+  readonly retryFailed: () => void;
 }
 
 /**
@@ -49,16 +58,32 @@ export function useHostEnvironmentBindings(
       results: Array<UseQueryResult<EnvironmentHostBinding>>,
     ): HostEnvironmentBindings => {
       const byHostId = new Map<string, EnvironmentHostBinding>();
+      const failedHostIds: string[] = [];
+      const failedRefetches: Array<() => Promise<unknown>> = [];
       let resolved = enabled;
       // Positional, and safe by construction: `useQueries` returns results in
       // the order the queries were given, so index `n` is `hostIdList[n]`.
       results.forEach((result, index) => {
         if (index >= hostIdList.length) return;
         const hostId = hostIdList[index];
-        if (result.data !== undefined) byHostId.set(hostId, result.data);
-        else if (result.status === "pending") resolved = false;
+        if (result.data !== undefined) {
+          byHostId.set(hostId, result.data);
+        } else if (result.status === "error") {
+          failedHostIds.push(hostId);
+          failedRefetches.push(result.refetch);
+        } else {
+          // Still pending (the only status left without data or an error).
+          resolved = false;
+        }
       });
-      return { byHostId, resolved };
+      return {
+        byHostId,
+        failedHostIds,
+        resolved,
+        retryFailed: () => {
+          for (const refetch of failedRefetches) void refetch();
+        },
+      };
     },
     [enabled, hostIdList],
   );

@@ -120,7 +120,7 @@ export function HostOptionRow(props: {
       {showActiveTag ? <ActiveTag /> : null}
       {environmentLabel === null ? null : (
         <span
-          className="shrink-0 truncate text-ui-xs text-muted-foreground"
+          className="min-w-0 max-w-[14ch] truncate text-ui-xs text-muted-foreground"
           data-testid={`host-option-environment-${host.hostId}`}
         >
           {environmentLabel}

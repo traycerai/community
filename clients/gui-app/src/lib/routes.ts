@@ -32,7 +32,7 @@ export function botRoute(botId: string): NavigateOptions {
 }
 
 export function botPathname(botId: string): string {
-  return `/bot/${botId}`;
+  return `/bot/${encodeURIComponent(botId)}`;
 }
 
 const BOT_ROUTE_RE = /^\/bot\/([^/]+)\/?$/;
