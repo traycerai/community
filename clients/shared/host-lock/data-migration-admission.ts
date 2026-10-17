@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import {
   admitProcess,
+  composeIncarnationVerdict,
   type AdmissionResult,
   type ProcessIncarnationProbe,
 } from "@traycer/protocol/config/data-migration-admission";
@@ -14,24 +15,34 @@ import {
 } from "@traycer/protocol/config/data-root";
 import { probeProcessLivenessAsync } from "@traycer/protocol/config/process-liveness";
 import {
+  observeProcessStartAsync,
   ownProcessStartIdentityAsync,
   verifyProcessIdentityAsync,
 } from "./process-identity";
 
 /**
  * The CLI's and Desktop's process reads for data-migration admission: the
- * same identity verdicts their locks already use, so "is that the same
- * process" means one thing on this side.
+ * same liveness and identity reads their locks already use, so "is that the
+ * same process" means one thing on this side, composed by the protocol's
+ * incarnation rule, the twin of the host's probe. This process's own pid
+ * keeps the locks' own-identity check.
  */
 export const clientProcessIncarnationProbe: ProcessIncarnationProbe = {
   ownStartIdentity: ownProcessStartIdentityAsync,
   liveness: probeProcessLivenessAsync,
   verdict: (pid, recorded) =>
-    verifyProcessIdentityAsync({
-      pid,
-      startedAtMs: null,
-      startIdentity: recorded,
-    }),
+    pid === process.pid
+      ? verifyProcessIdentityAsync({
+          pid,
+          startedAtMs: null,
+          startIdentity: recorded,
+        })
+      : composeIncarnationVerdict({
+          pid,
+          recorded,
+          liveness: probeProcessLivenessAsync,
+          observe: observeProcessStartAsync,
+        }),
 };
 
 // Long enough to outwait a busy admission (a few small file operations), short

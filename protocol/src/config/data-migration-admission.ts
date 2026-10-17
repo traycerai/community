@@ -36,8 +36,15 @@ import {
   type StartupGateInput,
 } from "./data-bootstrap-records";
 import type { DataRootPlatform, DataRootResolution } from "./data-root";
-import type { AttemptHolderLivenessVerdict } from "./host-update-attempt-liveness";
-import type { ProcessStartIdentity } from "@traycer/protocol/host/lifecycle/process-start-identity";
+import {
+  composeAttemptHolderVerdict,
+  type AttemptHolderLivenessVerdict,
+  type AttemptHolderProcessLiveness,
+} from "./host-update-attempt-liveness";
+import type {
+  ObservedProcessStart,
+  ProcessStartIdentity,
+} from "@traycer/protocol/host/lifecycle/process-start-identity";
 
 /**
  * Process admission against the data-migration startup barrier, and the
@@ -96,6 +103,47 @@ export interface ProcessIncarnationProbe {
     pid: number,
     recorded: ProcessStartIdentity | null,
   ): Promise<AttemptHolderLivenessVerdict>;
+}
+
+/**
+ * The `verdict` both sides' probes give, over their own OS reads:
+ * {@link composeAttemptHolderVerdict} of one liveness read and one identity
+ * read, with ONE exception.
+ *
+ * Liveness answered `alive`, an identity is recorded, and the identity read
+ * came back with nothing. On Windows that is a pid the OS handed to a
+ * short-lived process that exited between the two reads (`Get-Process` and
+ * the WMI fallback both find nothing), and it read as `indeterminate`, so a
+ * stale entry of a crashed process blocked a migration at random. Liveness
+ * is read once more: `dead` then is positive proof no process runs at that
+ * pid, so the recorded one cannot. Any other second answer keeps the
+ * composed verdict. Nothing else changes: an `indeterminate` first liveness
+ * still consults identity, and an identity read that answered is never
+ * overridden.
+ */
+export async function composeIncarnationVerdict(input: {
+  readonly pid: number;
+  readonly recorded: ProcessStartIdentity | null;
+  readonly liveness: (pid: number) => Promise<AttemptHolderProcessLiveness>;
+  readonly observe: (
+    pid: number,
+    recorded: ProcessStartIdentity,
+  ) => Promise<ObservedProcessStart | null>;
+}): Promise<AttemptHolderLivenessVerdict> {
+  const { pid, recorded } = input;
+  const liveness = await input.liveness(pid);
+  if (liveness === "dead" || recorded === null) {
+    return composeAttemptHolderVerdict(liveness, recorded, null);
+  }
+  const observed = await input.observe(pid, recorded);
+  if (
+    liveness === "alive" &&
+    observed === null &&
+    (await input.liveness(pid)) === "dead"
+  ) {
+    return "dead";
+  }
+  return composeAttemptHolderVerdict(liveness, recorded, observed);
 }
 
 export type MigrationAdmissionErrorCode =
