@@ -2,6 +2,7 @@ import { useSyncExternalStore } from "react";
 import type { HostClient } from "@traycer-clients/shared/host-client/host-client";
 import type { RequiredHostMethodVersion } from "@traycer-clients/shared/host-transport/host-messenger";
 import type { HostRpcRegistry } from "@traycer/protocol/host/index";
+import type { AgentRecordWriteOutcome } from "@traycer/protocol/host/epic/unary-schemas";
 import { useEpicSessionHostClient } from "@/hooks/epic/use-epic-session-host-client";
 import { useEpicSessionHostId } from "@/hooks/epic/use-epic-session-host-id";
 import { useHostBinding } from "@/lib/host";
@@ -31,6 +32,23 @@ export interface EpicRecordMutationContext extends EpicRecordMutationTarget {
  */
 export interface EpicRecordLifecycleMutationContext extends EpicRecordMutationContext {
   readonly servingHostId: string | null;
+}
+
+/**
+ * The host whose record a lifecycle write changed, by the receiving host's
+ * answer. `applied` means the host the call was sent to enacted it on a record
+ * of its own: when that was a stand-in, authority had moved to it after the
+ * row was read, and the record (its cloud row, session and tiles) is the
+ * stand-in's. `requested` means the stand-in wrote the cloud row of the owner
+ * the row names.
+ */
+export function enactedOwnerHostId(
+  outcome: AgentRecordWriteOutcome,
+  ctx: Pick<EpicRecordLifecycleMutationContext, "hostId" | "servingHostId">,
+): string | null {
+  return outcome === "applied" && ctx.servingHostId !== null
+    ? ctx.servingHostId
+    : ctx.hostId;
 }
 
 /**

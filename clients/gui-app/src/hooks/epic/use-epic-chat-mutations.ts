@@ -28,6 +28,7 @@ import { useHostMutation } from "@/hooks/host/use-host-query";
 import { useTabHostClient } from "@/hooks/host/use-tab-host-client";
 import { useEpicSessionHostClient } from "@/hooks/epic/use-epic-session-host-client";
 import {
+  enactedOwnerHostId,
   useEpicRecordLifecycleMutationClient,
   useEpicRecordMutationClient,
   type EpicRecordMutationContext,
@@ -985,18 +986,24 @@ function useEpicDeleteChatMutation(
         };
       },
       onSuccess: (data, variables, ctx) => {
+        // The host that owns the deleted chat. An `applied` answer from a
+        // stand-in means the record was its own (authority moved after this
+        // row was read), so it is the stand-in's chat that is gone: its cloud
+        // row, session and tiles carry the stand-in's id, not the stale one.
+        // A `requested` answer wrote the cloud row of the owner the row names.
+        const ownerHostId = enactedOwnerHostId(data.outcome, ctx);
         // Confirm BEFORE removing local records: otherwise their stale cloud
         // copy becomes an unfolded row. The host's identity also replaces an
         // incorrect provisional mapping, rather than confirming both rows.
         if (
           data.publicationChatId !== null &&
-          ctx.hostId !== null &&
+          ownerHostId !== null &&
           ctx.viewerUserId !== null
         ) {
           confirmCloudChatDeletion(ctx.cloudDeletionToken, {
             taskId: variables.epicId,
             ownerUserId: ctx.viewerUserId,
-            ownerHostId: ctx.hostId,
+            ownerHostId,
             chatId: data.publicationChatId,
           });
         } else {
@@ -1008,11 +1015,11 @@ function useEpicDeleteChatMutation(
         // session under this chat's identity either, so there is nothing to
         // force-release - and guessing a host here is exactly the
         // cross-host dispose this teardown must not perform.
-        if (ctx.hostId !== null) {
+        if (ownerHostId !== null) {
           getChatSessionRegistry().forceRelease(
             variables.epicId,
             variables.chatId,
-            ctx.hostId,
+            ownerHostId,
           );
           // This mutation-level callback survives the optimistic sidebar row
           // unmounting. Per-call callbacks owned by that row do not, which can
@@ -1023,7 +1030,7 @@ function useEpicDeleteChatMutation(
             .closeConfirmedDeletedAgentTiles(
               variables.epicId,
               variables.chatId,
-              ctx.hostId,
+              ownerHostId,
               "chat",
             );
         }
@@ -1053,7 +1060,7 @@ function useEpicDeleteChatMutation(
         const handle = getOpenEpicRegistry().peek(variables.epicId);
         if (
           handle !== null &&
-          ctx.hostId !== null &&
+          ownerHostId !== null &&
           ctx.viewerUserId !== null &&
           ctx.viewerUserId === currentProfileUserId()
         ) {
@@ -1061,7 +1068,7 @@ function useEpicDeleteChatMutation(
             kind: "remove",
             chatId: variables.chatId,
             ownerUserId: ctx.viewerUserId,
-            originHostId: ctx.hostId,
+            originHostId: ownerHostId,
           });
         }
         for (const hostId of new Set([
@@ -1096,9 +1103,12 @@ function useEpicDeleteChatMutation(
         // committed deletion does not leave the old cloud answer visible.
         if (ctx !== undefined && ctx.viewerUserId !== null) {
           const handle = getOpenEpicRegistry().peek(variables.epicId);
+          // The stand-in too: it may have committed the delete before the
+          // response or the cleanup failed, exactly as the owner may.
           for (const hostId of new Set([
             ctx.hostId,
             ctx.viewerHostId,
+            ctx.servingHostId,
             handle?.hostId ?? null,
           ])) {
             if (hostId === null) continue;

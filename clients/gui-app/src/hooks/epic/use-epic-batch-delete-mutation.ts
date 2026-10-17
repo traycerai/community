@@ -519,10 +519,16 @@ export function useEpicBatchDelete(): UseMutationResult<
           const hostScopedIds = deletedIds.filter(
             (id) => !accountWideIds.includes(id),
           );
+          // A host-scoped success belongs to the host that deleted it: on a
+          // fallback route that is the stand-in, not the down host.
           if (hostScopedIds.length > 0) {
             removeDeletedEpicsFromCloudTaskCaches(
               queryClient,
-              { hostId: ctx.hostId, userId },
+              {
+                hostId:
+                  ctx.route.kind === "fallback" ? ctx.route.hostId : ctx.hostId,
+                userId,
+              },
               hostScopedIds,
             );
           }

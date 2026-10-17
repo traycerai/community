@@ -465,7 +465,9 @@ describe("Task delete through a stand-in host that omits `home`", () => {
     expect(tombstonedOn(BYSTANDER)).toEqual(["cloud-a"]);
   });
 
-  it("keeps a stand-in's explicit `home: local` host-scoped", async () => {
+  it("keeps a stand-in's explicit `home: local` scoped to the stand-in that deleted it", async () => {
+    // Codex thread 4303057015 on dc648adf0: the local tombstone belongs to the
+    // host that performed the delete, never to the down host it stood in for.
     publishLeases(lease("active", "dead"), lease("this-machine", "ready"));
     hosts.state.home = "local";
 
@@ -476,7 +478,8 @@ describe("Task delete through a stand-in host that omits `home`", () => {
       worktreeCleanup: null,
     });
 
-    expect(tombstonedOn("active")).toEqual(["cloud-a"]);
+    expect(tombstonedOn("this-machine")).toEqual(["cloud-a"]);
+    expect(tombstonedOn("active")).toEqual([]);
     expect(tombstonedOn(BYSTANDER)).toEqual([]);
   });
 

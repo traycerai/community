@@ -59,6 +59,9 @@ import {
   resetNegotiatedManifests,
 } from "@traycer-clients/shared/host-transport/negotiated-manifest-registry";
 import { Analytics, AnalyticsEvent } from "@/lib/analytics";
+import { useCloudChatDeletions } from "@/lib/chats/cloud-chat-deletions";
+import { cloudChatListQueryKey } from "@/lib/chats/cloud-chat-list-cache";
+import { getChatSessionRegistry } from "@/lib/registries/chat-session-registry";
 
 vi.mock("sonner", () => ({
   toast: {
@@ -114,6 +117,8 @@ interface Fixture {
   readonly handshake: Map<string, SchemaVersion>;
   /** The host that runs both records, as the HOSTS see it. */
   ownerAsHostsSeeIt: string;
+  /** Whether `epic.deleteChat` answers with an error (after its commit). */
+  deleteChatFails: boolean;
   readonly wrapper: (props: { readonly children: ReactNode }) => ReactNode;
   readonly dispose: () => void;
 }
@@ -131,7 +136,7 @@ function createFixture(): Fixture {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   const calls: Call[] = [];
-  const state = { ownerAsHostsSeeIt: OWNER.hostId };
+  const state = { ownerAsHostsSeeIt: OWNER.hostId, deleteChatFails: false };
   const messengerRef: {
     current: FloorEnforcingMessenger<HostRpcRegistry> | null;
   } = {
@@ -166,6 +171,9 @@ function createFixture(): Fixture {
         "epic.deleteChat": () => {
           const hostId = lastCallHost(messengerRef.current ?? messenger);
           calls.push({ method: "epic.deleteChat", hostId });
+          if (state.deleteChatFails) {
+            throw new Error("the response was lost after the delete");
+          }
           return {
             deleted: true,
             publicationChatId: CHAT_ID,
@@ -214,6 +222,12 @@ function createFixture(): Fixture {
     },
     set ownerAsHostsSeeIt(value: string) {
       state.ownerAsHostsSeeIt = value;
+    },
+    get deleteChatFails() {
+      return state.deleteChatFails;
+    },
+    set deleteChatFails(value: boolean) {
+      state.deleteChatFails = value;
     },
     wrapper,
     dispose: () => {
@@ -702,5 +716,114 @@ describe("unchanged paths", () => {
     expect(writeCalls()).toEqual([
       { method: "epic.setChatArchived", hostId: OWNER.hostId },
     ]);
+  });
+});
+
+// Codex threads 4303057010 and 4303057013 on dc648adf0.
+describe("a stand-in's `applied` delete and a stand-in's failed delete", () => {
+  /** The confirmed cloud-deletion keys, as the suppression store keys them. */
+  function confirmedDeletionOwners(): string[] {
+    return [...useCloudChatDeletions.getState().confirmed].flatMap((key) => {
+      const parsed: unknown = JSON.parse(key);
+      return Array.isArray(parsed) && parsed[3] === CHAT_ID
+        ? [String(parsed[2])]
+        : [];
+    });
+  }
+
+  beforeEach(() => {
+    useCloudChatDeletions.setState({
+      pending: new Map(),
+      confirmed: new Set(),
+    });
+  });
+
+  it("binds an `applied` chat delete's cleanup to the stand-in that owned the chat, not the stale owner", async () => {
+    // Authority moved to the session host after the GUI last saw the row.
+    publishLeases(
+      lease(SESSION.hostId, "ready"),
+      lease(OWNER.hostId, "dead"),
+      lease(OTHER.hostId, "ready"),
+    );
+    fixture.ownerAsHostsSeeIt = SESSION.hostId;
+    const forceRelease = vi.spyOn(getChatSessionRegistry(), "forceRelease");
+
+    await deleteChat();
+
+    expect(writeCalls()).toEqual([
+      { method: "epic.deleteChat", hostId: SESSION.hostId },
+    ]);
+    // The cloud row of the deleted chat names the stand-in, so that is the
+    // identity a stale cloud answer must be suppressed under.
+    expect(confirmedDeletionOwners()).toEqual([SESSION.hostId]);
+    expect(forceRelease).toHaveBeenCalledWith(EPIC_ID, CHAT_ID, SESSION.hostId);
+    expect(forceRelease).not.toHaveBeenCalledWith(
+      EPIC_ID,
+      CHAT_ID,
+      OWNER.hostId,
+    );
+  });
+
+  it("keeps a `requested` chat delete's cleanup on the owner the row names", async () => {
+    publishLeases(
+      lease(SESSION.hostId, "ready"),
+      lease(OWNER.hostId, "dead"),
+      lease(OTHER.hostId, "ready"),
+    );
+
+    await deleteChat();
+
+    expect(confirmedDeletionOwners()).toEqual([OWNER.hostId]);
+  });
+
+  it("closes an `applied` terminal-agent delete's tiles under the stand-in that owned the agent", async () => {
+    publishLeases(
+      lease(SESSION.hostId, "ready"),
+      lease(OWNER.hostId, "dead"),
+      lease(OTHER.hostId, "ready"),
+    );
+    fixture.ownerAsHostsSeeIt = SESSION.hostId;
+    const closeTiles = vi.fn();
+    const original =
+      useEpicCanvasStore.getState().closeConfirmedDeletedAgentTiles;
+    useEpicCanvasStore.setState({
+      closeConfirmedDeletedAgentTiles: closeTiles,
+    });
+    try {
+      await deleteTuiAgent();
+    } finally {
+      useEpicCanvasStore.setState({
+        closeConfirmedDeletedAgentTiles: original,
+      });
+    }
+
+    expect(closeTiles).toHaveBeenCalledWith(
+      EPIC_ID,
+      TUI_ID,
+      SESSION.hostId,
+      "terminal-agent",
+    );
+  });
+
+  it("refreshes the stand-in's cloud chat list when its delete fails after it may have committed", async () => {
+    publishLeases(
+      lease(SESSION.hostId, "dead"),
+      lease(OWNER.hostId, "dead"),
+      lease(OTHER.hostId, "ready"),
+    );
+    fixture.deleteChatFails = true;
+    const standInCloudList = cloudChatListQueryKey({
+      hostId: OTHER.hostId,
+      viewerUserId: VIEWER_ID,
+      taskId: EPIC_ID,
+    });
+    seedList(standInCloudList);
+
+    await expect(deleteChat()).rejects.toThrow();
+
+    expect(writeCalls()).toEqual([
+      { method: "epic.deleteChat", hostId: OTHER.hostId },
+    ]);
+    expect(isInvalidated(standInCloudList)).toBe(true);
   });
 });

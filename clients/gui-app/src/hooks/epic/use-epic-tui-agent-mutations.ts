@@ -3,6 +3,7 @@ import type {
   RenameTuiAgentRequest,
 } from "@traycer/protocol/host/epic/unary-schemas";
 import {
+  enactedOwnerHostId,
   useEpicRecordLifecycleMutationClient,
   useEpicRecordMutationClient,
   type EpicRecordLifecycleMutationContext,
@@ -131,14 +132,17 @@ function useEpicDeleteTuiAgentMutation(
         servingHostId: route.servingHostId(variables),
       }),
       onSuccess: (data, variables, ctx) => {
+        // The tiles of the host that owned the agent: a stand-in's `applied`
+        // means authority had moved to it (`enactedOwnerHostId`).
+        const ownerHostId = enactedOwnerHostId(data.outcome, ctx);
         // Hook callbacks survive the row unmounting before the response arrives.
-        if (ctx.hostId !== null) {
+        if (ownerHostId !== null) {
           useEpicCanvasStore
             .getState()
             .closeConfirmedDeletedAgentTiles(
               variables.epicId,
               variables.tuiAgentId,
-              ctx.hostId,
+              ownerHostId,
               "terminal-agent",
             );
         }
