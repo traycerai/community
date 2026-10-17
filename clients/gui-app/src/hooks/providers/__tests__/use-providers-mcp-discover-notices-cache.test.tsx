@@ -15,6 +15,7 @@ import { createHostQueryInvalidator } from "@/lib/host/query-invalidator";
 import { createAppQueryClient } from "@/lib/query-client";
 import type { McpListData } from "@/hooks/providers/native-response-map";
 import { useProvidersMcpDiscover } from "@/hooks/providers/use-providers-mcp-discover-mutation";
+import { toastFromHostError } from "@/lib/host-error-toast";
 import { providersNativeQueryKeys } from "@/lib/query-keys/providers-native-query-keys";
 
 vi.mock("@/lib/host", async () => {
@@ -101,6 +102,7 @@ describe("useProvidersMcpDiscover list cache", () => {
     const seeded: McpListData = {
       servers: [row("docs", {}), row("other", {})],
       notices: [NOTICE],
+      coverage: null,
       refreshError: null,
     };
     queryClient.setQueryData<McpListData>(listKey, seeded);
@@ -130,5 +132,159 @@ describe("useProvidersMcpDiscover list cache", () => {
       "other",
     ]);
     expect(after?.servers[0]).toEqual(discovered);
+  });
+
+  it("keeps the previous coverage and takes the checked row's origin (A40)", async () => {
+    const origin = {
+      scope: "project" as const,
+      label: "Project settings",
+      path: null,
+      inherited: false,
+      editable: true,
+    };
+    const discovered = row("docs", { origin });
+    const coverage = {
+      complete: false,
+      sources: [
+        {
+          label: "Managed settings",
+          path: null,
+          scope: "managed" as const,
+          outcome: "unsupported" as const,
+          reason: "Not readable here.",
+        },
+      ],
+    };
+    const queryClient = createAppQueryClient();
+    const spine = new HostClient<HostRpcRegistry>({
+      registry: hostRpcRegistry,
+      invalidator: createHostQueryInvalidator(queryClient),
+      findHostById: (hostId) =>
+        hostId === mockLocalHostEntry.hostId ? mockLocalHostEntry : null,
+      messenger: new MockHostMessenger<HostRpcRegistry>({
+        registry: hostRpcRegistry,
+        requestId: () => "req-1",
+        handlers: {
+          "providers.list": () => ({
+            providers: [],
+            native: { ok: true, kind: "mcpDiscover", server: discovered },
+          }),
+        },
+      }),
+    });
+    spine.setRequestContext(
+      createRequestContextFixture({ origin: "renderer", bearerToken: "tok-1" }),
+    );
+    mockClientHolder.client = spine.createRequester(mockLocalHostEntry);
+    const listParams = {
+      providerId: "kilocode",
+      scope: "project",
+      workspaceRoot: "/work/repo",
+    } as const;
+    const listKey = providersNativeQueryKeys.mcpList(
+      mockLocalHostEntry.hostId,
+      listParams,
+    );
+    queryClient.setQueryData<McpListData>(listKey, {
+      servers: [row("docs", {}), row("other", {})],
+      notices: [],
+      coverage,
+      refreshError: null,
+    });
+    function Wrapper(props: { readonly children: ReactNode }): ReactNode {
+      return (
+        <QueryClientProvider client={queryClient}>
+          {props.children}
+        </QueryClientProvider>
+      );
+    }
+    const rendered = renderHook(() => useProvidersMcpDiscover(), {
+      wrapper: Wrapper,
+    });
+    await act(async () => {
+      await rendered.result.current.mutateAsync({
+        ...listParams,
+        serverName: "docs",
+        forceRefresh: false,
+      });
+    });
+    const after = queryClient.getQueryData<McpListData>(listKey);
+    expect(after?.coverage).toEqual(coverage);
+    expect(after?.servers[0]?.origin).toEqual(origin);
+    expect(after?.servers[1]?.name).toBe("other");
+  });
+
+  describe("U4: a Check refusal reaches the toast with the host's sentence", () => {
+    const DETAIL = "This server is not in Kilo's settings anymore.";
+
+    async function checkRefused(
+      code: "server_not_found" | "unsupported_action",
+      detail: string | null,
+    ): Promise<string> {
+      const queryClient = createAppQueryClient();
+      const spine = new HostClient<HostRpcRegistry>({
+        registry: hostRpcRegistry,
+        invalidator: createHostQueryInvalidator(queryClient),
+        findHostById: (hostId) =>
+          hostId === mockLocalHostEntry.hostId ? mockLocalHostEntry : null,
+        messenger: new MockHostMessenger<HostRpcRegistry>({
+          registry: hostRpcRegistry,
+          requestId: () => "req-1",
+          handlers: {
+            "providers.list": () => ({
+              providers: [],
+              native: { ok: false, code, detail },
+            }),
+          },
+        }),
+      });
+      spine.setRequestContext(
+        createRequestContextFixture({
+          origin: "renderer",
+          bearerToken: "tok-1",
+        }),
+      );
+      mockClientHolder.client = spine.createRequester(mockLocalHostEntry);
+      function Wrapper(props: { readonly children: ReactNode }): ReactNode {
+        return (
+          <QueryClientProvider client={queryClient}>
+            {props.children}
+          </QueryClientProvider>
+        );
+      }
+      const rendered = renderHook(() => useProvidersMcpDiscover(), {
+        wrapper: Wrapper,
+      });
+      vi.mocked(toastFromHostError).mockClear();
+      await act(async () => {
+        await rendered.result.current
+          .mutateAsync({
+            providerId: "kilocode",
+            scope: "global",
+            workspaceRoot: null,
+            serverName: "gone",
+            forceRefresh: true,
+          })
+          .catch(() => undefined);
+      });
+      const calls = vi.mocked(toastFromHostError).mock.calls;
+      expect(calls).toHaveLength(1);
+      const first: unknown = calls[0]?.[0];
+      return first instanceof Error ? first.message : "";
+    }
+
+    it("shows the host detail for server_not_found", async () => {
+      expect(await checkRefused("server_not_found", DETAIL)).toBe(DETAIL);
+    });
+
+    it("shows the same detail from an old peer's unsupported_action", async () => {
+      expect(await checkRefused("unsupported_action", DETAIL)).toBe(DETAIL);
+    });
+
+    it("falls back to the provider-neutral copy with no detail", async () => {
+      expect(await checkRefused("server_not_found", null)).toBe(
+        "This server is no longer in this provider's configuration. Refresh the list.",
+      );
+    });
   });
 });

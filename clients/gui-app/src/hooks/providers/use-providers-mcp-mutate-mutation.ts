@@ -67,7 +67,8 @@ function listChangedDuringMutation(
 ): boolean {
   return (
     currentData?.servers !== snapshot.listData?.servers ||
-    currentData?.notices !== snapshot.listData?.notices
+    currentData?.notices !== snapshot.listData?.notices ||
+    currentData?.coverage !== snapshot.listData?.coverage
   );
 }
 
@@ -171,6 +172,9 @@ export function useProvidersMcpMutate(): UseMutationResult<
       }
       if (
         fetchStatus === "fetching" ||
+        data.coverage?.sources.some(
+          (source) => source.outcome === "unrefreshed",
+        ) === true ||
         listChangedDuringMutation(currentData, snapshot) ||
         listQuery !== snapshot.listQuery ||
         mutationCompletionRevision !== snapshot.mutationCompletionRevision

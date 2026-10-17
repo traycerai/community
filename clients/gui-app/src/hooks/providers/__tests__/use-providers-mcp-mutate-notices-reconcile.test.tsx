@@ -106,6 +106,7 @@ describe("useProvidersMcpMutate notice reconciliation", () => {
     const seeded: McpListData = {
       servers: [server],
       notices: [oldNotice],
+      coverage: null,
       refreshError: null,
     };
     queryClient.setQueryData<McpListData>(listKey, seeded);
@@ -143,5 +144,192 @@ describe("useProvidersMcpMutate notice reconciliation", () => {
       await write;
     });
     expect(queryClient.getQueryState(listKey)?.isInvalidated).toBe(true);
+  });
+
+  it("invalidates when the mutation result says a source was not refreshed", async () => {
+    const server: ProviderMcpServer = {
+      name: "docs",
+      enabled: true,
+      transport: { type: "http", url: "https://example.com/mcp", auth: null },
+      status: "connected",
+      statusSource: "probe",
+      statusDetail: null,
+      tools: [],
+      discoveryPending: false,
+      instructions: null,
+      configOnly: false,
+      stdioDegraded: false,
+    };
+    const queryClient = createAppQueryClient();
+    const spine = new HostClient<HostRpcRegistry>({
+      registry: hostRpcRegistry,
+      invalidator: createHostQueryInvalidator(queryClient),
+      findHostById: (hostId) =>
+        hostId === mockLocalHostEntry.hostId ? mockLocalHostEntry : null,
+      messenger: new MockHostMessenger<HostRpcRegistry>({
+        registry: hostRpcRegistry,
+        requestId: () => "req-1",
+        handlers: {
+          "providers.nativeMutate": () => ({
+            result: {
+              ok: true,
+              kind: "mcp",
+              servers: [server],
+              notices: [],
+              coverage: {
+                complete: false,
+                sources: [
+                  {
+                    label: "Global settings",
+                    path: null,
+                    scope: "global",
+                    outcome: "unrefreshed",
+                    reason: null,
+                  },
+                ],
+              },
+            },
+          }),
+        },
+      }),
+    });
+    spine.setRequestContext(
+      createRequestContextFixture({ origin: "renderer", bearerToken: "tok-1" }),
+    );
+    mockClientHolder.client = spine.createRequester(mockLocalHostEntry);
+    const params = {
+      providerId: "kilocode",
+      scope: "global",
+      workspaceRoot: null,
+    } as const;
+    const listKey = providersNativeQueryKeys.mcpList(
+      mockLocalHostEntry.hostId,
+      params,
+    );
+    queryClient.setQueryData<McpListData>(listKey, {
+      servers: [server],
+      notices: [],
+      coverage: null,
+      refreshError: null,
+    });
+    function Wrapper(props: { readonly children: ReactNode }): ReactNode {
+      return (
+        <QueryClientProvider client={queryClient}>
+          {props.children}
+        </QueryClientProvider>
+      );
+    }
+    const rendered = renderHook(() => useProvidersMcpMutate(), {
+      wrapper: Wrapper,
+    });
+    await act(async () => {
+      await rendered.result.current.mutateAsync({
+        ...params,
+        mutation: { action: "toggleServer", name: "docs", enabled: false },
+        suppressToast: true,
+      });
+    });
+    expect(queryClient.getQueryState(listKey)?.isInvalidated).toBe(true);
+  });
+
+  it("U6: a mutation success keeps the checked status and tools on an unaffected row", async () => {
+    const checked: ProviderMcpServer = {
+      name: "checked",
+      enabled: true,
+      transport: { type: "http", url: "https://example.com/mcp", auth: null },
+      status: "connected",
+      statusSource: "probe",
+      statusDetail: null,
+      tools: [
+        {
+          name: "search",
+          description: null,
+          inputSchema: null,
+          enabled: true,
+          readOnly: false,
+        },
+      ],
+      discoveryPending: false,
+      instructions: null,
+      configOnly: false,
+      stdioDegraded: false,
+    };
+    const toggled: ProviderMcpServer = {
+      ...checked,
+      name: "toggled",
+      enabled: false,
+      status: "disconnected",
+      statusSource: "none",
+      tools: [],
+    };
+    const queryClient = createAppQueryClient();
+    const spine = new HostClient<HostRpcRegistry>({
+      registry: hostRpcRegistry,
+      invalidator: createHostQueryInvalidator(queryClient),
+      findHostById: (hostId) =>
+        hostId === mockLocalHostEntry.hostId ? mockLocalHostEntry : null,
+      messenger: new MockHostMessenger<HostRpcRegistry>({
+        registry: hostRpcRegistry,
+        requestId: () => "req-1",
+        handlers: {
+          // The new host rebuilds the whole list and carries the cached
+          // Check result for rows the write did not touch.
+          "providers.nativeMutate": () => ({
+            result: {
+              ok: true,
+              kind: "mcp",
+              servers: [checked, { ...toggled, enabled: true }],
+              notices: [],
+              coverage: { complete: true, sources: [] },
+            },
+          }),
+        },
+      }),
+    });
+    spine.setRequestContext(
+      createRequestContextFixture({ origin: "renderer", bearerToken: "tok-1" }),
+    );
+    mockClientHolder.client = spine.createRequester(mockLocalHostEntry);
+    const params = {
+      providerId: "kilocode",
+      scope: "global",
+      workspaceRoot: null,
+    } as const;
+    const listKey = providersNativeQueryKeys.mcpList(
+      mockLocalHostEntry.hostId,
+      params,
+    );
+    queryClient.setQueryData<McpListData>(listKey, {
+      servers: [checked, toggled],
+      notices: [],
+      coverage: null,
+      refreshError: null,
+    });
+    function Wrapper(props: { readonly children: ReactNode }): ReactNode {
+      return (
+        <QueryClientProvider client={queryClient}>
+          {props.children}
+        </QueryClientProvider>
+      );
+    }
+    const rendered = renderHook(() => useProvidersMcpMutate(), {
+      wrapper: Wrapper,
+    });
+    await act(async () => {
+      await rendered.result.current.mutateAsync({
+        ...params,
+        mutation: { action: "toggleServer", name: "toggled", enabled: true },
+        suppressToast: true,
+      });
+    });
+    const after = queryClient.getQueryData<McpListData>(listKey);
+    const kept = after?.servers.find((row) => row.name === "checked");
+    expect(kept?.status).toBe("connected");
+    expect(kept?.statusSource).toBe("probe");
+    expect(kept?.tools.map((tool) => tool.name)).toEqual(["search"]);
+    expect(after?.servers.find((row) => row.name === "toggled")?.enabled).toBe(
+      true,
+    );
+    expect(after?.coverage).toEqual({ complete: true, sources: [] });
   });
 });
