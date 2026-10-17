@@ -419,9 +419,9 @@ export interface SandboxCatalogueProvider {
   /**
    * False when this deployment's account cannot create the provider's
    * smallest shape: its plan's per-sandbox memory cap is below what a
-   * sandbox needs. The form offers no shape for it and says why; a create
-   * is refused `shape_not_offered` with `provider-plan-too-small`. True from
-   * a server that predates the field.
+   * sandbox needs. The form offers no shape for it and says sandboxes can't
+   * be created; a create is refused `shape_not_offered` with
+   * `provider-plan-too-small`. True from a server that predates the field.
    */
   readonly creatable: boolean;
   /**
