@@ -744,9 +744,19 @@ function useEpicArchiveChatMutation(
   });
 }
 
+/**
+ * One request of an archive batch, and how many SELECTED rows it stands for:
+ * archiving a record hides its subtree, so the sidebar sends only the topmost
+ * selected rows, each covering itself and its selected descendants. 1 for an
+ * independent target.
+ */
+export interface ArchiveChatsTarget extends ChatMutationTarget {
+  readonly selectedRows: number;
+}
+
 export interface ArchiveChatsMutationInput {
   readonly epicId: string;
-  readonly chats: readonly ChatMutationTarget[];
+  readonly chats: readonly ArchiveChatsTarget[];
   readonly archived: boolean;
 }
 
@@ -798,7 +808,8 @@ export function useEpicArchiveChats(): UseMutationResult<
         variables.chats.map((chat) =>
           archiveChat.mutateAsync({
             epicId: variables.epicId,
-            ...chat,
+            chatId: chat.chatId,
+            hostId: chat.hostId,
             archived: variables.archived,
           }),
         ),
@@ -808,9 +819,13 @@ export function useEpicArchiveChats(): UseMutationResult<
       // while its write waited its turn on the host: neither applied nor
       // failed as far as this batch can tell. Such rows stay in the
       // selection's count, unconfirmed.
-      const unconfirmedRows = results.filter(
-        (result) => result.status === "fulfilled" && !result.value.updated,
-      ).length;
+      const unconfirmedRows = results.reduce(
+        (sum, result, index) =>
+          result.status === "fulfilled" && !result.value.updated
+            ? sum + (variables.chats[index]?.selectedRows ?? 1)
+            : sum,
+        0,
+      );
       toastFromOwnerHostBatchWriteFailuresWithUnconfirmed(
         results.flatMap((result, index): OwnerHostBatchWriteOutcome[] =>
           result.status === "fulfilled" && !result.value.updated
@@ -819,7 +834,7 @@ export function useEpicArchiveChats(): UseMutationResult<
                 {
                   kind: "agent",
                   hostId: variables.chats[index]?.hostId ?? null,
-                  selectedRows: 1,
+                  selectedRows: variables.chats[index]?.selectedRows ?? 1,
                   error:
                     result.status === "rejected"
                       ? toHostRpcError(result.reason, "epic.setChatArchived")

@@ -1029,8 +1029,8 @@ describe("useEpicArchiveChats", () => {
       result.current.mutate({
         epicId: "epic-1",
         chats: [
-          { chatId: "chat-1", hostId: "host-test" },
-          { chatId: "chat-2", hostId: "remote-host" },
+          { chatId: "chat-1", hostId: "host-test", selectedRows: 1 },
+          { chatId: "chat-2", hostId: "remote-host", selectedRows: 1 },
         ],
         archived: true,
       });
@@ -1082,8 +1082,8 @@ describe("useEpicArchiveChats", () => {
       result.current.mutate({
         epicId: "epic-1",
         chats: [
-          { chatId: "chat-1", hostId: "host-test" },
-          { chatId: "chat-2", hostId: "remote-host" },
+          { chatId: "chat-1", hostId: "host-test", selectedRows: 1 },
+          { chatId: "chat-2", hostId: "remote-host", selectedRows: 1 },
         ],
         archived: true,
       });
@@ -1207,7 +1207,11 @@ describe("useEpicArchiveChats", () => {
     act(() => {
       result.current.mutate({
         epicId: "epic-1",
-        chats: rows.map(({ chatId, hostId }) => ({ chatId, hostId })),
+        chats: rows.map(({ chatId, hostId }) => ({
+          chatId,
+          hostId,
+          selectedRows: 1,
+        })),
         archived,
       });
     });
@@ -1271,8 +1275,8 @@ describe("useEpicArchiveChats", () => {
       result.current.mutate({
         epicId: "epic-1",
         chats: [
-          { chatId: "chat-1", hostId: "host-test" },
-          { chatId: "chat-2", hostId: "remote-host" },
+          { chatId: "chat-1", hostId: "host-test", selectedRows: 1 },
+          { chatId: "chat-2", hostId: "remote-host", selectedRows: 1 },
         ],
         archived: true,
       });
@@ -1300,8 +1304,8 @@ describe("useEpicArchiveChats", () => {
       result.current.mutate({
         epicId: "epic-1",
         chats: [
-          { chatId: "chat-1", hostId: "remote-host" },
-          { chatId: "chat-2", hostId: "remote-host" },
+          { chatId: "chat-1", hostId: "remote-host", selectedRows: 1 },
+          { chatId: "chat-2", hostId: "remote-host", selectedRows: 1 },
         ],
         archived: true,
       });
@@ -1334,8 +1338,8 @@ describe("useEpicArchiveChats", () => {
       result.current.mutate({
         epicId: "epic-1",
         chats: [
-          { chatId: "chat-1", hostId: "host-test" },
-          { chatId: "chat-2", hostId: "remote-host" },
+          { chatId: "chat-1", hostId: "host-test", selectedRows: 1 },
+          { chatId: "chat-2", hostId: "remote-host", selectedRows: 1 },
         ],
         archived: true,
       });
@@ -1350,5 +1354,106 @@ describe("useEpicArchiveChats", () => {
     expect(toast.error).toHaveBeenCalledTimes(1);
     expect(toast).not.toHaveBeenCalled();
     expect(toast.message).not.toHaveBeenCalled();
+  });
+  // traycerai/traycer thread taOw7: archiving a parent hides its subtree, so
+  // the sidebar sends only the topmost selected rows. Each carries the
+  // selected rows it covers, and the notice counts those, not the requests.
+  type WeightedArchiveRow =
+    | "updated"
+    | "not-updated"
+    | "refused"
+    | "unreachable";
+
+  async function weightedArchiveNotice(
+    rows: readonly {
+      readonly row: WeightedArchiveRow;
+      readonly selectedRows: number;
+    }[],
+    archived: boolean,
+  ): Promise<unknown> {
+    archiveChatMutateAsync.mockImplementation(
+      (input: ArchiveChatMutationInput) => {
+        const row = rows[Number(input.chatId.slice("root-".length))]?.row;
+        if (row === "refused") return Promise.reject(makeError("FORBIDDEN"));
+        if (row === "unreachable") {
+          return Promise.reject(hostUnreachable("epic.setChatArchived"));
+        }
+        return Promise.resolve({ updated: row === "updated" });
+      },
+    );
+    const { result } = renderHook(() => useEpicArchiveChats(), {
+      wrapper: makeWrapper(),
+    });
+
+    act(() => {
+      result.current.mutate({
+        epicId: "epic-1",
+        chats: rows.map((entry, index) => ({
+          chatId: `root-${String(index)}`,
+          hostId: `host-${String(index)}`,
+          selectedRows: entry.selectedRows,
+        })),
+        archived,
+      });
+    });
+
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledTimes(1);
+    });
+    return vi.mocked(toast.error).mock.calls[0]?.[0];
+  }
+
+  it("counts an unreachable parent with its selected child as two of three selected", async () => {
+    await expect(
+      weightedArchiveNotice(
+        [
+          { row: "unreachable", selectedRows: 2 },
+          { row: "updated", selectedRows: 1 },
+        ],
+        true,
+      ),
+    ).resolves.toBe("Archived 1 of 3 selected agents. 2 couldn't be archived.");
+  });
+
+  it("counts an archived parent with its selected child as two of three selected", async () => {
+    await expect(
+      weightedArchiveNotice(
+        [
+          { row: "updated", selectedRows: 2 },
+          { row: "refused", selectedRows: 1 },
+        ],
+        true,
+      ),
+    ).resolves.toBe(
+      "Archived 2 of 3 selected agents. 1 couldn't be archived. You don't have permission to do that.",
+    );
+  });
+
+  it("keeps a not-updated parent's selected child in the selection's count", async () => {
+    await expect(
+      weightedArchiveNotice(
+        [
+          { row: "not-updated", selectedRows: 2 },
+          { row: "refused", selectedRows: 1 },
+        ],
+        true,
+      ),
+    ).resolves.toBe(
+      "Couldn't confirm all 3 selected agents were archived. Check them and archive any that weren't. You don't have permission to do that.",
+    );
+  });
+
+  it("counts an unarchive the same way", async () => {
+    await expect(
+      weightedArchiveNotice(
+        [
+          { row: "unreachable", selectedRows: 2 },
+          { row: "updated", selectedRows: 1 },
+        ],
+        false,
+      ),
+    ).resolves.toBe(
+      "Unarchived 1 of 3 selected agents. 2 couldn't be unarchived.",
+    );
   });
 });

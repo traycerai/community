@@ -1897,6 +1897,13 @@ function useSelectedChatArchive(canMutate: boolean): SelectedChatArchiveAction {
         chats: selectedRootIds.map((chatId, index) => ({
           chatId,
           hostId: ownerHostIds[index] ?? sessionHostId,
+          // Archiving a root hides its subtree, so its request stands for
+          // the root and every selected row beneath it.
+          selectedRows: sidebarIdsWithinRoots({
+            ids: selection.selectedVisibleIds,
+            rootIds: [chatId],
+            tree,
+          }).length,
         })),
         archived: true,
       },
@@ -1940,6 +1947,7 @@ function useSelectedChatArchive(canMutate: boolean): SelectedChatArchiveAction {
     selectedRootIds,
     selection,
     supported,
+    tree,
   ]);
   return {
     supported,

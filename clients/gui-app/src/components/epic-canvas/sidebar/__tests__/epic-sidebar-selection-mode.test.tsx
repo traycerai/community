@@ -198,6 +198,12 @@ interface TestState {
    * through that one.
    */
   archiveRowPending: boolean;
+  /** The targets the last bulk archive was given, with their row weights. */
+  archiveBatchChats: ReadonlyArray<{
+    readonly chatId: string;
+    readonly hostId: string | null;
+    readonly selectedRows: number;
+  }>;
   archiveMutateAsync: Mock<
     (input: {
       readonly epicId: string;
@@ -270,6 +276,7 @@ const testState = vi.hoisted<TestState>(() => ({
   archiveMutate: vi.fn(),
   archiveBatchPending: false,
   archiveRowPending: false,
+  archiveBatchChats: [],
   archiveMutateAsync: vi.fn(),
   rowHostId: "host-1",
   rowHostReachability: "reachable",
@@ -606,6 +613,7 @@ vi.mock("@/hooks/epic/use-epic-chat-mutations", () => ({
         readonly chats: ReadonlyArray<{
           readonly chatId: string;
           readonly hostId: string | null;
+          readonly selectedRows: number;
         }>;
         readonly archived: boolean;
       },
@@ -616,6 +624,7 @@ vi.mock("@/hooks/epic/use-epic-chat-mutations", () => ({
       },
     ) => {
       testState.archiveBatchPending = true;
+      testState.archiveBatchChats = variables.chats;
       void Promise.allSettled(
         variables.chats.map((chat) =>
           testState.archiveMutateAsync({
@@ -1406,6 +1415,7 @@ describe("epic sidebar selection mode", () => {
     testState.archivedIds = [];
     testState.archiveMutate = vi.fn();
     testState.archiveBatchPending = false;
+    testState.archiveBatchChats = [];
     testState.archiveRowPending = false;
     testState.archiveMutateAsync = vi.fn();
     testState.openArtifactById = {};
@@ -1809,6 +1819,12 @@ describe("epic sidebar selection mode", () => {
       hostId: "host-1",
       archived: true,
     });
+    // Thread taOw7: the root's request stands for the selected child its
+    // archive hides, so the batch notice counts both.
+    expect(testState.archiveBatchChats).toEqual([
+      { chatId: "chat-root", hostId: "host-1", selectedRows: 2 },
+      { chatId: "agent-root", hostId: "host-1", selectedRows: 1 },
+    ]);
     expect(
       screen.queryByRole("button", { name: "Cancel selection" }),
     ).toBeNull();
