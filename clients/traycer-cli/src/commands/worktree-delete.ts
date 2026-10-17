@@ -267,12 +267,12 @@ function runDeleteCommand(
             declined: declined ?? null,
             error: null,
           }),
-        onTargetFailed: (_worktreePath, reason) =>
+        onTargetFailed: (_worktreePath, reason, _holders, code) =>
           finish({
             kind: "settled",
             deleted: false,
             declined: null,
-            error: deleteFailedCliError(reason, null),
+            error: deleteFailedCliError(reason, null, code),
           }),
         // With one target this normally arrives after its terminal frame and
         // is a no-op under the settled guard. It matters when it does NOT: an
@@ -290,7 +290,7 @@ function runDeleteCommand(
             kind: "settled",
             deleted: false,
             declined: null,
-            error: deleteFailedCliError(reason, null),
+            error: deleteFailedCliError(reason, null, undefined),
           }),
         onUnsupported: () => finish({ kind: "unsupported" }),
         onConnectionStatus: (
@@ -384,7 +384,13 @@ async function runLegacyDeleteStream(
           return;
         case "failed":
           finish(() =>
-            reject(deleteFailedCliError(frame.reason, frame.holders ?? null)),
+            reject(
+              deleteFailedCliError(
+                frame.reason,
+                frame.holders ?? null,
+                frame.code === "WORKTREE_BUSY" ? frame.code : undefined,
+              ),
+            ),
           );
           return;
         case "pong":
@@ -478,17 +484,25 @@ function relayOutput(
  * `details` so `--json` callers get the structured list, and the human message
  * names the holders rather than leaving "worktree is busy" for the user to
  * investigate by hand.
+ *
+ * `code` is the host's typed `WORKTREE_BUSY` refusal when it sent one. It, not
+ * the prose `reason` (which carries the person's absolute worktree path),
+ * decides that this is the expected busy outcome rather than a failure.
  */
 function deleteFailedCliError(
   reason: string,
   holders: WorktreeBusyHolders | null,
+  code: "WORKTREE_BUSY" | undefined,
 ): CliError {
   const named =
     holders === null || holders.length === 0
       ? ""
       : ` Held by ${holders.map((holder) => holder.label).join(", ")}.`;
   return cliError({
-    code: CLI_ERROR_CODES.UNEXPECTED,
+    code:
+      code === "WORKTREE_BUSY"
+        ? CLI_ERROR_CODES.WORKTREE_BUSY
+        : CLI_ERROR_CODES.UNEXPECTED,
     message: `traycer: worktree delete failed - ${reason}${named}`,
     details: holders === null ? null : { holders },
     exitCode: 1,

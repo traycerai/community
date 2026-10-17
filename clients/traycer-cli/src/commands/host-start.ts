@@ -57,6 +57,8 @@ import { hostHomeDir } from "../store/paths";
 import {
   HOST_CRASH_REPORT_TIMEOUT_MS,
   reportHostCrashToSentry,
+  resumeHostCrashReports,
+  settleHostCrashThrottleWrites,
   type HostCrashTelemetry,
 } from "../host/crash-telemetry";
 import {
@@ -672,6 +674,12 @@ export interface RunHostStartDeps extends ResolveHostStartTargetDeps {
   // pid.json read never touches a real host home. Best-effort: the marker is
   // written first and the relaunch does not wait on the network.
   readonly reportHostCrash: (telemetry: HostCrashTelemetry) => Promise<void>;
+  // Called once as a supervisor starts: takes the crash-report throttle state
+  // the previous supervisor left on disk, so the bound on full reports holds
+  // across the restarts a service manager makes of a host that cannot start,
+  // and a count that supervisor left open is still sent. Best-effort; must
+  // never throw.
+  readonly resumeCrashReports: (environment: Environment) => Promise<void>;
   // The lifecycle policy's park rule and the supervisor's `supervisor.json` /
   // `supervisor-run.json`. The defaults read and WRITE the real host home, so
   // a test that runs a labelled start, or reaches an admitted spawn, must
@@ -828,6 +836,7 @@ const defaultRunDeps: RunHostStartDeps = {
   readStopIntentIdentity,
   maxRelaunches: MAX_CONSECUTIVE_RELAUNCHES,
   reportHostCrash: reportHostCrashToSentry,
+  resumeCrashReports: resumeHostCrashReports,
   lifecycle: {
     readPolicy: readHostLifecyclePolicy,
     readPresence: readDesktopPresence,
@@ -1013,6 +1022,19 @@ export async function runHostStart(
     return deps.exit(0);
   }
 
+  // Pick up the crash-report throttle state the previous supervisor left, so a
+  // host that crashes on every start does not get a fresh budget of full
+  // reports per supervisor life, and a count that supervisor left open is
+  // sent. Not awaited here, but an exit before it ends waits for it (bounded),
+  // for the summary to be queued and the file written, not for Sentry to
+  // deliver it: an overdue count is sent at most once, and not sent twice
+  // because its write was cut off.
+  trackPendingCrashTelemetry(
+    Promise.resolve()
+      .then(() => deps.resumeCrashReports(opts.environment))
+      .catch(() => undefined),
+  );
+
   // Best-effort backstop against stacking a second host on a live one.
   // BE PRECISE ABOUT WHAT THIS DOES AND DOES NOT COVER.
   //
@@ -1081,6 +1103,7 @@ export async function runHostStart(
         supervisorPid,
       },
     );
+    await settlePendingCrashTelemetry();
     return deps.exit(0);
   }
 
@@ -1444,6 +1467,7 @@ export async function runHostStart(
       exitOwesSuccessor(exitCode) ? "keep-run-state" : "all",
     );
     releaseShutdownHandlers();
+    await settlePendingCrashTelemetry();
     return deps.exit(exitCode);
   };
 
@@ -3813,7 +3837,7 @@ function boundedCrashTelemetry(
   input: { readonly deps: RunHostStartDeps },
   telemetry: HostCrashTelemetry,
 ): Promise<void> {
-  return Promise.race([
+  const bounded = Promise.race([
     Promise.resolve()
       .then(() => input.deps.reportHostCrash(telemetry))
       .catch(() => undefined),
@@ -3822,6 +3846,46 @@ function boundedCrashTelemetry(
       timer.unref?.();
     }),
   ]);
+  trackPendingCrashTelemetry(bounded);
+  return bounded;
+}
+
+function trackPendingCrashTelemetry(task: Promise<void>): void {
+  pendingCrashTelemetry.add(task);
+  void task.then(() => pendingCrashTelemetry.delete(task));
+}
+
+/**
+ * Reports (and the throttle-state resume at start) still in flight; a report
+ * is inside its {@link HOST_CRASH_REPORT_TIMEOUT_MS} bound. The
+ * relaunch never waits on them, but the supervisor's own exit does: the last
+ * crash of a supervisor's life is reported just before it exits, and the
+ * throttle state that report writes is what the next supervisor starts from.
+ */
+const pendingCrashTelemetry = new Set<Promise<void>>();
+
+/** Wait, for at most the report bound, for the reports still in flight. */
+async function settlePendingCrashTelemetry(): Promise<void> {
+  const waiting = [...pendingCrashTelemetry];
+  let timer: NodeJS.Timeout | undefined;
+  await Promise.race([
+    (async () => {
+      await Promise.allSettled(waiting);
+      // After the reports, not beside them: a summary timer can fire while
+      // they are awaited, and its write and upload are queued only then. The
+      // throttle's own writes and uploads are waited for within the same
+      // deadline, since nothing else awaits them before a clean stop.
+      await settleHostCrashThrottleWrites().catch(() => undefined);
+    })(),
+    new Promise<void>((resolve) => {
+      // Referenced on purpose: with the report's own timer unref'd, this is
+      // what keeps the process alive until the wait ends.
+      timer = setTimeout(resolve, HOST_CRASH_REPORT_TIMEOUT_MS);
+    }),
+  ]);
+  clearTimeout(timer);
+  // Waited for, or given up on: either way nothing is left to wait for.
+  for (const task of waiting) pendingCrashTelemetry.delete(task);
 }
 
 /** The report's memory numbers, every field `null` when there was no report. */

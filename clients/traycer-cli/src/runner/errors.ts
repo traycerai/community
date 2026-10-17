@@ -47,8 +47,18 @@ export const CLI_ERROR_CODES = {
   // and before these codes each one fell through to UNEXPECTED and was
   // captured.
   WORKTREE_MISSING: "E_WORKTREE_MISSING",
+  // The host refused a `worktree delete` because an agent session or the
+  // background work it owns still holds the worktree (the typed
+  // `WORKTREE_BUSY` code on the delete frames). The person's own worktree is in
+  // use; stopping that work, or re-running with the owners stopped, is the
+  // remedy.
+  WORKTREE_BUSY: "E_WORKTREE_BUSY",
   WORKSPACE_BINDING_REQUIRED: "E_WORKSPACE_BINDING_REQUIRED",
   HOST_STORAGE_FULL: "E_HOST_STORAGE_FULL",
+  // The host refused a run or launch on a provider the person turned off in
+  // Settings -> Providers (HTTP 403, typed `PROVIDER_DISABLED`). Their own
+  // setting stops the request and the message names the remedy.
+  PROVIDER_DISABLED: "E_PROVIDER_DISABLED",
 
   // --- Auth ---
   AUTH_NO_CREDENTIALS: "E_AUTH_NO_CREDENTIALS",
@@ -263,8 +273,10 @@ export const EXPECTED_CLI_ERROR_CODES: ReadonlySet<CliErrorCode> =
     CLI_ERROR_CODES.AGENT_ARCHIVE_BUSY,
     CLI_ERROR_CODES.AGENT_RECORD_NOT_FOUND,
     CLI_ERROR_CODES.WORKTREE_MISSING,
+    CLI_ERROR_CODES.WORKTREE_BUSY,
     CLI_ERROR_CODES.WORKSPACE_BINDING_REQUIRED,
     CLI_ERROR_CODES.HOST_STORAGE_FULL,
+    CLI_ERROR_CODES.PROVIDER_DISABLED,
     CLI_ERROR_CODES.CONFIG_INVALID,
     CLI_ERROR_CODES.CONFIG_INVALID_VALUE,
     CLI_ERROR_CODES.CONFIG_MISSING_KEY,
