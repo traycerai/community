@@ -1620,12 +1620,13 @@ describe("runHostStart - signal/exit propagation", () => {
     expect(elapsed).toBeGreaterThanOrEqual(STDERR_END_WAIT_TIMEOUT_MS - 200);
   }, 10_000);
 
-  it("does not hold the relaunch decision on a reportHostCrash that never resolves", async () => {
-    // The reporter is dispatched WITHOUT awaiting it: the relaunch decision
-    // and its backoff must start the moment the marker is written, not after
-    // HOST_CRASH_REPORT_TIMEOUT_MS. Real timers, so the elapsed-time bound
-    // below is the invariant itself - a run that waited on the reporter's
-    // 1.5 s race would fail it.
+  it("waits for a reportHostCrash that never resolves no longer than its bound before the supervisor exits", async () => {
+    // The reporter is dispatched WITHOUT awaiting it, so a relaunch decision
+    // and its backoff start the moment the marker is written. The supervisor's
+    // own EXIT does wait for it, because the report writes the throttle state
+    // the next supervisor starts from, but never past
+    // HOST_CRASH_REPORT_TIMEOUT_MS. Real timers, so the elapsed-time bounds
+    // below are the invariant itself.
     const exec = "/opt/traycer/host/install/traycer-host";
     const { child, recorded, deps } = makeRunStubs(sampleRecord(exec), null);
     recorded.reportHostCrashHangs = true;
@@ -1650,7 +1651,38 @@ describe("runHostStart - signal/exit propagation", () => {
       recorded.sequence.indexOf("terminal-marker:crashed"),
     );
     expect(recorded.crashReports).toHaveLength(0);
-    expect(elapsedMs).toBeLessThan(HOST_CRASH_REPORT_TIMEOUT_MS);
+    expect(elapsedMs).toBeGreaterThanOrEqual(HOST_CRASH_REPORT_TIMEOUT_MS - 200);
+    expect(elapsedMs).toBeLessThan(HOST_CRASH_REPORT_TIMEOUT_MS + 1_500);
+  }, 10_000);
+
+  it("lets the last crash report land before the supervisor exits, so the throttle state it writes is on disk for the next supervisor", async () => {
+    const exec = "/opt/traycer/host/install/traycer-host";
+    const { child, recorded, deps } = makeRunStubs(sampleRecord(exec), null);
+    let landed = false;
+    let landedAtExit: boolean | null = null;
+    const slowReporting: RunHostStartDeps = {
+      ...deps,
+      reportHostCrash: async () => {
+        await new Promise<void>((resolve) => setTimeout(resolve, 300));
+        landed = true;
+      },
+      exit: (code) => {
+        landedAtExit = landed;
+        return deps.exit(code);
+      },
+    };
+
+    await runUntilExit(
+      () =>
+        runHostStart(
+          { environment: "production", cwd: null },
+          withChildExit(slowReporting, child, 7, null),
+        ),
+      recorded,
+    );
+
+    expect(recorded.exited).toBe(7);
+    expect(landedAtExit).toBe(true);
   }, 10_000);
 
   it("spawn() throw is translated into HOST_SPAWN_FAILED + exit 66", async () => {

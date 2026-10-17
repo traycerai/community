@@ -501,8 +501,10 @@ export class HostCrashReportThrottle {
   restore(persisted: PersistedHostCrashThrottle): void {
     const now = this.deps.now();
     for (const [key, kind] of persisted) {
-      // A clock that stepped back must not leave a kind muted: no time in the
-      // state may lie ahead of now.
+      // No time in the state may lie ahead of now, so a clock that stepped
+      // back holds a kind for at most one window, as any recent crash does,
+      // and never for as long as the step. (Treating a future time as "long
+      // quiet" instead would give every clock correction a fresh budget.)
       const lastCrashAt = Math.min(kind.lastCrashAt, now);
       const existing = this.states.get(key);
       if (existing !== undefined && existing.lastCrashAt >= lastCrashAt) {

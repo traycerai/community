@@ -1460,6 +1460,7 @@ export async function runHostStart(
       exitOwesSuccessor(exitCode) ? "keep-run-state" : "all",
     );
     releaseShutdownHandlers();
+    await settlePendingCrashTelemetry();
     return deps.exit(exitCode);
   };
 
@@ -3829,7 +3830,7 @@ function boundedCrashTelemetry(
   input: { readonly deps: RunHostStartDeps },
   telemetry: HostCrashTelemetry,
 ): Promise<void> {
-  return Promise.race([
+  const bounded = Promise.race([
     Promise.resolve()
       .then(() => input.deps.reportHostCrash(telemetry))
       .catch(() => undefined),
@@ -3838,6 +3839,32 @@ function boundedCrashTelemetry(
       timer.unref?.();
     }),
   ]);
+  pendingCrashTelemetry.add(bounded);
+  void bounded.then(() => pendingCrashTelemetry.delete(bounded));
+  return bounded;
+}
+
+/**
+ * Reports still inside their {@link HOST_CRASH_REPORT_TIMEOUT_MS} bound. The
+ * relaunch never waits on them, but the supervisor's own exit does: the last
+ * crash of a supervisor's life is reported just before it exits, and the
+ * throttle state that report writes is what the next supervisor starts from.
+ */
+const pendingCrashTelemetry = new Set<Promise<void>>();
+
+/** Wait, for at most the report bound, for the reports still in flight. */
+async function settlePendingCrashTelemetry(): Promise<void> {
+  if (pendingCrashTelemetry.size === 0) return;
+  let timer: NodeJS.Timeout | undefined;
+  await Promise.race([
+    Promise.allSettled([...pendingCrashTelemetry]),
+    new Promise<void>((resolve) => {
+      // Referenced on purpose: with the report's own timer unref'd, this is
+      // what keeps the process alive until the wait ends.
+      timer = setTimeout(resolve, HOST_CRASH_REPORT_TIMEOUT_MS);
+    }),
+  ]);
+  clearTimeout(timer);
 }
 
 /** The report's memory numbers, every field `null` when there was no report. */
