@@ -135,6 +135,8 @@ const catalogHarnesses = vi.hoisted(() => () => [
         supportedReasoningEfforts: [
           { id: "high", label: "High", description: null },
         ],
+        defaultServiceTier: null,
+        supportedServiceTiers: [],
         metadata: {},
       },
       // A SECOND model, so a host tuple and a local tuple can disagree
@@ -146,6 +148,8 @@ const catalogHarnesses = vi.hoisted(() => () => [
         supportedReasoningEfforts: [
           { id: "high", label: "High", description: null },
         ],
+        defaultServiceTier: null,
+        supportedServiceTiers: [],
         metadata: {},
       },
     ],

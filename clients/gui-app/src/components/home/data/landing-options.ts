@@ -838,6 +838,18 @@ export function selectedServiceTierOption(
   );
 }
 
+/** Resolve a recorded tier, including one that the model declares as default. */
+export function advertisedServiceTierOption(
+  value: ServiceTier,
+  model: ModelOption | null,
+): ServiceTierOption | null {
+  const id = value.trim();
+  if (id.length === 0) return null;
+  return (
+    model?.supportedServiceTiers.find((option) => option.id === id) ?? null
+  );
+}
+
 export function standardServiceTierLabel(model: ModelOption | null): string {
   return (
     model?.supportedServiceTiers.find(

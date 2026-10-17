@@ -107,7 +107,11 @@ export function ServiceTierMenuButton(props: ServiceTierMenuButtonProps) {
         onKeyDown={(event) => {
           if (event.key === "Escape") event.stopPropagation();
         }}
-        container={portalContainer ?? undefined}
+        // The panel clips its footer; its parent keeps the menu in the same
+        // overlay subtree without cutting off rows beyond the panel edge.
+        container={
+          portalContainer?.parentElement ?? portalContainer ?? undefined
+        }
       >
         <DropdownMenuRadioGroup
           value={selected}

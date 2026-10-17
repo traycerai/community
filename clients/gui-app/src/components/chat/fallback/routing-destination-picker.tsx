@@ -23,11 +23,10 @@ import type {
 import { tierRungSkipReasonSchema } from "@traycer/protocol/host/fallback-policy";
 import type { HostClient } from "@traycer-clients/shared/host-client/host-client";
 import {
+  advertisedServiceTierOption,
   DEFAULT_PERMISSION,
   modelDisplayLabel,
   normalizeReasoningForModel,
-  normalizeServiceTierForModel,
-  selectedServiceTierOption,
   type HarnessModelSelection,
   type ModelOption,
   type ReasoningFallback,
@@ -209,7 +208,7 @@ export function RoutingDestinationPicker(props: {
       ? null
       : modelFor(failedTuple.harnessId, failedTuple.model);
   const failedTierName =
-    selectedServiceTierOption(failedTuple.serviceTier ?? "", failedModel)
+    advertisedServiceTierOption(failedTuple.serviceTier ?? "", failedModel)
       ?.label ?? failedTuple.serviceTier;
   const seed = useStableValue(
     recommendedTuple(data, failedTuple),
@@ -1033,16 +1032,17 @@ function confirmTarget(
 ): ChatRunSettings | null {
   const { selection, reasoning } = pick;
   if (selection.modelSlug.length === 0) return null;
-  // The generic preference normalizer passes through while a catalog is
-  // loading. A routing confirmation has to choose a concrete target now, so
-  // an unverified paid tier clears to Standard until the target model arrives.
+  // Routing carries a historical tier when the target advertises that exact
+  // id, including an id it declares as its default. The picker excludes
+  // default tiers from its selectable upgrades, but that is not a routing
+  // membership test. An unresolved catalog cannot verify a paid tier.
   const tier =
     pick.selectedModel === null
       ? ""
-      : normalizeServiceTierForModel(
+      : (advertisedServiceTierOption(
           failedTuple.serviceTier ?? "",
           pick.selectedModel,
-        ).trim();
+        )?.id ?? "");
   const listed = listedTarget(pick, data);
   if (listed !== null) {
     return { ...listed, serviceTier: tier.length === 0 ? null : tier };
@@ -1182,11 +1182,9 @@ function RoutingConfirmFooter({
         >
           {line}
         </div>
-        {refusal === null && speedNotice !== null ? (
-          <div role="status" className="text-warning-foreground">
-            {speedNotice}
-          </div>
-        ) : null}
+        <div role="status" className="text-warning-foreground">
+          {refusal === null ? speedNotice : null}
+        </div>
       </div>
       <Button size="sm" disabled={disabled} onClick={onConfirm}>
         Switch
@@ -1217,9 +1215,9 @@ function fallbackSpeedNotice(
   const modelName =
     selectedModel === null ? target.model : modelDisplayLabel(selectedModel);
   if (selectedModel === null) {
-    return `Couldn't confirm ${tierName} on ${modelName}. This runs at Standard.`;
+    return `Couldn't confirm ${tierName} on ${modelName}. No Speed tier is selected.`;
   }
-  return `${tierName} isn't available on ${modelName}. This runs at Standard.`;
+  return `${tierName} isn't available on ${modelName}. No Speed tier is selected.`;
 }
 
 /**

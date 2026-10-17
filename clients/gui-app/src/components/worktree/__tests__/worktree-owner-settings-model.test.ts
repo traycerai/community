@@ -399,6 +399,29 @@ describe("deriveOwnerSettingsHeader", () => {
       expect(view?.serviceTierLabel).toBe("Ultrafast");
     });
 
+    it("resolves the advertised default tier label for a stored request", () => {
+      const entry = claudeHarnessEntry();
+      const view = deriveOwnerSettingsHeader(
+        baseInput({
+          chatSettings: { ...BASE_CHAT_SETTINGS, serviceTier: "priority" },
+          harnesses: [
+            {
+              ...entry,
+              models: entry.models.map((model) => ({
+                ...model,
+                defaultServiceTier: "priority",
+                supportedServiceTiers: [
+                  { id: "priority", label: "Flex", description: null },
+                ],
+              })),
+            },
+          ],
+        }),
+      );
+
+      expect(view?.serviceTierLabel).toBe("Flex");
+    });
+
     it("falls back to the raw id when the catalog has no matching tier", () => {
       const view = deriveOwnerSettingsHeader(
         baseInput({

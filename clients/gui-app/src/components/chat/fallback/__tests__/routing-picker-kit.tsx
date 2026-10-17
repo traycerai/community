@@ -215,6 +215,15 @@ const CODEX_MODELS: ReadonlyArray<ModelOption> = [
       { id: "ultrafast", label: "Ultrafast", description: null },
     ],
   }),
+  model({
+    harnessId: "codex",
+    slug: "gpt-6-flex",
+    label: "GPT-6-Flex",
+    defaultServiceTier: "priority",
+    supportedServiceTiers: [
+      { id: "priority", label: "Flex", description: null },
+    ],
+  }),
 ];
 
 interface CatalogCall {

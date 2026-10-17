@@ -858,9 +858,10 @@ describe("RoutingDestinationPicker", () => {
       kit.mutationResult = { outcome: "rung_unavailable", detail: null };
       fireEvent.click(footerConfirm());
 
-      expect(screen.getByRole("status").textContent).toBe(
-        "Couldn't switch just now.",
-      );
+      expect(
+        document.querySelector('[role="status"][aria-live="polite"]')
+          ?.textContent,
+      ).toBe("Couldn't switch just now.");
       expect(screen.queryByText(/^Replays on /)).toBeNull();
       expect(screen.getAllByText("Couldn't switch just now.")).toHaveLength(2);
     });
@@ -869,9 +870,11 @@ describe("RoutingDestinationPicker", () => {
       mount(failedTurn(["switch"]));
       await open();
 
-      const region = screen.getByRole("status");
-      expect(region.textContent).toBe("");
-      expect(region.className).toContain("sr-only");
+      const regions = screen.getAllByRole("status");
+      expect(regions).toHaveLength(2);
+      expect(regions[0].textContent).toBe("");
+      expect(regions[0].className).toContain("sr-only");
+      expect(regions[1].textContent).toBe("");
     });
 
     it("has exactly one button, Switch, and no Retry, Wait or Suggested anywhere in the popover", async () => {
@@ -1226,7 +1229,7 @@ describe("RoutingDestinationPicker", () => {
         await mountFailedAt(ULTRA_FAILED, []);
 
         fireEvent.click(option(/GPT-6-Astra/));
-        expect(screen.queryByText(/This runs at Standard/)).toBeNull();
+        expect(screen.queryByText(/No Speed tier is selected/)).toBeNull();
         fireEvent.click(footerConfirm());
 
         expect(kit.mutations[0]).toMatchObject({
@@ -1236,16 +1239,24 @@ describe("RoutingDestinationPicker", () => {
         });
       });
 
-      it("clears ultrafast to Standard on a priority-only destination and says so before confirming", async () => {
+      it("clears ultrafast on a priority-only destination and says so before confirming", async () => {
         await mountFailedAt(ULTRA_FAILED, []);
+
+        const statusRegions =
+          footerConfirm().parentElement?.querySelectorAll('[role="status"]');
+        if (statusRegions?.length !== 2) {
+          throw new Error("expected refusal and speed status regions");
+        }
+        const speedRegion = statusRegions[1];
+        expect(speedRegion.textContent).toContain("No Speed tier is selected.");
 
         fireEvent.click(option(/GPT-6-Sol/));
 
-        expect(
-          screen.getByText(
-            "Ultrafast isn't available on GPT-6-Sol. This runs at Standard.",
-          ),
-        ).not.toBeNull();
+        const notice =
+          "Ultrafast isn't available on GPT-6-Sol. No Speed tier is selected.";
+        expect(screen.getByText(notice)).not.toBeNull();
+        expect(speedRegion.isConnected).toBe(true);
+        expect(speedRegion.textContent).toBe(notice);
         fireEvent.click(footerConfirm());
         expect(kit.mutations[0]).toMatchObject({
           variables: { target: { model: "gpt-6-sol", serviceTier: null } },
@@ -1260,13 +1271,61 @@ describe("RoutingDestinationPicker", () => {
 
         expect(
           screen.getByText(
-            "Couldn't confirm ultrafast on gpt-6-sol. This runs at Standard.",
+            "Couldn't confirm ultrafast on gpt-6-sol. No Speed tier is selected.",
           ),
         ).not.toBeNull();
         fireEvent.click(footerConfirm());
         expect(kit.mutations[0]).toMatchObject({
           variables: { target: { model: "gpt-6-sol", serviceTier: null } },
         });
+      });
+
+      it("does not promise a named default when the failed tier is unsupported", async () => {
+        await mountFailedAt(ULTRA_FAILED, []);
+
+        fireEvent.click(option(/GPT-6-Flex/));
+
+        expect(
+          screen.getByText(
+            "Ultrafast isn't available on GPT-6-Flex. No Speed tier is selected.",
+          ),
+        ).not.toBeNull();
+        fireEvent.click(footerConfirm());
+        expect(kit.mutations[0]).toMatchObject({
+          variables: { target: { model: "gpt-6-flex", serviceTier: null } },
+        });
+      });
+
+      it("keeps the advertised default tier id when the failed tier matches it", async () => {
+        const failedAtPriority = { ...ULTRA_FAILED, serviceTier: "priority" };
+        await mountFailedAt(failedAtPriority, []);
+
+        fireEvent.click(option(/GPT-6-Flex/));
+
+        expect(screen.queryByText(/isn't available/)).toBeNull();
+        fireEvent.click(footerConfirm());
+        expect(kit.mutations[0]).toMatchObject({
+          variables: {
+            target: { model: "gpt-6-flex", serviceTier: "priority" },
+          },
+        });
+      });
+
+      it("uses the advertised default label for a historical failed tier", async () => {
+        const failedAtFlexDefault: ChatRunSettings = {
+          ...ULTRA_FAILED,
+          model: "gpt-6-flex",
+          serviceTier: "priority",
+        };
+        await mountFailedAt(failedAtFlexDefault, []);
+
+        fireEvent.click(screen.getByRole("tab", { name: "Claude" }));
+        fireEvent.click(option(/Claude Opus 4/));
+
+        expect(
+          screen.getByText(/Flex isn't available on Claude Opus 4/),
+        ).not.toBeNull();
+        expect(screen.queryByText(/priority isn't available/)).toBeNull();
       });
 
       it("uses the directory catalog slot for a managed failed profile and keeps its tier label", async () => {
@@ -1301,7 +1360,7 @@ describe("RoutingDestinationPicker", () => {
         ).toBe(true);
         expect(
           screen.getByText(
-            "Ultrafast isn't available on GPT-6-Sol. This runs at Standard.",
+            "Ultrafast isn't available on GPT-6-Sol. No Speed tier is selected.",
           ),
         ).not.toBeNull();
       });
@@ -1318,7 +1377,7 @@ describe("RoutingDestinationPicker", () => {
         ).toBe(true);
       });
 
-      it("never substitutes another paid tier: a Claude fast tuple on a Codex destination runs Standard", async () => {
+      it("never substitutes another paid tier for a Claude fast tuple on a Codex destination", async () => {
         kit.listData = listingOf({
           failedTuple: { ...FAILED, serviceTier: "fast" },
           profileTargets: [],
@@ -1356,7 +1415,7 @@ describe("RoutingDestinationPicker", () => {
         fireEvent.click(option(/GPT-6-Sol/));
         expect(
           screen.getByText(
-            "Ultrafast isn't available on GPT-6-Sol. This runs at Standard.",
+            "Ultrafast isn't available on GPT-6-Sol. No Speed tier is selected.",
           ),
         ).not.toBeNull();
         fireEvent.click(footerConfirm());
@@ -1371,7 +1430,7 @@ describe("RoutingDestinationPicker", () => {
 
         fireEvent.click(option(/GPT-6-Sol/));
 
-        expect(screen.queryByText(/This runs at Standard/)).toBeNull();
+        expect(screen.queryByText(/No Speed tier is selected/)).toBeNull();
       });
     });
 

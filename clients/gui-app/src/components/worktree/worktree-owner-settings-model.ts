@@ -6,9 +6,9 @@ import type { ChatRunSettings } from "@traycer/protocol/host/agent/gui/subscribe
 import type { ProviderProfile } from "@traycer/protocol/host/provider-schemas";
 import type { WorktreeBindingOwnerKind } from "@traycer/protocol/host/worktree-schemas";
 import {
+  advertisedServiceTierOption,
   findReasoningLabel,
   modelDisplayLabel,
-  selectedServiceTierOption,
   type ModelOption,
   type PermissionMode,
   type ProviderId,
@@ -104,7 +104,7 @@ function deriveChatHeader(
     serviceTierLabel:
       settings.serviceTier === null || settings.serviceTier.trim().length === 0
         ? null
-        : (selectedServiceTierOption(settings.serviceTier, model)?.label ??
+        : (advertisedServiceTierOption(settings.serviceTier, model)?.label ??
           settings.serviceTier),
     profileAccentDot: resolveProfileAccentDot(
       settings.profileId,
@@ -145,8 +145,8 @@ function findHarnessEntry(
   return harnesses.find((harness) => harness.id === harnessId) ?? null;
 }
 
-// Read-only: the row is only read for its label and reasoning options, so an
-// ambiguous alias match is fine here (see `readableModelMatch`).
+// Read-only: the row supplies labels for its model, reasoning and service
+// tier; an ambiguous alias match is fine here (see `readableModelMatch`).
 function findModel(
   entry: GuiHarnessCatalogEntry | null,
   slug: string,
