@@ -11,6 +11,7 @@ import {
   type EpicRecordMutationTarget,
 } from "@/hooks/epic/use-epic-record-mutation-client";
 import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
+import { getOpenEpicRegistry } from "@/lib/registries/epic-session-registry";
 import { useQueryClient } from "@tanstack/react-query";
 import type { HostClient } from "@traycer-clients/shared/host-client/host-client";
 import { useHostBinding, type HostRpcRegistry } from "@/lib/host";
@@ -148,12 +149,15 @@ function useEpicDeleteTuiAgentMutation(
             );
         }
         // The deletion is a registry fact on a migrated host; without this the
-        // row would linger in the tree until the next poll tick.
+        // row would linger in the tree until the next poll tick. The visible
+        // session may have been replaced while the write travelled, and its
+        // list fetched before the delete committed.
         for (const hostId of new Set([
           ctx.hostId,
           ownerHostId,
           ctx.viewerHostId,
           ctx.servingHostId,
+          getOpenEpicRegistry().peek(variables.epicId)?.hostId ?? null,
         ])) {
           invalidateEpicTuiAgentRecords(queryClient, hostId);
         }
@@ -172,16 +176,17 @@ function useEpicDeleteTuiAgentMutation(
           });
         }
       },
-      onError: (error, _variables, ctx) => {
+      onError: (error, variables, ctx) => {
         // The host may have committed the delete before its answer was lost,
         // so refresh every list it could have changed - the routed owner's,
-        // the viewer's and the host the call went to - whichever way the
-        // failure is presented.
+        // the viewer's, the host the call went to and the visible session's -
+        // whichever way the failure is presented.
         if (ctx !== undefined) {
           for (const hostId of new Set([
             ctx.hostId,
             ctx.viewerHostId,
             ctx.servingHostId,
+            getOpenEpicRegistry().peek(variables.epicId)?.hostId ?? null,
           ])) {
             invalidateEpicTuiAgentRecords(queryClient, hostId);
           }
@@ -223,11 +228,16 @@ export function useEpicRenameTuiAgent() {
         hostId,
         viewerHostId: sessionClient?.getActiveHostId() ?? null,
       }),
-      onSuccess: (_data, _variables, ctx) => {
+      onSuccess: (_data, variables, ctx) => {
         // Same refresh as the chat rename: on a migrated host the new title
         // lives in the registry, so without this the row keeps its old title
-        // until the poll fires - a rename that reads as a no-op.
-        for (const hostId of new Set([ctx.hostId, ctx.viewerHostId])) {
+        // until the poll fires - a rename that reads as a no-op. The visible
+        // session too: it may have been replaced while the rename travelled.
+        for (const hostId of new Set([
+          ctx.hostId,
+          ctx.viewerHostId,
+          getOpenEpicRegistry().peek(variables.epicId)?.hostId ?? null,
+        ])) {
           invalidateEpicTuiAgentRecords(queryClient, hostId);
         }
         Analytics.getInstance().track(AnalyticsEvent.TerminalRenamed, {

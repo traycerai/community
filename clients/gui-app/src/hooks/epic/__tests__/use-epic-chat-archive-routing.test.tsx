@@ -119,9 +119,17 @@ const DIRECTORY: readonly HostDirectoryEntry[] = [LOCAL, REMOTE, OTHER, MOVED];
 const standIn: {
   answer: "applied" | "requested" | "lost";
   readonly batchDeleteCalls: string[];
+  /** The terminal agents and Tasks OTHER holds: what a delete commits. */
+  readonly tuiAgents: Set<string>;
+  readonly tasks: Set<string>;
+  /** Holds OTHER's terminal-agent delete until it settles, when set. */
+  holdTuiDelete: Promise<void> | null;
 } = {
   answer: "applied",
   batchDeleteCalls: [],
+  tuiAgents: new Set(),
+  tasks: new Set(),
+  holdTuiDelete: null,
 };
 
 function lostAnswer(method: string): HostRpcError {
@@ -539,24 +547,36 @@ function createRoutingFixture(): RoutingFixture {
           outcome: "applied" as const,
         };
       },
-      "epic.deleteTuiAgent": () => {
+      "epic.deleteTuiAgent": (request: { readonly tuiAgentId: string }) => {
         const hostId = lastCallHost(messengerRef.current ?? messenger);
         if (hostId !== OTHER.hostId) {
           return { deleted: true, outcome: "applied" as const };
         }
-        if (standIn.answer === "requested") {
-          return {
-            deleted: true,
-            outcome: "requested" as const,
-            ownerHostId: MOVED.hostId,
-          };
-        }
-        if (standIn.answer === "lost") throw lostAnswer("epic.deleteTuiAgent");
-        return { deleted: true, outcome: "applied" as const };
+        const answer = () => {
+          if (standIn.answer === "requested") {
+            return {
+              deleted: true,
+              outcome: "requested" as const,
+              ownerHostId: MOVED.hostId,
+            };
+          }
+          // OTHER holds the agent: the delete commits, whatever happens to
+          // its answer.
+          standIn.tuiAgents.delete(request.tuiAgentId);
+          if (standIn.answer === "lost") {
+            throw lostAnswer("epic.deleteTuiAgent");
+          }
+          return { deleted: true, outcome: "applied" as const };
+        };
+        return standIn.holdTuiDelete === null
+          ? answer()
+          : standIn.holdTuiDelete.then(answer);
       },
       "epic.batchDelete": (request: { readonly ids: readonly string[] }) => {
         const hostId = lastCallHost(messengerRef.current ?? messenger);
         standIn.batchDeleteCalls.push(hostId);
+        // The purge commits, whatever happens to the answer.
+        for (const taskId of request.ids) standIn.tasks.delete(taskId);
         if (standIn.answer === "lost") throw lostAnswer("epic.batchDelete");
         // OTHER held its own local-homed copy of each Task.
         return {
@@ -1504,6 +1524,11 @@ describe("a write enacted by a stand-in", () => {
   beforeEach(() => {
     standIn.answer = "applied";
     standIn.batchDeleteCalls.length = 0;
+    standIn.tuiAgents.clear();
+    standIn.tuiAgents.add(TUI_ID);
+    standIn.tasks.clear();
+    standIn.tasks.add(TASK_ID);
+    standIn.holdTuiDelete = null;
     vi.mocked(toast.success).mockClear();
     useCloudChatDeletions.setState({
       pending: new Map(),
@@ -1599,6 +1624,33 @@ describe("a write enacted by a stand-in", () => {
     return vi.mocked(toast.success).mock.calls.map((call) => call[0]);
   }
 
+  /**
+   * A list as OTHER serves it from what it holds, read into the cache before
+   * the write, and a re-read that refetches it only if the write refreshed
+   * it - so a refresh shows as the list after the commit.
+   */
+  async function readStandInList(
+    queryKey: readonly unknown[],
+    held: ReadonlySet<string>,
+  ): Promise<() => Promise<unknown>> {
+    await fixture.queryClient.fetchQuery({
+      queryKey,
+      queryFn: () => [...held],
+    });
+    return async () => {
+      if (fixture.queryClient.getQueryState(queryKey)?.isInvalidated) {
+        await fixture.queryClient.refetchQueries({ queryKey, exact: true });
+      }
+      return fixture.queryClient.getQueryData(queryKey);
+    };
+  }
+
+  const otherTuiAgentList = [
+    ...hostQueryKeys.methodScope(OTHER.hostId, "epic.listTuiAgents"),
+    { epicId: EPIC_ID },
+  ];
+  const otherTaskList = [...hostQueryKeys.scope(OTHER.hostId), "tasks"];
+
   /** Each lifecycle mutation, mounted once and driven by the steps below. */
   function mountWrites() {
     const archive = renderHook(() => useEpicArchiveChat(), {
@@ -1662,6 +1714,34 @@ describe("a write enacted by a stand-in", () => {
             hostId: REMOTE.hostId,
           }),
         ),
+      /**
+       * The terminal-agent delete held at OTHER while the visible session is
+       * replaced onto MOVED, whose list is read before the delete commits.
+       */
+      deleteTuiAgentAcrossReplacement: async (): Promise<void> => {
+        let release: () => void = () => {
+          throw new Error("the held delete has no release");
+        };
+        standIn.holdTuiDelete = new Promise((resolve) => {
+          release = resolve;
+        });
+        let pending: Promise<unknown> = Promise.resolve();
+        act(() => {
+          pending = deleteTuiAgent.result.current
+            .mutateAsync({
+              epicId: EPIC_ID,
+              tuiAgentId: TUI_ID,
+              hostId: REMOTE.hostId,
+            })
+            .catch(() => undefined);
+        });
+        fixture.replaceMountedOnto(MOVED.hostId);
+        release();
+        await act(async () => {
+          await pending;
+        });
+        standIn.holdTuiDelete = null;
+      },
       deleteTasks: () =>
         settle(() =>
           deleteTasks.result.current.mutateAsync({
@@ -1786,10 +1866,16 @@ describe("a write enacted by a stand-in", () => {
         ),
       ).toBe(false);
 
+      // Terminal-agent delete, held while the visible session is replaced
+      // onto MOVED, whose list was read before the delete committed.
       refreshed = observeRefreshes();
-      await writes.deleteTuiAgent();
+      await writes.deleteTuiAgentAcrossReplacement();
+      expect(standIn.tuiAgents.has(TUI_ID)).toBe(false);
       expect(refreshed()).toEqual(
-        expect.arrayContaining([`${OTHER.hostId} terminal agents`]),
+        expect.arrayContaining([
+          `${OTHER.hostId} terminal agents`,
+          `${MOVED.hostId} terminal agents`,
+        ]),
       );
       expect(spies.closeTiles.mock.calls).toEqual([
         [EPIC_ID, REMOTE_CHAT_ID, OTHER.hostId, "chat"],
@@ -1929,6 +2015,15 @@ describe("a write enacted by a stand-in", () => {
     );
 
     refreshed = observeRefreshes();
+    await writes.archive(false);
+    expect(refreshed()).toEqual(
+      expect.arrayContaining([
+        `${OTHER.hostId} chats`,
+        `${OTHER.hostId} terminal agents`,
+      ]),
+    );
+
+    refreshed = observeRefreshes();
     const notices = [toast.error, toast.message, toast.warning, toast.success];
     for (const notice of notices) vi.mocked(notice).mockClear();
     await writes.archiveMany();
@@ -1958,13 +2053,22 @@ describe("a write enacted by a stand-in", () => {
     expect(useCloudChatDeletions.getState().confirmed.size).toBe(0);
     expect(useCloudChatDeletions.getState().pending.size).toBe(0);
 
+    // The terminal-agent delete commits on OTHER, then its answer is lost,
+    // while the visible session is replaced onto MOVED.
     refreshed = observeRefreshes();
-    await writes.deleteTuiAgent();
+    let reread = await readStandInList(otherTuiAgentList, standIn.tuiAgents);
+    await writes.deleteTuiAgentAcrossReplacement();
     expect(refreshed()).toEqual(
-      expect.arrayContaining([`${OTHER.hostId} terminal agents`]),
+      expect.arrayContaining([
+        `${OTHER.hostId} terminal agents`,
+        `${MOVED.hostId} terminal agents`,
+      ]),
     );
+    expect(await reread()).toEqual([]);
 
+    // The purge commits on OTHER, then its answer is lost.
     refreshed = observeRefreshes();
+    reread = await readStandInList(otherTaskList, standIn.tasks);
     await writes.deleteTasks();
     expect(standIn.batchDeleteCalls).toEqual([OTHER.hostId]);
     expect(refreshed()).toEqual(
@@ -1973,5 +2077,6 @@ describe("a write enacted by a stand-in", () => {
         `${LOCAL.hostId} host scope`,
       ]),
     );
+    expect(await reread()).toEqual([]);
   });
 });

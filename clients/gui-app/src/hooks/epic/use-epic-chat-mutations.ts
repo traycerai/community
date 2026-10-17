@@ -618,8 +618,14 @@ export function useEpicRenameChat() {
         hostId,
         viewerHostId: sessionClient?.getActiveHostId() ?? null,
       }),
-      onSuccess: (_data, _variables, ctx) => {
-        for (const hostId of new Set([ctx.hostId, ctx.viewerHostId])) {
+      onSuccess: (_data, variables, ctx) => {
+        // The visible session too: it may have been replaced while the
+        // rename travelled, and its list fetched before it landed.
+        for (const hostId of new Set([
+          ctx.hostId,
+          ctx.viewerHostId,
+          getOpenEpicRegistry().peek(variables.epicId)?.hostId ?? null,
+        ])) {
           invalidateEpicChatRecords(queryClient, hostId);
         }
       },

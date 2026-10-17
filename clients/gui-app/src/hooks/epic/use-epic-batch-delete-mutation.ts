@@ -18,6 +18,7 @@ import {
   type HostRpcRegistry,
 } from "@/lib/host";
 import { resolveNamedHostClient } from "@/lib/host/binding-host-client";
+import { activeHostIdOrNull } from "@/lib/host/runtime";
 import { readLocalHostIdSnapshot } from "@/lib/host/local-host-id-snapshot";
 import {
   readSelectionFleetSnapshot,
@@ -714,9 +715,12 @@ export function useEpicBatchDelete(): UseMutationResult<
             epicTitlesById: ctx.epicTitlesById,
           });
         }
+        // The window's current host too: the selection may have moved while
+        // the delete travelled, and that host's lists were read before it.
         invalidateBatchDeleteHostScopes(queryClient, [
           ctx.hostId,
           ctx.enactingHostId,
+          activeHostIdOrNull(),
         ]);
       },
       onError: (error, variables, ctx) => {
@@ -748,12 +752,14 @@ export function useEpicBatchDelete(): UseMutationResult<
           return;
         }
         // A request was sent and its answer is unknown: the host may have
-        // purged before it failed. Refresh both scopes it could have changed,
-        // the active host's and the enacting host's, as success does.
+        // purged before it failed. Refresh every scope it could have changed -
+        // the active host's at the start, the enacting host's and the
+        // window's current host's - as success does.
         if (ctx !== undefined) {
           invalidateBatchDeleteHostScopes(queryClient, [
             ctx.hostId,
             ctx.enactingHostId,
+            activeHostIdOrNull(),
           ]);
         }
         if (refused !== undefined && refused.length > 0) {
