@@ -221,6 +221,44 @@ describe("jsonContentToMarkdown task lists", () => {
       ),
     ).toBe("- [ ] \n  b");
   });
+
+  it("puts a blank line before a nested ordered list that starts above 1 under a task item's text", () => {
+    expect(
+      toMarkdown(
+        doc([
+          taskList([
+            taskItem(false, [
+              paragraph("t"),
+              {
+                type: "orderedList",
+                attrs: { start: 10 },
+                content: [{ type: "listItem", content: [paragraph("a")] }],
+              },
+            ]),
+          ]),
+        ]),
+      ),
+    ).toBe("- [ ] t\n\n  10. a");
+  });
+
+  it("writes an ordered list starting above 1 directly under an empty task paragraph", () => {
+    expect(
+      toMarkdown(
+        doc([
+          taskList([
+            taskItem(false, [
+              { type: "paragraph" },
+              {
+                type: "orderedList",
+                attrs: { start: 10 },
+                content: [{ type: "listItem", content: [paragraph("a")] }],
+              },
+            ]),
+          ]),
+        ]),
+      ),
+    ).toBe("- [ ] \n  10. a");
+  });
 });
 
 describe("writes list item text as the agent typed it", () => {

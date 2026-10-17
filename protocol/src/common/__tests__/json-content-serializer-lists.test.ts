@@ -629,6 +629,71 @@ describe("jsonContentToMarkdown ordered lists", () => {
       ),
     ).toBe("-\n  1. x");
   });
+
+  it("puts a blank line before a nested ordered list that starts above 1 under a line of text", () => {
+    expect(
+      toMarkdown(
+        docOf(
+          bulletList([
+            listItem([
+              textParagraph("t"),
+              orderedBlock([listItem([textParagraph("a")])], 10),
+            ]),
+          ]),
+        ),
+      ),
+    ).toBe("- t\n\n  10. a");
+  });
+
+  it("keeps a nested ordered list that starts at 1 directly under the text", () => {
+    expect(
+      toMarkdown(
+        docOf(
+          bulletList([
+            listItem([
+              textParagraph("t"),
+              orderedBlock([listItem([textParagraph("a")])], 1),
+            ]),
+          ]),
+        ),
+      ),
+    ).toBe("- t\n  1. a");
+  });
+
+  it("writes a three-deep chain of empty-first-paragraph items without a blank line", () => {
+    expect(
+      toMarkdown(
+        docOf(
+          bulletList([
+            listItem([
+              { type: "paragraph" },
+              bulletList([
+                listItem([
+                  { type: "paragraph" },
+                  bulletList([listItem([textParagraph("x")])]),
+                ]),
+              ]),
+            ]),
+          ]),
+        ),
+      ),
+    ).toBe("-\n  -\n    - x");
+  });
+
+  it("writes an ordered list starting above 1 directly under an empty first paragraph", () => {
+    expect(
+      toMarkdown(
+        docOf(
+          bulletList([
+            listItem([
+              { type: "paragraph" },
+              orderedBlock([listItem([textParagraph("a")])], 10),
+            ]),
+          ]),
+        ),
+      ),
+    ).toBe("-\n  10. a");
+  });
 });
 
 function orderedList(

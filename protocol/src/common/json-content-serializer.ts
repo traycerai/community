@@ -941,6 +941,20 @@ const LIST_BLOCK_TYPES: ReadonlySet<string> = new Set([
 
 const BARE_BULLET_LINE = /^[ \t]*-[ \t]*$/;
 
+/** The number an ordered list item's line starts with, if it is one. */
+const ORDERED_MARKER_LINE = /^[ \t]*(\d{1,9})[.)]/;
+
+/**
+ * Whether a nested list's first line, directly under a line of text, would
+ * read back as that text: a bare `-` is a setext heading underline, and an
+ * ordered marker other than 1 cannot interrupt a paragraph.
+ */
+function readsAsTextUnderText(firstLine: string): boolean {
+  if (BARE_BULLET_LINE.test(firstLine)) return true;
+  const ordered = ORDERED_MARKER_LINE.exec(firstLine);
+  return ordered !== null && Number(ordered[1]) !== 1;
+}
+
 const SELF_INDENTING_BLOCK_TYPES: ReadonlySet<string> = new Set([
   "codeBlock",
   "mermaidBlock",
@@ -1030,14 +1044,19 @@ function serializeListItemWithMarker(
         // instead (an item opens with at most one blank line), so there the
         // paragraph follows directly and reads back as the item's own.
         if (child.type === "paragraph" && !markerOnly) lines.push("");
+        const underMarkerOnly = markerOnly;
         markerOnly = false;
         // A nested list that opens with an empty bullet item starts with a
         // bare `-` line, and directly under a line of text that reads as a
         // setext heading underline: the item's paragraph would come back as
-        // a heading. A blank line before the list keeps it a list.
+        // a heading. One that starts at a number other than 1 reads as more
+        // of that text, since only a 1 interrupts a paragraph. A blank line
+        // before the list keeps it a list. Under a marker line with nothing on
+        // it there is no text, and a blank line there would end the item.
         if (
           isList &&
-          BARE_BULLET_LINE.test(childLines[0] ?? "") &&
+          !underMarkerOnly &&
+          readsAsTextUnderText(childLines[0] ?? "") &&
           lines.length > 0 &&
           lines[lines.length - 1] !== ""
         ) {

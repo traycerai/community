@@ -259,6 +259,82 @@ const LIST_FIRST_CHILD_UNDER_TEN_DOC = listFirstChildDoc(
   simpleList("bulletList", ["x"]),
 );
 
+/** A nested ordered list that starts above 1 sits behind a blank line. */
+const NESTED_ORDERED_TEN_UNDER_TEXT_DOC: JsonContent = {
+  type: "doc",
+  content: [
+    {
+      type: "bulletList",
+      content: [
+        {
+          type: "listItem",
+          content: [
+            { type: "paragraph", content: [{ type: "text", text: "t" }] },
+            {
+              type: "orderedList",
+              attrs: { start: 10 },
+              content: [
+                {
+                  type: "listItem",
+                  content: [
+                    {
+                      type: "paragraph",
+                      content: [{ type: "text", text: "a" }],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  ],
+};
+
+/** Empty first paragraphs three levels deep: no blank line anywhere. */
+const EMPTY_FIRST_PARAGRAPH_THREE_DEEP_DOC: JsonContent = {
+  type: "doc",
+  content: [
+    {
+      type: "bulletList",
+      content: [
+        {
+          type: "listItem",
+          content: [
+            { type: "paragraph" },
+            {
+              type: "bulletList",
+              content: [
+                {
+                  type: "listItem",
+                  content: [
+                    { type: "paragraph" },
+                    {
+                      type: "bulletList",
+                      content: [
+                        {
+                          type: "listItem",
+                          content: [
+                            {
+                              type: "paragraph",
+                              content: [{ type: "text", text: "x" }],
+                            },
+                          ],
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  ],
+};
+
 /** ...and the same break in a LATER block, which does take the indent. */
 const HARD_BREAK_IN_CONTINUATION_DOC: JsonContent = {
   type: "doc",
@@ -1808,6 +1884,8 @@ describe("content recovery classification", () => {
       LIST_FIRST_CHILD_TWO_ITEMS_DOC,
       LIST_FIRST_CHILD_THREE_DEEP_DOC,
       LIST_FIRST_CHILD_UNDER_TEN_DOC,
+      NESTED_ORDERED_TEN_UNDER_TEXT_DOC,
+      EMPTY_FIRST_PARAGRAPH_THREE_DEEP_DOC,
       HARD_BREAK_IN_CONTINUATION_DOC,
       NESTED_LIST_AS_FIRST_CHILD_DOC,
       FENCE_AS_CONTINUATION_DOC,
@@ -1850,6 +1928,18 @@ describe("content recovery classification", () => {
     expect(recoveryTextFromContent(NESTED_EMPTY_BULLET_DOC)).toBe("- a\n\n  -");
     expect(recoveryTextFromContent(NESTED_EMPTY_FIRST_PARAGRAPH_DOC)).toBe(
       "- a\n\n  -\n    b",
+    );
+  });
+
+  it("writes three levels of empty first paragraphs without a blank line", () => {
+    expect(recoveryTextFromContent(EMPTY_FIRST_PARAGRAPH_THREE_DEEP_DOC)).toBe(
+      "-\n  -\n    - x",
+    );
+  });
+
+  it("puts a blank line before a nested ordered list that starts above 1", () => {
+    expect(recoveryTextFromContent(NESTED_ORDERED_TEN_UNDER_TEXT_DOC)).toBe(
+      "- t\n\n  10. a",
     );
   });
 

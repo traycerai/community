@@ -608,10 +608,16 @@ function listItemLines(
       // The serializer puts a blank line before every later paragraph, except
       // straight after a marker line with nothing on it.
       if (block.type === "paragraph" && !markerOnly) lines.push("");
+      const underMarkerOnly = markerOnly;
       markerOnly = false;
       // ...and before a nested list that opens with a bare `-`, which under a
-      // line of text would read as a setext heading underline.
-      if (nested && opensUnderText(serialized, lines)) lines.push("");
+      // line of text would read as a setext heading underline, or with an
+      // ordered marker other than 1, which would read as more of that text.
+      // Not under a marker line with nothing on it: that is no text, and a
+      // blank line there would end the item.
+      if (nested && !underMarkerOnly && opensUnderText(serialized, lines)) {
+        lines.push("");
+      }
       for (const line of serialized.split("\n")) {
         lines.push(nested ? line : `${continuationIndent}${line}`);
       }
@@ -660,18 +666,22 @@ function firstBlockLines(
 }
 
 const BARE_BULLET_LINE = /^[ \t]*-[ \t]*$/;
+const ORDERED_MARKER_LINE = /^[ \t]*(\d{1,9})[.)]/;
 
-/** Whether `serialized` opens with a bare `-` line right under a line of text. */
+/**
+ * Whether `serialized` opens right under a line of text with a line that would
+ * read back as more of it: a bare `-`, or an ordered marker other than 1.
+ */
 function opensUnderText(
   serialized: string,
   lines: ReadonlyArray<string>,
 ): boolean {
   const previous = lines.length > 0 ? lines[lines.length - 1] : undefined;
-  return (
-    previous !== undefined &&
-    previous !== "" &&
-    BARE_BULLET_LINE.test(serialized.split("\n")[0] ?? "")
-  );
+  if (previous === undefined || previous === "") return false;
+  const firstLine = serialized.split("\n")[0] ?? "";
+  if (BARE_BULLET_LINE.test(firstLine)) return true;
+  const ordered = ORDERED_MARKER_LINE.exec(firstLine);
+  return ordered !== null && Number(ordered[1]) !== 1;
 }
 
 function isListNode(node: JsonContent): boolean {
