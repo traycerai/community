@@ -89,9 +89,10 @@ const CLAUDE_PARITY_MINOR = 20;
 // `chat-subscribe-cron-next-run-v124.test.ts` pins that arm directly. `1.25`
 // adds the bot-conversation request on a user row and the
 // `conversation-message` queue item (pinned below). `1.26` adds the
-// `task-checkin` queue item (pinned below). Every threshold above still reads
-// `>=` against the live line.
-const LIVE_MINOR = 26;
+// `task-checkin` queue item (pinned below). `1.27` adds the tool-call
+// `agentMessageDelivery` stamp (pinned below). Every threshold above still
+// reads `>=` against the live line.
+const LIVE_MINOR = 27;
 // `1.26`: the task check-in surface - the queue item's discriminant. The item
 // is content-free (it carries no key of its own beside the shared queue-item
 // fields), so the discriminant is its one needle.
@@ -103,6 +104,10 @@ const TASK_CHECKIN_NEEDLES = ['"task-checkin"'];
 // carried one since `1.8`.) All or none - a line that carried the queue item
 // without the row key would show a chip for a request it cannot name.
 const CONVERSATION_MINOR = 25;
+// `1.27`: the cross-host send state on a tool call, server frames only (the
+// host stamps it; a client never sends a body).
+const DELIVERY_MINOR = 27;
+const DELIVERY_NEEDLES = ['"agentMessageDelivery":'];
 const CONVERSATION_NEEDLES = [
   '"conversationRequest":',
   '"resolvedByMessageId":',
@@ -252,13 +257,13 @@ function actionAckPropertyNames(serverFrameSchema: z.ZodType): string[] {
 }
 
 describe("chat.subscribe line surfaces", () => {
-  it("covers chat.subscribe@1.0 through @1.26 (a line added later cannot drop out)", () => {
+  it("covers chat.subscribe@1.0 through @1.27 (a line added later cannot drop out)", () => {
     // RESTATED on purpose: this is the change-detector for the line SET, so a
     // derived list would assert the registry against itself. When a new minor
     // lands, extending this by hand is the acknowledgement.
     expect(MINORS).toEqual([
       0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-      21, 22, 23, 24, 25, 26,
+      21, 22, 23, 24, 25, 26, 27,
     ]);
     expect(chatSubscribeLine.latestMinor).toBe(LIVE_MINOR);
   });
@@ -285,6 +290,21 @@ describe("chat.subscribe line surfaces", () => {
       const carriesClaudeParity = minor >= CLAUDE_PARITY_MINOR;
       const carriesPageStamps = minor >= PAGE_STAMP_MINOR;
       const carriesConversation = minor >= CONVERSATION_MINOR;
+      const carriesDelivery = minor >= DELIVERY_MINOR;
+
+      it(`server frames ${carriesDelivery ? "carry" : "hold back"} the cross-host send delivery state`, () => {
+        const text = schemaText(contract.serverFrameSchema);
+        expect(
+          DELIVERY_NEEDLES.filter((needle) => text.includes(needle)),
+        ).toEqual(carriesDelivery ? DELIVERY_NEEDLES : []);
+      });
+
+      it("client frames hold back the delivery state on every line", () => {
+        const text = schemaText(contract.clientFrameSchema);
+        expect(
+          DELIVERY_NEEDLES.filter((needle) => text.includes(needle)),
+        ).toEqual([]);
+      });
 
       it(`server frames ${carriesConversation ? "carry" : "hold back"} the bot-conversation surface`, () => {
         const text = schemaText(contract.serverFrameSchema);

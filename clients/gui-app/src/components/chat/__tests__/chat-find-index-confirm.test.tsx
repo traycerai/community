@@ -2230,6 +2230,7 @@ const SUBAGENT_NESTED_TOOL_MODEL: ChatMessageModel = assistantSegmentsRow({
           agentMessageSend: null,
           managedCommand: null,
           agentMessageReceipt: null,
+          agentMessageDelivery: null,
           isStreaming: false,
           endState: null,
           stopped: false,

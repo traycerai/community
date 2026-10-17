@@ -3,6 +3,7 @@ import { Globe2, SendHorizontal, Wrench } from "lucide-react";
 import { useCallback, useMemo } from "react";
 import type { ReactNode } from "react";
 import type {
+  AgentMessageDelivery,
   AgentMessageReceipt,
   AgentMessageSend,
   BackgroundTaskOutput,
@@ -12,6 +13,11 @@ import type {
   ToolCallPageStamp,
 } from "@traycer/protocol/persistence/epic/content-blocks";
 import { useChatTranscriptJumpStore } from "@/stores/chats/chat-transcript-jump-store";
+import { useHostDirectoryEntry } from "@/hooks/host/use-host-directory-entry";
+import {
+  a2aSendDeliveryView,
+  type A2ASendDeliveryView,
+} from "./a2a-send-delivery";
 import type { SegmentEndState } from "@/stores/composer/chat-store";
 import { deriveA2ASendCollapsibleKey } from "@/components/chat/chat-collapsible-key";
 import { chatFindA2ASendBodyUnitId } from "@/components/chat/chat-find";
@@ -73,6 +79,9 @@ interface ToolSegmentProps {
   // Where that send landed in the receiver's transcript, stamped at
   // completion. Non-null lets the receiver link jump to the exact row.
   agentMessageReceipt: AgentMessageReceipt | null;
+  // Where a cross-host send stands. Non-null turns the card from "sent" into
+  // queued / delivered / not-delivered for the receiving host.
+  agentMessageDelivery: AgentMessageDelivery | null;
   isStreaming: boolean;
   // Terminal outcome when the turn ended mid-call (else null): drives a neutral
   // "stopped"/"superseded" badge instead of a spinner.
@@ -750,6 +759,11 @@ function A2ASendToolSegment(
     send,
     receipt,
   );
+  const delivery = useA2ASendDeliveryPresentation(
+    props.agentMessageDelivery,
+    hasError,
+  );
+  const destructive = hasError || delivery.undelivered;
 
   // The header is one row and the receiver name is the only element allowed
   // to shrink, so every fixed-width neighbour costs name characters on a
@@ -759,18 +773,16 @@ function A2ASendToolSegment(
   const header = (
     <>
       <SendHorizontal
-        className={cn(
-          "size-3.5 shrink-0",
-          hasError ? "text-destructive" : "text-primary",
-        )}
+        className={cn("size-3.5 shrink-0", delivery.iconClassName)}
         aria-hidden
       />
-      <span className="sr-only">Sent message</span>
+      <span className="sr-only">{delivery.srLabel}</span>
       <span className="flex min-w-0 flex-1 items-center gap-1.5 text-ui-sm">
         <span className="shrink-0 text-muted-foreground">to</span>
         <AgentHeaderLink name={receiverName} onOpen={openReceiver} />
         {send.expectReply ? <ReplyExpectedIcon /> : null}
       </span>
+      {delivery.badge}
       <ToolBadge state={badgeState} endState={endState} />
       <ChatMessageTimestamp
         timestamp={props.startedAt}
@@ -780,9 +792,15 @@ function A2ASendToolSegment(
     </>
   );
 
-  const preview = <AgentMessagePreview message={send.message} tone="primary" />;
+  const preview = (
+    <>
+      {delivery.note}
+      <AgentMessagePreview message={send.message} tone="primary" />
+    </>
+  );
   const body = open ? (
     <div className="flex flex-col gap-2">
+      {delivery.note}
       {send.expectReply ? <ReplyExpectedNote /> : null}
       <AgentMessageBody
         value={send.message}
@@ -813,7 +831,7 @@ function A2ASendToolSegment(
         onOpenChange={handleOpenChange}
         header={header}
         body={body}
-        tone={hasError ? "destructive" : "default"}
+        tone={destructive ? "destructive" : "default"}
         stickyHeader
         expandable
         headerFindUnitId={null}
@@ -831,7 +849,7 @@ function A2ASendToolSegment(
       headerAction={null}
       collapsedPreview={preview}
       body={body}
-      tone={hasError ? "destructive" : "primary"}
+      tone={destructive ? "destructive" : "primary"}
       headerPosition="normal"
       bodyOverflow="hidden"
       expandable
@@ -839,6 +857,90 @@ function A2ASendToolSegment(
       bodyFindUnitId={null}
       className={undefined}
     />
+  );
+}
+
+/** What the sent card shows for a send's delivery state, ready to render. */
+interface A2ASendDeliveryPresentation {
+  readonly undelivered: boolean;
+  readonly iconClassName: string;
+  readonly srLabel: string;
+  readonly badge: ReactNode;
+  readonly note: ReactNode;
+}
+
+function useA2ASendDeliveryPresentation(
+  delivery: AgentMessageDelivery | null,
+  hasError: boolean,
+): A2ASendDeliveryPresentation {
+  const hostEntry = useHostDirectoryEntry(delivery?.targetHostId ?? null);
+  if (delivery === null) {
+    return {
+      undelivered: false,
+      iconClassName: hasError ? "text-destructive" : "text-primary",
+      srLabel: "Sent message",
+      badge: null,
+      note: null,
+    };
+  }
+  const view = a2aSendDeliveryView(delivery, hostEntry?.label ?? null);
+  const undelivered = view.tone === "undelivered";
+  return {
+    undelivered,
+    iconClassName: deliveryIconClassName(view, hasError),
+    srLabel: view.srLabel,
+    // A call error already carries the error badge; a second tag would only
+    // repeat it.
+    badge:
+      view.badge === null || hasError ? null : (
+        <A2ADeliveryBadge label={view.badge} undelivered={undelivered} />
+      ),
+    note: <A2ADeliveryNote view={view} />,
+  };
+}
+
+function deliveryIconClassName(
+  view: A2ASendDeliveryView,
+  hasError: boolean,
+): string {
+  if (hasError || view.tone === "undelivered") return "text-destructive";
+  if (view.tone === "pending") return "text-muted-foreground";
+  return "text-primary";
+}
+
+// A foreground-alpha fill rather than `bg-muted`: the card this sits on is a
+// raised surface, where a muted fill collapses into the card in the preset
+// themes and the queued tag would vanish.
+function A2ADeliveryBadge(props: {
+  readonly label: string;
+  readonly undelivered: boolean;
+}) {
+  return (
+    <span
+      className={cn(
+        "shrink-0 rounded border px-1 text-overline font-medium uppercase",
+        props.undelivered
+          ? "border-destructive/40 bg-destructive/10 text-destructive"
+          : "border-border bg-foreground/8 text-muted-foreground",
+      )}
+    >
+      {props.label}
+    </span>
+  );
+}
+
+function A2ADeliveryNote(props: { readonly view: A2ASendDeliveryView }) {
+  return (
+    <p
+      className={cn(
+        "m-0 text-ui-xs leading-5",
+        props.view.tone === "undelivered"
+          ? "text-destructive"
+          : "text-muted-foreground",
+      )}
+    >
+      {props.view.note}
+    </p>
   );
 }
 

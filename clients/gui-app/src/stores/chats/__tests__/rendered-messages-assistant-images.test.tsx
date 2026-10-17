@@ -148,6 +148,7 @@ function toolCallWithImages(args: {
     agentMessageSend: null,
     managedCommand: null,
     agentMessageReceipt: null,
+    agentMessageDelivery: null,
     page: null,
     mcpApp: null,
     progress: null,
