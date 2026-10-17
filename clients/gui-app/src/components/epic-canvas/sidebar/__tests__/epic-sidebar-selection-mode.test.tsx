@@ -3004,6 +3004,124 @@ describe("epic sidebar selection mode", () => {
     toastError.mockRestore();
   });
 
+  // Thread taF0r: a row confirmed in the dialog can vanish before the delete
+  // is sent, and no request then stands for it. It stays in the count the
+  // dialog showed, never as deleted and never as failed: unconfirmed.
+  function vanishRecord(id: string): void {
+    const { [id]: _vanished, ...remainingNodes } = testState.tree.nodeById;
+    testState.tree = {
+      rootIds: testState.tree.rootIds.filter((rootId) => rootId !== id),
+      childrenByParent: Object.fromEntries(
+        Object.entries(testState.tree.childrenByParent).map(
+          ([parentId, childIds]) => [
+            parentId,
+            childIds.filter((childId) => childId !== id),
+          ],
+        ),
+      ),
+      nodeById: remainingNodes,
+    };
+    testState.records = testState.records.filter((record) => record.id !== id);
+  }
+
+  function forbidden(method: string): HostRpcError {
+    return new HostRpcError({
+      code: "FORBIDDEN",
+      message: "refused",
+      requestId: "req-forbidden",
+      method,
+      fatalDetails: null,
+    });
+  }
+
+  it("keeps an agent that vanished before the delete was sent in the dialog's count, unconfirmed", async () => {
+    seedChatTree();
+    const toastError = vi.spyOn(toast, "error");
+    testState.deleteChatMutateAsync.mockImplementation(
+      (input: { readonly chatId: string }) =>
+        input.chatId === "chat-child"
+          ? Promise.reject(forbidden("epic.deleteChat"))
+          : Promise.resolve({ outcome: "applied" }),
+    );
+
+    const view = render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "Select agents" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+    fireEvent.click(screen.getByTestId("epic-sidebar-delete-selected-chats"));
+    expect(screen.getByText("Delete 3 selected agents?")).toBeTruthy();
+    vanishRecord("agent-root");
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
+    fireEvent.click(screen.getByTestId("confirm-action"));
+
+    await waitFor(() => {
+      expect(toastError).toHaveBeenCalledTimes(1);
+    });
+    expect(toastError.mock.calls[0]?.[0]).toBe(
+      "Couldn't confirm all 3 selected agents were deleted. Check them and delete any that weren't. You don't have permission to do that.",
+    );
+    expect(testState.deleteTuiAgentMutateAsync).not.toHaveBeenCalled();
+    toastError.mockRestore();
+  });
+
+  it("stays quiet when a row vanished before the delete was sent and every sent delete applied", async () => {
+    seedChatTree();
+    const toastError = vi.spyOn(toast, "error");
+    const toastMessage = vi.spyOn(toast, "message");
+    testState.deleteChatMutateAsync.mockResolvedValue({ outcome: "applied" });
+
+    const view = render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "Select agents" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+    fireEvent.click(screen.getByTestId("epic-sidebar-delete-selected-chats"));
+    vanishRecord("agent-root");
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
+    fireEvent.click(screen.getByTestId("confirm-action"));
+
+    await waitFor(() => {
+      expect(testState.deleteChatMutateAsync).toHaveBeenCalledTimes(2);
+    });
+    await waitFor(() => {
+      expect(
+        screen.queryByRole("button", { name: "Cancel selection" }),
+      ).toBeNull();
+    });
+    expect(toastError).not.toHaveBeenCalled();
+    expect(toastMessage).not.toHaveBeenCalled();
+    toastError.mockRestore();
+    toastMessage.mockRestore();
+  });
+
+  it("keeps a selected descendant that vanished under a selected artifact in the dialog's count, unconfirmed", async () => {
+    seedArtifactTree();
+    testState.activePanelId = "artifacts";
+    const toastError = vi.spyOn(toast, "error");
+    testState.deleteArtifactMutateAsync.mockImplementation(() =>
+      Promise.reject(forbidden("epic.deleteArtifact")),
+    );
+
+    const view = render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "Select artifacts" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+    fireEvent.click(
+      screen.getByTestId("epic-sidebar-delete-selected-artifacts"),
+    );
+    expect(screen.getByText("Delete 2 selected artifacts?")).toBeTruthy();
+    vanishRecord("ticket-child");
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
+    fireEvent.click(screen.getByTestId("confirm-action"));
+
+    await waitFor(() => {
+      expect(toastError).toHaveBeenCalledTimes(1);
+    });
+    expect(toastError.mock.calls[0]?.[0]).toBe(
+      "Couldn't confirm all 2 selected artifacts were deleted. Check them and delete any that weren't. You don't have permission to do that.",
+    );
+    toastError.mockRestore();
+  });
+
   it("enters artifact selection mode from cmd-click on a row", () => {
     seedArtifactTree();
     testState.activePanelId = "artifacts";

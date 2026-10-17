@@ -174,7 +174,7 @@ import {
   useEpicDeleteChatInBatch,
 } from "@/hooks/epic/use-epic-chat-mutations";
 import {
-  toastFromOwnerHostBatchWriteFailures,
+  toastFromOwnerHostBatchWriteFailuresWithUnconfirmed,
   type OwnerHostBatchWriteCopy,
   type OwnerHostBatchWriteOutcome,
 } from "@/lib/owner-host-write-error-toast";
@@ -1605,6 +1605,8 @@ function SidebarBulkDeleteController(props: {
       tree,
       isAgentId: (id) => isAgentRecord(recordById.get(id)),
     });
+    // The rows the dialog asked about ("Delete N selected ...?").
+    const confirmedRows = pendingDeleteIds.length;
     const targets = deleteIds.flatMap((id) => {
       const target = sidebarDeleteTargetForRecord(recordById.get(id));
       return target === null ? [] : [target];
@@ -1649,7 +1651,15 @@ function SidebarBulkDeleteController(props: {
         // advice in the order it first appears in the selection.
         const selectionPosition = (index: number): number =>
           selectionOrder.get(targets[index].id) ?? index;
-        toastFromOwnerHostBatchWriteFailures(
+        // The dialog asked about every confirmed row. One that vanished
+        // before the delete was sent has no request standing for it - nor
+        // its cascade's weight - so it stays in that count, unconfirmed:
+        // never deleted and never failed.
+        const representedRows = targets.reduce(
+          (sum, target) => sum + (selectedRows.get(target.id) ?? 1),
+          0,
+        );
+        toastFromOwnerHostBatchWriteFailuresWithUnconfirmed(
           targets
             .map((target, index) => {
               const result = results[index];
@@ -1670,6 +1680,7 @@ function SidebarBulkDeleteController(props: {
             })
             .sort((left, right) => left.position - right.position)
             .map(({ outcome }) => outcome),
+          Math.max(0, confirmedRows - representedRows),
           sidebarBulkDeleteCopy(targets),
         );
         const successfulIds = targets.flatMap((target, index) =>
