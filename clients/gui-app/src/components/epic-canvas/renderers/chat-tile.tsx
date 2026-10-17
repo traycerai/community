@@ -1098,13 +1098,31 @@ export function ChatTileSessionView(props: ChatTileSessionViewProps) {
     },
     [clearComposerHighlight],
   );
-  const scrollToTranscriptEnd = useCallback((): void => {
+  const scrollToTranscriptEnd = useCallback((animated: boolean): void => {
     backgroundScrollRequestIdRef.current += 1;
     setBackgroundScrollRequest({
       kind: "end",
       requestId: backgroundScrollRequestIdRef.current,
+      animated,
     });
   }, []);
+  const pendingInlineEditMessageId = view.pendingInlineEditMessageId;
+  const followedInlineEditMessageIdRef = useRef<string | null>(null);
+  useLayoutEffect(() => {
+    if (
+      pendingInlineEditMessageId === null ||
+      pendingInlineEditMessageId === followedInlineEditMessageIdRef.current
+    ) {
+      return;
+    }
+    followedInlineEditMessageIdRef.current = pendingInlineEditMessageId;
+    // Editing rewrites the transcript suffix. The windowed index briefly loses
+    // measured heights while it is rebuilt, so a detached viewport can land
+    // several turns above the replacement and stay there as the new turn runs.
+    // The submit is an explicit move to the replacement tail; grant end-follow
+    // before the host's reindex can change the list geometry.
+    scrollToTranscriptEnd(false);
+  }, [pendingInlineEditMessageId, scrollToTranscriptEnd]);
   // Cross-tile transcript jumps (today: the communication-graph timeline).
   // Parked in a store rather than called directly because the jump is issued
   // from another tile, possibly before this one exists - `openTile`
@@ -1263,7 +1281,7 @@ export function ChatTileSessionView(props: ChatTileSessionViewProps) {
     }
     if (target.kind === "end") {
       queueMicrotask(() => {
-        scrollToTranscriptEnd();
+        scrollToTranscriptEnd(true);
       });
       consumeTranscriptJump(hostId, props.node.id, transcriptJump.requestId);
       // Same release as the resolved-target path below, and it returns before
@@ -3711,6 +3729,7 @@ function useChatTileSessionViewModel(
     onChatRetryFromUser: () => handle.store.getState().retryFromUser(),
     restoreContext,
     messages: pinnedTodoRenderState.messages,
+    pendingInlineEditMessageId: uiState.inlineEdit?.pendingMessageId ?? null,
     activeTurnId,
     // Same line discriminator as the revert-scope resolution above: on the
     // legacy line the window is an inert empty value whose `rowCount` of 0

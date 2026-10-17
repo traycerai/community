@@ -16,6 +16,7 @@ import {
   installLegendListViewportMetrics,
   restoreLegendListTestClock,
   settleLegendList,
+  setLegendListScrollContainerScrollHeightOverride,
 } from "@/components/chat/__tests__/legend-list-test-environment";
 import { modLabel } from "@/lib/keybindings/platform";
 import {
@@ -2161,6 +2162,29 @@ describe("<ChatTile />", () => {
 
     await waitFor(() => {
       expect(queryButtonByAriaLabel("Send edit")).toBeNull();
+    });
+  });
+
+  it("returns to end-follow when an inline edit is submitted from scrollback", async () => {
+    renderChatTile();
+    await waitForChatTileLoaded();
+    const scrollNode = screen.getByTestId("chat-messages-scroll");
+    setLegendListScrollContainerScrollHeightOverride(36_000);
+    scrollNode.scrollTop = 1_000;
+    fireEvent.scroll(scrollNode);
+    fireEvent.wheel(scrollNode, { deltaY: -80 });
+    scrollNode.scrollTop = 900;
+    fireEvent.scroll(scrollNode);
+    await waitFor(() => {
+      expect(scrollNode.dataset.scrollMode).toBe("free-scrolling");
+    });
+
+    fireEvent.click(getButtonByAriaLabel("Edit message"));
+    fireEvent.click(getButtonByAriaLabel("Send edit"));
+
+    expect(chatHarness.sent[0]?.kind).toBe("editUserMessage");
+    await waitFor(() => {
+      expect(scrollNode.dataset.scrollMode).toBe("following-end");
     });
   });
 
