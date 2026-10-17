@@ -1,4 +1,10 @@
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -141,8 +147,12 @@ async function superviseLife(
     await mod.reportHostCrashToSentry(crash(`attempt-${index}`, exitCode));
     vi.advanceTimersByTime(30_000);
   }
-  // The supervisor process ends: its timers go with it.
+  // The supervisor process ends: its timers go with it. `clearAllTimers`
+  // resets the fake clock too, which would rewind Date to the real time, so
+  // the time is put back.
+  const keep = Date.now();
   vi.clearAllTimers();
+  vi.setSystemTime(keep);
 }
 
 describe("host crash reports across supervisor restarts", () => {
@@ -221,6 +231,20 @@ describe("host crash reports across supervisor restarts", () => {
     await expect(superviseLife(1, 1)).resolves.toBeUndefined();
   });
 
+  it("reads a state file past the size cap as no state, without parsing it", async () => {
+    await superviseLife(RELAUNCHES_PER_SUPERVISOR_LIFE + 1, 1);
+    const stateDir = join(home, ".traycer", "cli");
+    const files = readdirSync(stateDir).filter((name) =>
+      name.startsWith("host-crash-throttle"),
+    );
+    // Valid JSON that would carry the held-back state, padded past 256 KiB.
+    const text = readFileSync(join(stateDir, files[0]), "utf8");
+    writeFileSync(join(stateDir, files[0]), `${text}${" ".repeat(300 * 1024)}`);
+    sentryMocks.messages.length = 0;
+    await superviseLife(1, 1);
+    expect(fullReports()).toBe(1);
+  });
+
   it("writes no account identifier, path or stderr into the state file", async () => {
     await superviseLife(2, 1);
     const stateDir = join(home, ".traycer", "cli");
@@ -228,10 +252,7 @@ describe("host crash reports across supervisor restarts", () => {
       name.startsWith("host-crash-throttle"),
     );
     expect(files).toHaveLength(1);
-    const text = (await import("node:fs")).readFileSync(
-      join(stateDir, files[0]),
-      "utf8",
-    );
+    const text = readFileSync(join(stateDir, files[0]), "utf8");
     expect(text).not.toContain(home);
   });
 });

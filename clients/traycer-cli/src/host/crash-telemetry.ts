@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, open, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   arch as osArch,
@@ -732,6 +732,25 @@ export function serializeHostCrashThrottle(
 }
 
 /**
+ * The file's text, or the empty string for a file longer than
+ * {@link MAX_PERSISTED_BYTES}: the size is checked on the open handle before
+ * anything is allocated, and the read is capped at the cap either way (a file
+ * can grow between the check and the read).
+ */
+async function readBounded(path: string): Promise<string> {
+  const handle = await open(path, "r");
+  try {
+    const { size } = await handle.stat();
+    if (size > MAX_PERSISTED_BYTES) return "";
+    const buffer = Buffer.alloc(size + 1);
+    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+    return bytesRead > size ? "" : buffer.toString("utf8", 0, bytesRead);
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
  * One environment's throttle with its state file. The file is replaced whole
  * by a rename, so a reader sees one writer's complete state or the other's,
  * never a mix; two supervisors on one machine can lose a count to each other,
@@ -766,7 +785,7 @@ class HostCrashThrottleEntry {
   async load(): Promise<void> {
     let text = "";
     try {
-      text = await readFile(this.path, "utf8");
+      text = await readBounded(this.path);
     } catch {
       // No file yet, or none readable: nothing carries over.
     }

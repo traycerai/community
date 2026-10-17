@@ -1621,12 +1621,10 @@ describe("runHostStart - signal/exit propagation", () => {
   }, 10_000);
 
   it("waits for a reportHostCrash that never resolves no longer than its bound before the supervisor exits", async () => {
-    // The reporter is dispatched WITHOUT awaiting it, so a relaunch decision
-    // and its backoff start the moment the marker is written. The supervisor's
-    // own EXIT does wait for it, because the report writes the throttle state
-    // the next supervisor starts from, but never past
-    // HOST_CRASH_REPORT_TIMEOUT_MS. Real timers, so the elapsed-time bounds
-    // below are the invariant itself.
+    // Two contracts. The supervisor's EXIT waits for a report still in flight,
+    // because the report writes the throttle state the next supervisor starts
+    // from, but never past HOST_CRASH_REPORT_TIMEOUT_MS (this test). A RELAUNCH
+    // never waits for it (the next test). Real timers.
     const exec = "/opt/traycer/host/install/traycer-host";
     const { child, recorded, deps } = makeRunStubs(sampleRecord(exec), null);
     recorded.reportHostCrashHangs = true;
@@ -1654,6 +1652,43 @@ describe("runHostStart - signal/exit propagation", () => {
     expect(elapsedMs).toBeGreaterThanOrEqual(HOST_CRASH_REPORT_TIMEOUT_MS - 200);
     // No upper wall-clock bound: a wait that never ended would hit the test
     // timeout below, and a tight bound would only measure CI event-loop delay.
+  }, 10_000);
+
+  it("never holds a relaunch on a crash report that never resolves", async () => {
+    const exec = "/opt/traycer/host/install/traycer-host";
+    const { recorded, deps } = makeRunStubs(sampleRecord(exec), null);
+    recorded.reportHostCrashHangs = true;
+    const scripted = withScriptedAttempts(deps, [
+      { code: 9, signal: null },
+      { code: 0, signal: null },
+    ]);
+    const originalSpawn = scripted.deps.spawn;
+    if (originalSpawn === undefined) {
+      throw new Error("test spawn dependency missing");
+    }
+    const startedAtMs = Date.now();
+    const spawnedAtMs: number[] = [];
+
+    await runUntilExit(
+      () =>
+        runHostStart(
+          { environment: "production", cwd: null },
+          {
+            ...scripted.deps,
+            maxRelaunches: 1,
+            spawn: (command, args, options) => {
+              spawnedAtMs.push(Date.now() - startedAtMs);
+              return originalSpawn(command, args, options);
+            },
+          },
+        ),
+      recorded,
+    );
+
+    expect(spawnedAtMs).toHaveLength(2);
+    // Awaiting the stalled reporter would put the relaunch at the report bound
+    // (1.5 s) or later; the margin is for a slow runner, not for the contract.
+    expect(spawnedAtMs[1]).toBeLessThan(HOST_CRASH_REPORT_TIMEOUT_MS - 500);
   }, 10_000);
 
   it("lets the last crash report land before the supervisor exits, so the throttle state it writes is on disk for the next supervisor", async () => {
