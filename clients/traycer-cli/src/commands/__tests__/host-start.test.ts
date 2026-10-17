@@ -1686,6 +1686,38 @@ describe("runHostStart - signal/exit propagation", () => {
     expect(landedAtExit).toBe(true);
   }, 10_000);
 
+  it("does not wait past the report bound for a crash report that is merely slow", async () => {
+    const exec = "/opt/traycer/host/install/traycer-host";
+    const { child, recorded, deps } = makeRunStubs(sampleRecord(exec), null);
+    let landed = false;
+    let landedAtExit: boolean | null = null;
+    const verySlowReporting: RunHostStartDeps = {
+      ...deps,
+      reportHostCrash: async () => {
+        await new Promise<void>((resolve) =>
+          setTimeout(resolve, HOST_CRASH_REPORT_TIMEOUT_MS + 1_500),
+        );
+        landed = true;
+      },
+      exit: (code) => {
+        landedAtExit = landed;
+        return deps.exit(code);
+      },
+    };
+
+    await runUntilExit(
+      () =>
+        runHostStart(
+          { environment: "production", cwd: null },
+          withChildExit(verySlowReporting, child, 7, null),
+        ),
+      recorded,
+    );
+
+    expect(recorded.exited).toBe(7);
+    expect(landedAtExit).toBe(false);
+  }, 10_000);
+
   it("spawn() throw is translated into HOST_SPAWN_FAILED + exit 66", async () => {
     const exec = "/opt/traycer/host/install/traycer-host";
     const { recorded, deps } = makeRunStubs(sampleRecord(exec), null);
