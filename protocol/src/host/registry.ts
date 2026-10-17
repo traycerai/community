@@ -353,6 +353,7 @@ import {
   chatSubscribeV124,
   chatSubscribeV125,
   chatSubscribeV126,
+  chatSubscribeV127,
 } from "@traycer/protocol/host/agent/gui/contracts";
 import {
   agentTuiGenerateTitleV10,
@@ -13727,7 +13728,7 @@ const HOST_STREAM_RPC_REGISTRY_DEFINITION = {
   ...HOST_STREAM_RPC_REGISTRY_OTHER_DEFINITION,
   "chat.subscribe": {
     1: {
-      latestMinor: 26,
+      latestMinor: 27,
       versions: {
         0: {
           contract: chatSubscribeV10,
@@ -13885,15 +13886,23 @@ const HOST_STREAM_RPC_REGISTRY_DEFINITION = {
         // `conversation-message` queue item on the bot's trunk (projection:
         // the host omits it below @1.25, as it omits port-forward below @1.14).
         // Frozen at the pre-delivery tool block and `tool_call.completed`
-        // since @1.26 opened above it.
+        // since @1.27 opened above it.
         25: {
           contract: chatSubscribeV125,
         },
-        // @1.26 adds `agentMessageDelivery` to the `tool_call` block and its
-        // completed event: where a cross-host send stands (queued, delivered,
-        // expired, failed). Projection: the host deletes the key below @1.26.
+        // @1.26 is the task check-in line: the `task-checkin` queue item on a
+        // bot's trunk (projection: the host omits it below @1.26, as it omits
+        // the conversation-message item below @1.25). @1.25 is frozen at its
+        // four-arm queue. Frozen at the pre-delivery tool block and
+        // `tool_call.completed` since @1.27 opened above it.
         26: {
           contract: chatSubscribeV126,
+        },
+        // @1.27 adds `agentMessageDelivery` to the `tool_call` block and its
+        // completed event: where a cross-host send stands (queued, delivered,
+        // expired, failed). Projection: the host deletes the key below @1.27.
+        27: {
+          contract: chatSubscribeV127,
         },
       },
     },

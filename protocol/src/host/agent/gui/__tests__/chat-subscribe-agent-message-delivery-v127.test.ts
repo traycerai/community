@@ -5,13 +5,14 @@ import {
   chatSubscribeV124,
   chatSubscribeV125,
   chatSubscribeV126,
+  chatSubscribeV127,
 } from "@traycer/protocol/host/agent/gui/subscribe";
 
 /**
- * `chat.subscribe@1.26`: `agentMessageDelivery` on a `tool_call` block and on
+ * `chat.subscribe@1.27`: `agentMessageDelivery` on a `tool_call` block and on
  * its `tool_call.completed` event.
  *
- * PROJECTION, not tolerance: `1.23`-`1.25` bind hand-frozen copies without the
+ * PROJECTION, not tolerance: `1.23`-`1.26` bind hand-frozen copies without the
  * key, so a frame carrying it parses there with the key gone and everything
  * else intact - on the tail, a `range` response and `blockDelta`.
  */
@@ -22,7 +23,7 @@ const DELIVERY = {
   state: "queued",
 };
 
-/** A cross-host send exactly as a 1.26 host persists it. */
+/** A cross-host send exactly as a 1.27 host persists it. */
 function sendToolCall(): Record<string, unknown> {
   return {
     type: "tool_call",
@@ -191,6 +192,7 @@ const FROZEN_LINES = [
   { label: "1.23", contract: chatSubscribeV123 },
   { label: "1.24", contract: chatSubscribeV124 },
   { label: "1.25", contract: chatSubscribeV125 },
+  { label: "1.26", contract: chatSubscribeV126 },
 ] as const;
 
 describe.each(FROZEN_LINES)(
@@ -232,8 +234,8 @@ describe.each(FROZEN_LINES)(
   },
 );
 
-describe("chat.subscribe@1.26 carries the delivery state", () => {
-  const frames = chatSubscribeV126.serverFrameSchema;
+describe("chat.subscribe@1.27 carries the delivery state", () => {
+  const frames = chatSubscribeV127.serverFrameSchema;
 
   it("round-trips it on the snapshot tail and on a range response", () => {
     const row = assistantRow([sendToolCall()]);

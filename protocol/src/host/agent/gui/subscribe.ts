@@ -882,6 +882,40 @@ export type ChatQueuedConversationMessageItem = z.infer<
   typeof chatQueuedConversationMessageItemSchema
 >;
 
+/**
+ * A check-in on the tasks a bot tracks, waiting to reach the bot's trunk
+ * (Tracy Bots, `chat.subscribe@1.26`). Queued on the TRUNK chat, like the
+ * conversation-message item above it.
+ *
+ * CONTENT-FREE like every other host-authored arm, and more so: the item
+ * carries no task ids. The host composes the report at dispatch from its own
+ * records - which tasks are due, what changed in each since its last
+ * check-in - so a check-in that queues while the trunk is mid-turn, and the
+ * check-ins that fall due while it waits, all coalesce into THIS item and
+ * one turn. The item is one per trunk at a time; `description` is the chip's
+ * label and nothing more.
+ *
+ * Same narrowed status enum and `delivery` / `targetTurnId` pair as the other
+ * host-authored arms. A peer below `1.26` is never sent one: the host's
+ * per-minor frame projection OMITS it, from the queue and from the queue
+ * events alike, as it omits the conversation-message item below `1.25`.
+ */
+export const chatQueuedTaskCheckinItemSchema = lazySchema(() =>
+  z.object({
+    kind: z.literal("task-checkin"),
+    queueItemId: z.string(),
+    description: z.string(),
+    delivery: chatQueueItemDeliverySchema.default("next_turn"),
+    targetTurnId: z.string().nullable().default(null),
+    status: z.enum(["pending", "steering", "paused"]).default("pending"),
+    createdAt: z.number(),
+    updatedAt: z.number(),
+  }),
+);
+export type ChatQueuedTaskCheckinItem = z.infer<
+  typeof chatQueuedTaskCheckinItemSchema
+>;
+
 // A plain `z.union` with the REQUIRED-`kind` arms FIRST - deliberately not
 // a `z.discriminatedUnion`, which rejects a payload missing the discriminant
 // even when the literal is defaulted (verified against this repo's zod). Legacy
@@ -895,6 +929,7 @@ export const chatQueuedItemSchema = lazySchema(() =>
     chatQueuedManagedCommandItemSchema,
     chatQueuedPortForwardItemSchema,
     chatQueuedConversationMessageItemSchema,
+    chatQueuedTaskCheckinItemSchema,
     chatQueuedPromptItemSchema,
   ]),
 );
@@ -956,7 +991,6 @@ const chatQueueStateSchemaPreConversation = lazySchema(() =>
     pausedReason: z.string().nullable().optional(),
   }),
 );
-
 // ─── Open-harness-id queue (`chat.subscribe@1.22`) ──────────────────────────
 //
 // The live queue with the prompt item's `sender` reopened: an A2A prompt
@@ -981,6 +1015,7 @@ export const openChatQueuedItemSchema = lazySchema(() =>
     chatQueuedManagedCommandItemSchema,
     chatQueuedPortForwardItemSchema,
     chatQueuedConversationMessageItemSchema,
+    chatQueuedTaskCheckinItemSchema,
     openChatQueuedPromptItemSchema,
   ]),
 );
@@ -991,6 +1026,27 @@ export const openChatQueueStateSchema = lazySchema(() =>
   }),
 );
 export type OpenChatQueueState = z.infer<typeof openChatQueueStateSchema>;
+
+// Wire-freeze of the open queue as `chat.subscribe@1.25` ships it: the four
+// arms that existed before `1.26` added the task-checkin item, with the
+// prompt item's sender reopened. Its own union, NOT derived from the live open
+// one, so a later arm cannot reach that line through it. Bound to `1.25`'s
+// snapshot and `queueChanged` frames.
+const openChatQueuedItemSchemaPreTaskCheckin = lazySchema(() =>
+  z.union([
+    chatQueuedManagedCommandItemSchema,
+    chatQueuedPortForwardItemSchema,
+    chatQueuedConversationMessageItemSchema,
+    openChatQueuedPromptItemSchema,
+  ]),
+);
+const openChatQueueStateSchemaPreTaskCheckin = lazySchema(() =>
+  z.object({
+    status: z.enum(["idle", "running", "paused"]),
+    items: z.array(openChatQueuedItemSchemaPreTaskCheckin),
+    pausedReason: z.string().nullable().optional(),
+  }),
+);
 
 // Wire-freeze of the open queue as `chat.subscribe@1.22` through `@1.24` ship
 // it: the three pre-`1.25` arms with the prompt item's sender reopened. Its own
@@ -3358,9 +3414,28 @@ const chatSubscribeCommonServerFrameSchemasOpenHarnessPreConversation =
     },
   });
 
-// The live common frames (`chat.subscribe@1.25`): the open-harness set over
+// The common frames as `chat.subscribe@1.25` ships them: the open-harness set
+// over the user row that may carry a bot-conversation request and the queue
+// frozen at its four pre-task-checkin arms.
+const chatSubscribeCommonServerFrameSchemasOpenHarnessPreTaskCheckin =
+  buildChatSubscribeCommonServerFrameSchemas({
+    message: openUserMessageSchema,
+    queue: openChatQueueStateSchemaPreTaskCheckin,
+    event: openChatEventSchema,
+    action: chatActionSchema,
+    approval: chatApprovalStateSchema,
+    fileEditApproval: chatFileEditApprovalStateSchema,
+    interviewAnswered: interviewAnsweredServerFrameSchema,
+    interviewErrored: interviewErroredServerFrameSchema,
+    extraActionAckFields: {
+      ...fallbackGraceHoldLeaseFields,
+      ...draftImageAckCauseFields,
+    },
+  });
+
+// The live common frames (`chat.subscribe@1.26`): the open-harness set over
 // the user row that may carry a bot-conversation request and the queue that
-// may carry a conversation-message item.
+// may carry a conversation-message or a task-checkin item.
 const chatSubscribeCommonServerFrameSchemasOpenHarness =
   buildChatSubscribeCommonServerFrameSchemas({
     message: openUserMessageSchema,
@@ -3513,20 +3588,27 @@ const chatSubscribeSharedServerFrameSchemas = [
 // The shared frames `chat.subscribe@1.23` and `@1.24` ship: the
 // open-harness common set, pre-conversation, over the `blockDelta` whose seven
 // harness-bearing events are reopened and whose `tool_call.completed` carries
-// no `1.26` delivery stamp. (`1.22` binds its own pre-page `blockDelta`.)
+// no `1.27` delivery stamp. (`1.22` binds its own pre-page `blockDelta`.)
 const chatSubscribeSharedServerFrameSchemasOpenHarnessPreConversation = [
   messageDeliveryChangedServerFrameSchema,
   ...chatSubscribeCommonServerFrameSchemasOpenHarnessPreConversation,
   blockDeltaServerFrameSchema(openRuntimeEventSchemaPreDelivery),
 ];
-// The shared frames `chat.subscribe@1.25` ships: the live open-harness common
-// set over the pre-delivery `blockDelta`. Frozen since `1.26` opened above it.
+// The shared frames `chat.subscribe@1.25` ships: the open-harness common set
+// with the pre-task-checkin queue, over the pre-delivery `blockDelta`.
+const chatSubscribeSharedServerFrameSchemasOpenHarnessPreTaskCheckin = [
+  messageDeliveryChangedServerFrameSchema,
+  ...chatSubscribeCommonServerFrameSchemasOpenHarnessPreTaskCheckin,
+  blockDeltaServerFrameSchema(openRuntimeEventSchemaPreDelivery),
+];
+// The shared frames `chat.subscribe@1.26` ships: the live open-harness common
+// set over the pre-delivery `blockDelta`. Frozen since `1.27` opened above it.
 const chatSubscribeSharedServerFrameSchemasOpenHarnessPreDelivery = [
   messageDeliveryChangedServerFrameSchema,
   ...chatSubscribeCommonServerFrameSchemasOpenHarness,
   blockDeltaServerFrameSchema(openRuntimeEventSchemaPreDelivery),
 ];
-// The live shared frames (`chat.subscribe@1.26`): the live open-harness common
+// The live shared frames (`chat.subscribe@1.27`): the live open-harness common
 // set over the live `blockDelta`.
 const chatSubscribeSharedServerFrameSchemasOpenHarness = [
   messageDeliveryChangedServerFrameSchema,
@@ -5887,8 +5969,8 @@ const chatSubscribeRangeServerFrameSchemaOpenHarnessPreConversation =
     }),
   );
 
-// The same frame as `1.25` ships it: the live user row, the tool block without
-// `1.26`'s delivery stamp, frozen for the reason the snapshot's `tail` is.
+// The same frame as `1.25` and `1.26` ship it: the live user row, the tool
+// block without `1.27`'s delivery stamp, frozen for the reason the snapshot's `tail` is.
 const chatSubscribeRangeServerFrameSchemaOpenHarnessPreDelivery = lazySchema(
   () =>
     z.object({
@@ -6259,11 +6341,39 @@ const chatSubscribeServerFrameSchemaV124 = lazySchema(() =>
 );
 
 /**
- * Frozen 1.25: the bot-conversation request row and queue item are live; the
- * tool block and `tool_call.completed` carry no `agentMessageDelivery` stamp
- * (`1.26`). Frozen since `1.26` opened above it.
+ * Frozen 1.25: the bot-conversation line - the user row carries its request
+ * and the queue its conversation-message item - with no task-checkin item
+ * (`1.26`) and no `agentMessageDelivery` stamp on the tool block or
+ * `tool_call.completed` (`1.27`). Frozen byte for byte since `1.26` opened
+ * above it: the snapshot and `queueChanged` bind the four-arm open queue.
  */
 const chatSubscribeServerFrameSchemaV125 = lazySchema(() =>
+  z.discriminatedUnion("kind", [
+    chatSubscribeWindowedSnapshotServerFrameSchemaOpenHarness.extend({
+      snapshot: chatWindowedSnapshotSchemaV124.extend({
+        queue: openChatQueueStateSchemaPreTaskCheckin,
+        tail: openChatTranscriptWindowSchemaPreDelivery,
+      }),
+    }),
+    chatSubscribeSkeletonChunkServerFrameSchemaV119,
+    chatSubscribeAccumulatedChangesServerFrameSchema,
+    chatSubscribeIndexChangedServerFrameSchema,
+    chatSubscribeRangeServerFrameSchemaOpenHarnessPreDelivery,
+    chatSubscribeTurnStateChangedServerFrameSchema,
+    chatSubscribeManagedCommandsChangedServerFrameSchema,
+    chatSubscribePortForwardsChangedServerFrameSchema,
+    chatSubscribeHeldUpdatesChangedServerFrameSchema,
+    chatSubscribeThinkingTokensServerFrameSchema,
+    ...chatSubscribeSharedServerFrameSchemasOpenHarnessPreTaskCheckin,
+  ]),
+);
+
+/**
+ * Frozen 1.26: the task-checkin queue item is live; the tool block and
+ * `tool_call.completed` carry no `agentMessageDelivery` stamp (`1.27`).
+ * Frozen since `1.27` opened above it.
+ */
+const chatSubscribeServerFrameSchemaV126 = lazySchema(() =>
   z.discriminatedUnion("kind", [
     chatSubscribeWindowedSnapshotServerFrameSchemaOpenHarness.extend({
       snapshot: openChatWindowedSnapshotSchema.extend({
@@ -6284,7 +6394,7 @@ const chatSubscribeServerFrameSchemaV125 = lazySchema(() =>
 );
 
 /**
- * The live windowed union as a READER decodes it (`chat.subscribe@1.26`): the
+ * The live windowed union as a READER decodes it (`chat.subscribe@1.27`): the
  * union above with the snapshot, the `range` response, the three
  * sender-bearing common frames and the `blockDelta` bound to their
  * open-harness copies. The frames a peer DRIVES through - `turnStateChanged`
@@ -7211,7 +7321,8 @@ export const chatSubscribeV124 = defineStreamRpcContract({
  *   peer below `1.25` (`chat-frame-projection.ts`), since there is no sibling
  *   shape to degrade it into.
  *
- * The open request and the client frames are `1.24`'s, unchanged.
+ * The open request and the client frames are `1.24`'s, unchanged. Frozen at
+ * the four-arm queue since `1.26` opened above it.
  */
 export const chatSubscribeV125 = defineStreamRpcContract({
   method: "chat.subscribe",
@@ -7222,30 +7333,57 @@ export const chatSubscribeV125 = defineStreamRpcContract({
 });
 
 /**
+ * The task check-in line (Tracy Bots).
+ *
+ * `1.26` adds one union member and no key, frame or enum value: the
+ * `task-checkin` queue item (`chatQueuedTaskCheckinItemSchema`), a report on
+ * the tasks a bot tracks waiting on the TRUNK chat's queue to reach the bot.
+ * The host composes it at dispatch from its own records, so the item carries
+ * no task ids and several due check-ins coalesce into the one item.
+ *
+ * PROJECTION, like `1.25`'s conversation-message item and `1.14`'s
+ * port-forward item: `1.25` binds the hand-frozen four-arm open queue
+ * (`openChatQueueStateSchemaPreTaskCheckin`), every older line its own
+ * freeze, and the host OMITS the item - from the queue and from the queue
+ * events alike - for every peer below `1.26` (`chat-frame-projection.ts`),
+ * since there is no sibling shape to degrade it into.
+ *
+ * The open request and the client frames are `1.25`'s, unchanged. Frozen at
+ * the pre-delivery tool block since `1.27` opened above it.
+ */
+export const chatSubscribeV126 = defineStreamRpcContract({
+  method: "chat.subscribe",
+  schemaVersion: { major: 1, minor: 26 } as const,
+  openRequestSchema: chatSubscribeOpenRequestSchemaV119,
+  serverFrameSchema: chatSubscribeServerFrameSchemaV126,
+  clientFrameSchema: chatSubscribeWindowedClientFrameSchema,
+});
+
+/**
  * The cross-host send-state line.
  *
- * `1.26` adds one key and no frame, union member or enum value:
+ * `1.27` adds one key and no frame, union member or enum value:
  * `agentMessageDelivery` on a `tool_call` block (`agentMessageDeliverySchema`)
  * and on its `tool_call.completed` event. A send to an agent on another host
  * is queued rather than delivered while the call runs; the key says so, and
  * moves to delivered, expired or failed as the receiving host answers.
  *
  * PROJECTION, not tolerance, like `1.23`'s page stamps: every line from `1.23`
- * through `1.25` binds the hand-frozen `toolCallBlockSchemaPreDelivery` /
+ * through `1.26` binds the hand-frozen `toolCallBlockSchemaPreDelivery` /
  * `toolCallCompletedEventSchemaPreDelivery` on every body channel (the tail, a
  * `range` response and `blockDelta`), and the host deletes the key by name for
- * every peer below `1.26` (`CHAT_SUBSCRIBE_AGENT_MESSAGE_DELIVERY_MINOR`). A
+ * every peer below `1.27` (`CHAT_SUBSCRIBE_AGENT_MESSAGE_DELIVERY_MINOR`). A
  * peer below it renders the send as the plain sent card it always did.
  *
  * Defaulted `null` on the block and optional on the event: a block persisted
  * before the key reads as "no send state", and an adapter that never stamps
  * simply omits it from the event.
  *
- * The open request and the client frames are `1.25`'s, unchanged.
+ * The open request and the client frames are `1.26`'s, unchanged.
  */
-export const chatSubscribeV126 = defineStreamRpcContract({
+export const chatSubscribeV127 = defineStreamRpcContract({
   method: "chat.subscribe",
-  schemaVersion: { major: 1, minor: 26 } as const,
+  schemaVersion: { major: 1, minor: 27 } as const,
   openRequestSchema: chatSubscribeOpenRequestSchemaV119,
   serverFrameSchema: openChatSubscribeWindowedServerFrameSchema,
   clientFrameSchema: chatSubscribeWindowedClientFrameSchema,
