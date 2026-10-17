@@ -15,7 +15,8 @@ import type { HostRuntimeBinding } from "@/providers/host-runtime-provider";
 
 /**
  * `remove-terminal-agent` is its own kind: a terminal agent's process runs on
- * its host, and a requested delete leaves it running until that host is back.
+ * its host, and a requested delete does not stop it. The answer carries no
+ * runtime fact (the agent may already have exited), so the copy says "may".
  */
 export type RequestedRecordWrite =
   | "archive"
@@ -49,7 +50,7 @@ export function requestedRecordWriteMessage(
     case "remove":
       return `Removed. Files on ${hostLabel ?? "its host"} are untouched`;
     case "remove-terminal-agent":
-      return `Removed. The agent keeps running on ${hostLabel ?? "its host"} until that host reconnects. Its files are untouched`;
+      return `Removed. The agent may keep running on ${hostLabel ?? "its host"} until that host reconnects. Its files are untouched`;
   }
 }
 

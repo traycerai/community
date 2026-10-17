@@ -421,24 +421,24 @@ describe("owner session down -> a live host takes the write", () => {
     ]);
   });
 
-  it("deletes a terminal agent through the session host and says the agent keeps running until its host reconnects", async () => {
+  it("deletes a terminal agent through the session host and says the agent may keep running until its host reconnects", async () => {
     await deleteTuiAgent();
 
     expect(writeCalls()).toEqual([
       { method: "epic.deleteTuiAgent", hostId: SESSION.hostId },
     ]);
     expect(successToasts()).toEqual([
-      "Removed. The agent keeps running on Mock Remote Host until that host reconnects. Its files are untouched",
+      "Removed. The agent may keep running on Mock Remote Host until that host reconnects. Its files are untouched",
     ]);
   });
 
-  it("words a chat delete and a terminal-agent delete differently: only the agent is still running", async () => {
+  it("words a chat delete and a terminal-agent delete differently: only the agent may still be running", async () => {
     await deleteChat();
     await deleteTuiAgent();
 
     expect(successToasts()).toEqual([
       "Removed. Files on Mock Remote Host are untouched",
-      "Removed. The agent keeps running on Mock Remote Host until that host reconnects. Its files are untouched",
+      "Removed. The agent may keep running on Mock Remote Host until that host reconnects. Its files are untouched",
     ]);
   });
 
