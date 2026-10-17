@@ -388,6 +388,20 @@ describe("canonicalTaskXml", () => {
       bare,
       `\uFEFF<?xml version="1.0" encoding="UTF-16"?>\r\r\n${bare.replace(/\n/gu, "\r\r\n")}\r\r\n`,
     ],
+    [
+      "a non-ASCII path in Command and Arguments survives the scheduler's re-serialization",
+      definition({
+        command: "D:\\q8t\\p4\\Tr\u00E1ycer Data m\\bin\\traycer.exe",
+        argumentsLine: "&quot;D:\\q8t\\p4\\Tr\u00E1ycer Data m&quot; host run",
+      }),
+      `\uFEFF<?xml version="1.0" encoding="UTF-16"?>\r\r\n${storedByWindows(
+        definition({
+          command: "D:\\q8t\\p4\\Tr\u00E1ycer Data m\\bin\\traycer.exe",
+          argumentsLine:
+            "&quot;D:\\q8t\\p4\\Tr\u00E1ycer Data m&quot; host run",
+        }),
+      )}`,
+    ],
   ];
   it.each(equalPairs)("%s", (_name, left, right) => {
     expect(canonicalTaskXml(left)).toBe(canonicalTaskXml(right));
