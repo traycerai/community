@@ -1850,18 +1850,16 @@ describe("a continuation probe leaves no reference definition behind", () => {
     expect(collectText(item).join("")).toContain("continuation");
   });
 
-  it("reads an ordered item's first line as text, never as a definition", () => {
+  it("reads a definition at the start of an ordered item's content as a definition, as a bullet item does", () => {
     const parsed = parseMarkdown("1. [x]: /wrong\n   continuation\n\n[x]");
     const top = parsed.content ?? [];
     expect(top.map((node) => node.type)).toEqual(["orderedList", "paragraph"]);
-    const item = (top[0].content ?? [])[0];
-    expect(childTypes(item)).toEqual(["paragraph"]);
-    const text = paragraphText((item.content ?? [])[0]);
-    expect(text).toContain("[x]: /wrong");
-    expect(text).toContain("continuation");
-    const last = lastTopParagraph(parsed);
-    expect(paragraphText(last)).toBe("[x]");
-    expect(linkHrefs(last)).toEqual([]);
+    expect(linkHrefs(lastTopParagraph(parsed))).toEqual(["/wrong"]);
+    const bullet = parseMarkdown("- [x]: /wrong\n  continuation\n\n[x]");
+    expect(linkHrefs(bullet)).toEqual(linkHrefs(parsed));
+    const orderedItem = (top[0].content ?? [])[0];
+    expect(childTypes(orderedItem)).toEqual(["paragraph"]);
+    expect(paragraphText((orderedItem.content ?? [])[0])).toBe("continuation");
   });
 
   it("still defines a top-level definition for a later [x]", () => {
@@ -2129,4 +2127,259 @@ describe("a <br> typed in a table cell comes back as that text", () => {
       expect(collectText(parsed).join("")).toContain(typed);
     });
   }
+});
+
+// ---- M. an ordered item that opens with a block lexes it as marked does
+
+function itemsOf(markdown: string, listType: string): JsonContent[] {
+  const top = parseMarkdown(markdown).content ?? [];
+  expect(top.map((node) => node.type)).toContain(listType);
+  const list = top.find((node) => node.type === listType);
+  expect(list).toBeDefined();
+  return (list ?? top[0]).content ?? [];
+}
+
+function firstItemOf(markdown: string, listType: string): JsonContent {
+  return itemsOf(markdown, listType)[0];
+}
+
+function firstListOf(markdown: string): JsonContent {
+  return (parseMarkdown(markdown).content ?? [])[0];
+}
+
+// `lines` hold the item's first line (after the marker's one-space gap) and
+// its continuation lines relative to the content column.
+function orderedSource(marker: string, lines: ReadonlyArray<string>): string {
+  const pad = " ".repeat(marker.length + 1);
+  return lines
+    .map((line, index) => (index === 0 ? `${marker} ${line}` : `${pad}${line}`))
+    .join("\n");
+}
+
+function bulletSource(lines: ReadonlyArray<string>): string {
+  return lines
+    .map((line, index) => (index === 0 ? `- ${line}` : `  ${line}`))
+    .join("\n");
+}
+
+const OPENING_BLOCKS: ReadonlyArray<readonly [string, ReadonlyArray<string>]> =
+  [
+    ["a heading", ["# h"]],
+    ["a quote", ["> q"]],
+    ["a fenced code block", ["```js", "code", "```"]],
+    ["indented code", ["     a"]],
+    ["an HTML block", ["<div>", " x", " </div>"]],
+    ["a nested bullet list", ["- x"]],
+  ];
+
+describe("an ordered item that opens with a block lexes it as marked does", () => {
+  for (const [name, lines] of OPENING_BLOCKS) {
+    for (const [marker, start] of [
+      ["1.", 1],
+      ["10.", 10],
+      ["100.", 100],
+    ] as const) {
+      it(`reads ${name} at ${marker} like a bullet item`, () => {
+        const ordered = firstListOf(orderedSource(marker, lines));
+        expect(ordered.type).toBe("orderedList");
+        expect(ordered.attrs?.start ?? 1).toBe(start);
+        const bullet = firstListOf(bulletSource(lines));
+        expect(bullet.type).toBe("bulletList");
+        expect(JSON.stringify((ordered.content ?? [])[0].content)).toBe(
+          JSON.stringify((bullet.content ?? [])[0].content),
+        );
+      });
+    }
+  }
+
+  for (const [marker, start] of [
+    ["1.", 1],
+    ["10.", 10],
+    ["100.", 100],
+  ] as const) {
+    it(`reads a thematic break at ${marker} as an empty paragraph and a rule`, () => {
+      const list = firstListOf(orderedSource(marker, ["---"]));
+      expect(list.type).toBe("orderedList");
+      expect(list.attrs?.start ?? 1).toBe(start);
+      const item = (list.content ?? [])[0];
+      expect(childTypes(item)).toEqual(["paragraph", "horizontalRule"]);
+      expect(paragraphText((item.content ?? [])[0])).toBe("");
+    });
+  }
+
+  it("reads `1. # h` as an empty paragraph and a heading", () => {
+    const item = firstItemOf("1. # h", "orderedList");
+    expect(childTypes(item)).toEqual(["paragraph", "heading"]);
+    expect(paragraphText((item.content ?? [])[0])).toBe("");
+    expect(collectText((item.content ?? [])[1]).join("")).toBe("h");
+  });
+
+  it("reads six spaces after the marker as indented code", () => {
+    const item = firstItemOf("1.      a", "orderedList");
+    expect(childTypes(item)).toEqual(["paragraph", "codeBlock"]);
+    expect(collectText((item.content ?? [])[1]).join("")).toBe(" a");
+  });
+
+  it("reads `1. 2. x` as a nested ordered list starting at 2", () => {
+    const item = firstItemOf("1. 2. x", "orderedList");
+    expect(childTypes(item)).toEqual(["paragraph", "orderedList"]);
+    const nested = (item.content ?? [])[1];
+    expect(nested.attrs?.start).toBe(2);
+    expect(childTypes((nested.content ?? [])[0])).toEqual(["paragraph"]);
+    expect(collectText(nested).join("")).toBe("x");
+  });
+});
+
+describe("marked decides where an ordered item's paragraph ends", () => {
+  function bulletForm(lines: ReadonlyArray<string>): string {
+    return lines
+      .map((line, index) =>
+        index === 0 ? `- ${line.slice(3)}` : `  ${line.slice(3)}`,
+      )
+      .join("\n");
+  }
+
+  function expectParity(lines: ReadonlyArray<string>): JsonContent {
+    const ordered = firstItemOf(lines.join("\n"), "orderedList");
+    const bullet = firstItemOf(bulletForm(lines), "bulletList");
+    expect(JSON.stringify(ordered.content)).toBe(
+      JSON.stringify(bullet.content),
+    );
+    return ordered;
+  }
+
+  it("keeps a deeply indented fence line as paragraph text before a sibling sub-list", () => {
+    const item = expectParity(["1. a", "       ```", "   2. b"]);
+    expect(childTypes(item)).toEqual(["paragraph", "orderedList"]);
+    expect(paragraphText((item.content ?? [])[0])).toBe("a\n```");
+    expect((item.content ?? [])[1].attrs?.start).toBe(2);
+    expect(hasNodeType(item, "codeBlock")).toBe(false);
+  });
+
+  it("keeps a deeply indented fence and the line after it as paragraph text", () => {
+    const item = expectParity(["1. a", "       ```", "       x", "   2. b"]);
+    expect(childTypes(item)).toEqual(["paragraph", "orderedList"]);
+    expect(paragraphText((item.content ?? [])[0])).toBe("a\n```\nx");
+    expect((item.content ?? [])[1].attrs?.start).toBe(2);
+  });
+
+  it("reads a rule under text as a setext heading", () => {
+    const item = expectParity(["1. a", "   ---"]);
+    expect(childTypes(item)).toEqual(["paragraph", "heading"]);
+    expect(paragraphText((item.content ?? [])[0])).toBe("");
+    expect(collectText((item.content ?? [])[1]).join("")).toBe("a");
+  });
+
+  it("ends the paragraph after a heading opener", () => {
+    const item = firstItemOf("1. # h\n   text", "orderedList");
+    expect(childTypes(item)).toEqual(["paragraph", "heading", "paragraph"]);
+    expect(collectText((item.content ?? [])[1]).join("")).toBe("h");
+    expect(paragraphText((item.content ?? [])[2])).toBe("text");
+  });
+
+  it("keeps a list-looking line inside a fence opened on the first line", () => {
+    const item = expectParity(["1. ```", "   2. x", "   ```"]);
+    expect(hasNodeType(item, "orderedList")).toBe(false);
+    expect(hasNodeType(item, "codeBlock")).toBe(true);
+    expect(collectText(item).join("")).toBe("2. x");
+  });
+});
+
+describe("a continuation probe leaves no prototype-named definition behind", () => {
+  const LABELS = ["constructor", "__proto__", "toString", "hasOwnProperty"];
+
+  for (const label of LABELS) {
+    it(`keeps a later [${label}] plain after a task item`, () => {
+      const parsed = parseMarkdown(
+        `- [ ] [${label}]: /wrong\n  continuation\n\n[${label}]`,
+      );
+      expect(linkHrefs(parsed)).toEqual([]);
+      const item = findTaskItem(parsed);
+      expect(childTypes(item)).toEqual(["paragraph"]);
+    });
+
+    for (const [name, build] of [
+      ["bullet", (l: string) => `- [${l}]: /wrong\n  continuation\n\n[${l}]`],
+      [
+        "ordered",
+        (l: string) => `1. [${l}]: /wrong\n   continuation\n\n[${l}]`,
+      ],
+    ] as const) {
+      it(`reads a [${label}] definition in a ${name} item as it reads [x]`, () => {
+        const withLabel = parseMarkdown(build(label));
+        const withX = parseMarkdown(build("x"));
+        expect(childTypes(withLabel)).toEqual(childTypes(withX));
+        expect(linkHrefs(withLabel)).toEqual(linkHrefs(withX));
+        expect(linkHrefs(withLabel)).toEqual(["/wrong"]);
+      });
+    }
+
+    it(`keeps the real [${label}] definition ahead of a probed one`, () => {
+      const parsed = parseMarkdown(
+        `[${label}]: /right\n\n- [ ] [${label}]: /wrong\n  continuation\n\n[${label}]`,
+      );
+      expect(linkHrefs(lastTopParagraph(parsed))).toEqual(["/right"]);
+    });
+  }
+});
+
+// ---- N. the kept-marker placeholder never reads as the user's text
+
+describe("a doc with runs of U+FDD0 survives alongside empty list items", () => {
+  const FDD0 = "\uFDD0";
+
+  function runsDoc(): JsonContent {
+    return {
+      type: "doc",
+      content: [
+        textPara(`x${FDD0.repeat(3)}y`),
+        listWith("bulletList", [itemOf(textPara(`p${FDD0}q`))], 1),
+        {
+          type: "table",
+          content: [
+            {
+              type: "tableRow",
+              content: [{ type: "tableHeader", content: [textPara("h")] }],
+            },
+            {
+              type: "tableRow",
+              content: [
+                { type: "tableCell", content: [textPara(`a${FDD0}b`)] },
+              ],
+            },
+          ],
+        },
+        listWith("orderedList", [itemOf({ type: "paragraph" })], 1),
+        {
+          type: "taskList",
+          content: [
+            {
+              type: "taskItem",
+              attrs: { checked: false },
+              content: [{ type: "paragraph" }],
+            },
+          ],
+        },
+      ],
+    };
+  }
+
+  it("keeps the user's runs as typed and the empty items' trailing space", () => {
+    const md = jsonContentToMarkdown(runsDoc(), SERIALIZER_OPTIONS);
+    expect(md.split(FDD0)).toHaveLength(6);
+    expect(md).toContain(`x${FDD0.repeat(3)}y`);
+    expect(md).toContain(`- p${FDD0}q`);
+    expect(md).toContain(`| a${FDD0}b |`);
+    expect(md.split("\n")).toContain("1. ");
+    expect(md.endsWith("\n- [ ] ")).toBe(true);
+  });
+
+  it("returns the same JSON after a markdown round trip", () => {
+    expectStructureBack(runsDoc());
+    const md = jsonContentToMarkdown(runsDoc(), SERIALIZER_OPTIONS);
+    const texts = collectText(parseMarkdown(md));
+    expect(texts).toContain(`x${FDD0.repeat(3)}y`);
+    expect(texts).toContain(`p${FDD0}q`);
+    expect(texts).toContain(`a${FDD0}b`);
+  });
 });

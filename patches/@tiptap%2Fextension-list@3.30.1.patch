@@ -1,5 +1,5 @@
 diff --git a/dist/index.cjs b/dist/index.cjs
-index 4c729511471466d470d01dae4ae2ab7393eb6e2d..49d55be1eac0e802eed845180915648ab019ca8e 100644
+index 4c729511471466d470d01dae4ae2ab7393eb6e2d..b4b7b0696dfde7bd817a57dbb2bc0b1f4be1e4b2 100644
 --- a/dist/index.cjs
 +++ b/dist/index.cjs
 @@ -487,7 +487,10 @@ var ListItem = import_core3.Node.create({
@@ -41,10 +41,41 @@ index 4c729511471466d470d01dae4ae2ab7393eb6e2d..49d55be1eac0e802eed845180915648a
        ];
      }
      return {
-@@ -930,6 +934,62 @@ function splitItemContent(contentLines) {
-     blockLines
-   };
+@@ -891,44 +895,64 @@ var PARAGRAPH_INTERRUPTERS = {
+   blockMath: /^\$\$/,
+   thematicBreak: /^(?:(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|(?:\*[ \t]*){3,})$/
+ };
+-function isOrderedListMarkerLine(line) {
+-  return ORDERED_LIST_ITEM_REGEX.test(line.trimStart());
+-}
+-function isBlockContentLine(line) {
+-  const trimmedLine = line.trimStart();
+-  return PARAGRAPH_INTERRUPTERS.bulletItem.test(trimmedLine) || isOrderedListMarkerLine(trimmedLine) || PARAGRAPH_INTERRUPTERS.heading.test(trimmedLine) || // dash breaks are excluded: "---" directly below paragraph text is a
+-  // setext heading underline, not a thematic break
+-  PARAGRAPH_INTERRUPTERS.thematicBreak.test(trimmedLine) && !trimmedLine.startsWith("-") || // oxlint-disable-next-line prefer-string-starts-ends-with
+-  /^>\s?/.test(trimmedLine) || PARAGRAPH_INTERRUPTERS.codeFence.test(trimmedLine) || PARAGRAPH_INTERRUPTERS.blockMath.test(trimmedLine);
+-}
+ function interruptsLazyContinuation(line) {
+   return Object.values(PARAGRAPH_INTERRUPTERS).some((pattern) => pattern.test(line));
  }
+-function splitItemContent(contentLines) {
+-  const paragraphLines = [];
+-  const blockLines = [];
+-  let reachedBlockBoundary = false;
+-  contentLines.forEach((line) => {
+-    if (reachedBlockBoundary) {
+-      blockLines.push(line);
+-      return;
+-    }
+-    if (line.trim() === "") {
+-      reachedBlockBoundary = true;
+-      blockLines.push(line);
+-      return;
+-    }
+-    if (paragraphLines.length > 0 && isBlockContentLine(line)) {
+-      reachedBlockBoundary = true;
+-      blockLines.push(line);
+-      return;
 +function leadingIndentColumns(line) {
 +  let column = 0;
 +  for (const char of line) {
@@ -67,7 +98,13 @@ index 4c729511471466d470d01dae4ae2ab7393eb6e2d..49d55be1eac0e802eed845180915648a
 +      column = next;
 +    } else {
 +      break;
-+    }
+     }
+-    paragraphLines.push(line);
+-  });
+-  return {
+-    paragraphLines,
+-    blockLines
+-  };
 +    index += 1;
 +  }
 +  return line.slice(index);
@@ -100,17 +137,42 @@ index 4c729511471466d470d01dae4ae2ab7393eb6e2d..49d55be1eac0e802eed845180915648a
 +  const spaces = end - markerEnd;
 +  if (text.startsWith(">")) return markerEnd + (spaces > 0 ? 1 : 0);
 +  return markerEnd + (spaces >= 1 && spaces <= 4 && text.trim().length > markerWidth ? spaces : 1);
-+}
+ }
  function collectOrderedListItems(lines) {
    const listItems = [];
-   let currentLineIndex = 0;
-@@ -949,10 +1009,20 @@ function collectOrderedListItems(lines) {
+@@ -945,14 +969,45 @@ function collectOrderedListItems(lines) {
+     const number = parseInt(marker, 10);
+     const markerType = isNaN(number) ? detectMarkerType(marker) : void 0;
+     const itemNumber = isNaN(number) ? markerToStart(marker) : number;
+-    const itemContentLines = [content];
      let nextLineIndex = currentLineIndex + 1;
      const itemLines = [line];
      let sawBlankLine = false;
 +    const itemContentColumn = containerContentColumn(line.trimStart(), leadingIndentColumns(indent), marker.length + _separator.length);
++    const markerEndColumn = leadingIndentColumns(indent) + marker.length + _separator.length;
++    const itemContentLines = [
++      stripIndentColumns(" ".repeat(markerEndColumn) + line.slice(indent.length + marker.length + _separator.length), itemContentColumn)
++    ];
 +    const innerBlocks = [];
 +    let openFence;
++    const firstText = itemContentLines[0].trimStart();
++    const firstColumn = itemContentColumn + leadingIndentColumns(itemContentLines[0]);
++    if (firstText !== "" && firstColumn - itemContentColumn <= 3) {
++      const run = fenceRun(firstText);
++      const firstMatch = firstText.match(ORDERED_LIST_ITEM_REGEX);
++      if (run !== void 0) {
++        openFence = { run, column: itemContentColumn };
++      } else if (firstMatch || /^(?:[-+*](?:\s|$)|>)/.test(firstText)) {
++        innerBlocks.push({
++          markerColumn: firstColumn,
++          contentColumn: containerContentColumn(
++            firstText,
++            firstColumn,
++            firstMatch ? firstMatch[2].length + 1 : 1
++          )
++        });
++      }
++    }
      while (nextLineIndex < lines.length) {
        const nextLine = lines[nextLineIndex];
        const nextMatch = nextLine.match(ORDERED_LIST_ITEM_REGEX);
@@ -126,7 +188,7 @@ index 4c729511471466d470d01dae4ae2ab7393eb6e2d..49d55be1eac0e802eed845180915648a
          break;
        }
        if (nextLine.trim() === "") {
-@@ -961,11 +1031,24 @@ function collectOrderedListItems(lines) {
+@@ -961,11 +1016,24 @@ function collectOrderedListItems(lines) {
          sawBlankLine = true;
          nextLineIndex += 1;
        } else if (nextLine.match(INDENTED_LINE_REGEX)) {
@@ -154,7 +216,34 @@ index 4c729511471466d470d01dae4ae2ab7393eb6e2d..49d55be1eac0e802eed845180915648a
        } else {
          if (sawBlankLine || interruptsLazyContinuation(nextLine)) {
            break;
-@@ -1042,7 +1125,7 @@ function buildNestedStructure(items, baseIndent, lexer) {
+@@ -1026,14 +1094,24 @@ function parsePlainTextOrderedListPaste(text) {
+     }))
+   };
+ }
++function splitAtFirstParagraph(contentLines, lexer) {
++  const tokens = lexer.probeBlockTokens(`${contentLines.join("\n")}\n`);
++  const first = tokens.findIndex((token) => token.type !== "space");
++  if (first === -1 || tokens[first].type !== "paragraph") {
++    return { paragraphLines: [], blockLines: contentLines };
++  }
++  const start = tokens.slice(0, first).map((token) => token.raw).join("").split("\n").length - 1;
++  const end = start + tokens[first].raw.replace(/\n+$/, "").split("\n").length;
++  return { paragraphLines: contentLines.slice(start, end), blockLines: contentLines.slice(end) };
++}
+ function buildNestedStructure(items, baseIndent, lexer) {
+   const result = [];
+   let currentIndex = 0;
+   while (currentIndex < items.length) {
+     const item = items[currentIndex];
+     if (item.indent === baseIndent) {
+-      const { paragraphLines, blockLines } = splitItemContent(item.contentLines);
+-      const mainText = paragraphLines.join("\n").trim();
++      const { paragraphLines, blockLines } = splitAtFirstParagraph(item.contentLines, lexer);
++      const mainText = paragraphLines.map((line) => line.trimStart()).join("\n").trim();
+       const tokens = [];
+       if (mainText) {
+         tokens.push({
+@@ -1042,7 +1120,7 @@ function buildNestedStructure(items, baseIndent, lexer) {
            tokens: lexer.inlineTokens(mainText)
          });
        }
@@ -163,7 +252,7 @@ index 4c729511471466d470d01dae4ae2ab7393eb6e2d..49d55be1eac0e802eed845180915648a
        if (additionalContent) {
          const blockTokens = lexer.blockTokens(additionalContent);
          tokens.push(...blockTokens);
-@@ -1101,6 +1184,9 @@ function parseListItems(items, helpers) {
+@@ -1101,6 +1179,9 @@ function parseListItems(items, helpers) {
          }
        });
      }
@@ -174,7 +263,7 @@ index 4c729511471466d470d01dae4ae2ab7393eb6e2d..49d55be1eac0e802eed845180915648a
        type: "listItem",
        content
 diff --git a/dist/index.js b/dist/index.js
-index ef3bc656fac8359ebc0ba0bf0a4f36aa9f4ca413..3383a9be91c40958a52428f121c238c1c5766f7f 100644
+index ef3bc656fac8359ebc0ba0bf0a4f36aa9f4ca413..0d59fc727af09331aa2b618203e2d570f8d35522 100644
 --- a/dist/index.js
 +++ b/dist/index.js
 @@ -447,7 +447,10 @@ var ListItem = Node2.create({
@@ -216,10 +305,41 @@ index ef3bc656fac8359ebc0ba0bf0a4f36aa9f4ca413..3383a9be91c40958a52428f121c238c1
        ];
      }
      return {
-@@ -890,6 +894,62 @@ function splitItemContent(contentLines) {
-     blockLines
-   };
+@@ -851,44 +855,64 @@ var PARAGRAPH_INTERRUPTERS = {
+   blockMath: /^\$\$/,
+   thematicBreak: /^(?:(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|(?:\*[ \t]*){3,})$/
+ };
+-function isOrderedListMarkerLine(line) {
+-  return ORDERED_LIST_ITEM_REGEX.test(line.trimStart());
+-}
+-function isBlockContentLine(line) {
+-  const trimmedLine = line.trimStart();
+-  return PARAGRAPH_INTERRUPTERS.bulletItem.test(trimmedLine) || isOrderedListMarkerLine(trimmedLine) || PARAGRAPH_INTERRUPTERS.heading.test(trimmedLine) || // dash breaks are excluded: "---" directly below paragraph text is a
+-  // setext heading underline, not a thematic break
+-  PARAGRAPH_INTERRUPTERS.thematicBreak.test(trimmedLine) && !trimmedLine.startsWith("-") || // oxlint-disable-next-line prefer-string-starts-ends-with
+-  /^>\s?/.test(trimmedLine) || PARAGRAPH_INTERRUPTERS.codeFence.test(trimmedLine) || PARAGRAPH_INTERRUPTERS.blockMath.test(trimmedLine);
+-}
+ function interruptsLazyContinuation(line) {
+   return Object.values(PARAGRAPH_INTERRUPTERS).some((pattern) => pattern.test(line));
  }
+-function splitItemContent(contentLines) {
+-  const paragraphLines = [];
+-  const blockLines = [];
+-  let reachedBlockBoundary = false;
+-  contentLines.forEach((line) => {
+-    if (reachedBlockBoundary) {
+-      blockLines.push(line);
+-      return;
+-    }
+-    if (line.trim() === "") {
+-      reachedBlockBoundary = true;
+-      blockLines.push(line);
+-      return;
+-    }
+-    if (paragraphLines.length > 0 && isBlockContentLine(line)) {
+-      reachedBlockBoundary = true;
+-      blockLines.push(line);
+-      return;
 +function leadingIndentColumns(line) {
 +  let column = 0;
 +  for (const char of line) {
@@ -242,7 +362,13 @@ index ef3bc656fac8359ebc0ba0bf0a4f36aa9f4ca413..3383a9be91c40958a52428f121c238c1
 +      column = next;
 +    } else {
 +      break;
-+    }
+     }
+-    paragraphLines.push(line);
+-  });
+-  return {
+-    paragraphLines,
+-    blockLines
+-  };
 +    index += 1;
 +  }
 +  return line.slice(index);
@@ -275,17 +401,42 @@ index ef3bc656fac8359ebc0ba0bf0a4f36aa9f4ca413..3383a9be91c40958a52428f121c238c1
 +  const spaces = end - markerEnd;
 +  if (text.startsWith(">")) return markerEnd + (spaces > 0 ? 1 : 0);
 +  return markerEnd + (spaces >= 1 && spaces <= 4 && text.trim().length > markerWidth ? spaces : 1);
-+}
+ }
  function collectOrderedListItems(lines) {
    const listItems = [];
-   let currentLineIndex = 0;
-@@ -909,10 +969,20 @@ function collectOrderedListItems(lines) {
+@@ -905,14 +929,45 @@ function collectOrderedListItems(lines) {
+     const number = parseInt(marker, 10);
+     const markerType = isNaN(number) ? detectMarkerType(marker) : void 0;
+     const itemNumber = isNaN(number) ? markerToStart(marker) : number;
+-    const itemContentLines = [content];
      let nextLineIndex = currentLineIndex + 1;
      const itemLines = [line];
      let sawBlankLine = false;
 +    const itemContentColumn = containerContentColumn(line.trimStart(), leadingIndentColumns(indent), marker.length + _separator.length);
++    const markerEndColumn = leadingIndentColumns(indent) + marker.length + _separator.length;
++    const itemContentLines = [
++      stripIndentColumns(" ".repeat(markerEndColumn) + line.slice(indent.length + marker.length + _separator.length), itemContentColumn)
++    ];
 +    const innerBlocks = [];
 +    let openFence;
++    const firstText = itemContentLines[0].trimStart();
++    const firstColumn = itemContentColumn + leadingIndentColumns(itemContentLines[0]);
++    if (firstText !== "" && firstColumn - itemContentColumn <= 3) {
++      const run = fenceRun(firstText);
++      const firstMatch = firstText.match(ORDERED_LIST_ITEM_REGEX);
++      if (run !== void 0) {
++        openFence = { run, column: itemContentColumn };
++      } else if (firstMatch || /^(?:[-+*](?:\s|$)|>)/.test(firstText)) {
++        innerBlocks.push({
++          markerColumn: firstColumn,
++          contentColumn: containerContentColumn(
++            firstText,
++            firstColumn,
++            firstMatch ? firstMatch[2].length + 1 : 1
++          )
++        });
++      }
++    }
      while (nextLineIndex < lines.length) {
        const nextLine = lines[nextLineIndex];
        const nextMatch = nextLine.match(ORDERED_LIST_ITEM_REGEX);
@@ -301,7 +452,7 @@ index ef3bc656fac8359ebc0ba0bf0a4f36aa9f4ca413..3383a9be91c40958a52428f121c238c1
          break;
        }
        if (nextLine.trim() === "") {
-@@ -921,11 +991,24 @@ function collectOrderedListItems(lines) {
+@@ -921,11 +976,24 @@ function collectOrderedListItems(lines) {
          sawBlankLine = true;
          nextLineIndex += 1;
        } else if (nextLine.match(INDENTED_LINE_REGEX)) {
@@ -329,7 +480,34 @@ index ef3bc656fac8359ebc0ba0bf0a4f36aa9f4ca413..3383a9be91c40958a52428f121c238c1
        } else {
          if (sawBlankLine || interruptsLazyContinuation(nextLine)) {
            break;
-@@ -1002,7 +1085,7 @@ function buildNestedStructure(items, baseIndent, lexer) {
+@@ -986,14 +1054,24 @@ function parsePlainTextOrderedListPaste(text) {
+     }))
+   };
+ }
++function splitAtFirstParagraph(contentLines, lexer) {
++  const tokens = lexer.probeBlockTokens(`${contentLines.join("\n")}\n`);
++  const first = tokens.findIndex((token) => token.type !== "space");
++  if (first === -1 || tokens[first].type !== "paragraph") {
++    return { paragraphLines: [], blockLines: contentLines };
++  }
++  const start = tokens.slice(0, first).map((token) => token.raw).join("").split("\n").length - 1;
++  const end = start + tokens[first].raw.replace(/\n+$/, "").split("\n").length;
++  return { paragraphLines: contentLines.slice(start, end), blockLines: contentLines.slice(end) };
++}
+ function buildNestedStructure(items, baseIndent, lexer) {
+   const result = [];
+   let currentIndex = 0;
+   while (currentIndex < items.length) {
+     const item = items[currentIndex];
+     if (item.indent === baseIndent) {
+-      const { paragraphLines, blockLines } = splitItemContent(item.contentLines);
+-      const mainText = paragraphLines.join("\n").trim();
++      const { paragraphLines, blockLines } = splitAtFirstParagraph(item.contentLines, lexer);
++      const mainText = paragraphLines.map((line) => line.trimStart()).join("\n").trim();
+       const tokens = [];
+       if (mainText) {
+         tokens.push({
+@@ -1002,7 +1080,7 @@ function buildNestedStructure(items, baseIndent, lexer) {
            tokens: lexer.inlineTokens(mainText)
          });
        }
@@ -338,7 +516,7 @@ index ef3bc656fac8359ebc0ba0bf0a4f36aa9f4ca413..3383a9be91c40958a52428f121c238c1
        if (additionalContent) {
          const blockTokens = lexer.blockTokens(additionalContent);
          tokens.push(...blockTokens);
-@@ -1061,6 +1144,9 @@ function parseListItems(items, helpers) {
+@@ -1061,6 +1139,9 @@ function parseListItems(items, helpers) {
          }
        });
      }
@@ -435,7 +613,7 @@ index d5416b99b4bc59f801ea3ce6496fbc3793ca0a3f..a0883fe1b0ce47466b4beaf187f2b287
      }
      return {
 diff --git a/dist/kit/index.cjs b/dist/kit/index.cjs
-index 1b3f64617adf858090a503bca2cbb567b7fb5e7a..002c60de6e987593eb12563aceb88df57a3f96e1 100644
+index 1b3f64617adf858090a503bca2cbb567b7fb5e7a..647ab7078a3eac7d6adc2a36f7613cac6f30545a 100644
 --- a/dist/kit/index.cjs
 +++ b/dist/kit/index.cjs
 @@ -468,7 +468,10 @@ var ListItem = import_core3.Node.create({
@@ -477,10 +655,41 @@ index 1b3f64617adf858090a503bca2cbb567b7fb5e7a..002c60de6e987593eb12563aceb88df5
        ];
      }
      return {
-@@ -908,6 +912,62 @@ function splitItemContent(contentLines) {
-     blockLines
-   };
+@@ -869,44 +873,64 @@ var PARAGRAPH_INTERRUPTERS = {
+   blockMath: /^\$\$/,
+   thematicBreak: /^(?:(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|(?:\*[ \t]*){3,})$/
+ };
+-function isOrderedListMarkerLine(line) {
+-  return ORDERED_LIST_ITEM_REGEX.test(line.trimStart());
+-}
+-function isBlockContentLine(line) {
+-  const trimmedLine = line.trimStart();
+-  return PARAGRAPH_INTERRUPTERS.bulletItem.test(trimmedLine) || isOrderedListMarkerLine(trimmedLine) || PARAGRAPH_INTERRUPTERS.heading.test(trimmedLine) || // dash breaks are excluded: "---" directly below paragraph text is a
+-  // setext heading underline, not a thematic break
+-  PARAGRAPH_INTERRUPTERS.thematicBreak.test(trimmedLine) && !trimmedLine.startsWith("-") || // oxlint-disable-next-line prefer-string-starts-ends-with
+-  /^>\s?/.test(trimmedLine) || PARAGRAPH_INTERRUPTERS.codeFence.test(trimmedLine) || PARAGRAPH_INTERRUPTERS.blockMath.test(trimmedLine);
+-}
+ function interruptsLazyContinuation(line) {
+   return Object.values(PARAGRAPH_INTERRUPTERS).some((pattern) => pattern.test(line));
  }
+-function splitItemContent(contentLines) {
+-  const paragraphLines = [];
+-  const blockLines = [];
+-  let reachedBlockBoundary = false;
+-  contentLines.forEach((line) => {
+-    if (reachedBlockBoundary) {
+-      blockLines.push(line);
+-      return;
+-    }
+-    if (line.trim() === "") {
+-      reachedBlockBoundary = true;
+-      blockLines.push(line);
+-      return;
+-    }
+-    if (paragraphLines.length > 0 && isBlockContentLine(line)) {
+-      reachedBlockBoundary = true;
+-      blockLines.push(line);
+-      return;
 +function leadingIndentColumns(line) {
 +  let column = 0;
 +  for (const char of line) {
@@ -503,7 +712,13 @@ index 1b3f64617adf858090a503bca2cbb567b7fb5e7a..002c60de6e987593eb12563aceb88df5
 +      column = next;
 +    } else {
 +      break;
-+    }
+     }
+-    paragraphLines.push(line);
+-  });
+-  return {
+-    paragraphLines,
+-    blockLines
+-  };
 +    index += 1;
 +  }
 +  return line.slice(index);
@@ -536,17 +751,42 @@ index 1b3f64617adf858090a503bca2cbb567b7fb5e7a..002c60de6e987593eb12563aceb88df5
 +  const spaces = end - markerEnd;
 +  if (text.startsWith(">")) return markerEnd + (spaces > 0 ? 1 : 0);
 +  return markerEnd + (spaces >= 1 && spaces <= 4 && text.trim().length > markerWidth ? spaces : 1);
-+}
+ }
  function collectOrderedListItems(lines) {
    const listItems = [];
-   let currentLineIndex = 0;
-@@ -927,10 +987,20 @@ function collectOrderedListItems(lines) {
+@@ -923,14 +947,45 @@ function collectOrderedListItems(lines) {
+     const number = parseInt(marker, 10);
+     const markerType = isNaN(number) ? detectMarkerType(marker) : void 0;
+     const itemNumber = isNaN(number) ? markerToStart(marker) : number;
+-    const itemContentLines = [content];
      let nextLineIndex = currentLineIndex + 1;
      const itemLines = [line];
      let sawBlankLine = false;
 +    const itemContentColumn = containerContentColumn(line.trimStart(), leadingIndentColumns(indent), marker.length + _separator.length);
++    const markerEndColumn = leadingIndentColumns(indent) + marker.length + _separator.length;
++    const itemContentLines = [
++      stripIndentColumns(" ".repeat(markerEndColumn) + line.slice(indent.length + marker.length + _separator.length), itemContentColumn)
++    ];
 +    const innerBlocks = [];
 +    let openFence;
++    const firstText = itemContentLines[0].trimStart();
++    const firstColumn = itemContentColumn + leadingIndentColumns(itemContentLines[0]);
++    if (firstText !== "" && firstColumn - itemContentColumn <= 3) {
++      const run = fenceRun(firstText);
++      const firstMatch = firstText.match(ORDERED_LIST_ITEM_REGEX);
++      if (run !== void 0) {
++        openFence = { run, column: itemContentColumn };
++      } else if (firstMatch || /^(?:[-+*](?:\s|$)|>)/.test(firstText)) {
++        innerBlocks.push({
++          markerColumn: firstColumn,
++          contentColumn: containerContentColumn(
++            firstText,
++            firstColumn,
++            firstMatch ? firstMatch[2].length + 1 : 1
++          )
++        });
++      }
++    }
      while (nextLineIndex < lines.length) {
        const nextLine = lines[nextLineIndex];
        const nextMatch = nextLine.match(ORDERED_LIST_ITEM_REGEX);
@@ -562,7 +802,7 @@ index 1b3f64617adf858090a503bca2cbb567b7fb5e7a..002c60de6e987593eb12563aceb88df5
          break;
        }
        if (nextLine.trim() === "") {
-@@ -939,11 +1009,24 @@ function collectOrderedListItems(lines) {
+@@ -939,11 +994,24 @@ function collectOrderedListItems(lines) {
          sawBlankLine = true;
          nextLineIndex += 1;
        } else if (nextLine.match(INDENTED_LINE_REGEX)) {
@@ -590,7 +830,34 @@ index 1b3f64617adf858090a503bca2cbb567b7fb5e7a..002c60de6e987593eb12563aceb88df5
        } else {
          if (sawBlankLine || interruptsLazyContinuation(nextLine)) {
            break;
-@@ -1020,7 +1103,7 @@ function buildNestedStructure(items, baseIndent, lexer) {
+@@ -1004,14 +1072,24 @@ function parsePlainTextOrderedListPaste(text) {
+     }))
+   };
+ }
++function splitAtFirstParagraph(contentLines, lexer) {
++  const tokens = lexer.probeBlockTokens(`${contentLines.join("\n")}\n`);
++  const first = tokens.findIndex((token) => token.type !== "space");
++  if (first === -1 || tokens[first].type !== "paragraph") {
++    return { paragraphLines: [], blockLines: contentLines };
++  }
++  const start = tokens.slice(0, first).map((token) => token.raw).join("").split("\n").length - 1;
++  const end = start + tokens[first].raw.replace(/\n+$/, "").split("\n").length;
++  return { paragraphLines: contentLines.slice(start, end), blockLines: contentLines.slice(end) };
++}
+ function buildNestedStructure(items, baseIndent, lexer) {
+   const result = [];
+   let currentIndex = 0;
+   while (currentIndex < items.length) {
+     const item = items[currentIndex];
+     if (item.indent === baseIndent) {
+-      const { paragraphLines, blockLines } = splitItemContent(item.contentLines);
+-      const mainText = paragraphLines.join("\n").trim();
++      const { paragraphLines, blockLines } = splitAtFirstParagraph(item.contentLines, lexer);
++      const mainText = paragraphLines.map((line) => line.trimStart()).join("\n").trim();
+       const tokens = [];
+       if (mainText) {
+         tokens.push({
+@@ -1020,7 +1098,7 @@ function buildNestedStructure(items, baseIndent, lexer) {
            tokens: lexer.inlineTokens(mainText)
          });
        }
@@ -599,7 +866,7 @@ index 1b3f64617adf858090a503bca2cbb567b7fb5e7a..002c60de6e987593eb12563aceb88df5
        if (additionalContent) {
          const blockTokens = lexer.blockTokens(additionalContent);
          tokens.push(...blockTokens);
-@@ -1079,6 +1162,9 @@ function parseListItems(items, helpers) {
+@@ -1079,6 +1157,9 @@ function parseListItems(items, helpers) {
          }
        });
      }
@@ -610,7 +877,7 @@ index 1b3f64617adf858090a503bca2cbb567b7fb5e7a..002c60de6e987593eb12563aceb88df5
        type: "listItem",
        content
 diff --git a/dist/kit/index.js b/dist/kit/index.js
-index 4a488ae7c7bdacfe3b7fac3cb5c0ace143a8d4df..1d1da4e4f3c2e06a9083a596eab39f2f6ebe621b 100644
+index 4a488ae7c7bdacfe3b7fac3cb5c0ace143a8d4df..21664fd34dbe51cef60c6d3f5e4a9b9f68bee75a 100644
 --- a/dist/kit/index.js
 +++ b/dist/kit/index.js
 @@ -450,7 +450,10 @@ var ListItem = Node2.create({
@@ -652,10 +919,41 @@ index 4a488ae7c7bdacfe3b7fac3cb5c0ace143a8d4df..1d1da4e4f3c2e06a9083a596eab39f2f
        ];
      }
      return {
-@@ -890,6 +894,62 @@ function splitItemContent(contentLines) {
-     blockLines
-   };
+@@ -851,44 +855,64 @@ var PARAGRAPH_INTERRUPTERS = {
+   blockMath: /^\$\$/,
+   thematicBreak: /^(?:(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|(?:\*[ \t]*){3,})$/
+ };
+-function isOrderedListMarkerLine(line) {
+-  return ORDERED_LIST_ITEM_REGEX.test(line.trimStart());
+-}
+-function isBlockContentLine(line) {
+-  const trimmedLine = line.trimStart();
+-  return PARAGRAPH_INTERRUPTERS.bulletItem.test(trimmedLine) || isOrderedListMarkerLine(trimmedLine) || PARAGRAPH_INTERRUPTERS.heading.test(trimmedLine) || // dash breaks are excluded: "---" directly below paragraph text is a
+-  // setext heading underline, not a thematic break
+-  PARAGRAPH_INTERRUPTERS.thematicBreak.test(trimmedLine) && !trimmedLine.startsWith("-") || // oxlint-disable-next-line prefer-string-starts-ends-with
+-  /^>\s?/.test(trimmedLine) || PARAGRAPH_INTERRUPTERS.codeFence.test(trimmedLine) || PARAGRAPH_INTERRUPTERS.blockMath.test(trimmedLine);
+-}
+ function interruptsLazyContinuation(line) {
+   return Object.values(PARAGRAPH_INTERRUPTERS).some((pattern) => pattern.test(line));
  }
+-function splitItemContent(contentLines) {
+-  const paragraphLines = [];
+-  const blockLines = [];
+-  let reachedBlockBoundary = false;
+-  contentLines.forEach((line) => {
+-    if (reachedBlockBoundary) {
+-      blockLines.push(line);
+-      return;
+-    }
+-    if (line.trim() === "") {
+-      reachedBlockBoundary = true;
+-      blockLines.push(line);
+-      return;
+-    }
+-    if (paragraphLines.length > 0 && isBlockContentLine(line)) {
+-      reachedBlockBoundary = true;
+-      blockLines.push(line);
+-      return;
 +function leadingIndentColumns(line) {
 +  let column = 0;
 +  for (const char of line) {
@@ -678,7 +976,13 @@ index 4a488ae7c7bdacfe3b7fac3cb5c0ace143a8d4df..1d1da4e4f3c2e06a9083a596eab39f2f
 +      column = next;
 +    } else {
 +      break;
-+    }
+     }
+-    paragraphLines.push(line);
+-  });
+-  return {
+-    paragraphLines,
+-    blockLines
+-  };
 +    index += 1;
 +  }
 +  return line.slice(index);
@@ -711,17 +1015,42 @@ index 4a488ae7c7bdacfe3b7fac3cb5c0ace143a8d4df..1d1da4e4f3c2e06a9083a596eab39f2f
 +  const spaces = end - markerEnd;
 +  if (text.startsWith(">")) return markerEnd + (spaces > 0 ? 1 : 0);
 +  return markerEnd + (spaces >= 1 && spaces <= 4 && text.trim().length > markerWidth ? spaces : 1);
-+}
+ }
  function collectOrderedListItems(lines) {
    const listItems = [];
-   let currentLineIndex = 0;
-@@ -909,10 +969,20 @@ function collectOrderedListItems(lines) {
+@@ -905,14 +929,45 @@ function collectOrderedListItems(lines) {
+     const number = parseInt(marker, 10);
+     const markerType = isNaN(number) ? detectMarkerType(marker) : void 0;
+     const itemNumber = isNaN(number) ? markerToStart(marker) : number;
+-    const itemContentLines = [content];
      let nextLineIndex = currentLineIndex + 1;
      const itemLines = [line];
      let sawBlankLine = false;
 +    const itemContentColumn = containerContentColumn(line.trimStart(), leadingIndentColumns(indent), marker.length + _separator.length);
++    const markerEndColumn = leadingIndentColumns(indent) + marker.length + _separator.length;
++    const itemContentLines = [
++      stripIndentColumns(" ".repeat(markerEndColumn) + line.slice(indent.length + marker.length + _separator.length), itemContentColumn)
++    ];
 +    const innerBlocks = [];
 +    let openFence;
++    const firstText = itemContentLines[0].trimStart();
++    const firstColumn = itemContentColumn + leadingIndentColumns(itemContentLines[0]);
++    if (firstText !== "" && firstColumn - itemContentColumn <= 3) {
++      const run = fenceRun(firstText);
++      const firstMatch = firstText.match(ORDERED_LIST_ITEM_REGEX);
++      if (run !== void 0) {
++        openFence = { run, column: itemContentColumn };
++      } else if (firstMatch || /^(?:[-+*](?:\s|$)|>)/.test(firstText)) {
++        innerBlocks.push({
++          markerColumn: firstColumn,
++          contentColumn: containerContentColumn(
++            firstText,
++            firstColumn,
++            firstMatch ? firstMatch[2].length + 1 : 1
++          )
++        });
++      }
++    }
      while (nextLineIndex < lines.length) {
        const nextLine = lines[nextLineIndex];
        const nextMatch = nextLine.match(ORDERED_LIST_ITEM_REGEX);
@@ -737,7 +1066,7 @@ index 4a488ae7c7bdacfe3b7fac3cb5c0ace143a8d4df..1d1da4e4f3c2e06a9083a596eab39f2f
          break;
        }
        if (nextLine.trim() === "") {
-@@ -921,11 +991,24 @@ function collectOrderedListItems(lines) {
+@@ -921,11 +976,24 @@ function collectOrderedListItems(lines) {
          sawBlankLine = true;
          nextLineIndex += 1;
        } else if (nextLine.match(INDENTED_LINE_REGEX)) {
@@ -765,7 +1094,34 @@ index 4a488ae7c7bdacfe3b7fac3cb5c0ace143a8d4df..1d1da4e4f3c2e06a9083a596eab39f2f
        } else {
          if (sawBlankLine || interruptsLazyContinuation(nextLine)) {
            break;
-@@ -1002,7 +1085,7 @@ function buildNestedStructure(items, baseIndent, lexer) {
+@@ -986,14 +1054,24 @@ function parsePlainTextOrderedListPaste(text) {
+     }))
+   };
+ }
++function splitAtFirstParagraph(contentLines, lexer) {
++  const tokens = lexer.probeBlockTokens(`${contentLines.join("\n")}\n`);
++  const first = tokens.findIndex((token) => token.type !== "space");
++  if (first === -1 || tokens[first].type !== "paragraph") {
++    return { paragraphLines: [], blockLines: contentLines };
++  }
++  const start = tokens.slice(0, first).map((token) => token.raw).join("").split("\n").length - 1;
++  const end = start + tokens[first].raw.replace(/\n+$/, "").split("\n").length;
++  return { paragraphLines: contentLines.slice(start, end), blockLines: contentLines.slice(end) };
++}
+ function buildNestedStructure(items, baseIndent, lexer) {
+   const result = [];
+   let currentIndex = 0;
+   while (currentIndex < items.length) {
+     const item = items[currentIndex];
+     if (item.indent === baseIndent) {
+-      const { paragraphLines, blockLines } = splitItemContent(item.contentLines);
+-      const mainText = paragraphLines.join("\n").trim();
++      const { paragraphLines, blockLines } = splitAtFirstParagraph(item.contentLines, lexer);
++      const mainText = paragraphLines.map((line) => line.trimStart()).join("\n").trim();
+       const tokens = [];
+       if (mainText) {
+         tokens.push({
+@@ -1002,7 +1080,7 @@ function buildNestedStructure(items, baseIndent, lexer) {
            tokens: lexer.inlineTokens(mainText)
          });
        }
@@ -774,7 +1130,7 @@ index 4a488ae7c7bdacfe3b7fac3cb5c0ace143a8d4df..1d1da4e4f3c2e06a9083a596eab39f2f
        if (additionalContent) {
          const blockTokens = lexer.blockTokens(additionalContent);
          tokens.push(...blockTokens);
-@@ -1061,6 +1144,9 @@ function parseListItems(items, helpers) {
+@@ -1061,6 +1139,9 @@ function parseListItems(items, helpers) {
          }
        });
      }
@@ -785,13 +1141,44 @@ index 4a488ae7c7bdacfe3b7fac3cb5c0ace143a8d4df..1d1da4e4f3c2e06a9083a596eab39f2f
        type: "listItem",
        content
 diff --git a/dist/ordered-list/index.cjs b/dist/ordered-list/index.cjs
-index 07719ef761bdc543488fcf637043115f5bb032fe..9fe0c09de7561dab6b3d150f255c71aedc4cf807 100644
+index 07719ef761bdc543488fcf637043115f5bb032fe..a91b881a593d399b209e8b9fc1ae80e96c058087 100644
 --- a/dist/ordered-list/index.cjs
 +++ b/dist/ordered-list/index.cjs
-@@ -278,6 +278,62 @@ function splitItemContent(contentLines) {
-     blockLines
-   };
+@@ -239,44 +239,64 @@ var PARAGRAPH_INTERRUPTERS = {
+   blockMath: /^\$\$/,
+   thematicBreak: /^(?:(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|(?:\*[ \t]*){3,})$/
+ };
+-function isOrderedListMarkerLine(line) {
+-  return ORDERED_LIST_ITEM_REGEX.test(line.trimStart());
+-}
+-function isBlockContentLine(line) {
+-  const trimmedLine = line.trimStart();
+-  return PARAGRAPH_INTERRUPTERS.bulletItem.test(trimmedLine) || isOrderedListMarkerLine(trimmedLine) || PARAGRAPH_INTERRUPTERS.heading.test(trimmedLine) || // dash breaks are excluded: "---" directly below paragraph text is a
+-  // setext heading underline, not a thematic break
+-  PARAGRAPH_INTERRUPTERS.thematicBreak.test(trimmedLine) && !trimmedLine.startsWith("-") || // oxlint-disable-next-line prefer-string-starts-ends-with
+-  /^>\s?/.test(trimmedLine) || PARAGRAPH_INTERRUPTERS.codeFence.test(trimmedLine) || PARAGRAPH_INTERRUPTERS.blockMath.test(trimmedLine);
+-}
+ function interruptsLazyContinuation(line) {
+   return Object.values(PARAGRAPH_INTERRUPTERS).some((pattern) => pattern.test(line));
  }
+-function splitItemContent(contentLines) {
+-  const paragraphLines = [];
+-  const blockLines = [];
+-  let reachedBlockBoundary = false;
+-  contentLines.forEach((line) => {
+-    if (reachedBlockBoundary) {
+-      blockLines.push(line);
+-      return;
+-    }
+-    if (line.trim() === "") {
+-      reachedBlockBoundary = true;
+-      blockLines.push(line);
+-      return;
+-    }
+-    if (paragraphLines.length > 0 && isBlockContentLine(line)) {
+-      reachedBlockBoundary = true;
+-      blockLines.push(line);
+-      return;
 +function leadingIndentColumns(line) {
 +  let column = 0;
 +  for (const char of line) {
@@ -814,7 +1201,13 @@ index 07719ef761bdc543488fcf637043115f5bb032fe..9fe0c09de7561dab6b3d150f255c71ae
 +      column = next;
 +    } else {
 +      break;
-+    }
+     }
+-    paragraphLines.push(line);
+-  });
+-  return {
+-    paragraphLines,
+-    blockLines
+-  };
 +    index += 1;
 +  }
 +  return line.slice(index);
@@ -847,17 +1240,42 @@ index 07719ef761bdc543488fcf637043115f5bb032fe..9fe0c09de7561dab6b3d150f255c71ae
 +  const spaces = end - markerEnd;
 +  if (text.startsWith(">")) return markerEnd + (spaces > 0 ? 1 : 0);
 +  return markerEnd + (spaces >= 1 && spaces <= 4 && text.trim().length > markerWidth ? spaces : 1);
-+}
+ }
  function collectOrderedListItems(lines) {
    const listItems = [];
-   let currentLineIndex = 0;
-@@ -297,10 +353,20 @@ function collectOrderedListItems(lines) {
+@@ -293,14 +313,45 @@ function collectOrderedListItems(lines) {
+     const number = parseInt(marker, 10);
+     const markerType = isNaN(number) ? detectMarkerType(marker) : void 0;
+     const itemNumber = isNaN(number) ? markerToStart(marker) : number;
+-    const itemContentLines = [content];
      let nextLineIndex = currentLineIndex + 1;
      const itemLines = [line];
      let sawBlankLine = false;
 +    const itemContentColumn = containerContentColumn(line.trimStart(), leadingIndentColumns(indent), marker.length + _separator.length);
++    const markerEndColumn = leadingIndentColumns(indent) + marker.length + _separator.length;
++    const itemContentLines = [
++      stripIndentColumns(" ".repeat(markerEndColumn) + line.slice(indent.length + marker.length + _separator.length), itemContentColumn)
++    ];
 +    const innerBlocks = [];
 +    let openFence;
++    const firstText = itemContentLines[0].trimStart();
++    const firstColumn = itemContentColumn + leadingIndentColumns(itemContentLines[0]);
++    if (firstText !== "" && firstColumn - itemContentColumn <= 3) {
++      const run = fenceRun(firstText);
++      const firstMatch = firstText.match(ORDERED_LIST_ITEM_REGEX);
++      if (run !== void 0) {
++        openFence = { run, column: itemContentColumn };
++      } else if (firstMatch || /^(?:[-+*](?:\s|$)|>)/.test(firstText)) {
++        innerBlocks.push({
++          markerColumn: firstColumn,
++          contentColumn: containerContentColumn(
++            firstText,
++            firstColumn,
++            firstMatch ? firstMatch[2].length + 1 : 1
++          )
++        });
++      }
++    }
      while (nextLineIndex < lines.length) {
        const nextLine = lines[nextLineIndex];
        const nextMatch = nextLine.match(ORDERED_LIST_ITEM_REGEX);
@@ -873,7 +1291,7 @@ index 07719ef761bdc543488fcf637043115f5bb032fe..9fe0c09de7561dab6b3d150f255c71ae
          break;
        }
        if (nextLine.trim() === "") {
-@@ -309,11 +375,24 @@ function collectOrderedListItems(lines) {
+@@ -309,11 +360,24 @@ function collectOrderedListItems(lines) {
          sawBlankLine = true;
          nextLineIndex += 1;
        } else if (nextLine.match(INDENTED_LINE_REGEX)) {
@@ -901,7 +1319,34 @@ index 07719ef761bdc543488fcf637043115f5bb032fe..9fe0c09de7561dab6b3d150f255c71ae
        } else {
          if (sawBlankLine || interruptsLazyContinuation(nextLine)) {
            break;
-@@ -390,7 +469,7 @@ function buildNestedStructure(items, baseIndent, lexer) {
+@@ -374,14 +438,24 @@ function parsePlainTextOrderedListPaste(text) {
+     }))
+   };
+ }
++function splitAtFirstParagraph(contentLines, lexer) {
++  const tokens = lexer.probeBlockTokens(`${contentLines.join("\n")}\n`);
++  const first = tokens.findIndex((token) => token.type !== "space");
++  if (first === -1 || tokens[first].type !== "paragraph") {
++    return { paragraphLines: [], blockLines: contentLines };
++  }
++  const start = tokens.slice(0, first).map((token) => token.raw).join("").split("\n").length - 1;
++  const end = start + tokens[first].raw.replace(/\n+$/, "").split("\n").length;
++  return { paragraphLines: contentLines.slice(start, end), blockLines: contentLines.slice(end) };
++}
+ function buildNestedStructure(items, baseIndent, lexer) {
+   const result = [];
+   let currentIndex = 0;
+   while (currentIndex < items.length) {
+     const item = items[currentIndex];
+     if (item.indent === baseIndent) {
+-      const { paragraphLines, blockLines } = splitItemContent(item.contentLines);
+-      const mainText = paragraphLines.join("\n").trim();
++      const { paragraphLines, blockLines } = splitAtFirstParagraph(item.contentLines, lexer);
++      const mainText = paragraphLines.map((line) => line.trimStart()).join("\n").trim();
+       const tokens = [];
+       if (mainText) {
+         tokens.push({
+@@ -390,7 +464,7 @@ function buildNestedStructure(items, baseIndent, lexer) {
            tokens: lexer.inlineTokens(mainText)
          });
        }
@@ -910,7 +1355,7 @@ index 07719ef761bdc543488fcf637043115f5bb032fe..9fe0c09de7561dab6b3d150f255c71ae
        if (additionalContent) {
          const blockTokens = lexer.blockTokens(additionalContent);
          tokens.push(...blockTokens);
-@@ -449,6 +528,9 @@ function parseListItems(items, helpers) {
+@@ -449,6 +523,9 @@ function parseListItems(items, helpers) {
          }
        });
      }
@@ -921,13 +1366,44 @@ index 07719ef761bdc543488fcf637043115f5bb032fe..9fe0c09de7561dab6b3d150f255c71ae
        type: "listItem",
        content
 diff --git a/dist/ordered-list/index.js b/dist/ordered-list/index.js
-index ecaf30387d3b89c25955a8faa5495c8d1032dfe9..38cb3dbdf77fff3d334118d7afa81e0a70ca2a0c 100644
+index ecaf30387d3b89c25955a8faa5495c8d1032dfe9..d86fa5edcef9975bcca862ffaa69531e5ac07c2e 100644
 --- a/dist/ordered-list/index.js
 +++ b/dist/ordered-list/index.js
-@@ -241,6 +241,62 @@ function splitItemContent(contentLines) {
-     blockLines
-   };
+@@ -202,44 +202,64 @@ var PARAGRAPH_INTERRUPTERS = {
+   blockMath: /^\$\$/,
+   thematicBreak: /^(?:(?:-[ \t]*){3,}|(?:_[ \t]*){3,}|(?:\*[ \t]*){3,})$/
+ };
+-function isOrderedListMarkerLine(line) {
+-  return ORDERED_LIST_ITEM_REGEX.test(line.trimStart());
+-}
+-function isBlockContentLine(line) {
+-  const trimmedLine = line.trimStart();
+-  return PARAGRAPH_INTERRUPTERS.bulletItem.test(trimmedLine) || isOrderedListMarkerLine(trimmedLine) || PARAGRAPH_INTERRUPTERS.heading.test(trimmedLine) || // dash breaks are excluded: "---" directly below paragraph text is a
+-  // setext heading underline, not a thematic break
+-  PARAGRAPH_INTERRUPTERS.thematicBreak.test(trimmedLine) && !trimmedLine.startsWith("-") || // oxlint-disable-next-line prefer-string-starts-ends-with
+-  /^>\s?/.test(trimmedLine) || PARAGRAPH_INTERRUPTERS.codeFence.test(trimmedLine) || PARAGRAPH_INTERRUPTERS.blockMath.test(trimmedLine);
+-}
+ function interruptsLazyContinuation(line) {
+   return Object.values(PARAGRAPH_INTERRUPTERS).some((pattern) => pattern.test(line));
  }
+-function splitItemContent(contentLines) {
+-  const paragraphLines = [];
+-  const blockLines = [];
+-  let reachedBlockBoundary = false;
+-  contentLines.forEach((line) => {
+-    if (reachedBlockBoundary) {
+-      blockLines.push(line);
+-      return;
+-    }
+-    if (line.trim() === "") {
+-      reachedBlockBoundary = true;
+-      blockLines.push(line);
+-      return;
+-    }
+-    if (paragraphLines.length > 0 && isBlockContentLine(line)) {
+-      reachedBlockBoundary = true;
+-      blockLines.push(line);
+-      return;
 +function leadingIndentColumns(line) {
 +  let column = 0;
 +  for (const char of line) {
@@ -950,7 +1426,13 @@ index ecaf30387d3b89c25955a8faa5495c8d1032dfe9..38cb3dbdf77fff3d334118d7afa81e0a
 +      column = next;
 +    } else {
 +      break;
-+    }
+     }
+-    paragraphLines.push(line);
+-  });
+-  return {
+-    paragraphLines,
+-    blockLines
+-  };
 +    index += 1;
 +  }
 +  return line.slice(index);
@@ -983,17 +1465,42 @@ index ecaf30387d3b89c25955a8faa5495c8d1032dfe9..38cb3dbdf77fff3d334118d7afa81e0a
 +  const spaces = end - markerEnd;
 +  if (text.startsWith(">")) return markerEnd + (spaces > 0 ? 1 : 0);
 +  return markerEnd + (spaces >= 1 && spaces <= 4 && text.trim().length > markerWidth ? spaces : 1);
-+}
+ }
  function collectOrderedListItems(lines) {
    const listItems = [];
-   let currentLineIndex = 0;
-@@ -260,10 +316,20 @@ function collectOrderedListItems(lines) {
+@@ -256,14 +276,45 @@ function collectOrderedListItems(lines) {
+     const number = parseInt(marker, 10);
+     const markerType = isNaN(number) ? detectMarkerType(marker) : void 0;
+     const itemNumber = isNaN(number) ? markerToStart(marker) : number;
+-    const itemContentLines = [content];
      let nextLineIndex = currentLineIndex + 1;
      const itemLines = [line];
      let sawBlankLine = false;
 +    const itemContentColumn = containerContentColumn(line.trimStart(), leadingIndentColumns(indent), marker.length + _separator.length);
++    const markerEndColumn = leadingIndentColumns(indent) + marker.length + _separator.length;
++    const itemContentLines = [
++      stripIndentColumns(" ".repeat(markerEndColumn) + line.slice(indent.length + marker.length + _separator.length), itemContentColumn)
++    ];
 +    const innerBlocks = [];
 +    let openFence;
++    const firstText = itemContentLines[0].trimStart();
++    const firstColumn = itemContentColumn + leadingIndentColumns(itemContentLines[0]);
++    if (firstText !== "" && firstColumn - itemContentColumn <= 3) {
++      const run = fenceRun(firstText);
++      const firstMatch = firstText.match(ORDERED_LIST_ITEM_REGEX);
++      if (run !== void 0) {
++        openFence = { run, column: itemContentColumn };
++      } else if (firstMatch || /^(?:[-+*](?:\s|$)|>)/.test(firstText)) {
++        innerBlocks.push({
++          markerColumn: firstColumn,
++          contentColumn: containerContentColumn(
++            firstText,
++            firstColumn,
++            firstMatch ? firstMatch[2].length + 1 : 1
++          )
++        });
++      }
++    }
      while (nextLineIndex < lines.length) {
        const nextLine = lines[nextLineIndex];
        const nextMatch = nextLine.match(ORDERED_LIST_ITEM_REGEX);
@@ -1009,7 +1516,7 @@ index ecaf30387d3b89c25955a8faa5495c8d1032dfe9..38cb3dbdf77fff3d334118d7afa81e0a
          break;
        }
        if (nextLine.trim() === "") {
-@@ -272,11 +338,24 @@ function collectOrderedListItems(lines) {
+@@ -272,11 +323,24 @@ function collectOrderedListItems(lines) {
          sawBlankLine = true;
          nextLineIndex += 1;
        } else if (nextLine.match(INDENTED_LINE_REGEX)) {
@@ -1037,7 +1544,34 @@ index ecaf30387d3b89c25955a8faa5495c8d1032dfe9..38cb3dbdf77fff3d334118d7afa81e0a
        } else {
          if (sawBlankLine || interruptsLazyContinuation(nextLine)) {
            break;
-@@ -353,7 +432,7 @@ function buildNestedStructure(items, baseIndent, lexer) {
+@@ -337,14 +401,24 @@ function parsePlainTextOrderedListPaste(text) {
+     }))
+   };
+ }
++function splitAtFirstParagraph(contentLines, lexer) {
++  const tokens = lexer.probeBlockTokens(`${contentLines.join("\n")}\n`);
++  const first = tokens.findIndex((token) => token.type !== "space");
++  if (first === -1 || tokens[first].type !== "paragraph") {
++    return { paragraphLines: [], blockLines: contentLines };
++  }
++  const start = tokens.slice(0, first).map((token) => token.raw).join("").split("\n").length - 1;
++  const end = start + tokens[first].raw.replace(/\n+$/, "").split("\n").length;
++  return { paragraphLines: contentLines.slice(start, end), blockLines: contentLines.slice(end) };
++}
+ function buildNestedStructure(items, baseIndent, lexer) {
+   const result = [];
+   let currentIndex = 0;
+   while (currentIndex < items.length) {
+     const item = items[currentIndex];
+     if (item.indent === baseIndent) {
+-      const { paragraphLines, blockLines } = splitItemContent(item.contentLines);
+-      const mainText = paragraphLines.join("\n").trim();
++      const { paragraphLines, blockLines } = splitAtFirstParagraph(item.contentLines, lexer);
++      const mainText = paragraphLines.map((line) => line.trimStart()).join("\n").trim();
+       const tokens = [];
+       if (mainText) {
+         tokens.push({
+@@ -353,7 +427,7 @@ function buildNestedStructure(items, baseIndent, lexer) {
            tokens: lexer.inlineTokens(mainText)
          });
        }
@@ -1046,7 +1580,7 @@ index ecaf30387d3b89c25955a8faa5495c8d1032dfe9..38cb3dbdf77fff3d334118d7afa81e0a
        if (additionalContent) {
          const blockTokens = lexer.blockTokens(additionalContent);
          tokens.push(...blockTokens);
-@@ -412,6 +491,9 @@ function parseListItems(items, helpers) {
+@@ -412,6 +486,9 @@ function parseListItems(items, helpers) {
          }
        });
      }
@@ -1112,13 +1646,50 @@ index e1227a05262b8e337a1406e7f63685d4f4f00fea..42df91215ab6f5e651a6b9ab6e853a33
      }
 
 diff --git a/src/ordered-list/utils.ts b/src/ordered-list/utils.ts
-index d0a3b84aa4c0ccb7bae75384aef5897fae102c70..edd36c920417725c0801c19800ac6157fe5a4240 100644
+index d0a3b84aa4c0ccb7bae75384aef5897fae102c70..047a65b3bc0b9aae71b9ec7436b6ff150c61efd2 100644
 --- a/src/ordered-list/utils.ts
 +++ b/src/ordered-list/utils.ts
-@@ -116,6 +116,93 @@ function splitItemContent(contentLines: string[]): {
-   }
+@@ -56,64 +56,95 @@ export interface OrderedListItem {
+   raw: string
  }
 
+-function isOrderedListMarkerLine(line: string): boolean {
+-  return ORDERED_LIST_ITEM_REGEX.test(line.trimStart())
+-}
+-
+-function isBlockContentLine(line: string): boolean {
+-  const trimmedLine = line.trimStart()
+-
+-  return (
+-    PARAGRAPH_INTERRUPTERS.bulletItem.test(trimmedLine) ||
+-    isOrderedListMarkerLine(trimmedLine) ||
+-    PARAGRAPH_INTERRUPTERS.heading.test(trimmedLine) ||
+-    // dash breaks are excluded: "---" directly below paragraph text is a
+-    // setext heading underline, not a thematic break
+-    (PARAGRAPH_INTERRUPTERS.thematicBreak.test(trimmedLine) && !trimmedLine.startsWith('-')) ||
+-    // oxlint-disable-next-line prefer-string-starts-ends-with
+-    /^>\s?/.test(trimmedLine) ||
+-    PARAGRAPH_INTERRUPTERS.codeFence.test(trimmedLine) ||
+-    PARAGRAPH_INTERRUPTERS.blockMath.test(trimmedLine)
+-  )
+-}
+-
+ function interruptsLazyContinuation(line: string): boolean {
+   return Object.values(PARAGRAPH_INTERRUPTERS).some(pattern => pattern.test(line))
+ }
+
+-function splitItemContent(contentLines: string[]): {
+-  paragraphLines: string[]
+-  blockLines: string[]
+-} {
+-  const paragraphLines: string[] = []
+-  const blockLines: string[] = []
+-  let reachedBlockBoundary = false
+-
+-  contentLines.forEach(line => {
+-    if (reachedBlockBoundary) {
+-      blockLines.push(line)
+-      return
 +/**
 + * The column a line's text starts at, a tab advancing to the next stop of 4.
 + */
@@ -1131,11 +1702,15 @@ index d0a3b84aa4c0ccb7bae75384aef5897fae102c70..edd36c920417725c0801c19800ac6157
 +      column += 4 - (column % 4)
 +    } else {
 +      break
-+    }
+     }
 +  }
 +  return column
 +}
-+
+
+-    if (line.trim() === '') {
+-      reachedBlockBoundary = true
+-      blockLines.push(line)
+-      return
 +/**
 + * A line without its first `columns` columns of indentation, a tab advancing to
 + * the next stop of 4. A tab that reaches past `columns` leaves the rest of its
@@ -1156,12 +1731,17 @@ index d0a3b84aa4c0ccb7bae75384aef5897fae102c70..edd36c920417725c0801c19800ac6157
 +      column = next
 +    } else {
 +      break
-+    }
+     }
 +    index += 1
 +  }
 +  return line.slice(index)
 +}
-+
+
+-    if (paragraphLines.length > 0 && isBlockContentLine(line)) {
+-      reachedBlockBoundary = true
+-      blockLines.push(line)
+-      return
+-    }
 +/**
 + * The run of a fence a line opens, without its indent, as marked's lexer reads
 + * one: three or more backticks with no backtick after them, or three or more
@@ -1171,7 +1751,9 @@ index d0a3b84aa4c0ccb7bae75384aef5897fae102c70..edd36c920417725c0801c19800ac6157
 +  const fence = /^(`{3,}(?=[^`]*$)|~{3,})/.exec(text)
 +  return fence === null ? undefined : fence[1]
 +}
-+
+
+-    paragraphLines.push(line)
+-  })
 +/**
 + * Whether a line, without its indent, closes the fence `run` opened, as
 + * marked's lexer reads it: that run, then only backticks or tildes, then
@@ -1180,7 +1762,10 @@ index d0a3b84aa4c0ccb7bae75384aef5897fae102c70..edd36c920417725c0801c19800ac6157
 +function closesFence(text: string, run: string): boolean {
 +  return text.startsWith(run) && /^[`~]* *$/.test(text.slice(run.length))
 +}
-+
+
+-  return {
+-    paragraphLines,
+-    blockLines,
 +/**
 + * The content column of a container whose marker, `markerWidth` wide (a
 + * bullet, an ordered marker with its separator, or `>`), starts `text` at
@@ -1198,18 +1783,20 @@ index d0a3b84aa4c0ccb7bae75384aef5897fae102c70..edd36c920417725c0801c19800ac6157
 +    } else {
 +      break
 +    }
-+  }
+   }
 +  const spaces = end - markerEnd
 +  if (text.startsWith('>')) {
 +    return markerEnd + (spaces > 0 ? 1 : 0)
 +  }
 +  return markerEnd + (spaces >= 1 && spaces <= 4 && text.trim().length > markerWidth ? spaces : 1)
-+}
-+
+ }
+
  /**
-  * Collects all ordered list items from lines, parsing them into a flat array
-  * with indentation information. Stops collecting continuation content when
-@@ -148,14 +235,60 @@ export function collectOrderedListItems(lines: string[]): [OrderedListItem[], nu
+@@ -144,18 +175,91 @@ export function collectOrderedListItems(lines: string[]): [OrderedListItem[], nu
+     const markerType = isNaN(number) ? detectMarkerType(marker) : undefined
+     const itemNumber = isNaN(number) ? markerToStart(marker) : number
+
+-    const itemContentLines = [content]
      let nextLineIndex = currentLineIndex + 1
      const itemLines = [line]
      let sawBlankLine = false
@@ -1220,12 +1807,40 @@ index d0a3b84aa4c0ccb7bae75384aef5897fae102c70..edd36c920417725c0801c19800ac6157
 +      leadingIndentColumns(indent),
 +      marker.length + _separator.length,
 +    )
++    // The item's first line, read from its content column: past more than 4
++    // columns of space, the rest is indented code, as marked reads it.
++    const markerEndColumn = leadingIndentColumns(indent) + marker.length + _separator.length
++    const itemContentLines = [
++      stripIndentColumns(
++        ' '.repeat(markerEndColumn) + line.slice(indent.length + marker.length + _separator.length),
++        itemContentColumn,
++      ),
++    ]
 +    // The containers (bullet items, blockquotes, nested ordered items) open
 +    // inside this item's content, outermost first, with their marker and
 +    // content columns; and an open fence, with the run that opened it and the
 +    // content column of the container it opened in.
 +    const innerBlocks: Array<{ markerColumn: number; contentColumn: number }> = []
 +    let openFence: { run: string; column: number } | undefined
++    // The first line opens a fence or a container as a continuation line does.
++    const firstText = itemContentLines[0].trimStart()
++    const firstColumn = itemContentColumn + leadingIndentColumns(itemContentLines[0])
++    if (firstText !== '' && firstColumn - itemContentColumn <= 3) {
++      const run = fenceRun(firstText)
++      const firstMatch = firstText.match(ORDERED_LIST_ITEM_REGEX)
++      if (run !== undefined) {
++        openFence = { run, column: itemContentColumn }
++      } else if (firstMatch || /^(?:[-+*](?:\s|$)|>)/.test(firstText)) {
++        innerBlocks.push({
++          markerColumn: firstColumn,
++          contentColumn: containerContentColumn(
++            firstText,
++            firstColumn,
++            firstMatch ? firstMatch[2].length + 1 : 1,
++          ),
++        })
++      }
++    }
 
      // Collect continuation lines for this item (but NOT nested list items)
      while (nextLineIndex < lines.length) {
@@ -1242,9 +1857,7 @@ index d0a3b84aa4c0ccb7bae75384aef5897fae102c70..edd36c920417725c0801c19800ac6157
 +      ) {
 +        openFence = undefined
 +      }
-
--      // If it's another list item (nested or not), stop collecting
--      if (nextMatch) {
++
 +      // An indented line, or an ordered marker, closes every container whose
 +      // marker sits at or right of its column, so it lands in the innermost one
 +      // it is past.
@@ -1260,7 +1873,9 @@ index d0a3b84aa4c0ccb7bae75384aef5897fae102c70..edd36c920417725c0801c19800ac6157
 +          innerBlocks.pop()
 +        }
 +      }
-+
+
+-      // If it's another list item (nested or not), stop collecting
+-      if (nextMatch) {
 +      // If it's another list item (nested or not), stop collecting - unless it
 +      // sits inside a container opened in this item, or a fence is open: then
 +      // it belongs to that block and stays with this item's content. A marker
@@ -1272,7 +1887,7 @@ index d0a3b84aa4c0ccb7bae75384aef5897fae102c70..edd36c920417725c0801c19800ac6157
          break
        }
 
-@@ -169,12 +302,41 @@ export function collectOrderedListItems(lines: string[]): [OrderedListItem[], nu
+@@ -169,12 +273,41 @@ export function collectOrderedListItems(lines: string[]): [OrderedListItem[], nu
        } else if (nextLine.match(INDENTED_LINE_REGEX)) {
          // Indented content - part of this item (but not a list item).
          // Strip the indentation only up to the whitespace that is actually present,
@@ -1318,7 +1933,56 @@ index d0a3b84aa4c0ccb7bae75384aef5897fae102c70..edd36c920417725c0801c19800ac6157
        } else {
          if (sawBlankLine || interruptsLazyContinuation(nextLine)) {
            break
-@@ -291,7 +453,12 @@ export function buildNestedStructure(
+@@ -254,6 +387,33 @@ export function parsePlainTextOrderedListPaste(text: string): JSONContent | null
+   }
+ }
+
++/**
++ * Splits an ordered item's content where marked ends its first paragraph:
++ * the lines of that paragraph, and the block content after it. When marked
++ * opens the content with another block (a heading, quote, rule, fence, HTML
++ * block, list, indented code or definition), all of it is block content, as
++ * a bullet item's is.
++ */
++function splitAtFirstParagraph(
++  contentLines: string[],
++  lexer: MarkdownLexerConfiguration,
++): { paragraphLines: string[]; blockLines: string[] } {
++  // Each line ends in a line break in the document, and marked lets a fence
++  // interrupt a paragraph only when one follows it.
++  const tokens = lexer.probeBlockTokens(`${contentLines.join('\n')}\n`)
++  const first = tokens.findIndex(token => token.type !== 'space')
++  if (first === -1 || tokens[first].type !== 'paragraph') {
++    return { paragraphLines: [], blockLines: contentLines }
++  }
++  const start = tokens
++    .slice(0, first)
++    .map(token => token.raw)
++    .join('')
++    .split('\n').length - 1
++  const end = start + tokens[first].raw.replace(/\n+$/, '').split('\n').length
++  return { paragraphLines: contentLines.slice(start, end), blockLines: contentLines.slice(end) }
++}
++
+ /**
+  * Recursively builds a nested structure from a flat array of list items
+  * based on their indentation levels. Creates proper markdown tokens with
+@@ -277,8 +437,12 @@ export function buildNestedStructure(
+
+     if (item.indent === baseIndent) {
+       // This item belongs at the current level
+-      const { paragraphLines, blockLines } = splitItemContent(item.contentLines)
+-      const mainText = paragraphLines.join('\n').trim()
++      const { paragraphLines, blockLines } = splitAtFirstParagraph(item.contentLines, lexer)
++      // A paragraph line's leading whitespace is not part of its text.
++      const mainText = paragraphLines
++        .map(line => line.trimStart())
++        .join('\n')
++        .trim()
+
+       const tokens = []
+
+@@ -291,7 +455,12 @@ export function buildNestedStructure(
          })
        }
 
@@ -1332,7 +1996,7 @@ index d0a3b84aa4c0ccb7bae75384aef5897fae102c70..edd36c920417725c0801c19800ac6157
        if (additionalContent) {
          const blockTokens = lexer.blockTokens(additionalContent)
          tokens.push(...blockTokens)
-@@ -391,6 +558,13 @@ export function parseListItems(
+@@ -391,6 +560,13 @@ export function parseListItems(
        })
      }
 

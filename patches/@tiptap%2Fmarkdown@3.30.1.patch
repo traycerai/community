@@ -1,8 +1,8 @@
 diff --git a/dist/index.cjs b/dist/index.cjs
-index 71985dc9ef879f8cfed92a960c6d8b6f15fad6a1..64ffa5d463167445bb0e10133a66d2c9925a20fb 100644
+index 71985dc9ef879f8cfed92a960c6d8b6f15fad6a1..798cc08aba118604ae1517690d1efcd4273a317b 100644
 --- a/dist/index.cjs
 +++ b/dist/index.cjs
-@@ -292,8 +292,40 @@ function htmlContainsUnrecognizedTag(html, schemaTags) {
+@@ -292,8 +292,44 @@ function htmlContainsUnrecognizedTag(html, schemaTags) {
    });
  }
 
@@ -14,9 +14,11 @@ index 71985dc9ef879f8cfed92a960c6d8b6f15fad6a1..64ffa5d463167445bb0e10133a66d2c9
 +// the inline work it queues in `inlineQueue` (and the `src` of an entry it
 +// rewrites there), and the shared tokenizer's `lexer` pointer. The probe's
 +// tokens are returned with their inline tokens never filled; a caller reads
-+// their types and raw text only.
++// their types and raw text only. `tokens.links` has no prototype, so its
++// snapshot is a Map: an inherited name such as `constructor` is never taken
++// for a definition that was there before the probe.
 +function probeBlockTokens(lexer, src) {
-+  const links = { ...lexer.tokens.links };
++  const links = new Map(Object.entries(lexer.tokens.links));
 +  const queue = [...lexer.inlineQueue];
 +  const queuedSources = queue.map((entry) => entry.src);
 +  const state = { ...lexer.state };
@@ -26,11 +28,13 @@ index 71985dc9ef879f8cfed92a960c6d8b6f15fad6a1..64ffa5d463167445bb0e10133a66d2c9
 +    return lexer.blockTokens(src, []);
 +  } finally {
 +    Object.keys(lexer.tokens.links).forEach((tag) => {
-+      if (!(tag in links)) {
++      if (!links.has(tag)) {
 +        delete lexer.tokens.links[tag];
 +      }
 +    });
-+    Object.assign(lexer.tokens.links, links);
++    links.forEach((link, tag) => {
++      lexer.tokens.links[tag] = link;
++    });
 +    lexer.inlineQueue.splice(0, lexer.inlineQueue.length, ...queue);
 +    queue.forEach((entry, index) => {
 +      entry.src = queuedSources[index];
@@ -43,7 +47,7 @@ index 71985dc9ef879f8cfed92a960c6d8b6f15fad6a1..64ffa5d463167445bb0e10133a66d2c9
    /**
     * Create a MarkdownManager.
     * @param options.marked Optional marked instance to use (injected).
-@@ -409,9 +441,10 @@ var MarkdownManager = class {
+@@ -409,9 +445,10 @@ var MarkdownManager = class {
    }
    createTokenizerHelpers(lexer) {
      return {
@@ -56,10 +60,10 @@ index 71985dc9ef879f8cfed92a960c6d8b6f15fad6a1..64ffa5d463167445bb0e10133a66d2c9
    tokenizeInline(src) {
      var _a;
 diff --git a/dist/index.js b/dist/index.js
-index 2626d82021300047fc9e46ba99487097719f8ef9..8ed83556f3fa24f8a5fe236eedda76115cc38d96 100644
+index 2626d82021300047fc9e46ba99487097719f8ef9..e2e96c81671e96521d73ac7e59c45642275ba2be 100644
 --- a/dist/index.js
 +++ b/dist/index.js
-@@ -292,8 +292,40 @@ function htmlContainsUnrecognizedTag(html, schemaTags) {
+@@ -292,8 +292,44 @@ function htmlContainsUnrecognizedTag(html, schemaTags) {
    });
  }
 
@@ -71,9 +75,11 @@ index 2626d82021300047fc9e46ba99487097719f8ef9..8ed83556f3fa24f8a5fe236eedda7611
 +// the inline work it queues in `inlineQueue` (and the `src` of an entry it
 +// rewrites there), and the shared tokenizer's `lexer` pointer. The probe's
 +// tokens are returned with their inline tokens never filled; a caller reads
-+// their types and raw text only.
++// their types and raw text only. `tokens.links` has no prototype, so its
++// snapshot is a Map: an inherited name such as `constructor` is never taken
++// for a definition that was there before the probe.
 +function probeBlockTokens(lexer, src) {
-+  const links = { ...lexer.tokens.links };
++  const links = new Map(Object.entries(lexer.tokens.links));
 +  const queue = [...lexer.inlineQueue];
 +  const queuedSources = queue.map((entry) => entry.src);
 +  const state = { ...lexer.state };
@@ -83,11 +89,13 @@ index 2626d82021300047fc9e46ba99487097719f8ef9..8ed83556f3fa24f8a5fe236eedda7611
 +    return lexer.blockTokens(src, []);
 +  } finally {
 +    Object.keys(lexer.tokens.links).forEach((tag) => {
-+      if (!(tag in links)) {
++      if (!links.has(tag)) {
 +        delete lexer.tokens.links[tag];
 +      }
 +    });
-+    Object.assign(lexer.tokens.links, links);
++    links.forEach((link, tag) => {
++      lexer.tokens.links[tag] = link;
++    });
 +    lexer.inlineQueue.splice(0, lexer.inlineQueue.length, ...queue);
 +    queue.forEach((entry, index) => {
 +      entry.src = queuedSources[index];
@@ -100,7 +108,7 @@ index 2626d82021300047fc9e46ba99487097719f8ef9..8ed83556f3fa24f8a5fe236eedda7611
    /**
     * Create a MarkdownManager.
     * @param options.marked Optional marked instance to use (injected).
-@@ -409,9 +441,10 @@ var MarkdownManager = class {
+@@ -409,9 +445,10 @@ var MarkdownManager = class {
    }
    createTokenizerHelpers(lexer) {
      return {
@@ -113,10 +121,10 @@ index 2626d82021300047fc9e46ba99487097719f8ef9..8ed83556f3fa24f8a5fe236eedda7611
    tokenizeInline(src) {
      var _a;
 diff --git a/src/MarkdownManager.ts b/src/MarkdownManager.ts
-index f5478f13e769850a5b3ffeeb60c41a0f6704e441..7a2dd13e45faa2bca03f2afac7a7220c7b06c83b 100644
+index f5478f13e769850a5b3ffeeb60c41a0f6704e441..5eb0e805cf362fb96eea8b6075784eb499061589 100644
 --- a/src/MarkdownManager.ts
 +++ b/src/MarkdownManager.ts
-@@ -34,8 +34,43 @@ import {
+@@ -34,8 +34,47 @@ import {
    wrapInMarkdownBlock,
  } from './utils.js'
  import { htmlContainsUnrecognizedTag } from './utils/htmlTagDetection.js'
@@ -129,10 +137,12 @@ index f5478f13e769850a5b3ffeeb60c41a0f6704e441..7a2dd13e45faa2bca03f2afac7a7220c
 + * inline work it queues in `inlineQueue` (and the `src` of an entry it
 + * rewrites there), and the shared tokenizer's `lexer` pointer. The probe's
 + * tokens are returned with their inline tokens never filled; a caller reads
-+ * their types and raw text only.
++ * their types and raw text only. `tokens.links` has no prototype, so its
++ * snapshot is a Map: an inherited name such as `constructor` is never taken
++ * for a definition that was there before the probe.
 + */
 +function probeBlockTokens(lexer: Lexer, src: string): Token[] {
-+  const links = { ...lexer.tokens.links }
++  const links = new Map(Object.entries(lexer.tokens.links))
 +  const queue = [...lexer.inlineQueue]
 +  const queuedSources = queue.map(entry => entry.src)
 +  const state = { ...lexer.state }
@@ -142,11 +152,13 @@ index f5478f13e769850a5b3ffeeb60c41a0f6704e441..7a2dd13e45faa2bca03f2afac7a7220c
 +    return lexer.blockTokens(src, [])
 +  } finally {
 +    Object.keys(lexer.tokens.links).forEach(tag => {
-+      if (!(tag in links)) {
++      if (!links.has(tag)) {
 +        delete lexer.tokens.links[tag]
 +      }
 +    })
-+    Object.assign(lexer.tokens.links, links)
++    links.forEach((link, tag) => {
++      lexer.tokens.links[tag] = link
++    })
 +    lexer.inlineQueue.splice(0, lexer.inlineQueue.length, ...queue)
 +    queue.forEach((entry, index) => {
 +      entry.src = queuedSources[index]
@@ -160,7 +172,7 @@ index f5478f13e769850a5b3ffeeb60c41a0f6704e441..7a2dd13e45faa2bca03f2afac7a7220c
    private markedInstance: typeof marked
    private activeParseLexer: Lexer | null = null
    private registry: Map<string, MarkdownExtensionSpec[]>
-@@ -200,8 +235,9 @@ export class MarkdownManager {
+@@ -200,8 +239,9 @@ export class MarkdownManager {
    private createTokenizerHelpers(lexer: Lexer): MarkdownLexerConfiguration {
      return {
        inlineTokens: (src: string) => lexer.inlineTokens(src),
