@@ -21,7 +21,7 @@ import {
   openPlanBlockSchema,
   openSteerBlockSchema,
   openTextBlockSchema,
-  openUserMessageSchema,
+  openUserMessageSchemaPreConversation,
 } from "@traycer/protocol/persistence/epic/open-harness-records";
 
 const openContentBlockSchemaPrePage = lazySchema(() =>
@@ -49,9 +49,11 @@ const openAssistantMessageSchemaPrePage = lazySchema(() =>
     blocks: z.array(openContentBlockSchemaPrePage),
   }),
 );
+// The user arm is the pre-conversation freeze: `1.22` predates `1.25`'s
+// `conversationRequest` key as it predates the page stamps.
 export const openMessageSchemaPrePage = lazySchema(() =>
   z.discriminatedUnion("role", [
-    openUserMessageSchema,
+    openUserMessageSchemaPreConversation,
     openAssistantMessageSchemaPrePage,
   ]),
 );

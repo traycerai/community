@@ -132,6 +132,17 @@ const CHAT_SUBSCRIBE_AUTO_JUDGE_NOTICE_MINOR = 16;
 export const CHAT_SUBSCRIBE_OPEN_HARNESS_MINOR = 22;
 
 /**
+ * The first minor whose queue may carry a `conversation-message` item (a
+ * human's message in a bot conversation waiting on the bot's trunk, Tracy
+ * Bots). A literal for the reason the constant above is one. The host omits
+ * the item, and the queue events that name it, from every peer below this
+ * minor (`chat-frame-projection.ts`), the way it omits the port-forward item
+ * below `1.14`; the client needs no predicate on it, since a `1.25` peer
+ * parses with the union its line binds.
+ */
+export const CHAT_SUBSCRIBE_CONVERSATION_MESSAGE_MINOR = 25;
+
+/**
  * Typed against the live enum on purpose: a rename of the mode breaks this
  * compile rather than leaving a string literal that silently matches nothing.
  *

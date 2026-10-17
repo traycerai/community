@@ -1763,6 +1763,41 @@ export const chatSyncSchemaSurfaceBaseline = {
                           "providerHistory": {
                             "type": "string",
                             "const": "excluded"
+                          },
+                          "conversationRequest": {
+                            "type": "object",
+                            "properties": {
+                              "requestId": {
+                                "type": "string",
+                                "minLength": 1
+                              },
+                              "resolvedAt": {
+                                "anyOf": [
+                                  {
+                                    "type": "number"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              },
+                              "resolvedByMessageId": {
+                                "anyOf": [
+                                  {
+                                    "type": "string"
+                                  },
+                                  {
+                                    "type": "null"
+                                  }
+                                ]
+                              }
+                            },
+                            "required": [
+                              "requestId",
+                              "resolvedAt",
+                              "resolvedByMessageId"
+                            ],
+                            "additionalProperties": false
                           }
                         },
                         "required": [

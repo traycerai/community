@@ -30,6 +30,7 @@ import {
   chatSubscribeV121,
   chatSubscribeV122,
   chatSubscribeV123,
+  chatSubscribeV124,
 } from "@traycer/protocol/host/agent/gui/subscribe";
 
 function canonical(value: unknown): unknown {
@@ -276,6 +277,13 @@ const SERVER_FRAME_DIGESTS = {
     "f5b56223b15cc20745f64c6fc12c12139770f769afd3ecb236db0a60b7577ff7",
     "85f17a63cb8ad0aead1ae6d97ccbfb1b33d0b423c86415286cdaa876c3be52ff",
   ],
+  // Captured from the live schema the moment before 1.25 opened above it: the
+  // cron next-run line, with no bot-conversation request on a user row and no
+  // conversation-message queue item.
+  24: [
+    "76fd9f55395a8589fb22b18260e5c7e89a9978b2cdd27733c13d8403a4c071ff",
+    "dfd3fd0c3e80e407fa2a94754897c7a4108fd4d671c008d08ec9a44a3d860101",
+  ],
 } as const;
 
 const contracts = [
@@ -303,10 +311,11 @@ const contracts = [
   chatSubscribeV121,
   chatSubscribeV122,
   chatSubscribeV123,
+  chatSubscribeV124,
 ] as const;
 
 describe("chat.subscribe placement freeze", () => {
-  it("keeps every 1.0–1.23 server schema input/output surface byte-stable", () => {
+  it("keeps every 1.0–1.24 server schema input/output surface byte-stable", () => {
     for (const contract of contracts) {
       const minor = contract.schemaVersion.minor;
       expect([

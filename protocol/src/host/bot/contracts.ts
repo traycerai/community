@@ -18,6 +18,12 @@ import {
   botUpdateRunSettingsRequestSchema,
   botUpdateTitleRequestSchema,
 } from "./schemas";
+import {
+  botConversationListRequestSchema,
+  botConversationListResponseSchema,
+  botConversationSendRequestSchema,
+  botConversationSendResponseSchema,
+} from "./conversation-schemas";
 
 /**
  * The `bot.*` namespace (Tracy Bots, T5). Brand-new v1.0 methods, none on
@@ -79,6 +85,27 @@ export const botClaimAuthorityV10 = defineRpcContract({
   schemaVersion: { major: 1, minor: 0 } as const,
   requestSchema: botClaimAuthorityRequestSchema,
   responseSchema: botClaimAuthorityResponseSchema,
+});
+
+/**
+ * `bot.conversation.*@1.0` (T7): the human side of a bot. Same posture as the
+ * rest of the namespace - optional, `degrade: { kind: "unsupported" }`. The
+ * list is cloud-backed like `bot.list`; the send is the one method here the
+ * host itself answers, writing the conversation record on the bound host or
+ * handing the message to it through the cross-host mailbox.
+ */
+export const botConversationListV10 = defineRpcContract({
+  method: "bot.conversation.list",
+  schemaVersion: { major: 1, minor: 0 } as const,
+  requestSchema: botConversationListRequestSchema,
+  responseSchema: botConversationListResponseSchema,
+});
+
+export const botConversationSendV10 = defineRpcContract({
+  method: "bot.conversation.send",
+  schemaVersion: { major: 1, minor: 0 } as const,
+  requestSchema: botConversationSendRequestSchema,
+  responseSchema: botConversationSendResponseSchema,
 });
 
 /**
