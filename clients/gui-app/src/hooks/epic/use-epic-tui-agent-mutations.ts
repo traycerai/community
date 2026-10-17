@@ -5,6 +5,7 @@ import type {
 import {
   useEpicRecordLifecycleMutationClient,
   useEpicRecordMutationClient,
+  type EpicRecordLifecycleMutationContext,
   type EpicRecordMutationContext,
   type EpicRecordMutationTarget,
 } from "@/hooks/epic/use-epic-record-mutation-client";
@@ -109,23 +110,25 @@ export function useEpicDeleteTuiAgentInBatch() {
 function useEpicDeleteTuiAgentMutation(
   failurePresentation: "individual" | "aggregate",
 ) {
-  const client = useEpicRecordLifecycleMutationClient("epic.deleteTuiAgent");
+  const route = useEpicRecordLifecycleMutationClient("epic.deleteTuiAgent");
   const sessionClient = useEpicSessionHostClient();
   const binding = useHostBinding();
   const queryClient = useQueryClient();
   return useHostMutation<
     HostRpcRegistry,
     "epic.deleteTuiAgent",
-    EpicRecordMutationContext,
+    EpicRecordLifecycleMutationContext,
     DeleteTuiAgentMutationInput
   >({
-    client,
+    client: route.client,
     method: "epic.deleteTuiAgent",
     mapVariables: ({ epicId, tuiAgentId }) => ({ epicId, tuiAgentId }),
+    requiredHostMethodVersion: route.requiredHostMethodVersion,
     options: {
-      onMutate: ({ hostId }) => ({
-        hostId,
+      onMutate: (variables) => ({
+        hostId: variables.hostId,
         viewerHostId: sessionClient?.getActiveHostId() ?? null,
+        servingHostId: route.servingHostId(variables),
       }),
       onSuccess: (data, variables, ctx) => {
         // Hook callbacks survive the row unmounting before the response arrives.
@@ -141,7 +144,11 @@ function useEpicDeleteTuiAgentMutation(
         }
         // The deletion is a registry fact on a migrated host; without this the
         // row would linger in the tree until the next poll tick.
-        for (const hostId of new Set([ctx.hostId, ctx.viewerHostId])) {
+        for (const hostId of new Set([
+          ctx.hostId,
+          ctx.viewerHostId,
+          ctx.servingHostId,
+        ])) {
           invalidateEpicTuiAgentRecords(queryClient, hostId);
         }
         // Only an applied delete stopped the agent: a requested one deleted
@@ -153,7 +160,7 @@ function useEpicDeleteTuiAgentMutation(
         }
         if (data.outcome === "requested" && ctx.hostId !== null) {
           toastRequestedRecordWrite({
-            write: "remove",
+            write: "remove-terminal-agent",
             ownerHostId: ctx.hostId,
             hostLabel: recordOwnerHostLabel(binding, ctx.hostId),
           });

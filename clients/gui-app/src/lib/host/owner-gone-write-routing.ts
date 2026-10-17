@@ -1,5 +1,8 @@
 import type { HostLeaseSnapshot } from "@traycer-clients/shared/host-selection/selection-authority-contract";
-import { negotiatedVersionMeetsRequirement } from "@traycer-clients/shared/host-transport/host-messenger";
+import {
+  negotiatedVersionMeetsRequirement,
+  type RequiredHostMethodVersion,
+} from "@traycer-clients/shared/host-transport/host-messenger";
 import {
   getNegotiatedHostMethodVersion,
   subscribeNegotiatedManifests,
@@ -62,6 +65,18 @@ const OWNER_GONE_RECORD_WRITE_FLOORS: Readonly<
 };
 
 /**
+ * The floor a stand-in's dispatch of `method` must clear: the minor that
+ * writes a record another host owns. Selection reads a cached manifest; the
+ * dispatch enforces this against the handshake of the connection carrying
+ * the write, so a stand-in that restarted older is refused, not written to.
+ */
+export function ownerGoneRecordWriteRequirement(
+  method: OwnerGoneRecordWriteMethod,
+): RequiredHostMethodVersion {
+  return { method, version: OWNER_GONE_RECORD_WRITE_FLOORS[method] };
+}
+
+/**
  * Whether `hostId`'s last handshake negotiated `method` at or above the minor
  * that writes a record another host owns. `false` before any handshake.
  */
@@ -71,7 +86,7 @@ export function hostTakesOwnerGoneRecordWrite(
 ): boolean {
   return negotiatedVersionMeetsRequirement(
     getNegotiatedHostMethodVersion(hostId, method) ?? undefined,
-    { method, version: OWNER_GONE_RECORD_WRITE_FLOORS[method] },
+    ownerGoneRecordWriteRequirement(method),
   );
 }
 
@@ -161,13 +176,23 @@ export function recordWriteServingHostId(args: {
   readonly fleet: SurfacePinFleetView;
   readonly preferredHostIds: () => readonly (string | null)[];
 }): string {
+  return routeRecordWrite(args).hostId;
+}
+
+/** {@link recordWriteServingHostId}, with whether the owner was passed over. */
+export function routeRecordWrite(args: {
+  readonly ownerHostId: string;
+  readonly method: OwnerGoneRecordWriteMethod;
+  readonly fleet: SurfacePinFleetView;
+  readonly preferredHostIds: () => readonly (string | null)[];
+}): OwnerGoneWriteRoute {
   return routeOwnerGoneWrite({
     ownerHostId: args.ownerHostId,
     fleet: args.fleet,
     preferredHostIds: args.preferredHostIds,
     fallbackAccepts: (hostId) =>
       hostTakesOwnerGoneRecordWrite(hostId, args.method),
-  }).hostId;
+  });
 }
 
 /**

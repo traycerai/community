@@ -13,7 +13,15 @@ import type { HostRuntimeBinding } from "@/providers/host-runtime-provider";
  * the response, never where the call was routed.
  */
 
-export type RequestedRecordWrite = "archive" | "unarchive" | "remove";
+/**
+ * `remove-terminal-agent` is its own kind: a terminal agent's process runs on
+ * its host, and a requested delete leaves it running until that host is back.
+ */
+export type RequestedRecordWrite =
+  | "archive"
+  | "unarchive"
+  | "remove"
+  | "remove-terminal-agent";
 
 /**
  * The owner's display name from the live directory, or `null` when the
@@ -40,6 +48,8 @@ export function requestedRecordWriteMessage(
       return `Unarchived. ${hostLabel ?? "Its host"} will finish when it is back`;
     case "remove":
       return `Removed. Files on ${hostLabel ?? "its host"} are untouched`;
+    case "remove-terminal-agent":
+      return `Removed. The agent keeps running on ${hostLabel ?? "its host"} until that host reconnects. Its files are untouched`;
   }
 }
 

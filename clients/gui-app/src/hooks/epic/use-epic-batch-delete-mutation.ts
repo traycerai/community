@@ -449,9 +449,19 @@ export function useEpicBatchDelete(): UseMutationResult<
           // `"cloud"`. That asymmetry is deliberate: account-wide is the
           // destructive direction, and an old host is exactly the peer that
           // produced no evidence for it.
+          //
+          // A fallback route is the exception: it sent only the ids whose row
+          // was cloud-homed, and a stand-in deletes those from the account
+          // whatever its minor, so a success there is account-wide even when
+          // an older stand-in omits `home`. A stand-in that does state
+          // `home: "local"` is still believed.
           const userId = ctx.userId;
           const accountWideIds = data.results.flatMap((result) =>
-            result.success && result.home === "cloud" ? [result.taskId] : [],
+            result.success &&
+            (result.home === "cloud" ||
+              (ctx.route.kind === "fallback" && result.home === undefined))
+              ? [result.taskId]
+              : [],
           );
           const hostScopedIds = deletedIds.filter(
             (id) => !accountWideIds.includes(id),
@@ -482,13 +492,21 @@ export function useEpicBatchDelete(): UseMutationResult<
             );
           }
         }
-        const epicToast = epicDeleteToastParts({
-          failures,
-          successes,
-          total: data.results.length,
-          deletedIds,
-          epicTitlesById: ctx.epicTitlesById,
-        });
+        const epicToast = withSkippedWorktreeCleanup(
+          epicDeleteToastParts({
+            failures,
+            successes,
+            total: data.results.length,
+            deletedIds,
+            epicTitlesById: ctx.epicTitlesById,
+          }),
+          skippedWorktreeCleanupCount(
+            ctx.route,
+            variables.worktreeCleanup,
+            deletedIds,
+            successes,
+          ),
+        );
         const eligibleWorktreePaths = routedWorktreeCleanupPaths(
           ctx.route,
           variables.worktreeCleanup,
@@ -944,6 +962,42 @@ function routedWorktreeCleanupPaths(
 ): ReadonlyArray<string> {
   if (route.kind !== "direct") return [];
   return eligibleWorktreeCleanupPaths(cleanup, deletedIds, successes);
+}
+
+/**
+ * How many approved worktree removals a stand-in route left undone: the
+ * worktrees are on the active host, which is down. Zero on a direct route.
+ */
+function skippedWorktreeCleanupCount(
+  route: EpicBatchDeleteRoute,
+  cleanup: BatchDeleteEpicVariables["worktreeCleanup"],
+  deletedIds: ReadonlyArray<string>,
+  successes: number,
+): number {
+  if (route.kind === "direct") return 0;
+  return eligibleWorktreeCleanupPaths(cleanup, deletedIds, successes).length;
+}
+
+/** Why approved worktree removals were not run, for the toast's detail. */
+export const WORKTREE_CLEANUP_SKIPPED_DETAIL =
+  "Traycer can't reach the task's host, so its worktrees and their files stay on that machine. Remove them in Settings ▸ Worktrees once that host is reachable.";
+
+/**
+ * The Task half of the toast, with the approved worktree removals that were
+ * not run: the Task is deleted, but the worktrees the person asked to remove
+ * are still on disk, so the toast is a warning that says so. Exported with
+ * `epicDeleteToastParts` for the same reason.
+ */
+export function withSkippedWorktreeCleanup(
+  parts: EpicDeleteToastParts,
+  skipped: number,
+): EpicDeleteToastParts {
+  if (skipped === 0) return parts;
+  return {
+    level: parts.level === "error" ? "error" : "warning",
+    message: `${parts.message} · ${skipped} worktree${skipped === 1 ? "" : "s"} not removed`,
+    detail: joinToastDetails(parts.detail, WORKTREE_CLEANUP_SKIPPED_DETAIL),
+  };
 }
 
 /** The active host's scope, and the stand-in's when one took the call. */

@@ -242,6 +242,7 @@ interface ArchiveChatContext {
   readonly hostId: string | null;
   readonly viewerHostId: string | null;
   readonly viewerUserId: string | null;
+  readonly servingHostId: string | null;
 }
 
 type ChatMutationClientResolver = (variables: {
@@ -571,6 +572,7 @@ describe("useEpicDeleteChat", () => {
         hostId: "host-test",
         viewerHostId: "host-test",
         viewerUserId: null,
+        servingHostId: "host-test",
         cloudDeletionToken: null,
       },
       mutationContext,
@@ -618,6 +620,7 @@ describe("useEpicDeleteChat", () => {
         hostId: null,
         viewerHostId: "host-test",
         viewerUserId: null,
+        servingHostId: null,
         cloudDeletionToken: null,
       },
       { client: new QueryClient(), meta: undefined },
@@ -816,6 +819,7 @@ describe("useEpicArchiveChat", () => {
       hostId: "host-test",
       viewerHostId: "host-test",
       viewerUserId: null,
+      servingHostId: "host-test",
     });
     opts.onSuccess({ updated: false, outcome: "applied" }, variables, ctx, {
       client: queryClient,
@@ -856,6 +860,7 @@ describe("useEpicArchiveChat", () => {
       hostId: "remote-host",
       viewerHostId: "host-test",
       viewerUserId: null,
+      servingHostId: "remote-host",
     });
     opts.onSuccess({ updated: true, outcome: "applied" }, variables, ctx, {
       client: queryClient,

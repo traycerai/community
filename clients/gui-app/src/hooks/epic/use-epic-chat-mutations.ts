@@ -136,6 +136,8 @@ interface ChatRecordMutationContext {
   readonly hostId: string | null;
   readonly viewerHostId: string | null;
   readonly viewerUserId: string | null;
+  /** Where the call went: the owner, or a live host standing in for it. */
+  readonly servingHostId: string | null;
 }
 
 interface DeleteChatMutationContext extends ChatRecordMutationContext {
@@ -639,7 +641,7 @@ function useEpicArchiveChatMutation(
   HostRpcError,
   ArchiveChatMutationInput
 > {
-  const client = useEpicRecordLifecycleMutationClient("epic.setChatArchived");
+  const route = useEpicRecordLifecycleMutationClient("epic.setChatArchived");
   const sessionClient = useEpicSessionHostClient();
   const binding = useHostBinding();
   const queryClient = useQueryClient();
@@ -651,7 +653,7 @@ function useEpicArchiveChatMutation(
     unknown,
     ArchiveChatMutationInput
   >({
-    client,
+    client: route.client,
     method: "epic.listChatRecords",
     // `knownRevision: null` - this read holds no list stamp and wants the
     // whole list, which is what a one-shot post-write read means. The host
@@ -669,19 +671,21 @@ function useEpicArchiveChatMutation(
     ChatRecordMutationContext,
     ArchiveChatMutationInput
   >({
-    client,
+    client: route.client,
     method: "epic.setChatArchived",
     mapVariables: ({ epicId, chatId, archived }) => ({
       epicId,
       chatId,
       archived,
     }),
+    requiredHostMethodVersion: route.requiredHostMethodVersion,
     options: {
       mutationKey: epicMutationKeys.setChatArchived(),
-      onMutate: ({ hostId }) => ({
-        hostId,
+      onMutate: (variables) => ({
+        hostId: variables.hostId,
         viewerHostId: sessionClient?.getActiveHostId() ?? null,
         viewerUserId: currentProfileUserId(),
+        servingHostId: route.servingHostId(variables),
       }),
       onSuccess: async (data, variables, ctx) => {
         const handle = getOpenEpicRegistry().peek(variables.epicId);
@@ -689,6 +693,7 @@ function useEpicArchiveChatMutation(
         for (const hostId of new Set([
           ctx.hostId,
           ctx.viewerHostId,
+          ctx.servingHostId,
           handle?.hostId ?? null,
         ])) {
           invalidateEpicChatRecords(queryClient, hostId);
@@ -855,7 +860,7 @@ function useEpicDeleteChatMutation(
   DeleteChatMutationInput,
   DeleteChatMutationContext
 > {
-  const client = useEpicRecordLifecycleMutationClient("epic.deleteChat");
+  const route = useEpicRecordLifecycleMutationClient("epic.deleteChat");
   const sessionClient = useEpicSessionHostClient();
   const binding = useHostBinding();
   const queryClient = useQueryClient();
@@ -865,9 +870,10 @@ function useEpicDeleteChatMutation(
     DeleteChatMutationContext,
     DeleteChatMutationInput
   >({
-    client,
+    client: route.client,
     method: "epic.deleteChat",
     mapVariables: ({ epicId, chatId }) => ({ epicId, chatId }),
+    requiredHostMethodVersion: route.requiredHostMethodVersion,
     options: {
       // `epic.deleteChat` names no host on the wire - the host it is SENT to
       // is the one that owns the chat being deleted - so the teardown below
@@ -875,7 +881,8 @@ function useEpicDeleteChatMutation(
       // repo's host-swap convention) rather than re-read in `onSuccess`, so a
       // host swap while the delete is in flight cannot make us dispose a
       // same-id chat session belonging to a different machine.
-      onMutate: ({ hostId, epicId, chatId }) => {
+      onMutate: (variables) => {
+        const { hostId, epicId, chatId } = variables;
         const viewerHostId = sessionClient?.getActiveHostId() ?? null;
         const viewerUserId = currentProfileUserId();
         const cachedPublicationChatId =
@@ -893,6 +900,7 @@ function useEpicDeleteChatMutation(
           hostId,
           viewerHostId,
           viewerUserId,
+          servingHostId: route.servingHostId(variables),
           cloudDeletionToken:
             hostId === null || viewerUserId === null
               ? null
@@ -987,6 +995,7 @@ function useEpicDeleteChatMutation(
         for (const hostId of new Set([
           ctx.hostId,
           ctx.viewerHostId,
+          ctx.servingHostId,
           handle?.hostId ?? null,
         ])) {
           invalidateEpicChatRecords(queryClient, hostId);
