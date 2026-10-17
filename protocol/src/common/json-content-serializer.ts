@@ -939,6 +939,8 @@ const LIST_BLOCK_TYPES: ReadonlySet<string> = new Set([
   "taskList",
 ]);
 
+const BARE_BULLET_LINE = /^[ \t]*-[ \t]*$/;
+
 const SELF_INDENTING_BLOCK_TYPES: ReadonlySet<string> = new Set([
   "codeBlock",
   "mermaidBlock",
@@ -1027,6 +1029,18 @@ function serializeListItemWithMarker(
         if (child.type === "paragraph" && !markerOnly) lines.push("");
         markerOnly = false;
         const childLines = serialized.split("\n");
+        // A nested list that opens with an empty bullet item starts with a
+        // bare `-` line, and directly under a line of text that reads as a
+        // setext heading underline: the item's paragraph would come back as
+        // a heading. A blank line before the list keeps it a list.
+        if (
+          LIST_BLOCK_TYPES.has(child.type ?? "") &&
+          BARE_BULLET_LINE.test(childLines[0] ?? "") &&
+          lines.length > 0 &&
+          lines[lines.length - 1] !== ""
+        ) {
+          lines.push("");
+        }
         for (const line of childLines) {
           if (LIST_BLOCK_TYPES.has(child.type ?? "")) {
             lines.push(line);

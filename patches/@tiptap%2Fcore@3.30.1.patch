@@ -1,0 +1,112 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+index d828422b45e463c229bd937d39ea416278055dde..1e9998d69dfcf36158ecb4b54a5556226b96d024 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -4788,6 +4788,11 @@ function createInlineMarkdownSpec(options) {
+ }
+
+ // src/utilities/markdown/parseIndentedBlocks.ts
++// Whether a line, without its indent, opens a block and so cannot continue
++// the paragraph before it.
++function startsMarkdownBlock(line) {
++  return /^([-+*]|\d{1,9}[.)])(\s|$)/.test(line) || /^(```|~~~)/.test(line) || /^>/.test(line) || /^#{1,6}(\s|$)/.test(line) || /^([*_-])(\s*\1){2,}\s*$/.test(line);
++}
+ function parseIndentedBlocks(src, config, lexer) {
+   var _a, _b, _c, _d;
+   const lines = src.split("\n");
+@@ -4816,6 +4821,13 @@ function parseIndentedBlocks(src, config, lexer) {
+ `;
+     const itemContent = [mainContent];
+     i += 1;
++    while (i < lines.length) {
++      const nextLine = lines[i];
++      if (nextLine.trim() === "" || config.itemPattern.test(nextLine) || startsMarkdownBlock(nextLine.trimStart())) break;
++      itemData.mainContent = itemData.mainContent === "" ? nextLine.trimStart() : `${itemData.mainContent}\n${nextLine.trimStart()}`;
++      totalRaw = `${totalRaw}${nextLine}\n`;
++      i += 1;
++    }
+     while (i < lines.length) {
+       const nextLine = lines[i];
+       if (nextLine.trim() === "") {
+diff --git a/dist/index.js b/dist/index.js
+index a0f6db230e5c24f99066beda95637818680b3fd2..1ae66eb30c2d76de00d1259cd17395f3ddcdf59b 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -4626,6 +4626,11 @@ function createInlineMarkdownSpec(options) {
+ }
+
+ // src/utilities/markdown/parseIndentedBlocks.ts
++// Whether a line, without its indent, opens a block and so cannot continue
++// the paragraph before it.
++function startsMarkdownBlock(line) {
++  return /^([-+*]|\d{1,9}[.)])(\s|$)/.test(line) || /^(```|~~~)/.test(line) || /^>/.test(line) || /^#{1,6}(\s|$)/.test(line) || /^([*_-])(\s*\1){2,}\s*$/.test(line);
++}
+ function parseIndentedBlocks(src, config, lexer) {
+   var _a, _b, _c, _d;
+   const lines = src.split("\n");
+@@ -4654,6 +4659,13 @@ function parseIndentedBlocks(src, config, lexer) {
+ `;
+     const itemContent = [mainContent];
+     i += 1;
++    while (i < lines.length) {
++      const nextLine = lines[i];
++      if (nextLine.trim() === "" || config.itemPattern.test(nextLine) || startsMarkdownBlock(nextLine.trimStart())) break;
++      itemData.mainContent = itemData.mainContent === "" ? nextLine.trimStart() : `${itemData.mainContent}\n${nextLine.trimStart()}`;
++      totalRaw = `${totalRaw}${nextLine}\n`;
++      i += 1;
++    }
+     while (i < lines.length) {
+       const nextLine = lines[i];
+       if (nextLine.trim() === "") {
+diff --git a/src/utilities/markdown/parseIndentedBlocks.ts b/src/utilities/markdown/parseIndentedBlocks.ts
+index ae4956bd21ffe5489a64d08486cf323e82859c06..8fe4359829f6ea8c9eafa7c65c0aef09f3d0f71d 100644
+--- a/src/utilities/markdown/parseIndentedBlocks.ts
++++ b/src/utilities/markdown/parseIndentedBlocks.ts
+@@ -37,6 +37,20 @@ export interface BlockParserConfig {
+   customNestedParser?: (dedentedContent: string) => any[] | undefined
+ }
+
++/**
++ * Whether a line, without its indent, opens a block and so cannot continue the
++ * paragraph before it.
++ */
++function startsMarkdownBlock(line: string): boolean {
++  return (
++    /^([-+*]|\d{1,9}[.)])(\s|$)/.test(line) ||
++    /^(```|~~~)/.test(line) ||
++    /^>/.test(line) ||
++    /^#{1,6}(\s|$)/.test(line) ||
++    /^([*_-])(\s*\1){2,}\s*$/.test(line)
++  )
++}
++
+ /**
+  * Parses markdown text into hierarchical indented blocks with proper nesting.
+  *
+@@ -118,6 +132,26 @@ export function parseIndentedBlocks(
+     const itemContent = [mainContent] // Start with the main text
+     i += 1
+
++    // A paragraph continuation of the item's first line (indented, or lazy at
++    // column 0) joins it, so a hard break stays inside the item's paragraph.
++    // An item with an empty first line takes the continuation as its text.
++    while (i < lines.length) {
++      const nextLine = lines[i]
++      if (
++        nextLine.trim() === '' ||
++        config.itemPattern.test(nextLine) ||
++        startsMarkdownBlock(nextLine.trimStart())
++      ) {
++        break
++      }
++      itemData.mainContent =
++        itemData.mainContent === ''
++          ? nextLine.trimStart()
++          : `${itemData.mainContent}\n${nextLine.trimStart()}`
++      totalRaw = `${totalRaw}${nextLine}\n`
++      i += 1
++    }
++
+     // Look ahead for nested content (indented more than current item)
+     while (i < lines.length) {
+       const nextLine = lines[i]
