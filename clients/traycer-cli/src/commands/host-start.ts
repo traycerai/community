@@ -58,6 +58,7 @@ import {
   HOST_CRASH_REPORT_TIMEOUT_MS,
   reportHostCrashToSentry,
   resumeHostCrashReports,
+  settleHostCrashThrottleWrites,
   type HostCrashTelemetry,
 } from "../host/crash-telemetry";
 import {
@@ -3865,8 +3866,12 @@ const pendingCrashTelemetry = new Set<Promise<void>>();
 
 /** Wait, for at most the report bound, for the reports still in flight. */
 async function settlePendingCrashTelemetry(): Promise<void> {
-  if (pendingCrashTelemetry.size === 0) return;
-  const waiting = [...pendingCrashTelemetry];
+  // The throttle's own writes are waited for too: a summary timer can fire
+  // just before a clean stop, and nothing else would await its write.
+  const waiting = [
+    ...pendingCrashTelemetry,
+    settleHostCrashThrottleWrites().catch(() => undefined),
+  ];
   let timer: NodeJS.Timeout | undefined;
   await Promise.race([
     Promise.allSettled(waiting),

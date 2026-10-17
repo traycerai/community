@@ -478,6 +478,31 @@ describe("parsePersistedHostCrashThrottle", () => {
     expect(parsed).toEqual(h.throttle.snapshot());
   });
 
+  it("cuts a tag longer than the cap instead of dropping the kind", () => {
+    const longVersion = "local-" + "x".repeat(600);
+    const parsed = parsePersistedHostCrashThrottle(
+      JSON.stringify({
+        version: 1,
+        kinds: {
+          k: {
+            ...kind,
+            suppressedCount: 2,
+            lastSuppressed: {
+              message: "Host crashed: 1",
+              level: "error",
+              fingerprint: ["host-crash", "linux", "1"],
+              hostId: null,
+              tags: { host_version: longVersion },
+            },
+          },
+        },
+      }),
+    );
+    const held = parsed.get("k")?.lastSuppressed;
+    expect(parsed.get("k")?.suppressedCount).toBe(2);
+    expect(held?.tags.host_version).toBe(longVersion.slice(0, 256));
+  });
+
   it.each([
     ["empty", ""],
     ["torn", '{"version":1,"kinds":{"a|b":{"reported":3'],

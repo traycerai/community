@@ -37,6 +37,8 @@ const sentryMocks = vi.hoisted(() => ({
   messages: [] as SentryMessage[],
   pendingExtras: undefined as SentryExtras | undefined,
   flushes: [] as number[],
+  /** When set, the next flush with this timeout stays pending until opened. */
+  heldFlush: null as { timeout: number; release: () => void } | null,
 }));
 
 vi.mock("@sentry/node", () => ({
@@ -71,6 +73,14 @@ vi.mock("@sentry/node", () => ({
   },
   flush: (timeout: number) => {
     sentryMocks.flushes.push(timeout);
+    const held = sentryMocks.heldFlush;
+    if (held !== null && held.timeout === timeout) {
+      return new Promise<boolean>((resolve) => {
+        held.release = () => {
+          resolve(true);
+        };
+      });
+    }
     return Promise.resolve(true);
   },
 }));
@@ -148,6 +158,7 @@ beforeEach(() => {
   osHome.current = home;
   sentryMocks.messages.length = 0;
   sentryMocks.flushes.length = 0;
+  sentryMocks.heldFlush = null;
   pidMetadata.hostId = null;
   nowMs = Date.UTC(2026, 9, 17, 0, 0, 0);
   vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
@@ -234,13 +245,53 @@ describe("host crash reports across supervisor restarts", () => {
     expect(sentryMocks.flushes).not.toContain(mod.HOST_CRASH_REPORT_TIMEOUT_MS);
     vi.clearAllTimers();
 
-    // Overdue: sent at once, and the transport is flushed within the bound.
+    // Overdue: sent at once, and the resume stays pending until the transport
+    // flush for it (within the bound) has settled.
     vi.advanceTimersByTime(3 * HOUR_MS);
     vi.resetModules();
     mod = await import("../crash-telemetry");
-    await mod.resumeHostCrashReports("production");
+    sentryMocks.heldFlush = {
+      timeout: mod.HOST_CRASH_REPORT_TIMEOUT_MS,
+      release: () => undefined,
+    };
+    let resolved = false;
+    const resuming = mod.resumeHostCrashReports("production").then(() => {
+      resolved = true;
+    });
+    for (let turn = 0; turn < 50; turn += 1) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
     expect(summaries()).toEqual([{ suppressedCount: 3 }]);
     expect(sentryMocks.flushes).toContain(mod.HOST_CRASH_REPORT_TIMEOUT_MS);
+    expect(resolved).toBe(false);
+    sentryMocks.heldFlush.release();
+    await resuming;
+    expect(resolved).toBe(true);
+  });
+
+  it("leaves a summary a timer sent just before a clean stop cleared on disk once the throttle writes have settled", async () => {
+    vi.resetModules();
+    const mod = await import("../crash-telemetry");
+    for (
+      let index = 0;
+      index < RELAUNCHES_PER_SUPERVISOR_LIFE + 1;
+      index += 1
+    ) {
+      await mod.reportHostCrashToSentry(crash(`attempt-${index}`, 1));
+    }
+    vi.advanceTimersByTime(HOUR_MS);
+    expect(summaries()).toEqual([{ suppressedCount: 3 }]);
+    await mod.settleHostCrashThrottleWrites();
+
+    const stateDir = join(home, ".traycer", "cli");
+    const files = readdirSync(stateDir).filter((name) =>
+      name.startsWith("host-crash-throttle"),
+    );
+    const text = readFileSync(join(stateDir, files[0]), "utf8");
+    // Sent and a whole window quiet since: nothing is left to carry over.
+    expect(text).not.toContain('"suppressedCount":3');
+    expect(text).toBe('{"version":1,"kinds":{}}\n');
+    vi.clearAllTimers();
   });
 
   it("reports in full again once a kind has stayed quiet for a whole window", async () => {

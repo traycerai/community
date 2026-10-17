@@ -662,8 +662,11 @@ function parsePersistedEvent(value: unknown): PersistedHostCrashEvent | null {
   if (tagEntries.length > MAX_PERSISTED_TAGS) return null;
   const parsedTags: Record<string, string> = {};
   for (const [name, tagValue] of tagEntries) {
-    if (!isBoundedString(tagValue)) return null;
-    parsedTags[name] = tagValue;
+    if (typeof tagValue !== "string") return null;
+    // A tag the host wrote can be longer than the cap (a local install's
+    // version is derived from a path). Cut, never reject: rejecting would
+    // drop the whole kind and hand a crash loop a fresh budget.
+    parsedTags[name] = tagValue.slice(0, MAX_PERSISTED_STRING);
   }
   return {
     message,
@@ -829,13 +832,27 @@ function hostCrashThrottleFor(
 }
 
 /**
+ * Resolves once every throttle state write queued so far, by a crash report or
+ * by a summary timer, has settled. Never rejects. The supervisor's exit waits
+ * for it, so a summary a timer sent just before a clean stop is not sent again
+ * by the next supervisor.
+ */
+export async function settleHostCrashThrottleWrites(): Promise<void> {
+  await Promise.all(
+    [...hostCrashThrottles.values()].map((entry) => entry.settled()),
+  );
+}
+
+/**
  * Called when a supervisor starts: take the throttle state the previous
  * supervisor left, so a count it left open is sent when its window ends even
- * if this one never sees a crash. A count sent at once is also given
- * {@link HOST_CRASH_REPORT_TIMEOUT_MS} to leave the machine before this
- * resolves: its count is already cleared on disk, so a supervisor that exits
- * with the upload still queued (an early exit for a live incumbent) would
- * otherwise lose it. Never throws.
+ * if this one never sees a crash. A count sent at once is also given time to
+ * leave the machine before this resolves: its count is already cleared on
+ * disk, so a supervisor that exits with the upload still queued (an early exit
+ * for a live incumbent) would otherwise lose it. The supervisor's exit waits
+ * {@link HOST_CRASH_REPORT_TIMEOUT_MS} for the whole of this (read, write and
+ * flush); the flush's own timeout is the same ceiling, not an extra budget.
+ * Never throws.
  */
 export async function resumeHostCrashReports(
   environment: Environment,
