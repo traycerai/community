@@ -36,6 +36,7 @@ vi.mock("node:os", async (importOriginal) => {
 const sentryMocks = vi.hoisted(() => ({
   messages: [] as SentryMessage[],
   pendingExtras: undefined as SentryExtras | undefined,
+  flushes: [] as number[],
 }));
 
 vi.mock("@sentry/node", () => ({
@@ -68,7 +69,10 @@ vi.mock("@sentry/node", () => ({
     });
     sentryMocks.pendingExtras = undefined;
   },
-  flush: () => Promise.resolve(true),
+  flush: (timeout: number) => {
+    sentryMocks.flushes.push(timeout);
+    return Promise.resolve(true);
+  },
 }));
 
 vi.mock("../../sentry-transport", () => ({
@@ -143,6 +147,7 @@ beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "traycer-crash-restart-test-"));
   osHome.current = home;
   sentryMocks.messages.length = 0;
+  sentryMocks.flushes.length = 0;
   pidMetadata.hostId = null;
   nowMs = Date.UTC(2026, 9, 17, 0, 0, 0);
   vi.useFakeTimers({ toFake: ["Date", "setTimeout", "clearTimeout"] });
@@ -216,6 +221,26 @@ describe("host crash reports across supervisor restarts", () => {
     // 3 hours quiet: the new life's crash is reported in full again.
     expect(fullReports()).toBe(4);
     expect(summaries()).toHaveLength(1);
+  });
+
+  it("gives an overdue count sent on resume time to leave the machine before the resume resolves, and waits for nothing otherwise", async () => {
+    await superviseLife(RELAUNCHES_PER_SUPERVISOR_LIFE + 1, 1);
+    // Not yet due: nothing is sent, so nothing is flushed.
+    vi.resetModules();
+    let mod = await import("../crash-telemetry");
+    sentryMocks.flushes.length = 0;
+    await mod.resumeHostCrashReports("production");
+    expect(summaries()).toEqual([]);
+    expect(sentryMocks.flushes).not.toContain(mod.HOST_CRASH_REPORT_TIMEOUT_MS);
+    vi.clearAllTimers();
+
+    // Overdue: sent at once, and the transport is flushed within the bound.
+    vi.advanceTimersByTime(3 * HOUR_MS);
+    vi.resetModules();
+    mod = await import("../crash-telemetry");
+    await mod.resumeHostCrashReports("production");
+    expect(summaries()).toEqual([{ suppressedCount: 3 }]);
+    expect(sentryMocks.flushes).toContain(mod.HOST_CRASH_REPORT_TIMEOUT_MS);
   });
 
   it("reports in full again once a kind has stayed quiet for a whole window", async () => {
