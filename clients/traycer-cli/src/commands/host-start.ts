@@ -2491,12 +2491,16 @@ export async function runHostStart(
     // on THIS (bounded) before writing the marker - otherwise the fatal text can
     // still be unread in the pipe and the capture comes out empty in exactly the
     // abnormal-death case this feature exists for.
-    let resolveStderrEnded: () => void = () => undefined;
-    const stderrEnded = new Promise<void>((resolve) => {
+    //
+    // It resolves `true` when the pipe ended or closed, `false` when it errored
+    // first: a dead pipe may have lost bytes, so the capture is not known to be
+    // whole (the crash event's `incomplete` kind).
+    let resolveStderrEnded: (drained: boolean) => void = () => undefined;
+    const stderrEnded = new Promise<boolean>((resolve) => {
       resolveStderrEnded = resolve;
     });
     if (child.stderr === null || child.stderr === undefined) {
-      resolveStderrEnded();
+      resolveStderrEnded(true);
     } else {
       const stderr = child.stderr;
       stderr.on("data", (chunk: Buffer) => {
@@ -2510,18 +2514,18 @@ export async function runHostStart(
       // settle the wait: whatever bytes arrived are still worth recording, and
       // `error` may arrive instead of `end`.
       stderr.on("error", () => {
-        resolveStderrEnded();
+        resolveStderrEnded(false);
       });
       stderr.on("end", () => {
-        resolveStderrEnded();
+        resolveStderrEnded(true);
       });
       stderr.on("close", () => {
-        resolveStderrEnded();
+        resolveStderrEnded(true);
       });
       // The spawn-site recorder may have observed the stream's one `error`
       // before any of the listeners above existed; a dead stream emits
       // nothing further, so settle the wait from the recorded state.
-      if (stderrErroredEarly) resolveStderrEnded();
+      if (stderrErroredEarly) resolveStderrEnded(false);
     }
 
     const probeObservation =
@@ -3422,7 +3426,7 @@ async function finalizeIntentionalRestartAttempt(input: {
   readonly environment: Environment;
   readonly probeObservation: Promise<ProbeObservation> | null;
   readonly stderrTee: StderrTee;
-  readonly stderrEnded: Promise<void>;
+  readonly stderrEnded: Promise<boolean>;
 }): Promise<void> {
   await finalizeAttemptProbe({
     code: input.code,
@@ -3479,7 +3483,7 @@ async function finalizeAttemptProbe(input: {
  * restart (or a crash exit) wait forever.
  */
 async function flushAttemptStderr(input: {
-  readonly stderrEnded: Promise<void>;
+  readonly stderrEnded: Promise<boolean>;
   readonly stderrTee: StderrTee;
 }): Promise<boolean> {
   const ended = await withDeadline(
@@ -3542,7 +3546,7 @@ async function persistChildExit(input: {
   readonly childSpawnedMonoMs: number;
   readonly childEndedMonoMs: number;
   readonly stderrTee: StderrTee;
-  readonly stderrEnded: Promise<void>;
+  readonly stderrEnded: Promise<boolean>;
   readonly crashReportsDirPath: string;
   readonly preexistingReportNames: ReadonlySet<string>;
 }): Promise<ChildExitOutcome> {
@@ -3940,18 +3944,19 @@ function boundedCrashReportScan(input: {
 
 /**
  * Resolves when `promise` settles or `timeoutMs` elapses, whichever is first:
- * `true` when it settled, `false` when the deadline won. Never rejects: every
+ * the promise's own value (`true` when the pipe drained), or `false` when it
+ * rejected or the deadline won. Never rejects: every
  * caller here is on the exit path, where the only acceptable outcome is
  * "continue and write the marker".
  */
 function withDeadline(
-  promise: Promise<void>,
+  promise: Promise<boolean>,
   timeoutMs: number,
 ): Promise<boolean> {
   return Promise.race([
     promise.then(
-      () => true,
-      () => true,
+      (drained) => drained,
+      () => false,
     ),
     new Promise<boolean>((resolve) => {
       const timer = setTimeout(() => resolve(false), timeoutMs);

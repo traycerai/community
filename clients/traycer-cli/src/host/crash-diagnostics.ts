@@ -369,7 +369,9 @@ export class StderrCaptureBuffer {
       }
       const held =
         Buffer.concat(this.headChunks).toString("utf8") +
-        "\n" +
+        // Contiguous unless the middle was dropped; a separator inside an
+        // unbroken stream would split a line across the head/tail boundary.
+        (this.elidedBytes > 0 ? "\n" : "") +
         Buffer.concat(this.tailChunks).toString("utf8");
       if (
         ASSERTION_FAILED_FORM.test(held) ||

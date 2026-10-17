@@ -160,6 +160,16 @@ describe("StderrCaptureBuffer", () => {
       expect(buf.classifyFatal(true)).toBe("v8-heap-oom");
     });
 
+    it("matches an assertion line that crosses the head/tail boundary when nothing was elided", () => {
+      // 2040 bytes of earlier output, then a line straddling byte 2048; the
+      // total is far below head + tail, so the two halves are contiguous.
+      const line =
+        "Assertion failed: !(handle->flags & UV_HANDLE_CLOSING), file src\\win\\async.c, line 76\n";
+      expect(capture("w".repeat(2040) + line).classifyFatal(true)).toBe(
+        "assertion",
+      );
+    });
+
     it("sees a needle split across two chunks", () => {
       expect(
         capture(

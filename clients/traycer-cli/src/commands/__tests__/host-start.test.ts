@@ -1765,6 +1765,38 @@ describe("runHostStart - signal/exit propagation", () => {
       expect(recorded.crashReports[0]?.stderrFatal).toBe("v8-heap-oom");
     });
 
+    it("tags nothing-recognised as incomplete when the stderr pipe errored before it ended", async () => {
+      const exec = "/opt/traycer/host/install/traycer-host";
+      const { child, recorded, deps } = makeRunStubs(sampleRecord(exec), null);
+      const stderr = new PassThrough();
+      Object.assign(child, { stderr });
+      const originalSpawn = deps.spawn;
+      if (originalSpawn === undefined) {
+        throw new Error("test spawn dependency missing");
+      }
+      await runUntilExit(
+        () =>
+          runHostStart(
+            { environment: "production", cwd: null },
+            {
+              ...deps,
+              spawn: (command, args, options) => {
+                const spawned = originalSpawn(command, args, options);
+                setImmediate(() => {
+                  stderr.write(Buffer.from("partial\n"));
+                  // EIO / EPIPE after an abnormal death: bytes may be lost.
+                  stderr.emit("error", new Error("EIO on host stderr"));
+                  child.emit("exit", 7, null);
+                });
+                return spawned;
+              },
+            },
+          ),
+        recorded,
+      );
+      expect(recorded.crashReports[0]?.stderrFatal).toBe("incomplete");
+    });
+
     it("tags nothing-recognised as incomplete when the stream had not ended at the deadline", async () => {
       const exec = "/opt/traycer/host/install/traycer-host";
       const { child, recorded, deps } = makeRunStubs(sampleRecord(exec), null);
