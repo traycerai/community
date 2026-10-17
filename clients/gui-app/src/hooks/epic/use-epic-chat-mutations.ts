@@ -749,9 +749,16 @@ function useEpicArchiveChatMutation(
  * archiving a record hides its subtree, so the sidebar sends only the topmost
  * selected rows, each covering itself and its selected descendants. 1 for an
  * independent target.
+ *
+ * `selectedRows` is fixed at the gesture. `coveredRows` is read when the batch
+ * settles: how many of those rows are still beneath the record then. A
+ * selected descendant moved out while the request was in flight was not
+ * archived with it, so it gets neither the request's applied nor its failed
+ * count - it is unconfirmed.
  */
 export interface ArchiveChatsTarget extends ChatMutationTarget {
   readonly selectedRows: number;
+  readonly coveredRows: () => number;
 }
 
 export interface ArchiveChatsMutationInput {
@@ -819,29 +826,32 @@ export function useEpicArchiveChats(): UseMutationResult<
       // while its write waited its turn on the host: neither applied nor
       // failed as far as this batch can tell. Such rows stay in the
       // selection's count, unconfirmed.
-      const unconfirmedRows = results.reduce(
-        (sum, result, index) =>
-          result.status === "fulfilled" && !result.value.updated
-            ? sum + (variables.chats[index]?.selectedRows ?? 1)
-            : sum,
-        0,
+      let unconfirmedRows = 0;
+      const outcomes = results.flatMap(
+        (result, index): OwnerHostBatchWriteOutcome[] => {
+          const chat = variables.chats[index];
+          const selectedRows = chat.selectedRows;
+          if (result.status === "fulfilled" && !result.value.updated) {
+            unconfirmedRows += selectedRows;
+            return [];
+          }
+          const coveredRows = Math.min(selectedRows, chat.coveredRows());
+          unconfirmedRows += selectedRows - coveredRows;
+          return [
+            {
+              kind: "agent",
+              hostId: chat.hostId,
+              selectedRows: coveredRows,
+              error:
+                result.status === "rejected"
+                  ? toHostRpcError(result.reason, "epic.setChatArchived")
+                  : null,
+            },
+          ];
+        },
       );
       toastFromOwnerHostBatchWriteFailuresWithUnconfirmed(
-        results.flatMap((result, index): OwnerHostBatchWriteOutcome[] =>
-          result.status === "fulfilled" && !result.value.updated
-            ? []
-            : [
-                {
-                  kind: "agent",
-                  hostId: variables.chats[index]?.hostId ?? null,
-                  selectedRows: variables.chats[index]?.selectedRows ?? 1,
-                  error:
-                    result.status === "rejected"
-                      ? toHostRpcError(result.reason, "epic.setChatArchived")
-                      : null,
-                },
-              ],
-        ),
+        outcomes,
         unconfirmedRows,
         variables.archived ? ARCHIVE_BATCH_COPY : UNARCHIVE_BATCH_COPY,
       );

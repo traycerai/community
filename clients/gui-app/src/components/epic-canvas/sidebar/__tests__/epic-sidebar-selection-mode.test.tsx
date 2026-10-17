@@ -204,6 +204,8 @@ interface TestState {
     readonly hostId: string | null;
     readonly selectedRows: number;
   }>;
+  /** Each bulk-archive target's covered rows, read when the batch settled. */
+  archiveCoveredRowsAtSettlement: readonly number[];
   archiveMutateAsync: Mock<
     (input: {
       readonly epicId: string;
@@ -277,6 +279,7 @@ const testState = vi.hoisted<TestState>(() => ({
   archiveBatchPending: false,
   archiveRowPending: false,
   archiveBatchChats: [],
+  archiveCoveredRowsAtSettlement: [],
   archiveMutateAsync: vi.fn(),
   rowHostId: "host-1",
   rowHostReachability: "reachable",
@@ -614,6 +617,7 @@ vi.mock("@/hooks/epic/use-epic-chat-mutations", () => ({
           readonly chatId: string;
           readonly hostId: string | null;
           readonly selectedRows: number;
+          readonly coveredRows: () => number;
         }>;
         readonly archived: boolean;
       },
@@ -636,6 +640,9 @@ vi.mock("@/hooks/epic/use-epic-chat-mutations", () => ({
         ),
       ).then((results) => {
         testState.archiveBatchPending = false;
+        testState.archiveCoveredRowsAtSettlement = variables.chats.map((chat) =>
+          chat.coveredRows(),
+        );
         options.onSuccess(results);
       });
     },
@@ -1416,6 +1423,7 @@ describe("epic sidebar selection mode", () => {
     testState.archiveMutate = vi.fn();
     testState.archiveBatchPending = false;
     testState.archiveBatchChats = [];
+    testState.archiveCoveredRowsAtSettlement = [];
     testState.archiveRowPending = false;
     testState.archiveMutateAsync = vi.fn();
     testState.openArtifactById = {};
@@ -1822,9 +1830,21 @@ describe("epic sidebar selection mode", () => {
     // Thread taOw7: the root's request stands for the selected child its
     // archive hides, so the batch notice counts both.
     expect(testState.archiveBatchChats).toEqual([
-      { chatId: "chat-root", hostId: "host-1", selectedRows: 2 },
-      { chatId: "agent-root", hostId: "host-1", selectedRows: 1 },
+      expect.objectContaining({
+        chatId: "chat-root",
+        hostId: "host-1",
+        selectedRows: 2,
+      }),
+      expect.objectContaining({
+        chatId: "agent-root",
+        hostId: "host-1",
+        selectedRows: 1,
+      }),
     ]);
+    // Nothing moved, so each request still covers every row it stood for.
+    await waitFor(() => {
+      expect(testState.archiveCoveredRowsAtSettlement).toEqual([2, 1]);
+    });
     expect(
       screen.queryByRole("button", { name: "Cancel selection" }),
     ).toBeNull();
@@ -2064,6 +2084,63 @@ describe("epic sidebar selection mode", () => {
     expect(
       screen.getByTestId("epic-sidebar-select-chat-child").matches(":checked"),
     ).toBe(true);
+  });
+
+  // A selected child moved out of the selected parent while the archive is
+  // in flight is not archived with it: at settlement the parent's request
+  // covers itself alone, and the child stays selected.
+  it("recounts an archive request's selected rows against the tree it settles in", async () => {
+    let resolveRootArchive: (value: {
+      readonly updated: boolean;
+    }) => void = () => {
+      throw new Error("Archive resolver is unavailable");
+    };
+    testState.archiveMutateAsync.mockImplementation((input) =>
+      input.chatId === "chat-root"
+        ? new Promise<{ readonly updated: boolean }>((resolve) => {
+            resolveRootArchive = resolve;
+          })
+        : Promise.reject(new Error("refused")),
+    );
+    seedChatTree();
+
+    const view = render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "Select agents" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+    fireEvent.click(screen.getByTestId("epic-sidebar-archive-selected-chats"));
+    expect(
+      testState.archiveBatchChats.map((chat) => chat.selectedRows),
+    ).toEqual([2, 1]);
+
+    const reparentedChild = treeNode("chat-child", null, "Child chat", "chat");
+    testState.tree = {
+      rootIds: ["chat-root", reparentedChild.id, "agent-root"],
+      childrenByParent: { "chat-root": [] },
+      nodeById: {
+        ...testState.tree.nodeById,
+        [reparentedChild.id]: reparentedChild,
+      },
+    };
+    testState.records = testState.records.map((record) =>
+      record.id === reparentedChild.id
+        ? recordFromNode(reparentedChild)
+        : record,
+    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
+
+    resolveRootArchive({ updated: true });
+
+    await waitFor(() => {
+      expect(testState.archiveCoveredRowsAtSettlement).toEqual([1, 1]);
+    });
+    await waitFor(() => {
+      expect(
+        screen
+          .getByTestId("epic-sidebar-select-chat-child")
+          .matches(":checked"),
+      ).toBe(true);
+    });
   });
 
   it("hides the bulk archive action when the host lacks archive support", () => {

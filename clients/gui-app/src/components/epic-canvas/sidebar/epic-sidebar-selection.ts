@@ -618,6 +618,29 @@ export function sidebarBulkDeleteIds(args: {
   return [...deepestFirst, ...artifactIds];
 }
 
+/**
+ * Of `ids`, each beneath `rootId` when it was captured, the ones `tree` now
+ * places outside it: present, with an ancestor chain that ends without
+ * passing `rootId`. A row missing from the tree, or beneath a missing row, is
+ * not counted - archiving the root hides its subtree, so a hidden row is no
+ * evidence that it moved.
+ */
+export function sidebarIdsMovedOutOfRoot(args: {
+  readonly ids: readonly string[];
+  readonly rootId: string;
+  readonly tree: EpicTreeIndex;
+}): readonly string[] {
+  return args.ids.filter((id) => {
+    let currentId: string | null = id;
+    while (currentId !== null) {
+      if (currentId === args.rootId) return false;
+      if (!Object.hasOwn(args.tree.nodeById, currentId)) return false;
+      currentId = args.tree.nodeById[currentId].parentId;
+    }
+    return true;
+  });
+}
+
 export function sidebarIdsWithinRoots(args: {
   readonly ids: readonly string[];
   readonly rootIds: readonly string[];

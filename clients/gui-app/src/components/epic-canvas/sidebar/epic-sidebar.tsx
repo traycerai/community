@@ -247,6 +247,7 @@ import { SplitResizeHandle } from "@/components/epic-canvas/canvas/resize-handle
 import {
   isSidebarBulkSelectionPanelId,
   rootmostSelectedSidebarIds,
+  sidebarIdsMovedOutOfRoot,
   sidebarBulkDeleteIds,
   sidebarBulkDeleteSelectedRows,
   sidebarBulkDeleteSelectionOrder,
@@ -1894,17 +1895,29 @@ function useSelectedChatArchive(canMutate: boolean): SelectedChatArchiveAction {
     archiveChats.mutate(
       {
         epicId,
-        chats: selectedRootIds.map((chatId, index) => ({
-          chatId,
-          hostId: ownerHostIds[index] ?? sessionHostId,
+        chats: selectedRootIds.map((chatId, index) => {
           // Archiving a root hides its subtree, so its request stands for
-          // the root and every selected row beneath it.
-          selectedRows: sidebarIdsWithinRoots({
+          // the root and every selected row beneath it at the gesture. A
+          // collaborator can move one of those rows out while the request is
+          // in flight; the latest tree at settlement says which it covers.
+          const coveredIds = sidebarIdsWithinRoots({
             ids: selection.selectedVisibleIds,
             rootIds: [chatId],
             tree,
-          }).length,
-        })),
+          });
+          return {
+            chatId,
+            hostId: ownerHostIds[index] ?? sessionHostId,
+            selectedRows: coveredIds.length,
+            coveredRows: () =>
+              coveredIds.length -
+              sidebarIdsMovedOutOfRoot({
+                ids: coveredIds,
+                rootId: chatId,
+                tree: latestTreeRef.current,
+              }).length,
+          };
+        }),
         archived: true,
       },
       {

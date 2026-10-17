@@ -1029,8 +1029,18 @@ describe("useEpicArchiveChats", () => {
       result.current.mutate({
         epicId: "epic-1",
         chats: [
-          { chatId: "chat-1", hostId: "host-test", selectedRows: 1 },
-          { chatId: "chat-2", hostId: "remote-host", selectedRows: 1 },
+          {
+            chatId: "chat-1",
+            hostId: "host-test",
+            selectedRows: 1,
+            coveredRows: () => 1,
+          },
+          {
+            chatId: "chat-2",
+            hostId: "remote-host",
+            selectedRows: 1,
+            coveredRows: () => 1,
+          },
         ],
         archived: true,
       });
@@ -1082,8 +1092,18 @@ describe("useEpicArchiveChats", () => {
       result.current.mutate({
         epicId: "epic-1",
         chats: [
-          { chatId: "chat-1", hostId: "host-test", selectedRows: 1 },
-          { chatId: "chat-2", hostId: "remote-host", selectedRows: 1 },
+          {
+            chatId: "chat-1",
+            hostId: "host-test",
+            selectedRows: 1,
+            coveredRows: () => 1,
+          },
+          {
+            chatId: "chat-2",
+            hostId: "remote-host",
+            selectedRows: 1,
+            coveredRows: () => 1,
+          },
         ],
         archived: true,
       });
@@ -1211,6 +1231,7 @@ describe("useEpicArchiveChats", () => {
           chatId,
           hostId,
           selectedRows: 1,
+          coveredRows: () => 1,
         })),
         archived,
       });
@@ -1275,8 +1296,18 @@ describe("useEpicArchiveChats", () => {
       result.current.mutate({
         epicId: "epic-1",
         chats: [
-          { chatId: "chat-1", hostId: "host-test", selectedRows: 1 },
-          { chatId: "chat-2", hostId: "remote-host", selectedRows: 1 },
+          {
+            chatId: "chat-1",
+            hostId: "host-test",
+            selectedRows: 1,
+            coveredRows: () => 1,
+          },
+          {
+            chatId: "chat-2",
+            hostId: "remote-host",
+            selectedRows: 1,
+            coveredRows: () => 1,
+          },
         ],
         archived: true,
       });
@@ -1304,8 +1335,18 @@ describe("useEpicArchiveChats", () => {
       result.current.mutate({
         epicId: "epic-1",
         chats: [
-          { chatId: "chat-1", hostId: "remote-host", selectedRows: 1 },
-          { chatId: "chat-2", hostId: "remote-host", selectedRows: 1 },
+          {
+            chatId: "chat-1",
+            hostId: "remote-host",
+            selectedRows: 1,
+            coveredRows: () => 1,
+          },
+          {
+            chatId: "chat-2",
+            hostId: "remote-host",
+            selectedRows: 1,
+            coveredRows: () => 1,
+          },
         ],
         archived: true,
       });
@@ -1338,8 +1379,18 @@ describe("useEpicArchiveChats", () => {
       result.current.mutate({
         epicId: "epic-1",
         chats: [
-          { chatId: "chat-1", hostId: "host-test", selectedRows: 1 },
-          { chatId: "chat-2", hostId: "remote-host", selectedRows: 1 },
+          {
+            chatId: "chat-1",
+            hostId: "host-test",
+            selectedRows: 1,
+            coveredRows: () => 1,
+          },
+          {
+            chatId: "chat-2",
+            hostId: "remote-host",
+            selectedRows: 1,
+            coveredRows: () => 1,
+          },
         ],
         archived: true,
       });
@@ -1368,6 +1419,7 @@ describe("useEpicArchiveChats", () => {
     rows: readonly {
       readonly row: WeightedArchiveRow;
       readonly selectedRows: number;
+      readonly coveredRows: number;
     }[],
     archived: boolean,
   ): Promise<unknown> {
@@ -1392,6 +1444,7 @@ describe("useEpicArchiveChats", () => {
           chatId: `root-${String(index)}`,
           hostId: `host-${String(index)}`,
           selectedRows: entry.selectedRows,
+          coveredRows: () => entry.coveredRows,
         })),
         archived,
       });
@@ -1407,8 +1460,8 @@ describe("useEpicArchiveChats", () => {
     await expect(
       weightedArchiveNotice(
         [
-          { row: "unreachable", selectedRows: 2 },
-          { row: "updated", selectedRows: 1 },
+          { row: "unreachable", selectedRows: 2, coveredRows: 2 },
+          { row: "updated", selectedRows: 1, coveredRows: 1 },
         ],
         true,
       ),
@@ -1419,8 +1472,8 @@ describe("useEpicArchiveChats", () => {
     await expect(
       weightedArchiveNotice(
         [
-          { row: "updated", selectedRows: 2 },
-          { row: "refused", selectedRows: 1 },
+          { row: "updated", selectedRows: 2, coveredRows: 2 },
+          { row: "refused", selectedRows: 1, coveredRows: 1 },
         ],
         true,
       ),
@@ -1433,8 +1486,26 @@ describe("useEpicArchiveChats", () => {
     await expect(
       weightedArchiveNotice(
         [
-          { row: "not-updated", selectedRows: 2 },
-          { row: "refused", selectedRows: 1 },
+          { row: "not-updated", selectedRows: 2, coveredRows: 2 },
+          { row: "refused", selectedRows: 1, coveredRows: 1 },
+        ],
+        true,
+      ),
+    ).resolves.toBe(
+      "Couldn't confirm all 3 selected agents were archived. Check them and archive any that weren't. You don't have permission to do that.",
+    );
+  });
+
+  // Thread round 9: a selected child moved out of the parent while the
+  // archive was in flight is not archived with it. The request stands for
+  // fewer rows at settlement than at the gesture, and the rows it no longer
+  // covers are unconfirmed - never archived, never failed.
+  it("counts a selected child moved out of an archived parent as unconfirmed", async () => {
+    await expect(
+      weightedArchiveNotice(
+        [
+          { row: "updated", selectedRows: 2, coveredRows: 1 },
+          { row: "refused", selectedRows: 1, coveredRows: 1 },
         ],
         true,
       ),
@@ -1447,8 +1518,8 @@ describe("useEpicArchiveChats", () => {
     await expect(
       weightedArchiveNotice(
         [
-          { row: "unreachable", selectedRows: 2 },
-          { row: "updated", selectedRows: 1 },
+          { row: "unreachable", selectedRows: 2, coveredRows: 2 },
+          { row: "updated", selectedRows: 1, coveredRows: 1 },
         ],
         false,
       ),
