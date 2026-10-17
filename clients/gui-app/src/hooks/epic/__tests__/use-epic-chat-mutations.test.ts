@@ -1127,6 +1127,93 @@ describe("useEpicArchiveChats", () => {
     expect(toast.error).toHaveBeenCalledTimes(1);
   });
 
+  // Codex thread 4302962544. A record whose owner is gone is archived by a
+  // stand-in host, which writes the cloud row and answers `requested`. When
+  // the row already had that state it answers `updated: false` as well. The
+  // per-record mutation reports it as accepted, so the batch must count it
+  // as accepted too, never as unconfirmed.
+  describe("a requested no-op from a stand-in host", () => {
+    function allNotices(): string[] {
+      return [
+        ...vi.mocked(toast).mock.calls,
+        ...vi.mocked(toast.error).mock.calls,
+        ...vi.mocked(toast.message).mock.calls,
+      ].map((call) => {
+        const [message] = call;
+        return typeof message === "string" ? message : JSON.stringify(message);
+      });
+    }
+
+    async function settleBatch(
+      answers: Readonly<Record<string, () => Promise<SetChatArchivedResponse>>>,
+      archived: boolean,
+    ): Promise<void> {
+      vi.mocked(toast).mockClear();
+      vi.mocked(toast.error).mockClear();
+      vi.mocked(toast.message).mockClear();
+      const answerByChat = new Map(Object.entries(answers));
+      archiveChatMutateAsync.mockImplementation(
+        (input: ArchiveChatMutationInput) => {
+          const answer = answerByChat.get(input.chatId);
+          if (answer === undefined)
+            throw new Error(`unexpected ${input.chatId}`);
+          return answer();
+        },
+      );
+      const { result, unmount } = renderHook(() => useEpicArchiveChats(), {
+        wrapper: makeWrapper(),
+      });
+      act(() => {
+        result.current.mutate({
+          epicId: "epic-1",
+          chats: Object.keys(answers).map((chatId) => ({
+            chatId,
+            hostId: "remote-host",
+            selectedRows: 2,
+            coveredRows: () => 2,
+          })),
+          archived,
+        });
+      });
+      await waitFor(() => {
+        expect(result.current.isSuccess).toBe(true);
+      });
+      unmount();
+    }
+
+    it.each([true, false])(
+      "says nothing about confirmation when every row was accepted (archived=%s)",
+      async (archived) => {
+        await settleBatch(
+          {
+            "chat-1": () =>
+              Promise.resolve({ updated: false, outcome: "requested" }),
+            "chat-2": () =>
+              Promise.resolve({ updated: true, outcome: "applied" }),
+          },
+          archived,
+        );
+
+        expect(allNotices()).toEqual([]);
+      },
+    );
+
+    it("counts the requested no-op's rows as applied beside a failure", async () => {
+      await settleBatch(
+        {
+          "chat-1": () =>
+            Promise.resolve({ updated: false, outcome: "requested" }),
+          "chat-2": () => Promise.reject(makeError("RPC_ERROR")),
+        },
+        true,
+      );
+
+      expect(allNotices()).toEqual([
+        "Archived 2 of 4 selected agents. 2 couldn't be archived.",
+      ]);
+    });
+  });
+
   // traycerai/traycer thread taE7F. `updated: false` is an already-satisfied
   // no-op, or a chat deleted while its archive write waited its turn: neither
   // applied nor failed as far as the batch can tell. Every mix of two and

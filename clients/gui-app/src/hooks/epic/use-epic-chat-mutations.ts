@@ -849,16 +849,25 @@ export function useEpicArchiveChats(): UseMutationResult<
         ),
       ),
     onSuccess: (results, variables) => {
-      // `updated: false` is an already-satisfied no-op, or a chat deleted
-      // while its write waited its turn on the host: neither applied nor
-      // failed as far as this batch can tell. Such rows stay in the
-      // selection's count, unconfirmed.
+      // `updated: false` from the owner is an already-satisfied no-op, or a
+      // chat deleted while its write waited its turn on the host: neither
+      // applied nor failed as far as this batch can tell. Such rows stay in
+      // the selection's count, unconfirmed.
+      //
+      // A `requested` answer is accepted whatever `updated` says: a stand-in
+      // host wrote the cloud row for a gone owner, and `updated: false` there
+      // means the row already had that state. The per-record mutation reports
+      // it as accepted, so the batch counts it as applied.
       let unconfirmedRows = 0;
       const outcomes = results.flatMap(
         (result, index): OwnerHostBatchWriteOutcome[] => {
           const chat = variables.chats[index];
           const selectedRows = chat.selectedRows;
-          if (result.status === "fulfilled" && !result.value.updated) {
+          if (
+            result.status === "fulfilled" &&
+            result.value.outcome !== "requested" &&
+            !result.value.updated
+          ) {
             unconfirmedRows += selectedRows;
             return [];
           }
