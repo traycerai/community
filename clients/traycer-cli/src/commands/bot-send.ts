@@ -342,10 +342,15 @@ class ReplyFollower {
     session.onStatusChange((status, reason) => {
       // A drop re-subscribes on its own and the new snapshot starts over;
       // the person's timeout bounds the wait either way.
-      if (status !== "closed" || reason === null || reason.kind !== "fatalError")
+      if (
+        status !== "closed" ||
+        reason === null ||
+        reason.kind !== "fatalError"
+      )
         return;
       if (
-        this.input.client.getMethodSupport("chat.subscribe") === "unsupported" ||
+        this.input.client.getMethodSupport("chat.subscribe") ===
+          "unsupported" ||
         isIncompatibleCloseForMethod(reason, "chat.subscribe")
       ) {
         this.finish(() => this.reject(botHostUpdateError()));
@@ -373,7 +378,8 @@ class ReplyFollower {
   }
 
   private onFrame(envelope: StreamFrameEnvelope): void {
-    const parsed = openChatSubscribeWindowedServerFrameSchema.safeParse(envelope);
+    const parsed =
+      openChatSubscribeWindowedServerFrameSchema.safeParse(envelope);
     if (!parsed.success) {
       // Only the frames that carry the index or rows matter here; any other
       // frame this CLI cannot read is not one it is waiting for.
@@ -428,7 +434,11 @@ class ReplyFollower {
     }
     this.rowCount = snapshot.rowCount;
     const tail = snapshot.tail;
-    for (let ordinal = tail.fromOrdinal; ordinal < snapshot.rowCount; ordinal++) {
+    for (
+      let ordinal = tail.fromOrdinal;
+      ordinal < snapshot.rowCount;
+      ordinal++
+    ) {
       this.read.add(ordinal);
     }
     this.readMessages(tail.messages);
