@@ -73,6 +73,8 @@ const TEXT_COMPLETE_NODE_TYPES: ReadonlySet<string> = new Set([
   "codeBlock",
   "mermaidBlock",
   "uiPreviewBlock",
+  // The projection emits the `---` the serializer sends.
+  "horizontalRule",
   // Table PARTS are scaffolding for the grid their container emits.
   "tableRow",
   "tableHeader",
@@ -441,6 +443,15 @@ function prepareForProjection(
     if (node.type === "table") {
       return tableLines(node);
     }
+    // `serializeNode` sends a rule as `---`; it has no children to project.
+    if (node.type === "horizontalRule") {
+      return [
+        {
+          type: "paragraph",
+          content: [{ type: "text", text: THEMATIC_BREAK }],
+        },
+      ];
+    }
     const source = atomSource(node);
     if (source !== null) {
       return [
@@ -610,12 +621,11 @@ function listItemLines(
       if (block.type === "paragraph" && !markerOnly) lines.push("");
       const underMarkerOnly = markerOnly;
       markerOnly = false;
-      // ...and before a nested list that opens with a bare `-`, which under a
-      // line of text would read as a setext heading underline, or with an
-      // ordered marker other than 1, which would read as more of that text.
-      // Not under a marker line with nothing on it: that is no text, and a
-      // blank line there would end the item.
-      if (nested && !underMarkerOnly && opensUnderText(serialized, lines)) {
+      // ...and before a block that would read back as part of the line of
+      // text above it (see `opensUnderText`). Not under a marker line with
+      // nothing on it: that is no text, and a blank line there would end the
+      // item.
+      if (!underMarkerOnly && opensUnderText(block, serialized, lines)) {
         lines.push("");
       }
       for (const line of serialized.split("\n")) {
@@ -650,7 +660,11 @@ function firstBlockLines(
   prefixes: ListItemPrefixes,
 ): ReadonlyArray<string> {
   const { markerLine, emptyMarkerLine, continuationIndent } = prefixes;
-  if (FENCE_NODE_TYPES.has(block.type ?? "")) {
+  // A rule goes below the marker too: behind it, `- ---` reads as one rule.
+  if (
+    FENCE_NODE_TYPES.has(block.type ?? "") ||
+    block.type === "horizontalRule"
+  ) {
     return [
       emptyMarkerLine,
       ...serialized.split("\n").map((line) => `${continuationIndent}${line}`),
@@ -666,18 +680,24 @@ function firstBlockLines(
 }
 
 const BARE_BULLET_LINE = /^[ \t]*-[ \t]*$/;
+const THEMATIC_BREAK = "---";
 const ORDERED_MARKER_LINE = /^[ \t]*(\d{1,9})[.)]/;
 
 /**
- * Whether `serialized` opens right under a line of text with a line that would
- * read back as more of it: a bare `-`, or an ordered marker other than 1.
+ * Whether `block`, serialized as `serialized`, opens right under a line of
+ * text with a line that would read back as part of it: a rule (`---`, a
+ * setext heading underline there), or a nested list opening with a bare `-`
+ * or with an ordered marker other than 1.
  */
 function opensUnderText(
+  block: JsonContent,
   serialized: string,
   lines: ReadonlyArray<string>,
 ): boolean {
   const previous = lines.length > 0 ? lines[lines.length - 1] : undefined;
   if (previous === undefined || previous === "") return false;
+  if (block.type === "horizontalRule") return true;
+  if (!isListNode(block)) return false;
   const firstLine = serialized.split("\n")[0] ?? "";
   if (BARE_BULLET_LINE.test(firstLine)) return true;
   const ordered = ORDERED_MARKER_LINE.exec(firstLine);

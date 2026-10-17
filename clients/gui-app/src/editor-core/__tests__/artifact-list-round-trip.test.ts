@@ -1633,3 +1633,166 @@ describe("an ordered list starting above 1 directly under an empty first paragra
     );
   });
 });
+
+// ---- F. a horizontal rule survives the serializer in every position
+
+describe("a horizontal rule survives the serializer in every position", () => {
+  const rule: JsonContent = { type: "horizontalRule" };
+  const empty: JsonContent = { type: "paragraph" };
+  const a = textPara("a");
+  const b = textPara("b");
+  const x = listWith("bulletList", [itemOf(textPara("x"))], 1);
+
+  function topDoc(...content: JsonContent[]): JsonContent {
+    return { type: "doc", content };
+  }
+
+  function taskDoc(...items: JsonContent[][]): JsonContent {
+    return listDoc({
+      type: "taskList",
+      content: items.map((content) => ({
+        type: "taskItem",
+        attrs: { checked: false },
+        content,
+      })),
+    });
+  }
+
+  function itemsDoc(
+    type: "bulletList" | "orderedList",
+    start: number,
+    ...items: JsonContent[][]
+  ): JsonContent {
+    return listDoc(
+      listWith(
+        type,
+        items.map((children) => itemOf(...children)),
+        start,
+      ),
+    );
+  }
+
+  const ROWS: ReadonlyArray<readonly [string, JsonContent, string]> = [
+    ["a lone rule", topDoc(rule), "---"],
+    ["a rule before a paragraph", topDoc(rule, a), "---\n\na"],
+    ["a rule between paragraphs", topDoc(a, rule, b), "a\n\n---\n\nb"],
+    ["a rule after a paragraph", topDoc(a, rule), "a\n\n---"],
+    [
+      "a rule after a heading",
+      topDoc(
+        {
+          type: "heading",
+          attrs: { level: 2 },
+          content: [{ type: "text", text: "H" }],
+        },
+        rule,
+      ),
+      "## H\n\n---",
+    ],
+    [
+      "two rules between paragraphs",
+      topDoc(a, rule, rule, b),
+      "a\n\n---\n\n---\n\nb",
+    ],
+    [
+      "a rule after text in a bullet item",
+      itemsDoc("bulletList", 1, [a, rule]),
+      "- a\n\n  ---",
+    ],
+    [
+      "a rule behind an empty paragraph in a bullet item",
+      itemsDoc("bulletList", 1, [empty, rule]),
+      "-\n  ---",
+    ],
+    [
+      "a rule after a nested list in a bullet item",
+      itemsDoc("bulletList", 1, [a, x, rule]),
+      "- a\n  - x\n\n  ---",
+    ],
+    [
+      "two rules after text in a bullet item",
+      itemsDoc("bulletList", 1, [a, rule, rule]),
+      "- a\n\n  ---\n\n  ---",
+    ],
+    [
+      "a rule between paragraphs in a bullet item",
+      itemsDoc("bulletList", 1, [a, rule, b]),
+      "- a\n\n  ---\n\n  b",
+    ],
+    [
+      "a rule after text in an ordered item at 1",
+      itemsDoc("orderedList", 1, [a, rule]),
+      "1. a\n\n   ---",
+    ],
+    [
+      "a rule after text in an ordered item at 10",
+      itemsDoc("orderedList", 10, [a, rule]),
+      "10. a\n\n    ---",
+    ],
+    [
+      "a rule behind an empty paragraph in an ordered item at 100",
+      itemsDoc("orderedList", 100, [empty, rule]),
+      "100. \n     ---",
+    ],
+    [
+      "a rule after a nested list in an ordered item with a sibling",
+      itemsDoc("orderedList", 1, [a, x, rule], [b]),
+      "1. a\n   - x\n\n   ---\n2. b",
+    ],
+    [
+      "a rule after text in a task item",
+      taskDoc([a, rule]),
+      "- [ ] a\n\n  ---",
+    ],
+    [
+      "a rule behind an empty paragraph in a task item",
+      taskDoc([empty, rule]),
+      "- [ ] \n  ---",
+    ],
+    [
+      "a rule after a nested list in a task item",
+      taskDoc([a, x, rule]),
+      "- [ ] a\n  - x\n\n  ---",
+    ],
+    [
+      "two rules in a task item with a sibling",
+      taskDoc([a, rule, rule], [b]),
+      "- [ ] a\n\n  ---\n\n  ---\n- [ ] b",
+    ],
+    [
+      "a rule in a nested bullet item",
+      itemsDoc("bulletList", 1, [
+        a,
+        listWith("bulletList", [itemOf(b, rule)], 1),
+      ]),
+      "- a\n  - b\n\n    ---",
+    ],
+  ];
+
+  for (const [name, source, bytes] of ROWS) {
+    it(`keeps ${name}`, () => {
+      expect(jsonContentToMarkdown(source, SERIALIZER_OPTIONS)).toBe(bytes);
+      expectStructureBack(source);
+    });
+
+    it(`keeps ${name} through the artifact schema`, () => {
+      const parsed = parseMarkdown(
+        jsonContentToMarkdown(source, SERIALIZER_OPTIONS),
+      );
+      expect(skeleton(throughSchema(parsed))).toBe(skeleton(source));
+    });
+  }
+
+  it("writes a bullet item holding only a rule as an empty marker and the rule", () => {
+    const source = itemsDoc("bulletList", 1, [rule]);
+    const md = jsonContentToMarkdown(source, SERIALIZER_OPTIONS);
+    expect(md).toBe("-\n  ---");
+    expect(md).not.toBe("- ---");
+    const parsed = parseMarkdown(md);
+    expect(skeleton(parsed)).toBe(
+      skeleton(itemsDoc("bulletList", 1, [empty, rule])),
+    );
+    expect(skeleton(throughSchema(parsed))).toBe(skeleton(parsed));
+    expect(jsonContentToMarkdown(parsed, SERIALIZER_OPTIONS)).toBe(md);
+  });
+});

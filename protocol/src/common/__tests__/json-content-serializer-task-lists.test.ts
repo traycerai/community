@@ -318,6 +318,58 @@ describe("writes list item text as the agent typed it", () => {
   });
 });
 
+describe("jsonContentToMarkdown horizontal rules in task items", () => {
+  const empty: JsonContent = { type: "paragraph" };
+
+  it("writes a rule after a task item's text behind a blank line", () => {
+    expect(
+      toMarkdown(doc([taskList([taskItem(false, [paragraph("a"), rule()])])])),
+    ).toBe("- [ ] a\n\n  ---");
+  });
+
+  it("writes a rule under an empty task marker", () => {
+    expect(
+      toMarkdown(doc([taskList([taskItem(false, [empty, rule()])])])),
+    ).toBe("- [ ] \n  ---");
+  });
+
+  it("writes a rule after a nested list behind a blank line", () => {
+    expect(
+      toMarkdown(
+        doc([
+          taskList([
+            taskItem(false, [
+              paragraph("a"),
+              {
+                type: "bulletList",
+                content: [{ type: "listItem", content: [paragraph("x")] }],
+              },
+              rule(),
+            ]),
+          ]),
+        ]),
+      ),
+    ).toBe("- [ ] a\n  - x\n\n  ---");
+  });
+
+  it("keeps the next task item after two rules", () => {
+    expect(
+      toMarkdown(
+        doc([
+          taskList([
+            taskItem(false, [paragraph("a"), rule(), rule()]),
+            taskItem(false, [paragraph("b")]),
+          ]),
+        ]),
+      ),
+    ).toBe("- [ ] a\n\n  ---\n\n  ---\n- [ ] b");
+  });
+});
+
+function rule(): JsonContent {
+  return { type: "horizontalRule" };
+}
+
 function doc(content: JsonContent[]): JsonContent {
   return { type: "doc", content };
 }
