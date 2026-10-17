@@ -22,6 +22,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import type { HostLeaseSnapshot } from "@traycer-clients/shared/host-selection/selection-authority-contract";
 import type { BatchDeleteResponse } from "@traycer/protocol/host/epic/unary-schemas";
+import { RetryableTransportError } from "@traycer-clients/shared/host-transport/host-messenger";
 
 const mocks = vi.hoisted(() => ({
   toastMessage: vi.fn(),
@@ -53,11 +54,14 @@ const hosts = vi.hoisted(() => {
     sent: SentRequest[];
     /** The `home` every success row states; `null` is an older host's omission. */
     home: "cloud" | "local" | null;
+    /** What every request rejects with, instead of answering; `null` answers. */
+    failWith: Error | null;
   } = {
     activeHostId: "active",
     localHostId: "this-machine",
     sent: [],
     home: "cloud",
+    failWith: null,
   };
   const clientFor = (hostId: string) => ({
     getActiveHostId: (): string => hostId,
@@ -67,6 +71,7 @@ const hosts = vi.hoisted(() => {
       params: { readonly ids: readonly string[] },
     ): Promise<BatchDeleteResponse> => {
       state.sent.push({ hostId, method, params });
+      if (state.failWith !== null) return Promise.reject(state.failWith);
       return Promise.resolve({
         results: params.ids.map((taskId) =>
           state.home === null
@@ -146,6 +151,7 @@ import {
   useEpicBatchDelete,
   type BatchDeleteEpicVariables,
 } from "@/hooks/epic/use-epic-batch-delete-mutation";
+import { OWNER_HOST_UNREACHABLE_NOTICE } from "@/lib/owner-host-write-error-toast";
 import {
   deletedCloudEpicTasksPageEpicIdsForScope,
   useCloudEpicTasksPagesStore,
@@ -188,6 +194,7 @@ beforeEach(() => {
   hosts.state.localHostId = "this-machine";
   hosts.state.sent.length = 0;
   hosts.state.home = "cloud";
+  hosts.state.failWith = null;
   useCloudEpicTasksPagesStore.setState({
     pagesByIdentity: {},
     generationByIdentity: {},
@@ -302,6 +309,47 @@ describe("Task delete while the active host is down", () => {
     expect(mocks.reportableErrorToast.mock.calls[0]?.[1]).toEqual({
       description: `${EPIC_DELETE_HOST_UNREACHABLE_MESSAGE} · ${EPIC_DELETE_ACCOUNT_CHANGED_MESSAGE}`,
     });
+  });
+
+  // traycer#2556 composed with the fallback route: the stand-in's request
+  // never reaches its host, so its cloud-homed ids were not deleted either.
+  // One notice gives both reasons - the stand-in unreachable and the
+  // local-homed Task left on the down host - over the whole selection.
+  it("names the down host's local-homed Task beside the unreachable stand-in, in one notice", async () => {
+    publishLeases(lease("active", "dead"), lease("this-machine", "ready"));
+    hosts.state.failWith = new RetryableTransportError({
+      replaySafetyFromKey: false,
+      code: "RPC_ERROR",
+      message: "Remote session is not ready",
+      requestId: "request-1",
+      method: "epic.batchDelete",
+      fatalDetails: null,
+    });
+
+    await dispatch({
+      ids: ["cloud-a", "local-b"],
+      isLocalHomedNow: localHomed("local-b"),
+      boundUserId: "user-1",
+      worktreeCleanup: null,
+    });
+
+    expect(hosts.state.sent).toEqual([
+      {
+        hostId: "this-machine",
+        method: "epic.batchDelete",
+        params: { ids: ["cloud-a"] },
+      },
+    ]);
+    expect(mocks.reportableErrorToast).toHaveBeenCalledTimes(1);
+    expect(mocks.reportableErrorToast.mock.calls[0]?.[0]).toBe(
+      "Couldn't delete 2 tasks.",
+    );
+    expect(mocks.reportableErrorToast.mock.calls[0]?.[1]).toEqual({
+      description: `${OWNER_HOST_UNREACHABLE_NOTICE} · ${EPIC_DELETE_HOST_UNREACHABLE_MESSAGE}`,
+    });
+    // One notice: the unreachable-host line is not raised on its own too.
+    expect(mocks.toastFromHostError).not.toHaveBeenCalled();
+    expect(mocks.toastDismiss).toHaveBeenCalled();
   });
 
   it("does not try to remove the down host's worktrees", async () => {
