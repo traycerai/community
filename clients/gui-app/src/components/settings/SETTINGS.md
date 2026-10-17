@@ -4358,6 +4358,20 @@ min`): "The judge didn't finish in time, so it's asking you instead."
   hooks. This settings panel edits only the global guide. A workspace can add
   `.traycer/agent-selection-guide.md` manually; agents layer that file over the
   global guide when they work in that workspace.
+  - **Environment** (`panels/host-environment-section.tsx`, above the guide
+    editor, Tracy Bots). Which environment THIS host runs: the personal one
+    unless it was bound to a team. Reads `environment.list` and
+    `environment.host.read` through the scope's client, marks the environment
+    the host reports (`aria-pressed`), and binds on a click through
+    `environment.host.bind`; the mutation has no toast - a refusal is shown in
+    place under the list (`role="alert"`). Nothing is pre-selected: the marked
+    row is the host's own answer, never a default the panel chose. On a host
+    whose handshake lacks `environment.host.read` the section shows one
+    sentence saying the host predates environments; while the capability is
+    unknown it renders nothing. The copy says the host's bots and the guide
+    below belong to the environment; the section does not restate which
+    hosts run which environment (Home's create form answers that per
+    environment).
 - `Fallback` (section id `fallback`, route `/settings/fallback`,
   `panels/fallback-settings-panel.tsx` plus `panels/fallback/`) The whole
   configuration surface for **automatic provider fallback**: what the host does
