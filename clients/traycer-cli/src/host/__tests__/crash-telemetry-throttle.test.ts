@@ -388,6 +388,25 @@ describe("HostCrashReportThrottle across processes", () => {
     expect(next.scheduled[0].delayMs).toBe(HOST_CRASH_SUMMARY_WINDOW_MS);
   });
 
+  it("writes the clamped times back, so the next process counts from them too", () => {
+    const persisted = leftBehind(10 * HOST_CRASH_SUMMARY_WINDOW_MS);
+    const next = createHarness();
+    next.throttle.restore(persisted);
+    expect(next.persist).toHaveBeenCalledTimes(1);
+    const written = [...next.persist.mock.calls[0][0].values()][0];
+    expect(written.lastCrashAt).toBeLessThanOrEqual(next.now());
+    expect(written.windowStartedAt).toBeLessThanOrEqual(next.now());
+    expect(written.suppressedCount).toBe(2);
+  });
+
+  it("writes nothing back for a state that needed no clamping", () => {
+    const persisted = leftBehind(0);
+    const next = createHarness();
+    next.advance(10_000);
+    next.throttle.restore(persisted);
+    expect(next.persist).not.toHaveBeenCalled();
+  });
+
   it("keeps its own state for a kind it has seen more recently", () => {
     const next = createHarness();
     next.advance(5_000);

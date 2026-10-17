@@ -516,27 +516,39 @@ export class HostCrashReportThrottle {
    */
   restore(persisted: PersistedHostCrashThrottle): void {
     const now = this.deps.now();
+    let clamped = false;
     for (const [key, kind] of persisted) {
       // No time in the state may lie ahead of now, so a clock that stepped
       // back holds a kind for at most one window, as any recent crash does,
       // and never for as long as the step. (Treating a future time as "long
       // quiet" instead would give every clock correction a fresh budget.)
       const lastCrashAt = Math.min(kind.lastCrashAt, now);
+      const windowStartedAt = Math.min(kind.windowStartedAt, now);
       const existing = this.states.get(key);
       if (existing !== undefined && existing.lastCrashAt >= lastCrashAt) {
         continue;
+      }
+      if (
+        lastCrashAt !== kind.lastCrashAt ||
+        windowStartedAt !== kind.windowStartedAt
+      ) {
+        clamped = true;
       }
       this.states.set(key, {
         reported: kind.reported,
         lastCrashAt,
         suppressedCount: kind.suppressedCount,
-        windowStartedAt: Math.min(kind.windowStartedAt, now),
+        windowStartedAt,
         lastSuppressed:
           kind.lastSuppressed === null
             ? null
             : { ...kind.lastSuppressed, extra: {} },
       });
     }
+    // The clamped times are what the scheduling below counts from, so they are
+    // what the next supervisor has to start from too: otherwise a run of short
+    // supervisors would each restart the full hour from the same future time.
+    if (clamped) this.persist();
     for (const [key, state] of [...this.states]) {
       if (
         state.suppressedCount === 0 ||
