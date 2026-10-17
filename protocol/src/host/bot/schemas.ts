@@ -210,23 +210,42 @@ export type BotTaskCadence = z.infer<typeof botTaskCadenceSchema>;
  * host release, and nothing filled the earlier shape.
  */
 export const botTaskEntrySchema = lazySchema(() =>
-  z.object({
-    taskId: z.string().min(1),
-    cadence: botTaskCadenceSchema,
-    /** When the last check-in for this task was consumed; null if never. */
-    lastCheckinAt: z.number().int().nullable(),
-    /** When the next periodic check-in is due; null for any other cadence. */
-    nextAt: z.number().int().nullable(),
-    state: z.enum(["tracking", "ended"]),
-    /**
-     * Null while tracking. `by-bot`: the bot set `none`; `deleted`: the task
-     * was deleted; `archived`: its owner archived it; `completed`: an
-     * `on-completion` check-in fired.
-     */
-    endedReason: z
-      .enum(["by-bot", "deleted", "archived", "completed"])
-      .nullable(),
-  }),
+  z
+    .object({
+      taskId: z.string().min(1),
+      cadence: botTaskCadenceSchema,
+      /** When the last check-in for this task was consumed; null if never. */
+      lastCheckinAt: z.number().int().nullable(),
+      /** When the next periodic check-in is due; null for any other cadence. */
+      nextAt: z.number().int().nullable(),
+      state: z.enum(["tracking", "ended"]),
+      /**
+       * Null while tracking. `by-bot`: the bot set `none`; `deleted`: the task
+       * was deleted; `archived`: its owner archived it; `completed`: an
+       * `on-completion` check-in fired.
+       */
+      endedReason: z
+        .enum(["by-bot", "deleted", "archived", "completed"])
+        .nullable(),
+    })
+    .superRefine((entry, ctx) => {
+      // The two invariants the fields document, enforced: an entry with a
+      // reason it ended is ended, and only a periodic cadence has a due time.
+      if ((entry.state === "ended") !== (entry.endedReason !== null)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["endedReason"],
+          message: "endedReason is set exactly when state is ended",
+        });
+      }
+      if (entry.nextAt !== null && entry.cadence.kind !== "every") {
+        ctx.addIssue({
+          code: "custom",
+          path: ["nextAt"],
+          message: "nextAt is null unless the cadence is every",
+        });
+      }
+    }),
 );
 export type BotTaskEntry = z.infer<typeof botTaskEntrySchema>;
 
