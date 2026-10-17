@@ -1,4 +1,6 @@
-import { arch, platform, release } from "node:os";
+import { mkdtempSync, rmSync } from "node:fs";
+import { arch, platform, release, tmpdir } from "node:os";
+import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Environment } from "../../runner/environment";
 import type {
@@ -7,6 +9,15 @@ import type {
   HostCrashTelemetry,
 } from "../crash-telemetry";
 import type { HostPidMetadata } from "../pid-metadata";
+
+// The crash throttle keeps its state under the CLI home, which `store/paths`
+// binds from `os.homedir()` at module load. Point it at a directory of this
+// file's own so no test reads or writes a real `~/.traycer`.
+const osHome = vi.hoisted(() => ({ current: "" }));
+vi.mock("node:os", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:os")>();
+  return { ...actual, homedir: () => osHome.current || actual.tmpdir() };
+});
 
 // Fake Sentry scope surface: only the methods `captureHostCrashEvent`
 // actually calls, mirroring how the module narrows `Sentry.Scope` itself.
@@ -552,7 +563,11 @@ describe("captureHostCrashEvent", () => {
 });
 
 describe("reportHostCrashToSentry", () => {
+  let workHome: string;
+
   beforeEach(() => {
+    workHome = mkdtempSync(join(tmpdir(), "traycer-crash-telemetry-test-"));
+    osHome.current = workHome;
     pidMetadataMocks.readHostPidMetadata.mockReset();
     sentryMocks.setLevel.mockReset();
     sentryMocks.setFingerprint.mockReset();
@@ -570,6 +585,8 @@ describe("reportHostCrashToSentry", () => {
 
   afterEach(() => {
     vi.useRealTimers();
+    osHome.current = "";
+    rmSync(workHome, { recursive: true, force: true });
   });
 
   // Every test below imports a FRESH crash-telemetry module instance rather

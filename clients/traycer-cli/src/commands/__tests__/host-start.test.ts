@@ -323,6 +323,8 @@ interface Recorded {
   // Fleet crash telemetry (`deps.reportHostCrash`) observations. Injected so
   // suites never touch a real Sentry client or a real pid.json.
   readonly crashReports: HostCrashTelemetry[];
+  /** Environments the supervisor asked to resume crash-report state for. */
+  readonly resumedCrashReports: Environment[];
   /** When set, reportHostCrash never resolves (report-timeout path). */
   reportHostCrashHangs: boolean;
   /** When set, reportHostCrash rejects (must not skip marker/exit). */
@@ -408,6 +410,7 @@ function makeRunStubs(
     findCrashReportHangs: false,
     findCrashReportRejects: false,
     crashReports: [],
+    resumedCrashReports: [],
     reportHostCrashHangs: false,
     reportHostCrashRejects: false,
     lastStderrTee: null,
@@ -584,6 +587,9 @@ function makeRunStubs(
         });
       }
       recorded.crashReports.push(telemetry);
+    },
+    resumeCrashReports: async (environment) => {
+      recorded.resumedCrashReports.push(environment);
     },
     createStderrTee: (_environment: Environment): StderrTee => {
       const tee = new MemoryStderrTee();
@@ -2068,6 +2074,21 @@ describe("runHostStart - Windows session-end exits", () => {
       recorded.loggerErrors.some((e) => e.message === "Host crash diagnostics"),
     ).toBe(true);
     expect(recorded.crashReports).toHaveLength(0);
+  });
+
+  it("resumes the crash-report throttle state once as the supervisor starts, before any crash", async () => {
+    const { child, recorded, deps } = makeRunStubs(sampleRecord(exec), null);
+
+    await runUntilExit(
+      () =>
+        runHostStart(
+          { environment: "production", cwd: null },
+          withChildExit(deps, child, 3, null),
+        ),
+      recorded,
+    );
+
+    expect(recorded.resumedCrashReports).toEqual(["production"]);
   });
 
   it("control: DBG_TERMINATE_PROCESS on win32 still produces a crash report", async () => {
