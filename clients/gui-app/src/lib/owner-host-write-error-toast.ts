@@ -9,7 +9,7 @@ import { toastFromHostError } from "@/lib/host-error-toast";
  * One id for every attempt, so a person who retries a few times against a host
  * that cannot be reached reads a single line rather than a stack of them.
  */
-const OWNER_HOST_OFFLINE_TOAST_ID = "owner-host-offline-notice";
+const OWNER_HOST_UNREACHABLE_TOAST_ID = "owner-host-unreachable-notice";
 
 const OWNER_HOST_UNREACHABLE_NOTICE =
   "Traycer can't reach that host right now, so nothing on it was changed. Try again once it is reachable.";
@@ -35,7 +35,7 @@ const OWNER_HOST_UNREACHABLE_BATCH_HOSTS_NOTICE =
  * with `replaySafetyFromKey: true` is the timeout or drop of a keyed request
  * that was already sent, which the host may have run.
  */
-export function isOwnerHostOfflineFailure(error: HostRpcError): boolean {
+export function isOwnerHostUnreachableFailure(error: HostRpcError): boolean {
   return (
     error instanceof RetryableTransportError &&
     error.fatalDetails === null &&
@@ -55,9 +55,9 @@ export function toastFromOwnerHostWriteError(
   error: HostRpcError,
   fallback: string,
 ): void {
-  if (isOwnerHostOfflineFailure(error)) {
+  if (isOwnerHostUnreachableFailure(error)) {
     toast.message(OWNER_HOST_UNREACHABLE_NOTICE, {
-      id: OWNER_HOST_OFFLINE_TOAST_ID,
+      id: OWNER_HOST_UNREACHABLE_TOAST_ID,
     });
     return;
   }
@@ -133,7 +133,7 @@ function toastOwnerHostOnlyOrUnreachableBatch(
   }
   if (
     failures.length === outcomes.length &&
-    failures.every(isOwnerHostOfflineFailure)
+    failures.every(isOwnerHostUnreachableFailure)
   ) {
     toastOwnerHostsUnreachableForBatch(
       outcomes.map((outcome) => outcome.hostId),
@@ -145,7 +145,7 @@ function toastOwnerHostOnlyOrUnreachableBatch(
 
 /**
  * The notice for a batch write in which every request failed with
- * `isOwnerHostOfflineFailure`. A batch can span agents on several hosts, so
+ * `isOwnerHostUnreachableFailure`. A batch can span agents on several hosts, so
  * the copy is singular only when one host owns them all.
  */
 function toastOwnerHostsUnreachableForBatch(
@@ -155,5 +155,5 @@ function toastOwnerHostsUnreachableForBatch(
     new Set(ownerHostIds).size === 1
       ? OWNER_HOST_UNREACHABLE_BATCH_ONE_HOST_NOTICE
       : OWNER_HOST_UNREACHABLE_BATCH_HOSTS_NOTICE;
-  toast.message(notice, { id: OWNER_HOST_OFFLINE_TOAST_ID });
+  toast.message(notice, { id: OWNER_HOST_UNREACHABLE_TOAST_ID });
 }

@@ -144,6 +144,7 @@ vi.mock("@/lib/epics/deleted-epic-events", async (importOriginal) => ({
 }));
 
 import {
+  EPIC_DELETE_ACCOUNT_CHANGED_MESSAGE,
   useEpicBatchDelete,
   useEpicDeleteInFlightReader,
   useIsEpicDeleteInFlight,
@@ -207,7 +208,12 @@ function deleteOf(
   worktreeCleanup: BatchDeleteEpicVariables["worktreeCleanup"],
 ): BatchDeleteEpicVariables {
   // Cloud rows: admitted only while the session is signed in.
-  return { ids, isLocalHomedNow: () => false, worktreeCleanup };
+  return {
+    ids,
+    isLocalHomedNow: () => false,
+    boundUserId: "user-1",
+    worktreeCleanup,
+  };
 }
 
 function cleanupOf(...worktreePaths: ReadonlyArray<string>) {
@@ -565,7 +571,7 @@ describe("the delete's progress toast", () => {
       expect(mocks.runWorktreeCleanup).not.toHaveBeenCalled();
     });
 
-    it("says the host is offline, instead of the error toast, when the delete never reached it", async () => {
+    it("says Traycer cannot reach the host, instead of the error toast, when the delete never reached it", async () => {
       const view = renderBatchDelete();
       view.dispatch(deleteOf(["epic-a"], null));
       await waitFor(() => {
@@ -642,6 +648,7 @@ describe("the delete's progress toast", () => {
       view.dispatch({
         ids: ["epic-local", "epic-cloud"],
         isLocalHomedNow: (epicId) => epicId === "epic-local",
+        boundUserId: "user-1",
         worktreeCleanup: null,
       });
       await waitFor(() => {
@@ -920,6 +927,7 @@ describe("the delete's progress toast", () => {
       view.dispatch({
         ids: ["epic-local-1", "epic-promoted", "epic-local-2"],
         isLocalHomedNow: (epicId) => localNow.has(epicId),
+        boundUserId: "user-1",
         worktreeCleanup: null,
       });
       localNow.delete("epic-promoted");
@@ -953,6 +961,99 @@ describe("the delete's progress toast", () => {
         "Couldn't delete 23 tasks.",
       );
       expect(mocks.toastFromHostError).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("the account the delete was chosen under", () => {
+    function refusalToastOptions(): unknown {
+      return mocks.toastError.mock.calls.at(0)?.[1];
+    }
+
+    it("sends the request when the delete was chosen under the account the client sends as", async () => {
+      host.state.userId = "user-b";
+      const view = renderBatchDelete();
+
+      view.dispatch({ ...deleteOf(["epic-a"], null), boundUserId: "user-b" });
+
+      await waitFor(() => {
+        expect(host.state.requests).toHaveLength(1);
+      });
+      expect(hostRequest(0).method).toBe("epic.batchDelete");
+    });
+
+    it("sends nothing and refuses every id when the client now sends as another account", async () => {
+      host.state.userId = "user-b";
+      const view = renderBatchDelete();
+
+      view.dispatch({
+        ...deleteOf(["epic-a", "epic-b"], null),
+        boundUserId: "user-a",
+      });
+
+      await waitFor(() => {
+        expect(mocks.toastError).toHaveBeenCalledTimes(1);
+      });
+      expect(host.state.requests).toHaveLength(0);
+      expect(mocks.toastError.mock.calls.at(0)?.[0]).toBe(
+        "Couldn't delete 2 tasks.",
+      );
+      expect(JSON.stringify(refusalToastOptions())).toContain(
+        EPIC_DELETE_ACCOUNT_CHANGED_MESSAGE,
+      );
+      expect(mocks.toastFromHostError).not.toHaveBeenCalled();
+      expect(mocks.toastSuccess).not.toHaveBeenCalled();
+      expect(mocks.publishDeletedEpicNotification).not.toHaveBeenCalled();
+    });
+
+    it("sends nothing when the delete was bound to no account", async () => {
+      const view = renderBatchDelete();
+
+      view.dispatch({ ...deleteOf(["epic-a"], null), boundUserId: null });
+
+      await waitFor(() => {
+        expect(mocks.toastError).toHaveBeenCalledTimes(1);
+      });
+      expect(host.state.requests).toHaveLength(0);
+      expect(JSON.stringify(refusalToastOptions())).toContain(
+        EPIC_DELETE_ACCOUNT_CHANGED_MESSAGE,
+      );
+      expect(mocks.publishDeletedEpicNotification).not.toHaveBeenCalled();
+    });
+
+    // `EPIC_DELETE_SIGNED_OUT_MESSAGE` is not exported; the literal is the
+    // sentence a person reads.
+    const SIGNED_OUT_SENTENCE =
+      "This task was not deleted because Traycer couldn't confirm your sign-in. Try again once you're signed in.";
+
+    it("says the sign-in could not be confirmed, not that the account changed, when the client has no signed-in identity at send", async () => {
+      host.state.userId = null;
+      const view = renderBatchDelete();
+
+      view.dispatch({ ...deleteOf(["epic-a"], null), boundUserId: "user-1" });
+
+      await waitFor(() => {
+        expect(mocks.toastError).toHaveBeenCalledTimes(1);
+      });
+      expect(host.state.requests).toHaveLength(0);
+      const options = JSON.stringify(refusalToastOptions());
+      expect(options).toContain(SIGNED_OUT_SENTENCE);
+      expect(options).not.toContain(EPIC_DELETE_ACCOUNT_CHANGED_MESSAGE);
+    });
+
+    it("says the sign-in could not be confirmed when the delete was bound to no account and the client has no identity either", async () => {
+      host.state.userId = null;
+      const view = renderBatchDelete();
+
+      view.dispatch({ ...deleteOf(["epic-a"], null), boundUserId: null });
+
+      await waitFor(() => {
+        expect(mocks.toastError).toHaveBeenCalledTimes(1);
+      });
+      expect(host.state.requests).toHaveLength(0);
+      const options = JSON.stringify(refusalToastOptions());
+      expect(options).toContain(SIGNED_OUT_SENTENCE);
+      expect(options).not.toContain(EPIC_DELETE_ACCOUNT_CHANGED_MESSAGE);
+      expect(mocks.publishDeletedEpicNotification).not.toHaveBeenCalled();
     });
   });
 });

@@ -141,6 +141,7 @@ import {
   tooltipTextNear,
 } from "@/components/ui/__tests__/tooltip-probe";
 import { holdEpicBatchDelete } from "@/hooks/epic/__tests__/hold-epic-batch-delete";
+import { EPIC_DELETE_ACCOUNT_CHANGED_MESSAGE } from "@/hooks/epic/use-epic-batch-delete-mutation";
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
 });
@@ -237,6 +238,7 @@ interface WorktreeCleanupCandidateStub {
 interface DeleteEpicsVariables {
   readonly ids: string[];
   readonly isLocalHomedNow: (epicId: string) => boolean;
+  readonly boundUserId: string | null;
   readonly worktreeCleanup: {
     readonly candidates: ReadonlyArray<{
       readonly worktreePath: string;
@@ -280,6 +282,17 @@ const testState = vi.hoisted(() => ({
   isFetchingNextPage: false,
   hostId: "host-test" as string | null,
   currentUserId: "user-test" as string | null,
+  /**
+   * The account the host client sends requests as. History's `currentUserId`
+   * above is a separate reading of the identity (it drives the scope reset);
+   * the delete is bound to THIS one, so a case moves it alone to switch the
+   * account without History's identity changing.
+   */
+  requestUserId: "user-test" as string | null,
+  /** `true` runs the real `useEpicBatchDelete` against the stub host client. */
+  useRealBatchDelete: false,
+  /** What the stub host client was asked to send, in order. */
+  hostRequests: [] as { readonly method: string; readonly params: unknown }[],
   localContextMatchKey: "[]",
   // The message-hit section's two inputs. A `null` client is the no-host-runtime
   // reading every case in this file predates, under which the section is not
@@ -290,11 +303,31 @@ const testState = vi.hoisted(() => ({
 
 const stubChatSearchHostClient = { getActiveHostId: () => "host-test" };
 
+// The client `useHostClient()` hands the delete hooks: the account reader the
+// panel binds a delete with, and, when a case asks for the real delete hook,
+// the hook itself. Its `request` never answers: a case only asks whether a
+// request was sent.
+const stubDeleteHostClient = {
+  getActiveHostId: (): string => "host-test",
+  getRequestContextUserId: (): string | null => testState.requestUserId,
+  request: (method: string, params: unknown): Promise<never> => {
+    testState.hostRequests.push({ method, params });
+    return new Promise<never>(() => undefined);
+  },
+};
+
+vi.mock("@/lib/host/use-worktree-delete-stream-transport", () => ({
+  useWorktreeDeleteStreamTransportFactory: () => () => {
+    throw new Error("no stream transport in this fixture");
+  },
+}));
+
 vi.mock("@/lib/host", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/host")>();
   return {
     ...actual,
     useOptionalHostClient: () => testState.chatSearchClient,
+    useHostClient: () => stubDeleteHostClient,
   };
 });
 
@@ -373,10 +406,14 @@ vi.mock(
       >();
     return {
       ...actual,
-      useEpicBatchDelete: () => ({
-        isPending: false,
-        mutate: testState.mutate,
-      }),
+      // The real hook is always called (hooks stay unconditional); the flag
+      // picks whose result the panel sees.
+      useEpicBatchDelete: () => {
+        const real = actual.useEpicBatchDelete();
+        return testState.useRealBatchDelete
+          ? real
+          : { isPending: false, mutate: testState.mutate };
+      },
     };
   },
 );
@@ -713,6 +750,9 @@ describe("<EpicsListPanel />", () => {
     testState.isFetchingNextPage = false;
     testState.hostId = "host-test";
     testState.currentUserId = "user-test";
+    testState.requestUserId = "user-test";
+    testState.useRealBatchDelete = false;
+    testState.hostRequests = [];
     testState.localContextMatchKey = "[]";
     testState.chatSearchClient = null;
     testState.chatSearchHits = { kind: "absent" };
@@ -4070,6 +4110,240 @@ describe("<EpicsListPanel />", () => {
     await waitFor(() =>
       expect(screen.queryByTestId("sweep-worktrees-dialog")).toBeNull(),
     );
+  });
+
+  describe("the account a delete is chosen under", () => {
+    async function selectAllAndOpenDelete(): Promise<void> {
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Select history items" }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+      fireEvent.click(screen.getByTestId("epics-list-delete-selected"));
+      await screen.findByTestId("delete-tasks-dialog");
+    }
+
+    function sentVariables(): DeleteEpicsVariables {
+      const call = testState.mutate.mock.calls.at(0);
+      if (call === undefined) throw new Error("expected a delete mutation");
+      return call[0];
+    }
+
+    it("binds the delete to the account the selection was made under, not the one signed in at confirm", async () => {
+      testState.requestUserId = "user-a";
+      renderPanel("page", "/");
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Select history items" }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+
+      testState.requestUserId = "user-b";
+      fireEvent.click(screen.getByTestId("epics-list-delete-selected"));
+      fireEvent.click(await screen.findByTestId("delete-tasks-confirm"));
+
+      expect(testState.mutate).toHaveBeenCalledTimes(1);
+      expect(sentVariables().boundUserId).toBe("user-a");
+    });
+
+    it("binds a row's own delete to the account signed in when it is chosen", async () => {
+      testState.requestUserId = "user-a";
+      renderPanel("page", "/");
+      await screen.findByTestId("epics-list-row-delete");
+
+      testState.requestUserId = "user-b";
+      fireEvent.click(screen.getByTestId("epics-list-row-delete"));
+      fireEvent.click(await screen.findByTestId("delete-tasks-confirm"));
+
+      expect(sentVariables().boundUserId).toBe("user-b");
+    });
+
+    it.each(["before the dialog opens", "while the dialog is open"])(
+      "sends nothing and says why when the request account changes %s, with History's account unchanged",
+      async (when) => {
+        testState.useRealBatchDelete = true;
+        testState.requestUserId = "user-a";
+        renderPanel("page", "/");
+
+        fireEvent.click(
+          await screen.findByRole("button", { name: "Select history items" }),
+        );
+        fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+        // Only the client's identity moves. History's `currentUserId` stays,
+        // so the scope reset does not close the dialog or clear the selection.
+        expect(testState.currentUserId).toBe("user-test");
+        if (when === "before the dialog opens") {
+          testState.requestUserId = "user-b";
+        }
+        fireEvent.click(screen.getByTestId("epics-list-delete-selected"));
+        await screen.findByTestId("delete-tasks-dialog");
+        testState.requestUserId = "user-b";
+        fireEvent.click(screen.getByTestId("delete-tasks-confirm"));
+
+        expect(
+          await screen.findByText(EPIC_DELETE_ACCOUNT_CHANGED_MESSAGE),
+        ).not.toBeNull();
+        expect(testState.hostRequests).toEqual([]);
+      },
+    );
+
+    // Select all over unloaded pages awaits a walk. The selection it lands was
+    // started by whoever pressed Select all, so the account is read at the
+    // click, not when the walk comes back.
+    async function pressSelectAllAndHoldWalk(): Promise<{
+      readonly landWalk: () => Promise<void>;
+    }> {
+      testState.hasNextPage = true;
+      let complete: ((items: readonly HistoryItem[]) => void) | undefined;
+      testState.fetchAllItems.mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            complete = resolve;
+          }),
+      );
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Select history items" }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+      await waitFor(() => {
+        expect(testState.fetchAllItems).toHaveBeenCalledTimes(1);
+      });
+      return {
+        landWalk: async () => {
+          await act(async () => {
+            complete?.(testState.items);
+            await Promise.resolve();
+          });
+          await waitFor(() => {
+            expect(
+              screen
+                .getAllByTestId("epics-list-row-select")
+                .every(
+                  (checkbox) =>
+                    checkbox.getAttribute("aria-checked") === "true",
+                ),
+            ).toBe(true);
+          });
+        },
+      };
+    }
+
+    it("binds a Select all that walks unloaded pages to the account signed in when it was pressed, not when the walk lands", async () => {
+      testState.requestUserId = "user-a";
+      renderPanel("page", "/");
+      const walk = await pressSelectAllAndHoldWalk();
+
+      // Only the client's identity moves, while the walk is still pending.
+      // History's `currentUserId` stays, so the selection is not reset.
+      testState.requestUserId = "user-b";
+      expect(testState.currentUserId).toBe("user-test");
+      await walk.landWalk();
+      fireEvent.click(screen.getByTestId("epics-list-delete-selected"));
+      fireEvent.click(await screen.findByTestId("delete-tasks-confirm"));
+
+      expect(testState.mutate).toHaveBeenCalledTimes(1);
+      expect(sentVariables().boundUserId).toBe("user-a");
+    });
+
+    it("sends nothing and says why when the account changed while Select all was walking unloaded pages", async () => {
+      testState.useRealBatchDelete = true;
+      testState.requestUserId = "user-a";
+      renderPanel("page", "/");
+      const walk = await pressSelectAllAndHoldWalk();
+
+      testState.requestUserId = "user-b";
+      await walk.landWalk();
+      fireEvent.click(screen.getByTestId("epics-list-delete-selected"));
+      fireEvent.click(await screen.findByTestId("delete-tasks-confirm"));
+
+      expect(
+        await screen.findByText(EPIC_DELETE_ACCOUNT_CHANGED_MESSAGE),
+      ).not.toBeNull();
+      expect(testState.hostRequests).toEqual([]);
+    });
+
+    it("keeps a row-by-row selection bound to the account its first row was chosen under", async () => {
+      testState.items = [
+        historyItem({}),
+        historyItem({
+          id: "history-epic-2",
+          epicId: "epic-two",
+          title: "Second history item",
+        }),
+      ];
+      testState.requestUserId = "user-a";
+      renderPanel("page", "/");
+
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Select history items" }),
+      );
+      const rows = screen.getAllByTestId("epics-list-row-select");
+      expect(rows).toHaveLength(2);
+      const [firstRow, secondRow] = rows;
+      fireEvent.click(firstRow);
+
+      testState.requestUserId = "user-b";
+      fireEvent.click(secondRow);
+      fireEvent.click(screen.getByTestId("epics-list-delete-selected"));
+      fireEvent.click(await screen.findByTestId("delete-tasks-confirm"));
+
+      expect(testState.mutate).toHaveBeenCalledTimes(1);
+      expect(sentVariables().ids).toHaveLength(2);
+      expect(sentVariables().boundUserId).toBe("user-a");
+    });
+
+    it("sends the delete when the account at confirm is the one the selection was made under", async () => {
+      testState.useRealBatchDelete = true;
+      testState.requestUserId = "user-a";
+      renderPanel("page", "/");
+
+      await selectAllAndOpenDelete();
+      fireEvent.click(screen.getByTestId("delete-tasks-confirm"));
+
+      await waitFor(() => {
+        expect(testState.hostRequests).toHaveLength(1);
+      });
+      expect(testState.hostRequests.map((request) => request.method)).toEqual([
+        "epic.batchDelete",
+      ]);
+      expect(
+        screen.queryByText(EPIC_DELETE_ACCOUNT_CHANGED_MESSAGE),
+      ).toBeNull();
+    });
+
+    it("binds a selection made with no account signed in to no account, not to the one that signs in before the dialog opens", async () => {
+      testState.requestUserId = null;
+      renderPanel("page", "/");
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Select history items" }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+
+      testState.requestUserId = "user-b";
+      fireEvent.click(screen.getByTestId("epics-list-delete-selected"));
+      fireEvent.click(await screen.findByTestId("delete-tasks-confirm"));
+
+      expect(testState.mutate).toHaveBeenCalledTimes(1);
+      expect(sentVariables().boundUserId).toBeNull();
+    });
+
+    it("sends nothing and says why when a selection made with no account signed in is confirmed after signing in", async () => {
+      testState.useRealBatchDelete = true;
+      testState.requestUserId = null;
+      renderPanel("page", "/");
+      fireEvent.click(
+        await screen.findByRole("button", { name: "Select history items" }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+
+      testState.requestUserId = "user-b";
+      fireEvent.click(screen.getByTestId("epics-list-delete-selected"));
+      await screen.findByTestId("delete-tasks-dialog");
+      fireEvent.click(screen.getByTestId("delete-tasks-confirm"));
+
+      expect(
+        await screen.findByText(EPIC_DELETE_ACCOUNT_CHANGED_MESSAGE),
+      ).not.toBeNull();
+      expect(testState.hostRequests).toEqual([]);
+    });
   });
   it("deletes selected history rows from selection mode", async () => {
     testState.items = [

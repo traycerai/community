@@ -226,7 +226,7 @@ describe("loading handshake", () => {
     harness.host.receive(proxyReady());
     harness.host.receive(message());
     expect(harness.host.status).toBe("disposed");
-    expect(harness.statuses).toEqual(["disposed"]);
+    expect(harness.statuses).toEqual(["disposed", "crashed"]);
   });
 
   it("ignores a document-ready that arrives before the resource was delivered", () => {
@@ -242,6 +242,7 @@ describe("loading handshake", () => {
     const harness = ready(null, OPENS);
     harness.host.receive(documentReady(NONCE, 120));
     expect(harness.host.status).toBe("disposed");
+    expect(harness.statuses).toEqual(["ready", "disposed", "crashed"]);
   });
 
   it("allows two frame loads and disposes on the third", () => {
@@ -249,14 +250,17 @@ describe("loading handshake", () => {
     harness.host.frameLoaded();
     harness.host.frameLoaded();
     expect(harness.host.status).toBe("ready");
+    expect(harness.statuses).toEqual(["ready"]);
     harness.host.frameLoaded();
     expect(harness.host.status).toBe("disposed");
+    expect(harness.statuses).toEqual(["ready", "disposed", "crashed"]);
   });
 
   it("disposes when the loader comes back with a second proxy-ready", () => {
     const harness = ready(null, OPENS);
     harness.host.receive(proxyReady());
     expect(harness.host.status).toBe("disposed");
+    expect(harness.statuses).toEqual(["ready", "disposed", "crashed"]);
     expect(harness.all("ui/notifications/sandbox-resource-ready")).toHaveLength(
       1,
     );
@@ -974,6 +978,7 @@ describe("teardown", () => {
     harness.host.receive({ jsonrpc: "2.0", id: asked.id, result: {} });
     await done;
     expect(harness.host.status).toBe("disposed");
+    expect(harness.statuses).toEqual(["ready", "disposed"]);
   });
 
   it("disposes after the 2 s grace when the page never answers", async () => {
@@ -988,12 +993,14 @@ describe("teardown", () => {
     await vi.advanceTimersByTimeAsync(1);
     expect(finished).toBe(true);
     expect(harness.host.status).toBe("disposed");
+    expect(harness.statuses).toEqual(["ready", "disposed"]);
   });
 
   it("disposes without asking a frame that never loaded the resource", async () => {
     const harness = createHarness({ appRequests: null, openLink: OPENS });
     await harness.host.teardown();
     expect(harness.host.status).toBe("disposed");
+    expect(harness.statuses).toEqual(["disposed"]);
     expect(harness.all("ui/resource-teardown")).toEqual([]);
   });
 });

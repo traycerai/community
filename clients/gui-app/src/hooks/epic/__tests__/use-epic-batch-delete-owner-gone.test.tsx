@@ -128,6 +128,7 @@ vi.mock("@/lib/epics/deleted-epic-events", async (importOriginal) => ({
 }));
 
 import {
+  EPIC_DELETE_ACCOUNT_CHANGED_MESSAGE,
   EPIC_DELETE_HOST_UNREACHABLE_MESSAGE,
   routeEpicBatchDelete,
   useEpicBatchDelete,
@@ -190,6 +191,7 @@ describe("Task delete while the active host is down", () => {
     await dispatch({
       ids: ["cloud-a", "local-b", "cloud-c"],
       isLocalHomedNow: localHomed("local-b"),
+      boundUserId: "user-1",
       worktreeCleanup: null,
     });
 
@@ -222,6 +224,7 @@ describe("Task delete while the active host is down", () => {
     await dispatch({
       ids: ["cloud-a"],
       isLocalHomedNow: localHomed(),
+      boundUserId: "user-1",
       worktreeCleanup: null,
     });
 
@@ -238,6 +241,7 @@ describe("Task delete while the active host is down", () => {
     await dispatch({
       ids: ["local-a", "local-b"],
       isLocalHomedNow: localHomed("local-a", "local-b"),
+      boundUserId: "user-1",
       worktreeCleanup: null,
     });
 
@@ -254,12 +258,37 @@ describe("Task delete while the active host is down", () => {
     expect(mocks.toastDismiss).toHaveBeenCalled();
   });
 
+  // #2561 composed with the fallback route: a delete chosen under another
+  // account sends nothing, on any route. The ids the stand-in would have
+  // been sent are refused for the account; the local-homed ones keep their
+  // own reason, since choosing them again cannot reach the down host.
+  it("sends nothing when the account changed, keeping the down host's reason for its local-homed ids", async () => {
+    publishLeases(lease("active", "dead"), lease("this-machine", "ready"));
+
+    await dispatch({
+      ids: ["cloud-a", "local-b"],
+      isLocalHomedNow: localHomed("local-b"),
+      boundUserId: "someone-else",
+      worktreeCleanup: null,
+    });
+
+    expect(hosts.state.sent).toEqual([]);
+    expect(mocks.reportableErrorToast).toHaveBeenCalledTimes(1);
+    expect(mocks.reportableErrorToast.mock.calls[0]?.[0]).toBe(
+      "Couldn't delete 2 tasks.",
+    );
+    expect(mocks.reportableErrorToast.mock.calls[0]?.[1]).toEqual({
+      description: `${EPIC_DELETE_HOST_UNREACHABLE_MESSAGE} · ${EPIC_DELETE_ACCOUNT_CHANGED_MESSAGE}`,
+    });
+  });
+
   it("does not try to remove the down host's worktrees", async () => {
     publishLeases(lease("active", "dead"), lease("this-machine", "ready"));
 
     await dispatch({
       ids: ["cloud-a"],
       isLocalHomedNow: localHomed(),
+      boundUserId: "user-1",
       worktreeCleanup: {
         candidates: [{ worktreePath: "/wt/a", ownerEpicIds: ["cloud-a"] }],
       },
@@ -280,6 +309,7 @@ describe("Task delete while the active host is down and the session is not signe
     await dispatch({
       ids: ["cloud-a", "local-b"],
       isLocalHomedNow: localHomed("local-b"),
+      boundUserId: "user-1",
       worktreeCleanup: null,
     });
 
@@ -307,6 +337,7 @@ describe("unchanged paths", () => {
     await dispatch({
       ids: ["cloud-a", "local-b"],
       isLocalHomedNow: localHomed("local-b"),
+      boundUserId: "user-1",
       worktreeCleanup: null,
     });
 
@@ -330,6 +361,7 @@ describe("unchanged paths", () => {
     await dispatch({
       ids: ["cloud-a", "local-b"],
       isLocalHomedNow: localHomed("local-b"),
+      boundUserId: "user-1",
       worktreeCleanup: null,
     });
 
