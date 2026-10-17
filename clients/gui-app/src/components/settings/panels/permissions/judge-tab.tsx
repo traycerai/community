@@ -16,6 +16,7 @@ import {
   type RefObject,
 } from "react";
 import { CircleDot, Sparkle } from "lucide-react";
+import { useStore } from "zustand";
 import type { GuiHarnessOption } from "@traycer/protocol/host/index";
 import type { GuiAgentModelOption } from "@traycer/protocol/host/agent/gui/unary-schemas";
 import type { ProviderCliState } from "@traycer/protocol/host/provider-schemas";
@@ -33,6 +34,7 @@ import {
   ChoiceTileTitle,
 } from "@/components/ui/choice-tile";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import type { MaxModeContext } from "@/components/home/data/model-max-mode";
 import {
   HarnessModelPicker,
   type HarnessModelPickerEmbedding,
@@ -630,6 +632,17 @@ function PickTileContent(
   // the seed as the judge. It is seeded with the level the host runs (the
   // stored effort, else the model's lowest).
   const drawsEffortFooter = props.storesEffort && judgeSelectionMarked(state);
+  const reasoning = useStore(
+    picker.toolbar.store,
+    (toolbar) => toolbar.reasoning,
+  );
+  const maxModeContext = useMemo<MaxModeContext>(
+    () => ({
+      kind: "judge",
+      reasoningEffort: drawsEffortFooter ? reasoning : null,
+    }),
+    [drawsEffortFooter, reasoning],
+  );
   return (
     <>
       <RadioGroupItem
@@ -651,6 +664,7 @@ function PickTileContent(
       {state.row === "loading" ? null : (
         <HarnessModelPicker
           store={picker.toolbar.store}
+          maxModeContext={maxModeContext}
           // No Fast setting to carry; the effort footer per
           // `drawsEffortFooter` above.
           withServiceTier={false}
