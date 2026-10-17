@@ -46,7 +46,8 @@ export function HomeBotsSection(): ReactNode {
 
   const hostLabels = useMemo(() => {
     const labels = new Map<string, string>();
-    for (const entry of directory.data ?? []) labels.set(entry.hostId, entry.label);
+    for (const entry of directory.data ?? [])
+      labels.set(entry.hostId, entry.label);
     return labels;
   }, [directory.data]);
   const connectableHostIds = useMemo(

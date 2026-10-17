@@ -184,12 +184,14 @@ describe("<BotTabSurface /> bound elsewhere", () => {
 
     const banner = screen.getByTestId("bot-tab-bound-elsewhere");
     expect(banner.getAttribute("data-offline")).toBe("false");
-    expect(screen.getByRole("button", { name: "View on Studio Mac" })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "View on Studio Mac" }),
+    ).toBeTruthy();
     expect(screen.getByTestId("bot-tab-move-here")).toBeTruthy();
     expect(
-      screen.getByTestId("stub-conversation").getAttribute(
-        "data-offline-host-label",
-      ),
+      screen
+        .getByTestId("stub-conversation")
+        .getAttribute("data-offline-host-label"),
     ).toBe("none");
   });
 
@@ -214,9 +216,9 @@ describe("<BotTabSurface /> bound elsewhere", () => {
 
     await user.click(screen.getByTestId("bot-tab-view-under-the-hood"));
     expect(
-      screen.getByTestId("stub-under-the-hood").getAttribute(
-        "data-offline-host-label",
-      ),
+      screen
+        .getByTestId("stub-under-the-hood")
+        .getAttribute("data-offline-host-label"),
     ).toBe("Studio Mac");
   });
 
@@ -226,12 +228,14 @@ describe("<BotTabSurface /> bound elsewhere", () => {
     render(surface());
 
     expect(
-      screen.getByTestId("bot-tab-bound-elsewhere").getAttribute("data-offline"),
+      screen
+        .getByTestId("bot-tab-bound-elsewhere")
+        .getAttribute("data-offline"),
     ).toBe("false");
     expect(
-      screen.getByTestId("stub-conversation").getAttribute(
-        "data-offline-host-label",
-      ),
+      screen
+        .getByTestId("stub-conversation")
+        .getAttribute("data-offline-host-label"),
     ).toBe("none");
   });
 
@@ -254,9 +258,9 @@ describe("<BotTabSurface /> bound elsewhere", () => {
 
     expect(screen.queryByTestId("bot-tab-bound-elsewhere")).toBeNull();
     expect(
-      screen.getByTestId("stub-conversation").getAttribute(
-        "data-offline-host-label",
-      ),
+      screen
+        .getByTestId("stub-conversation")
+        .getAttribute("data-offline-host-label"),
     ).toBe("none");
   });
 });
@@ -290,12 +294,16 @@ describe("<BotTabSurface /> tab lifetime", () => {
   it("keeps the tab while bot.list carries the bot or has not answered", () => {
     mocks.state.listedBotIds = [BOT_ID, OTHER_BOT_ID];
     const view = render(surface());
-    expect(lookupBotTab(useBotTabsStore.getState().tabs, BOT_ID)).not.toBeNull();
+    expect(
+      lookupBotTab(useBotTabsStore.getState().tabs, BOT_ID),
+    ).not.toBeNull();
 
     view.unmount();
     mocks.state.listedBotIds = undefined;
     render(surface());
-    expect(lookupBotTab(useBotTabsStore.getState().tabs, BOT_ID)).not.toBeNull();
+    expect(
+      lookupBotTab(useBotTabsStore.getState().tabs, BOT_ID),
+    ).not.toBeNull();
   });
 
   it("closes the tab on the stream's deleted frame", () => {
