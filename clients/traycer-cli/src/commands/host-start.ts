@@ -2492,15 +2492,23 @@ export async function runHostStart(
     // still be unread in the pipe and the capture comes out empty in exactly the
     // abnormal-death case this feature exists for.
     //
-    // It resolves `true` when the pipe ended or closed, `false` when it errored
-    // first: a dead pipe may have lost bytes, so the capture is not known to be
-    // whole (the crash event's `incomplete` kind).
-    let resolveStderrEnded: (drained: boolean) => void = () => undefined;
-    const stderrEnded = new Promise<boolean>((resolve) => {
+    // How it settled is kept in `stderrSettle`, first settle wins: `true` when
+    // the pipe ended or closed, `false` when it errored first (a dead pipe may
+    // have lost bytes, so the capture is not known to be whole). The crash
+    // event's `incomplete` kind reads it when it classifies, NOT when the
+    // bounded wait returns: the capture is fed until `disposeAttemptStderr`,
+    // so a pipe released after the deadline still completes it.
+    const stderrSettle: StderrSettle = { drained: null };
+    let resolveStderrEnded: () => void = () => undefined;
+    const stderrEnded = new Promise<void>((resolve) => {
       resolveStderrEnded = resolve;
     });
+    const settleStderr = (drained: boolean): void => {
+      stderrSettle.drained ??= drained;
+      resolveStderrEnded();
+    };
     if (child.stderr === null || child.stderr === undefined) {
-      resolveStderrEnded(true);
+      settleStderr(true);
     } else {
       const stderr = child.stderr;
       stderr.on("data", (chunk: Buffer) => {
@@ -2514,18 +2522,18 @@ export async function runHostStart(
       // settle the wait: whatever bytes arrived are still worth recording, and
       // `error` may arrive instead of `end`.
       stderr.on("error", () => {
-        resolveStderrEnded(false);
+        settleStderr(false);
       });
       stderr.on("end", () => {
-        resolveStderrEnded(true);
+        settleStderr(true);
       });
       stderr.on("close", () => {
-        resolveStderrEnded(true);
+        settleStderr(true);
       });
       // The spawn-site recorder may have observed the stream's one `error`
       // before any of the listeners above existed; a dead stream emits
       // nothing further, so settle the wait from the recorded state.
-      if (stderrErroredEarly) resolveStderrEnded(false);
+      if (stderrErroredEarly) settleStderr(false);
     }
 
     const probeObservation =
@@ -2900,6 +2908,7 @@ export async function runHostStart(
       childEndedMonoMs,
       stderrTee,
       stderrEnded,
+      stderrSettle,
       crashReportsDirPath,
       preexistingReportNames,
     });
@@ -2914,7 +2923,9 @@ export async function runHostStart(
     // crash cycles accumulate without limit. Same argument as the log fd.
     //
     // Best-effort and deliberately last: the marker and the capture have both
-    // already been written from this stream by the time we get here.
+    // already been written from this stream by the time we get here. It must
+    // stay after `persistChildExit`, which classifies the capture from the
+    // stream's settle state while the stream is still being read.
     disposeAttemptStderr(child.stderr);
 
     // A clean exit is the host standing down on purpose - never relaunch it.
@@ -3426,7 +3437,7 @@ async function finalizeIntentionalRestartAttempt(input: {
   readonly environment: Environment;
   readonly probeObservation: Promise<ProbeObservation> | null;
   readonly stderrTee: StderrTee;
-  readonly stderrEnded: Promise<boolean>;
+  readonly stderrEnded: Promise<void>;
 }): Promise<void> {
   await finalizeAttemptProbe({
     code: input.code,
@@ -3478,20 +3489,24 @@ async function finalizeAttemptProbe(input: {
 }
 
 /**
+ * How the child's stderr pipe settled, first settle wins: `true` when it
+ * ended or closed, `false` when it errored first, `null` while it is open.
+ */
+interface StderrSettle {
+  drained: boolean | null;
+}
+
+/**
  * Wait for the child pipe and its path-addressed tee exactly once per attempt.
  * Both calls are bounded: an inherited stderr descriptor must not make a
  * restart (or a crash exit) wait forever.
  */
 async function flushAttemptStderr(input: {
-  readonly stderrEnded: Promise<boolean>;
+  readonly stderrEnded: Promise<void>;
   readonly stderrTee: StderrTee;
-}): Promise<boolean> {
-  const ended = await withDeadline(
-    input.stderrEnded,
-    STDERR_END_WAIT_TIMEOUT_MS,
-  );
+}): Promise<void> {
+  await withDeadline(input.stderrEnded, STDERR_END_WAIT_TIMEOUT_MS);
   await input.stderrTee.flush(STDERR_FLUSH_TIMEOUT_MS);
-  return ended;
 }
 
 /**
@@ -3546,7 +3561,8 @@ async function persistChildExit(input: {
   readonly childSpawnedMonoMs: number;
   readonly childEndedMonoMs: number;
   readonly stderrTee: StderrTee;
-  readonly stderrEnded: Promise<boolean>;
+  readonly stderrEnded: Promise<void>;
+  readonly stderrSettle: StderrSettle;
   readonly crashReportsDirPath: string;
   readonly preexistingReportNames: ReadonlySet<string>;
 }): Promise<ChildExitOutcome> {
@@ -3569,7 +3585,7 @@ async function persistChildExit(input: {
     bundle,
     deps,
   } = input;
-  const stderrStreamEnded = await flushAttemptStderr({
+  await flushAttemptStderr({
     stderrEnded: input.stderrEnded,
     stderrTee: input.stderrTee,
   });
@@ -3676,7 +3692,9 @@ async function persistChildExit(input: {
         ),
         stopRequested: input.stopRequested,
         stderrEmpty: input.stderrTee.capture.isEmpty(),
-        stderrFatal: input.stderrTee.capture.classifyFatal(stderrStreamEnded),
+        stderrFatal: input.stderrTee.capture.classifyFatal(
+          input.stderrSettle.drained === true,
+        ),
       });
     }
     return outcome;
@@ -3830,7 +3848,9 @@ async function persistChildExit(input: {
     uptimeMs: Math.max(0, input.childEndedMonoMs - input.childSpawnedMonoMs),
     stopRequested: input.stopRequested,
     stderrEmpty: input.stderrTee.capture.isEmpty(),
-    stderrFatal: input.stderrTee.capture.classifyFatal(stderrStreamEnded),
+    stderrFatal: input.stderrTee.capture.classifyFatal(
+      input.stderrSettle.drained === true,
+    ),
   });
   return outcome;
 }
@@ -3943,23 +3963,21 @@ function boundedCrashReportScan(input: {
 }
 
 /**
- * Resolves when `promise` settles or `timeoutMs` elapses, whichever is first:
- * the promise's own value (`true` when the pipe drained), or `false` when it
- * rejected or the deadline won. Never rejects: every
- * caller here is on the exit path, where the only acceptable outcome is
- * "continue and write the marker".
+ * Resolves when `promise` settles or `timeoutMs` elapses, whichever is first.
+ * Never rejects: every caller here is on the exit path, where the only
+ * acceptable outcome is "continue and write the marker".
  */
 function withDeadline(
-  promise: Promise<boolean>,
+  promise: Promise<void>,
   timeoutMs: number,
-): Promise<boolean> {
+): Promise<void> {
   return Promise.race([
     promise.then(
-      (drained) => drained,
-      () => false,
+      () => undefined,
+      () => undefined,
     ),
-    new Promise<boolean>((resolve) => {
-      const timer = setTimeout(() => resolve(false), timeoutMs);
+    new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, timeoutMs);
       timer.unref?.();
     }),
   ]);

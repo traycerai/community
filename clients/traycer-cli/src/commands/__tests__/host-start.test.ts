@@ -1797,6 +1797,80 @@ describe("runHostStart - signal/exit propagation", () => {
       expect(recorded.crashReports[0]?.stderrFatal).toBe("incomplete");
     });
 
+    // The wait for the pipe to end is bounded, but classification runs later,
+    // after the tee flush and the report scan, while the capture is still fed.
+    // A pipe a grandchild held past the deadline and then released in that
+    // window leaves a whole capture, so it must read as whole.
+    it.each([
+      {
+        name: "a silent capture whose pipe ends during the scan is none",
+        chunks: [] as string[],
+        settle: "end" as const,
+        expected: "none",
+      },
+      {
+        name: "an unrecognised capture whose pipe ends during the scan is other",
+        chunks: ["Error: spawn EBUSY\n"],
+        settle: "end" as const,
+        expected: "other",
+      },
+      {
+        name: "a pipe that errors during the scan stays incomplete",
+        chunks: ["partial\n"],
+        settle: "error" as const,
+        expected: "incomplete",
+      },
+    ])(
+      "$name, after the end-of-stream wait timed out",
+      async ({ chunks, settle, expected }) => {
+        const exec = "/opt/traycer/host/install/traycer-host";
+        const { child, recorded, deps } = makeRunStubs(
+          sampleRecord(exec),
+          null,
+        );
+        const stderr = new PassThrough();
+        Object.assign(child, { stderr });
+        const originalSpawn = deps.spawn;
+        const originalScan = deps.findCrashReport;
+        if (originalSpawn === undefined || originalScan === undefined) {
+          throw new Error("test dependency missing");
+        }
+        await runUntilExit(
+          () =>
+            runHostStart(
+              { environment: "production", cwd: null },
+              {
+                ...deps,
+                spawn: (command, args, options) => {
+                  const spawned = originalSpawn(command, args, options);
+                  setImmediate(() => {
+                    for (const chunk of chunks) {
+                      stderr.write(Buffer.from(chunk));
+                    }
+                    // Not ended: the supervisor waits out the deadline.
+                    child.emit("exit", 7, null);
+                  });
+                  return spawned;
+                },
+                findCrashReport: async (dir, sinceMs, excludeNames) => {
+                  // The scan runs after the deadline and the flush.
+                  if (settle === "end") {
+                    stderr.end();
+                  } else {
+                    stderr.emit("error", new Error("EIO on host stderr"));
+                  }
+                  await new Promise<void>((resolve) => setImmediate(resolve));
+                  return originalScan(dir, sinceMs, excludeNames);
+                },
+              },
+            ),
+          recorded,
+        );
+        expect(recorded.crashReports[0]?.stderrFatal).toBe(expected);
+      },
+      15_000,
+    );
+
     it("tags nothing-recognised as incomplete when the stream had not ended at the deadline", async () => {
       const exec = "/opt/traycer/host/install/traycer-host";
       const { child, recorded, deps } = makeRunStubs(sampleRecord(exec), null);
