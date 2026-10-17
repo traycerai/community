@@ -636,7 +636,7 @@ interface ListItemPrefixes {
  * break falls out of a task item when it is parsed back. A nested list passes
  * through unchanged because it already carries its own depth. A fence starts
  * on the line after an empty marker line, every line at the continuation
- * indent.
+ * indent, and so does a nested list, at its own column.
  */
 function firstBlockLines(
   block: JsonContent,
@@ -650,12 +650,12 @@ function firstBlockLines(
       ...serialized.split("\n").map((line) => `${continuationIndent}${line}`),
     ];
   }
+  if (isListNode(block)) return [emptyMarkerLine, ...serialized.split("\n")];
   if (serialized === "") return [emptyMarkerLine];
-  const nested = isListNode(block);
   const [head, ...rest] = serialized.split("\n");
   return [
     `${markerLine}${head}`,
-    ...rest.map((line) => (nested ? line : `${continuationIndent}${line}`)),
+    ...rest.map((line) => `${continuationIndent}${line}`),
   ];
 }
 

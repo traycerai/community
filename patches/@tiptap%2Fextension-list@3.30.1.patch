@@ -1,5 +1,5 @@
 diff --git a/dist/index.cjs b/dist/index.cjs
-index 4c729511471466d470d01dae4ae2ab7393eb6e2d..57b1d7439185fed6ff511c2a8b061c239d87e507 100644
+index 4c729511471466d470d01dae4ae2ab7393eb6e2d..e31b8d9e7a7f863e9a950371f737f2db4b4a7217 100644
 --- a/dist/index.cjs
 +++ b/dist/index.cjs
 @@ -487,7 +487,10 @@ var ListItem = import_core3.Node.create({
@@ -25,7 +25,23 @@ index 4c729511471466d470d01dae4ae2ab7393eb6e2d..57b1d7439185fed6ff511c2a8b061c23
              const additionalContent = parseBlockChildren(remainingTokens);
              content.push(...additionalContent);
            }
-@@ -962,7 +965,7 @@ function collectOrderedListItems(lines) {
+@@ -949,10 +952,14 @@ function collectOrderedListItems(lines) {
+     let nextLineIndex = currentLineIndex + 1;
+     const itemLines = [line];
+     let sawBlankLine = false;
++    const itemContentColumn = indentLevel + marker.length + _separator.length + 1;
++    let innerBlockColumn;
++    let openFence;
+     while (nextLineIndex < lines.length) {
+       const nextLine = lines[nextLineIndex];
+       const nextMatch = nextLine.match(ORDERED_LIST_ITEM_REGEX);
+-      if (nextMatch) {
++      const nextColumn = nextLine.length - nextLine.trimStart().length;
++      if (nextMatch && openFence === void 0 && !(innerBlockColumn !== void 0 && nextColumn > innerBlockColumn)) {
+         break;
+       }
+       if (nextLine.trim() === "") {
+@@ -962,10 +969,21 @@ function collectOrderedListItems(lines) {
          nextLineIndex += 1;
        } else if (nextLine.match(INDENTED_LINE_REGEX)) {
          const leadingWhitespace = nextLine.length - nextLine.trimStart().length;
@@ -34,8 +50,22 @@ index 4c729511471466d470d01dae4ae2ab7393eb6e2d..57b1d7439185fed6ff511c2a8b061c23
          itemLines.push(nextLine);
          itemContentLines.push(nextLine.slice(Math.min(leadingWhitespace, contentIndent)));
          nextLineIndex += 1;
++        const text = nextLine.trimStart();
++        const fence = /^(`{3,}|~{3,})/.exec(text);
++        if (openFence !== void 0) {
++          if (text.startsWith(openFence) && /^[`~]*\s*$/.test(text.slice(openFence.length))) openFence = void 0;
++        } else if (fence) {
++          openFence = fence[1];
++        } else if (!nextMatch && nextColumn >= itemContentColumn && /^(?:[-+*](?:\s|$)|>)/.test(text)) {
++          innerBlockColumn = nextColumn;
++        } else if (innerBlockColumn !== void 0 && nextColumn < innerBlockColumn) {
++          innerBlockColumn = void 0;
++        }
+       } else {
+         if (sawBlankLine || interruptsLazyContinuation(nextLine)) {
+           break;
 diff --git a/dist/index.js b/dist/index.js
-index ef3bc656fac8359ebc0ba0bf0a4f36aa9f4ca413..8bd4eef1bb02dbcc152afcbf39bb6386e858880a 100644
+index ef3bc656fac8359ebc0ba0bf0a4f36aa9f4ca413..bcb04016f036a5a4c717760c8117657b0417889e 100644
 --- a/dist/index.js
 +++ b/dist/index.js
 @@ -447,7 +447,10 @@ var ListItem = Node2.create({
@@ -61,7 +91,23 @@ index ef3bc656fac8359ebc0ba0bf0a4f36aa9f4ca413..8bd4eef1bb02dbcc152afcbf39bb6386
              const additionalContent = parseBlockChildren(remainingTokens);
              content.push(...additionalContent);
            }
-@@ -922,7 +925,7 @@ function collectOrderedListItems(lines) {
+@@ -909,10 +912,14 @@ function collectOrderedListItems(lines) {
+     let nextLineIndex = currentLineIndex + 1;
+     const itemLines = [line];
+     let sawBlankLine = false;
++    const itemContentColumn = indentLevel + marker.length + _separator.length + 1;
++    let innerBlockColumn;
++    let openFence;
+     while (nextLineIndex < lines.length) {
+       const nextLine = lines[nextLineIndex];
+       const nextMatch = nextLine.match(ORDERED_LIST_ITEM_REGEX);
+-      if (nextMatch) {
++      const nextColumn = nextLine.length - nextLine.trimStart().length;
++      if (nextMatch && openFence === void 0 && !(innerBlockColumn !== void 0 && nextColumn > innerBlockColumn)) {
+         break;
+       }
+       if (nextLine.trim() === "") {
+@@ -922,10 +929,21 @@ function collectOrderedListItems(lines) {
          nextLineIndex += 1;
        } else if (nextLine.match(INDENTED_LINE_REGEX)) {
          const leadingWhitespace = nextLine.length - nextLine.trimStart().length;
@@ -70,6 +116,20 @@ index ef3bc656fac8359ebc0ba0bf0a4f36aa9f4ca413..8bd4eef1bb02dbcc152afcbf39bb6386
          itemLines.push(nextLine);
          itemContentLines.push(nextLine.slice(Math.min(leadingWhitespace, contentIndent)));
          nextLineIndex += 1;
++        const text = nextLine.trimStart();
++        const fence = /^(`{3,}|~{3,})/.exec(text);
++        if (openFence !== void 0) {
++          if (text.startsWith(openFence) && /^[`~]*\s*$/.test(text.slice(openFence.length))) openFence = void 0;
++        } else if (fence) {
++          openFence = fence[1];
++        } else if (!nextMatch && nextColumn >= itemContentColumn && /^(?:[-+*](?:\s|$)|>)/.test(text)) {
++          innerBlockColumn = nextColumn;
++        } else if (innerBlockColumn !== void 0 && nextColumn < innerBlockColumn) {
++          innerBlockColumn = void 0;
++        }
+       } else {
+         if (sawBlankLine || interruptsLazyContinuation(nextLine)) {
+           break;
 diff --git a/dist/item/index.cjs b/dist/item/index.cjs
 index 2ebaf87e5350f25a1aed1458527ae01925b8e64c..39ca9652f62972bf45b02a8befe353b0321a4168 100644
 --- a/dist/item/index.cjs
@@ -125,7 +185,7 @@ index d5416b99b4bc59f801ea3ce6496fbc3793ca0a3f..14f905d4c0e68a10a14e73632137a05a
              content.push(...additionalContent);
            }
 diff --git a/dist/kit/index.cjs b/dist/kit/index.cjs
-index 1b3f64617adf858090a503bca2cbb567b7fb5e7a..5f8c991308dae5e03f32e910c0282d0341876ab5 100644
+index 1b3f64617adf858090a503bca2cbb567b7fb5e7a..22afc81d9ab6ad61ed3fe43ef31dd6bed1c81b0c 100644
 --- a/dist/kit/index.cjs
 +++ b/dist/kit/index.cjs
 @@ -468,7 +468,10 @@ var ListItem = import_core3.Node.create({
@@ -151,7 +211,23 @@ index 1b3f64617adf858090a503bca2cbb567b7fb5e7a..5f8c991308dae5e03f32e910c0282d03
              const additionalContent = parseBlockChildren(remainingTokens);
              content.push(...additionalContent);
            }
-@@ -940,7 +943,7 @@ function collectOrderedListItems(lines) {
+@@ -927,10 +930,14 @@ function collectOrderedListItems(lines) {
+     let nextLineIndex = currentLineIndex + 1;
+     const itemLines = [line];
+     let sawBlankLine = false;
++    const itemContentColumn = indentLevel + marker.length + _separator.length + 1;
++    let innerBlockColumn;
++    let openFence;
+     while (nextLineIndex < lines.length) {
+       const nextLine = lines[nextLineIndex];
+       const nextMatch = nextLine.match(ORDERED_LIST_ITEM_REGEX);
+-      if (nextMatch) {
++      const nextColumn = nextLine.length - nextLine.trimStart().length;
++      if (nextMatch && openFence === void 0 && !(innerBlockColumn !== void 0 && nextColumn > innerBlockColumn)) {
+         break;
+       }
+       if (nextLine.trim() === "") {
+@@ -940,10 +947,21 @@ function collectOrderedListItems(lines) {
          nextLineIndex += 1;
        } else if (nextLine.match(INDENTED_LINE_REGEX)) {
          const leadingWhitespace = nextLine.length - nextLine.trimStart().length;
@@ -160,8 +236,22 @@ index 1b3f64617adf858090a503bca2cbb567b7fb5e7a..5f8c991308dae5e03f32e910c0282d03
          itemLines.push(nextLine);
          itemContentLines.push(nextLine.slice(Math.min(leadingWhitespace, contentIndent)));
          nextLineIndex += 1;
++        const text = nextLine.trimStart();
++        const fence = /^(`{3,}|~{3,})/.exec(text);
++        if (openFence !== void 0) {
++          if (text.startsWith(openFence) && /^[`~]*\s*$/.test(text.slice(openFence.length))) openFence = void 0;
++        } else if (fence) {
++          openFence = fence[1];
++        } else if (!nextMatch && nextColumn >= itemContentColumn && /^(?:[-+*](?:\s|$)|>)/.test(text)) {
++          innerBlockColumn = nextColumn;
++        } else if (innerBlockColumn !== void 0 && nextColumn < innerBlockColumn) {
++          innerBlockColumn = void 0;
++        }
+       } else {
+         if (sawBlankLine || interruptsLazyContinuation(nextLine)) {
+           break;
 diff --git a/dist/kit/index.js b/dist/kit/index.js
-index 4a488ae7c7bdacfe3b7fac3cb5c0ace143a8d4df..f1388526c0b2bfed7001ef05901831b7bc84b71b 100644
+index 4a488ae7c7bdacfe3b7fac3cb5c0ace143a8d4df..55f2b1785704fd9fe5937c00441207fe3e974197 100644
 --- a/dist/kit/index.js
 +++ b/dist/kit/index.js
 @@ -450,7 +450,10 @@ var ListItem = Node2.create({
@@ -187,7 +277,23 @@ index 4a488ae7c7bdacfe3b7fac3cb5c0ace143a8d4df..f1388526c0b2bfed7001ef05901831b7
              const additionalContent = parseBlockChildren(remainingTokens);
              content.push(...additionalContent);
            }
-@@ -922,7 +925,7 @@ function collectOrderedListItems(lines) {
+@@ -909,10 +912,14 @@ function collectOrderedListItems(lines) {
+     let nextLineIndex = currentLineIndex + 1;
+     const itemLines = [line];
+     let sawBlankLine = false;
++    const itemContentColumn = indentLevel + marker.length + _separator.length + 1;
++    let innerBlockColumn;
++    let openFence;
+     while (nextLineIndex < lines.length) {
+       const nextLine = lines[nextLineIndex];
+       const nextMatch = nextLine.match(ORDERED_LIST_ITEM_REGEX);
+-      if (nextMatch) {
++      const nextColumn = nextLine.length - nextLine.trimStart().length;
++      if (nextMatch && openFence === void 0 && !(innerBlockColumn !== void 0 && nextColumn > innerBlockColumn)) {
+         break;
+       }
+       if (nextLine.trim() === "") {
+@@ -922,10 +929,21 @@ function collectOrderedListItems(lines) {
          nextLineIndex += 1;
        } else if (nextLine.match(INDENTED_LINE_REGEX)) {
          const leadingWhitespace = nextLine.length - nextLine.trimStart().length;
@@ -196,11 +302,41 @@ index 4a488ae7c7bdacfe3b7fac3cb5c0ace143a8d4df..f1388526c0b2bfed7001ef05901831b7
          itemLines.push(nextLine);
          itemContentLines.push(nextLine.slice(Math.min(leadingWhitespace, contentIndent)));
          nextLineIndex += 1;
++        const text = nextLine.trimStart();
++        const fence = /^(`{3,}|~{3,})/.exec(text);
++        if (openFence !== void 0) {
++          if (text.startsWith(openFence) && /^[`~]*\s*$/.test(text.slice(openFence.length))) openFence = void 0;
++        } else if (fence) {
++          openFence = fence[1];
++        } else if (!nextMatch && nextColumn >= itemContentColumn && /^(?:[-+*](?:\s|$)|>)/.test(text)) {
++          innerBlockColumn = nextColumn;
++        } else if (innerBlockColumn !== void 0 && nextColumn < innerBlockColumn) {
++          innerBlockColumn = void 0;
++        }
+       } else {
+         if (sawBlankLine || interruptsLazyContinuation(nextLine)) {
+           break;
 diff --git a/dist/ordered-list/index.cjs b/dist/ordered-list/index.cjs
-index 07719ef761bdc543488fcf637043115f5bb032fe..f161edec144f585669f0295cbfa1d2aeb907b960 100644
+index 07719ef761bdc543488fcf637043115f5bb032fe..32b48ef9cb6faf3b4002b7fd42ce954cf0896c33 100644
 --- a/dist/ordered-list/index.cjs
 +++ b/dist/ordered-list/index.cjs
-@@ -310,7 +310,7 @@ function collectOrderedListItems(lines) {
+@@ -297,10 +297,14 @@ function collectOrderedListItems(lines) {
+     let nextLineIndex = currentLineIndex + 1;
+     const itemLines = [line];
+     let sawBlankLine = false;
++    const itemContentColumn = indentLevel + marker.length + _separator.length + 1;
++    let innerBlockColumn;
++    let openFence;
+     while (nextLineIndex < lines.length) {
+       const nextLine = lines[nextLineIndex];
+       const nextMatch = nextLine.match(ORDERED_LIST_ITEM_REGEX);
+-      if (nextMatch) {
++      const nextColumn = nextLine.length - nextLine.trimStart().length;
++      if (nextMatch && openFence === void 0 && !(innerBlockColumn !== void 0 && nextColumn > innerBlockColumn)) {
+         break;
+       }
+       if (nextLine.trim() === "") {
+@@ -310,10 +314,21 @@ function collectOrderedListItems(lines) {
          nextLineIndex += 1;
        } else if (nextLine.match(INDENTED_LINE_REGEX)) {
          const leadingWhitespace = nextLine.length - nextLine.trimStart().length;
@@ -209,11 +345,41 @@ index 07719ef761bdc543488fcf637043115f5bb032fe..f161edec144f585669f0295cbfa1d2ae
          itemLines.push(nextLine);
          itemContentLines.push(nextLine.slice(Math.min(leadingWhitespace, contentIndent)));
          nextLineIndex += 1;
++        const text = nextLine.trimStart();
++        const fence = /^(`{3,}|~{3,})/.exec(text);
++        if (openFence !== void 0) {
++          if (text.startsWith(openFence) && /^[`~]*\s*$/.test(text.slice(openFence.length))) openFence = void 0;
++        } else if (fence) {
++          openFence = fence[1];
++        } else if (!nextMatch && nextColumn >= itemContentColumn && /^(?:[-+*](?:\s|$)|>)/.test(text)) {
++          innerBlockColumn = nextColumn;
++        } else if (innerBlockColumn !== void 0 && nextColumn < innerBlockColumn) {
++          innerBlockColumn = void 0;
++        }
+       } else {
+         if (sawBlankLine || interruptsLazyContinuation(nextLine)) {
+           break;
 diff --git a/dist/ordered-list/index.js b/dist/ordered-list/index.js
-index ecaf30387d3b89c25955a8faa5495c8d1032dfe9..c5a0c2b2bf205e0582ecc4196060bb9cb37fadcc 100644
+index ecaf30387d3b89c25955a8faa5495c8d1032dfe9..e6a699da72d24c00b1b47b0a16a21bc549ea1778 100644
 --- a/dist/ordered-list/index.js
 +++ b/dist/ordered-list/index.js
-@@ -273,7 +273,7 @@ function collectOrderedListItems(lines) {
+@@ -260,10 +260,14 @@ function collectOrderedListItems(lines) {
+     let nextLineIndex = currentLineIndex + 1;
+     const itemLines = [line];
+     let sawBlankLine = false;
++    const itemContentColumn = indentLevel + marker.length + _separator.length + 1;
++    let innerBlockColumn;
++    let openFence;
+     while (nextLineIndex < lines.length) {
+       const nextLine = lines[nextLineIndex];
+       const nextMatch = nextLine.match(ORDERED_LIST_ITEM_REGEX);
+-      if (nextMatch) {
++      const nextColumn = nextLine.length - nextLine.trimStart().length;
++      if (nextMatch && openFence === void 0 && !(innerBlockColumn !== void 0 && nextColumn > innerBlockColumn)) {
+         break;
+       }
+       if (nextLine.trim() === "") {
+@@ -273,10 +277,21 @@ function collectOrderedListItems(lines) {
          nextLineIndex += 1;
        } else if (nextLine.match(INDENTED_LINE_REGEX)) {
          const leadingWhitespace = nextLine.length - nextLine.trimStart().length;
@@ -222,6 +388,20 @@ index ecaf30387d3b89c25955a8faa5495c8d1032dfe9..c5a0c2b2bf205e0582ecc4196060bb9c
          itemLines.push(nextLine);
          itemContentLines.push(nextLine.slice(Math.min(leadingWhitespace, contentIndent)));
          nextLineIndex += 1;
++        const text = nextLine.trimStart();
++        const fence = /^(`{3,}|~{3,})/.exec(text);
++        if (openFence !== void 0) {
++          if (text.startsWith(openFence) && /^[`~]*\s*$/.test(text.slice(openFence.length))) openFence = void 0;
++        } else if (fence) {
++          openFence = fence[1];
++        } else if (!nextMatch && nextColumn >= itemContentColumn && /^(?:[-+*](?:\s|$)|>)/.test(text)) {
++          innerBlockColumn = nextColumn;
++        } else if (innerBlockColumn !== void 0 && nextColumn < innerBlockColumn) {
++          innerBlockColumn = void 0;
++        }
+       } else {
+         if (sawBlankLine || interruptsLazyContinuation(nextLine)) {
+           break;
 diff --git a/src/item/list-item.ts b/src/item/list-item.ts
 index e1227a05262b8e337a1406e7f63685d4f4f00fea..a862b296b5a27062cddf503ac9b64d2fe3f04e1a 100644
 --- a/src/item/list-item.ts
@@ -259,10 +439,41 @@ index e1227a05262b8e337a1406e7f63685d4f4f00fea..a862b296b5a27062cddf503ac9b64d2f
              content.push(...additionalContent)
            }
 diff --git a/src/ordered-list/utils.ts b/src/ordered-list/utils.ts
-index d0a3b84aa4c0ccb7bae75384aef5897fae102c70..b3f46ea6dcbeb19a7d497103d507a234192d5d38 100644
+index d0a3b84aa4c0ccb7bae75384aef5897fae102c70..3d9298f3d8056266a45e0d80b62e79588ba14ef8 100644
 --- a/src/ordered-list/utils.ts
 +++ b/src/ordered-list/utils.ts
-@@ -171,7 +171,7 @@ export function collectOrderedListItems(lines: string[]): [OrderedListItem[], nu
+@@ -148,14 +148,27 @@ export function collectOrderedListItems(lines: string[]): [OrderedListItem[], nu
+     let nextLineIndex = currentLineIndex + 1
+     const itemLines = [line]
+     let sawBlankLine = false
++    const itemContentColumn = indentLevel + marker.length + _separator.length + 1
++    // The column of a bullet list or blockquote opened inside this item's
++    // content, while it is still open, and the marker of an open fence.
++    let innerBlockColumn: number | undefined
++    let openFence: string | undefined
+
+     // Collect continuation lines for this item (but NOT nested list items)
+     while (nextLineIndex < lines.length) {
+       const nextLine = lines[nextLineIndex]
+       const nextMatch = nextLine.match(ORDERED_LIST_ITEM_REGEX)
+-
+-      // If it's another list item (nested or not), stop collecting
+-      if (nextMatch) {
++      const nextColumn = nextLine.length - nextLine.trimStart().length
++
++      // If it's another list item (nested or not), stop collecting - unless
++      // another block opened inside this item between them and the line sits
++      // inside that block (past its marker), or a fence is open: then the
++      // line belongs to that block and stays with this item's content.
++      if (
++        nextMatch &&
++        openFence === undefined &&
++        !(innerBlockColumn !== undefined && nextColumn > innerBlockColumn)
++      ) {
+         break
+       }
+
+@@ -171,10 +184,28 @@ export function collectOrderedListItems(lines: string[]): [OrderedListItem[], nu
          // Strip the indentation only up to the whitespace that is actually present,
          // so an under-indented line (e.g. a single leading space) keeps its first character.
          const leadingWhitespace = nextLine.length - nextLine.trimStart().length
@@ -271,3 +482,24 @@ index d0a3b84aa4c0ccb7bae75384aef5897fae102c70..b3f46ea6dcbeb19a7d497103d507a234
          itemLines.push(nextLine)
          itemContentLines.push(nextLine.slice(Math.min(leadingWhitespace, contentIndent)))
          nextLineIndex += 1
++
++        const text = nextLine.trimStart()
++        const fence = /^(`{3,}|~{3,})/.exec(text)
++        if (openFence !== undefined) {
++          if (text.startsWith(openFence) && /^[`~]*\s*$/.test(text.slice(openFence.length))) {
++            openFence = undefined
++          }
++        } else if (fence) {
++          openFence = fence[1]
++        } else if (
++          !nextMatch &&
++          nextColumn >= itemContentColumn &&
++          /^(?:[-+*](?:\s|$)|>)/.test(text)
++        ) {
++          innerBlockColumn = nextColumn
++        } else if (innerBlockColumn !== undefined && nextColumn < innerBlockColumn) {
++          innerBlockColumn = undefined
++        }
+       } else {
+         if (sawBlankLine || interruptsLazyContinuation(nextLine)) {
+           break

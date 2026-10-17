@@ -975,46 +975,49 @@ function serializeListItemWithMarker(
       Math.max(ctx.options.listIndent ?? 2, marker.length + 1),
   };
 
+  const markerLine = `${baseIndent}${marker} ${checkbox}`;
+
   if (node.content) {
     for (const child of node.content) {
       // A fenced block indents itself by list depth; under an item it takes
       // the continuation indent below instead, or every round trip would
-      // push it one level deeper. As the item's FIRST child it still starts
-      // on the line after the marker: the ordered and task item parsers read
-      // an item's first line as a paragraph, so a fence opened on the marker
-      // line comes back as text. The empty marker line is also exactly what
-      // an item whose first paragraph is empty writes, so both shapes read
-      // back the same.
+      // push it one level deeper.
       const fenced = SELF_INDENTING_BLOCK_TYPES.has(child.type ?? "");
+      const isList = LIST_BLOCK_TYPES.has(child.type ?? "");
       const serialized = serializeNode(
         child,
         fenced
           ? { ...itemCtx, listDepth: 0 }
-          : LIST_BLOCK_TYPES.has(child.type ?? "")
+          : isList
             ? nestedListCtx
             : itemCtx,
       );
+      const childLines = serialized.split("\n");
 
       if (firstLine) {
-        if (fenced) {
-          lines.push(`${baseIndent}${marker} ${checkbox}`);
-          for (const line of serialized.split("\n")) {
-            lines.push(`${continuationIndent}${line}`);
+        if (fenced || isList) {
+          // A fence or a list as the item's FIRST child starts on the line
+          // after an empty marker line: the ordered and task item parsers read
+          // an item's first line as a paragraph, so a fence opened on the
+          // marker line comes back as text, and a list there comes back as
+          // text, a code block or a list split in two. The empty marker line
+          // is also exactly what an item whose first paragraph is empty
+          // writes, so both shapes read back the same. A nested list already
+          // carries the content column.
+          lines.push(markerLine);
+          for (const line of childLines) {
+            lines.push(isList ? line : `${continuationIndent}${line}`);
           }
         } else {
           // Every line after the marker line sits at the content column. A
           // hard break is a bare "\n", and the line after it at column zero
           // is not inside the item: the task item parser reads only the
           // marker line as the item's paragraph, so the rest of it leaves the
-          // item, or becomes a list of its own when it starts like one.
-          const [head, ...rest] = serialized.split("\n");
-          lines.push(`${baseIndent}${marker} ${checkbox}${head}`);
+          // item.
+          const [head, ...rest] = childLines;
+          lines.push(`${markerLine}${head}`);
           for (const line of rest) {
-            lines.push(
-              LIST_BLOCK_TYPES.has(child.type ?? "")
-                ? line
-                : `${continuationIndent}${line}`,
-            );
+            lines.push(`${continuationIndent}${line}`);
           }
           markerOnly = serialized === "";
         }
@@ -1028,13 +1031,12 @@ function serializeListItemWithMarker(
         // paragraph follows directly and reads back as the item's own.
         if (child.type === "paragraph" && !markerOnly) lines.push("");
         markerOnly = false;
-        const childLines = serialized.split("\n");
         // A nested list that opens with an empty bullet item starts with a
         // bare `-` line, and directly under a line of text that reads as a
         // setext heading underline: the item's paragraph would come back as
         // a heading. A blank line before the list keeps it a list.
         if (
-          LIST_BLOCK_TYPES.has(child.type ?? "") &&
+          isList &&
           BARE_BULLET_LINE.test(childLines[0] ?? "") &&
           lines.length > 0 &&
           lines[lines.length - 1] !== ""
@@ -1042,11 +1044,7 @@ function serializeListItemWithMarker(
           lines.push("");
         }
         for (const line of childLines) {
-          if (LIST_BLOCK_TYPES.has(child.type ?? "")) {
-            lines.push(line);
-          } else {
-            lines.push(`${continuationIndent}${line}`);
-          }
+          lines.push(isList ? line : `${continuationIndent}${line}`);
         }
       }
     }

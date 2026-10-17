@@ -533,3 +533,382 @@ describe("keeps an item's paragraph when a nested list opens with an empty bulle
     expect(roundTrip(md2)).toBe(md2);
   });
 });
+
+// A task item's continuation line joins its first paragraph unless the nested
+// parser would open a block there, measured from the item's content column. A
+// line four columns past that column is indented code only while the first
+// paragraph is empty: code cannot interrupt a paragraph.
+
+interface TaskContext {
+  readonly name: string;
+  readonly parentLines: ReadonlyArray<string>;
+  readonly taskIndent: string;
+  readonly contentColumn: string;
+}
+
+const TASK_CONTEXTS: ReadonlyArray<TaskContext> = [
+  {
+    name: "a top-level task item",
+    parentLines: [],
+    taskIndent: "",
+    contentColumn: "  ",
+  },
+  {
+    name: "a bullet item",
+    parentLines: ["- a"],
+    taskIndent: "  ",
+    contentColumn: "    ",
+  },
+  ...MARKERS.map((marker): TaskContext => ({
+    name: `${marker}`,
+    parentLines: [`${marker} a`],
+    taskIndent: pad(marker),
+    contentColumn: `${pad(marker)}  `,
+  })),
+];
+
+type BlockKind = "indentedCode" | "plain" | "block" | "joinedText";
+
+interface BlockLine {
+  readonly name: string;
+  readonly lines: ReadonlyArray<string>;
+  readonly kind: BlockKind;
+}
+
+const BLOCK_LINES: ReadonlyArray<BlockLine> = [
+  { name: "a bullet marker", lines: ["- x"], kind: "block" },
+  { name: "an ordered marker", lines: ["1. x"], kind: "block" },
+  { name: "a fence", lines: ["```", "code", "```"], kind: "block" },
+  { name: "a blockquote", lines: ["> q"], kind: "block" },
+  { name: "an ATX heading", lines: ["# h"], kind: "block" },
+  { name: "a thematic break", lines: ["---"], kind: "block" },
+  // `===` joins the paragraph as text: nested under a bullet parent it came
+  // back as a bare text node when treated as an underline.
+  { name: "a setext underline", lines: ["==="], kind: "joinedText" },
+  { name: "an HTML block", lines: ["<div>hi</div>"], kind: "block" },
+  { name: "a table", lines: ["| a |", "| - |"], kind: "block" },
+  {
+    name: "a table without leading pipes",
+    lines: ["A | B", "--- | ---"],
+    kind: "block",
+  },
+  { name: "indented code", lines: ["    code"], kind: "indentedCode" },
+  { name: "a plain line", lines: ["plain"], kind: "plain" },
+];
+
+function findTaskItem(parsed: JsonContent): JsonContent {
+  const top = parsed.content ?? [];
+  const first = top[0];
+  expect(first).toBeDefined();
+  if (first.type === "taskList") return (first.content ?? [])[0];
+  const parentItem = (first.content ?? [])[0];
+  const taskList = (parentItem.content ?? []).find(
+    (child) => child.type === "taskList",
+  );
+  expect(taskList).toBeDefined();
+  return ((taskList ?? first).content ?? [])[0];
+}
+
+describe("a task item's continuation joins its paragraph only where no block opens", () => {
+  for (const context of TASK_CONTEXTS) {
+    for (const first of ["", "first"]) {
+      for (const block of BLOCK_LINES) {
+        const label = first === "" ? "empty" : "non-empty";
+        it(`${label} first paragraph, ${block.name}, under ${context.name}`, () => {
+          const markdown = [
+            ...context.parentLines,
+            `${context.taskIndent}- [ ] ${first}`,
+            ...block.lines.map((line) => `${context.contentColumn}${line}`),
+          ].join("\n");
+          const item = findTaskItem(parseMarkdown(markdown));
+          const children = item.content ?? [];
+
+          if (
+            block.kind === "plain" ||
+            block.kind === "joinedText" ||
+            (block.kind === "indentedCode" && first !== "")
+          ) {
+            const joinedTextByKind: Record<string, string> = {
+              plain: "plain",
+              joinedText: "===",
+              indentedCode: "code",
+            };
+            const text = joinedTextByKind[block.kind];
+            expect(childTypes(item)).toEqual(["paragraph"]);
+            expect(paragraphText(children[0])).toBe(
+              first === "" ? text : `${first}\n${text}`,
+            );
+            return;
+          }
+
+          const reference = parseMarkdown(block.lines.join("\n")).content ?? [];
+          expect(childTypes(item)[0]).toBe("paragraph");
+          expect(paragraphText(children[0])).toBe(first);
+          expect(children.slice(1)).toEqual(reference);
+        });
+      }
+    }
+  }
+});
+
+describe("a task item's lazy continuation line", () => {
+  const LAZY_CASES: ReadonlyArray<readonly [string, string, string]> = [
+    ["empty", "", "plain"],
+    ["empty", " ", "plain"],
+    ["non-empty", "", "first\nplain"],
+    ["non-empty", " ", "first\nplain"],
+  ];
+
+  for (const [state, lead, expectedText] of LAZY_CASES) {
+    it(`${state} first paragraph, plain line at column ${String(lead.length)}`, () => {
+      const first = state === "empty" ? "" : "first";
+      const parsed = parseMarkdown(`- [ ] ${first}\n${lead}plain`);
+      const top = parsed.content ?? [];
+
+      if (state === "empty" && lead === "") {
+        // The empty item ends at the blank-looking line: the text is top level.
+        expect(top.map((node) => node.type)).toEqual(["taskList", "paragraph"]);
+        expect(paragraphText(top[1])).toBe("plain");
+        expect(childTypes((top[0].content ?? [])[0])).toEqual(["paragraph"]);
+        return;
+      }
+
+      expect(top.map((node) => node.type)).toEqual(["taskList"]);
+      const item = (top[0].content ?? [])[0];
+      expect(childTypes(item)).toEqual(["paragraph"]);
+      expect(paragraphText((item.content ?? [])[0])).toBe(expectedText);
+    });
+  }
+});
+
+// A list that is an item's FIRST child: the item's marker line stays bare and
+// the nested list starts on the next line at the item's content column.
+
+function skeleton(node: JsonContent): string {
+  const text = node.text === undefined ? "" : `:${node.text}`;
+  const kids = (node.content ?? []).map(skeleton).join(",");
+  return `${node.type ?? ""}${text}(${kids})`;
+}
+
+function listWith(
+  type: "bulletList" | "orderedList",
+  items: ReadonlyArray<JsonContent>,
+  start: number,
+): JsonContent {
+  return type === "orderedList"
+    ? { type, attrs: { start }, content: [...items] }
+    : { type, content: [...items] };
+}
+
+function itemOf(...children: JsonContent[]): JsonContent {
+  return { type: "listItem", content: children };
+}
+
+const LIST_FIRST_CHILD_CASES: ReadonlyArray<readonly [string, JsonContent]> = [
+  [
+    "a bullet list of two items inside a bullet item",
+    listDoc(
+      listWith(
+        "bulletList",
+        [
+          itemOf(
+            listWith(
+              "bulletList",
+              [itemOf(textPara("x")), itemOf(textPara("y"))],
+              1,
+            ),
+          ),
+        ],
+        1,
+      ),
+    ),
+  ],
+  [
+    "three bullet lists deep",
+    listDoc(
+      listWith(
+        "bulletList",
+        [
+          itemOf(
+            listWith(
+              "bulletList",
+              [itemOf(listWith("bulletList", [itemOf(textPara("x"))], 1))],
+              1,
+            ),
+          ),
+        ],
+        1,
+      ),
+    ),
+  ],
+  [
+    "an ordered list inside an ordered item at 1.",
+    listDoc(
+      listWith(
+        "orderedList",
+        [
+          itemOf(
+            listWith(
+              "orderedList",
+              [itemOf(textPara("x")), itemOf(textPara("y"))],
+              1,
+            ),
+          ),
+        ],
+        1,
+      ),
+    ),
+  ],
+  [
+    "a bullet list inside an ordered item at 10.",
+    listDoc(
+      listWith(
+        "orderedList",
+        [itemOf(listWith("bulletList", [itemOf(textPara("x"))], 1))],
+        10,
+      ),
+    ),
+  ],
+  [
+    "an ordered list inside a bullet item",
+    listDoc(
+      listWith(
+        "bulletList",
+        [itemOf(listWith("orderedList", [itemOf(textPara("x"))], 1))],
+        1,
+      ),
+    ),
+  ],
+];
+
+describe("a list as an item's first child", () => {
+  for (const [name, source] of LIST_FIRST_CHILD_CASES) {
+    it(`keeps its structure and converges: ${name}`, () => {
+      const md1 = jsonContentToMarkdown(source, SERIALIZER_OPTIONS);
+      const parsed = parseMarkdown(md1);
+      expect(skeleton(parsed)).toBe(skeleton(source));
+
+      const md2 = jsonContentToMarkdown(parsed, SERIALIZER_OPTIONS);
+      const md3 = jsonContentToMarkdown(parseMarkdown(md2), SERIALIZER_OPTIONS);
+      expect(md2).toBe(md1);
+      expect(md3).toBe(md1);
+    });
+  }
+});
+
+// The ordered tokenizer used to pull a nested `1. x` out of the block it was
+// written in and make it a sibling list of the outer ordered item. The
+// structure that was serialized has to be the structure that comes back.
+
+function expectStructureBack(source: JsonContent): void {
+  const md1 = jsonContentToMarkdown(source, SERIALIZER_OPTIONS);
+  const parsed = parseMarkdown(md1);
+  expect(skeleton(parsed)).toBe(skeleton(source));
+
+  const md2 = jsonContentToMarkdown(parsed, SERIALIZER_OPTIONS);
+  const md3 = jsonContentToMarkdown(parseMarkdown(md2), SERIALIZER_OPTIONS);
+  expect(md2).toBe(md1);
+  expect(md3).toBe(md1);
+}
+
+function orderedAt(start: number, ...children: JsonContent[]): JsonContent {
+  return listDoc(listWith("orderedList", [itemOf(...children)], start));
+}
+
+function orderedX(): JsonContent {
+  return listWith("orderedList", [itemOf(textPara("x"))], 1);
+}
+
+describe("an ordered list nested in another block under an ordered item stays in that block", () => {
+  for (const start of [1, 10, 100]) {
+    it(`under a bullet list inside an ordered item at ${String(start)}.`, () => {
+      expectStructureBack(
+        orderedAt(
+          start,
+          textPara("a"),
+          listWith("bulletList", [itemOf(textPara("b"), orderedX())], 1),
+        ),
+      );
+    });
+
+    it(`under a task list inside an ordered item at ${String(start)}.`, () => {
+      expectStructureBack(
+        orderedAt(start, textPara("a"), {
+          type: "taskList",
+          content: [
+            {
+              type: "taskItem",
+              attrs: { checked: false },
+              content: [textPara("t"), orderedX()],
+            },
+          ],
+        }),
+      );
+    });
+
+    it(`under a blockquote inside an ordered item at ${String(start)}.`, () => {
+      const column = " ".repeat(String(start).length + 2);
+      const markdown = `${String(start)}. a\n${column}> q\n${column}> 1. x`;
+      const expected = orderedAt(start, textPara("a"), {
+        type: "blockquote",
+        content: [textPara("q"), orderedX()],
+      });
+      const parsed = parseMarkdown(markdown);
+      expect(skeleton(parsed)).toBe(skeleton(expected));
+      const md = roundTrip(markdown);
+      expect(roundTrip(md)).toBe(md);
+    });
+  }
+
+  it("keeps a `1. x` line inside a fence under an ordered item as code", () => {
+    expectStructureBack(
+      orderedAt(1, textPara("a"), {
+        type: "codeBlock",
+        content: [{ type: "text", text: "1. x\n2. y" }],
+      }),
+    );
+  });
+
+  it("keeps an ordered list under an empty task item under an ordered item", () => {
+    const expected = orderedAt(1, textPara("a"), {
+      type: "taskList",
+      content: [
+        {
+          type: "taskItem",
+          attrs: { checked: false },
+          content: [{ type: "paragraph" }, orderedX()],
+        },
+      ],
+    });
+    const markdown = "1. a\n   - [ ] \n     1. x";
+    const parsed = parseMarkdown(markdown);
+    expect(skeleton(parsed)).toBe(skeleton(expected));
+    const md = roundTrip(markdown);
+    expect(roundTrip(md)).toBe(md);
+  });
+
+  it("keeps a plain nested ordered list nested", () => {
+    const expected = orderedAt(
+      1,
+      textPara("a"),
+      listWith("orderedList", [itemOf(textPara("b"))], 1),
+    );
+    const parsed = parseMarkdown("1. a\n   1. b");
+    expect(skeleton(parsed)).toBe(skeleton(expected));
+    const md = roundTrip("1. a\n   1. b");
+    expect(roundTrip(md)).toBe(md);
+  });
+
+  it("keeps an ordered list after a bullet list at the same column as a sibling inside the item", () => {
+    const expected = orderedAt(
+      1,
+      textPara("a"),
+      listWith("bulletList", [itemOf(textPara("b"))], 1),
+      orderedX(),
+    );
+    const parsed = parseMarkdown("1. a\n   - b\n   1. x");
+    expect(skeleton(parsed)).toBe(skeleton(expected));
+    const md = roundTrip("1. a\n   - b\n   1. x");
+    expect(roundTrip(md)).toBe(md);
+  });
+});

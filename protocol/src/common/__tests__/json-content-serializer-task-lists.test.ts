@@ -223,6 +223,63 @@ describe("jsonContentToMarkdown task lists", () => {
   });
 });
 
+describe("writes list item text as the agent typed it", () => {
+  it("leaves a bullet-looking line after a hard break in a task item unescaped", () => {
+    expect(
+      toMarkdown(
+        doc([
+          taskList([
+            taskItem(false, [hardBreakParagraph("First", "- Second")]),
+          ]),
+        ]),
+      ),
+    ).toBe("- [ ] First\n  - Second");
+  });
+
+  it("leaves a blockquote-looking line after a hard break in a bullet item unescaped", () => {
+    expect(
+      toMarkdown(
+        doc([
+          {
+            type: "bulletList",
+            content: [
+              {
+                type: "listItem",
+                content: [hardBreakParagraph("First", "> q")],
+              },
+            ],
+          },
+        ]),
+      ),
+    ).toBe("- First\n  > q");
+  });
+
+  it("leaves a heading-looking line after a hard break in an ordered item at 10 unescaped", () => {
+    expect(
+      toMarkdown(
+        doc([
+          {
+            type: "orderedList",
+            attrs: { start: 10 },
+            content: [
+              {
+                type: "listItem",
+                content: [hardBreakParagraph("First", "# h")],
+              },
+            ],
+          },
+        ]),
+      ),
+    ).toBe("10. First\n    # h");
+  });
+
+  it("leaves a top-level paragraph's lines unescaped", () => {
+    expect(toMarkdown(doc([hardBreakParagraph("First", "- Second")]))).toBe(
+      "First\n- Second",
+    );
+  });
+});
+
 function doc(content: JsonContent[]): JsonContent {
   return { type: "doc", content };
 }

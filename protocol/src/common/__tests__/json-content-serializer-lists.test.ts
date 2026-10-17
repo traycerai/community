@@ -548,6 +548,87 @@ describe("jsonContentToMarkdown ordered lists", () => {
       ),
     ).toBe("- a\n  - x");
   });
+
+  it("opens an item that holds only a bullet list with a bare marker line", () => {
+    expect(
+      toMarkdown(
+        docOf(
+          bulletList([
+            listItem([
+              bulletList([
+                listItem([textParagraph("x")]),
+                listItem([textParagraph("y")]),
+              ]),
+            ]),
+          ]),
+        ),
+      ),
+    ).toBe("-\n  - x\n  - y");
+  });
+
+  it("opens a three-deep chain of bullet lists with bare marker lines", () => {
+    expect(
+      toMarkdown(
+        docOf(
+          bulletList([
+            listItem([
+              bulletList([
+                listItem([bulletList([listItem([textParagraph("x")])])]),
+              ]),
+            ]),
+          ]),
+        ),
+      ),
+    ).toBe("-\n  -\n    - x");
+  });
+
+  it("opens an ordered item that holds only an ordered list with the marker and its trailing space", () => {
+    expect(
+      toMarkdown(
+        docOf(
+          orderedBlock(
+            [
+              listItem([
+                orderedBlock(
+                  [
+                    listItem([textParagraph("x")]),
+                    listItem([textParagraph("y")]),
+                  ],
+                  1,
+                ),
+              ]),
+            ],
+            1,
+          ),
+        ),
+      ),
+    ).toBe("1. \n   1. x\n   2. y");
+  });
+
+  it("opens an ordered item at 10 that holds only a bullet list on the next line", () => {
+    expect(
+      toMarkdown(
+        docOf(
+          orderedBlock(
+            [listItem([bulletList([listItem([textParagraph("x")])])])],
+            10,
+          ),
+        ),
+      ),
+    ).toBe("10. \n    - x");
+  });
+
+  it("opens a bullet item that holds only an ordered list with a bare marker", () => {
+    expect(
+      toMarkdown(
+        docOf(
+          bulletList([
+            listItem([orderedBlock([listItem([textParagraph("x")])], 1)]),
+          ]),
+        ),
+      ),
+    ).toBe("-\n  1. x");
+  });
 });
 
 function orderedList(
