@@ -16,6 +16,7 @@ import {
   type RefObject,
 } from "react";
 import { CircleDot, Sparkle } from "lucide-react";
+import { useStore } from "zustand";
 import type { GuiHarnessOption } from "@traycer/protocol/host/index";
 import type { GuiAgentModelOption } from "@traycer/protocol/host/agent/gui/unary-schemas";
 import type { ProviderCliState } from "@traycer/protocol/host/provider-schemas";
@@ -630,6 +631,7 @@ function PickTileContent(
   // the seed as the judge. It is seeded with the level the host runs (the
   // stored effort, else the model's lowest).
   const drawsEffortFooter = props.storesEffort && judgeSelectionMarked(state);
+  const pickerToolbar = useStore(picker.toolbar.store);
   return (
     <>
       <RadioGroupItem
@@ -651,6 +653,10 @@ function PickTileContent(
       {state.row === "loading" ? null : (
         <HarnessModelPicker
           store={picker.toolbar.store}
+          maxModeContext={{
+            kind: "judge",
+            reasoningEffort: drawsEffortFooter ? pickerToolbar.reasoning : null,
+          }}
           // No Fast setting to carry; the effort footer per
           // `drawsEffortFooter` above.
           withServiceTier={false}

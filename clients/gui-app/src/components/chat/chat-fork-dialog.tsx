@@ -435,6 +435,13 @@ function ChatForkDialogBody(props: ChatForkDialogProps) {
       chatLineCarriesAutoMode: null,
     },
   );
+  const pickerToolbar = useStore(toolbarStore);
+  const pickerChatSettings = buildChatRunSettings({
+    selection: pickerToolbar.selection,
+    permission: pickerToolbar.permission,
+    reasoning: pickerToolbar.reasoning,
+    serviceTier: pickerToolbar.serviceTier,
+  });
   // Cross-host asks a DIFFERENT question from same-host, and only cross-host.
   //
   // The toolbar store retains the previous host's slug across a retarget while
@@ -903,6 +910,7 @@ function ChatForkDialogBody(props: ChatForkDialogProps) {
                 labelDisplay="responsive"
                 key={modelPickerKey}
                 store={toolbarStore}
+                maxModeContext={{ kind: "chat", tuple: pickerChatSettings }}
                 withServiceTier
                 withReasoning
                 tuiOnly={false}

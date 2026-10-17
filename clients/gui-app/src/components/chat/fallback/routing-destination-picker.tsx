@@ -346,28 +346,57 @@ export function RoutingDestinationPicker(props: {
   return (
     <>
       <RoutingCatalogSync store={store} client={client} open={open} />
-      <HarnessModelPicker
+      <RoutingModelPicker
         store={store}
-        withServiceTier={false}
-        withReasoning
-        tuiOnly={false}
-        lockedHarnessId={null}
-        // Never the trigger's gate: a surface that goes quiet while its answer
-        // is in flight must stay open to give it.
-        disabled={false}
-        // Not the composer's toggle target: the model-picker shortcut and the
-        // palette's "Change model…" belong to the chat's own composer.
-        registerActivation={false}
-        createProfileHostId={tabHostId}
-        runTargetHostId={tabHostId}
-        // No terminal to open a provider's setup session into from here; the
-        // panel shows the steps without the button.
-        terminalLoginSurface={null}
-        labelDisplay="model-only"
-        profileAdmission={null}
+        data={data}
+        failedTuple={failedTuple}
+        tabHostId={tabHostId}
         embedding={embedding}
       />
     </>
+  );
+}
+
+// The store subscription stays below the listing/lease wrapper: catalog
+// updates can replace store state without asking the host for another listing.
+function RoutingModelPicker(props: {
+  readonly store: ComposerToolbarStore;
+  readonly data: ChatFallbackListTargetsResponse | undefined;
+  readonly failedTuple: ChatRunSettings;
+  readonly tabHostId: string;
+  readonly embedding: HarnessModelPickerEmbedding;
+}) {
+  const selection = useStore(props.store, (state) => state.selection);
+  const reasoning = useStore(props.store, (state) => state.reasoning);
+  const selectedModel = useStore(props.store, (state) => state.selectedModel);
+  const target = confirmTarget(
+    { selection, reasoning, selectedModel },
+    props.data,
+    props.failedTuple,
+  );
+  return (
+    <HarnessModelPicker
+      store={props.store}
+      maxModeContext={{ kind: "chat", tuple: target }}
+      withServiceTier={false}
+      withReasoning
+      tuiOnly={false}
+      lockedHarnessId={null}
+      // Never the trigger's gate: a surface that goes quiet while its answer
+      // is in flight must stay open to give it.
+      disabled={false}
+      // Not the composer's toggle target: the model-picker shortcut and the
+      // palette's "Change model…" belong to the chat's own composer.
+      registerActivation={false}
+      createProfileHostId={props.tabHostId}
+      runTargetHostId={props.tabHostId}
+      // No terminal to open a provider's setup session into from here; the
+      // panel shows the steps without the button.
+      terminalLoginSurface={null}
+      labelDisplay="model-only"
+      profileAdmission={null}
+      embedding={props.embedding}
+    />
   );
 }
 
