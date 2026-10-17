@@ -574,20 +574,14 @@ function listItemLines(
     // paragraph, so the trailing prose jumped above the steps it was written
     // to follow. Child order is content, not layout.
     //
-    // The FIRST block goes in whole, behind the marker, with its own newlines
-    // untouched: a `hardBreak` in the first paragraph is a bare "\n" on the
-    // wire, so the serializer emits `- foo\nbar` with the second line at
-    // column zero. Indenting every line and then stripping the first gave
-    // `- foo\n  bar` - a continuation indent the agent never received.
-    // Continuation indent belongs to LATER blocks only, per line, and a nested
-    // list passes through unchanged because it already carries its own depth.
-    // A fence as the FIRST block starts on the line after an empty marker
-    // line, every line at the continuation indent, as
-    // `serializeListItemWithMarker` writes it. The serializer's normalization
-    // keeps the space after an empty ORDERED marker and drops it after a
-    // bullet, so this does the same.
+    // The serializer's normalization keeps the space after an empty ORDERED
+    // marker and drops it after a bullet, so this does the same.
+    const emptyMarkerLine = ordered
+      ? `${baseIndent}${marker} `
+      : `${baseIndent}${marker}`;
     const lines: string[] = [];
     let firstBlock = true;
+    let markerOnly = false;
     for (const block of item.content ?? []) {
       const nested = isListNode(block);
       const serialized = nested
@@ -600,31 +594,66 @@ function listItemLines(
             content: [...prepareForProjection([block])],
           });
       if (firstBlock) {
-        if (FENCE_NODE_TYPES.has(block.type ?? "")) {
-          lines.push(
-            ordered ? `${baseIndent}${marker} ` : `${baseIndent}${marker}`,
-          );
-          for (const line of serialized.split("\n")) {
-            lines.push(`${continuationIndent}${line}`);
-          }
-        } else {
-          lines.push(`${baseIndent}${marker} ${serialized}`);
-        }
+        lines.push(
+          ...firstBlockLines(block, serialized, {
+            markerLine: `${baseIndent}${marker} `,
+            emptyMarkerLine,
+            continuationIndent,
+          }),
+        );
+        markerOnly = serialized === "";
         firstBlock = false;
         continue;
       }
-      // The serializer puts a blank line before every later paragraph.
-      if (block.type === "paragraph") lines.push("");
+      // The serializer puts a blank line before every later paragraph, except
+      // straight after a marker line with nothing on it.
+      if (block.type === "paragraph" && !markerOnly) lines.push("");
+      markerOnly = false;
       for (const line of serialized.split("\n")) {
         lines.push(nested ? line : `${continuationIndent}${line}`);
       }
     }
-    // The serializer keeps the space after an empty ORDERED marker.
-    if (lines.length === 0) {
-      return [ordered ? `${baseIndent}${marker} ` : `${baseIndent}${marker}`];
-    }
-    return lines;
+    return lines.length === 0 ? [emptyMarkerLine] : lines;
   });
+}
+
+interface ListItemPrefixes {
+  /** The marker and its space, which the first line of content follows. */
+  readonly markerLine: string;
+  /** The marker line with nothing on it, as the serializer leaves it. */
+  readonly emptyMarkerLine: string;
+  readonly continuationIndent: string;
+}
+
+/**
+ * An item's FIRST block, as `serializeListItemWithMarker` writes it. It starts
+ * behind the marker, and every line after that takes the continuation indent:
+ * a `hardBreak` in the first paragraph is a bare "\n" on the wire, and the
+ * serializer writes `- foo\n  bar`, because at column zero the line after the
+ * break falls out of a task item when it is parsed back. A nested list passes
+ * through unchanged because it already carries its own depth. A fence starts
+ * on the line after an empty marker line, every line at the continuation
+ * indent.
+ */
+function firstBlockLines(
+  block: JsonContent,
+  serialized: string,
+  prefixes: ListItemPrefixes,
+): ReadonlyArray<string> {
+  const { markerLine, emptyMarkerLine, continuationIndent } = prefixes;
+  if (FENCE_NODE_TYPES.has(block.type ?? "")) {
+    return [
+      emptyMarkerLine,
+      ...serialized.split("\n").map((line) => `${continuationIndent}${line}`),
+    ];
+  }
+  if (serialized === "") return [emptyMarkerLine];
+  const nested = isListNode(block);
+  const [head, ...rest] = serialized.split("\n");
+  return [
+    `${markerLine}${head}`,
+    ...rest.map((line) => (nested ? line : `${continuationIndent}${line}`)),
+  ];
 }
 
 function isListNode(node: JsonContent): boolean {

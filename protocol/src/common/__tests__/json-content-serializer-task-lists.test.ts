@@ -181,6 +181,46 @@ describe("jsonContentToMarkdown task lists", () => {
       "- [x] Lone",
     );
   });
+
+  it.each([
+    [false, "- [ ] First\n  Second"],
+    [true, "- [x] First\n  Second"],
+  ])(
+    "keeps the line after a hard break in a task item's first paragraph at the content column (checked %s)",
+    (checked, expected) => {
+      expect(
+        toMarkdown(
+          doc([
+            taskList([
+              taskItem(checked, [hardBreakParagraph("First", "Second")]),
+            ]),
+          ]),
+        ),
+      ).toBe(expected);
+    },
+  );
+
+  it("keeps a bullet-looking line after a hard break inside the task item", () => {
+    expect(
+      toMarkdown(
+        doc([
+          taskList([
+            taskItem(false, [hardBreakParagraph("First", "- Second")]),
+          ]),
+        ]),
+      ),
+    ).toBe("- [ ] First\n  - Second");
+  });
+
+  it("writes a paragraph after an empty first paragraph directly under the empty marker line", () => {
+    expect(
+      toMarkdown(
+        doc([
+          taskList([taskItem(false, [{ type: "paragraph" }, paragraph("b")])]),
+        ]),
+      ),
+    ).toBe("- [ ] \n  b");
+  });
 });
 
 function doc(content: JsonContent[]): JsonContent {
@@ -204,4 +244,15 @@ function toMarkdown(content: JsonContent): string {
     mentionFormat: "llm",
     platform: "POSIX",
   });
+}
+
+function hardBreakParagraph(first: string, second: string): JsonContent {
+  return {
+    type: "paragraph",
+    content: [
+      { type: "text", text: first },
+      { type: "hardBreak" },
+      { type: "text", text: second },
+    ],
+  };
 }
