@@ -91,7 +91,7 @@ describe("<TerminalDeadTileBanner />", () => {
 });
 
 describe("<ChatDeadTileBanner />", () => {
-  it("leads with the clone action and says the original stays on the host (host-offline)", () => {
+  it("leads with the clone action and names the offline host and says the original stays there (host-offline)", () => {
     render(
       <ChatDeadTileBanner
         hostLabel="mac-mini"
@@ -109,7 +109,7 @@ describe("<ChatDeadTileBanner />", () => {
     // The clone fires immediately from this banner, so it is the only place the
     // user is told the original stays where it is.
     expect(screen.getByTestId("chat-dead").textContent).toContain(
-      'Clone this agent to continue; the original stays on "mac-mini".',
+      'Clone this agent to continue while "mac-mini" is offline; the original stays there.',
     );
     // The clone lands on the app's active host, which need not be the machine
     // the reader is at, so the sentence names no place for it.

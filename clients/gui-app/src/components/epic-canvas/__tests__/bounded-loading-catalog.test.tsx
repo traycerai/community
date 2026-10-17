@@ -402,7 +402,7 @@ describe("a dead-offline lease draws the Clone banner over a directory that has 
 
     const banner = screen.getByTestId(bannerTestId);
     expect(banner.textContent).toContain(
-      'Clone this agent to continue; the original stays on "Office Mac".',
+      'Clone this agent to continue while "Office Mac" is offline; the original stays there.',
     );
     expect(screen.getByRole("button", { name: "Clone agent" })).not.toBeNull();
     // The body above the strip points at the button the strip draws.
@@ -410,8 +410,12 @@ describe("a dead-offline lease draws the Clone banner over a directory that has 
       screen.getByTestId(`chat-tile-pre-content-${CHAT_ARTIFACT.id}`)
         .textContent,
     ).toContain(
-      'Turn on "Office Mac" and open Traycer there, or continue here as a new agent.',
+      'Open Traycer on "Office Mac", or continue here as a new agent.',
     );
+    expect(
+      screen.getByTestId(`chat-tile-pre-content-${CHAT_ARTIFACT.id}`)
+        .textContent,
+    ).not.toContain("Turn on");
   });
 
   it("names the host as the host, not a raw id, while the directory is still checking", async () => {
@@ -422,7 +426,9 @@ describe("a dead-offline lease draws the Clone banner over a directory that has 
     await settleEpicSession();
 
     const banner = screen.getByTestId(bannerTestId);
-    expect(banner.textContent).toContain("the original stays on the host.");
+    expect(banner.textContent).toContain(
+      "while the host is offline; the original stays there.",
+    );
     expect(banner.textContent).not.toContain(CHAT_ARTIFACT.hostId);
     expect(screen.getByRole("button", { name: "Clone agent" })).not.toBeNull();
   });
@@ -434,14 +440,14 @@ describe("a dead-offline lease draws the Clone banner over a directory that has 
     await settleEpicSession();
 
     const banner = screen.getByTestId(bannerTestId);
-    expect(banner.textContent).toContain("the original stays on the host.");
+    expect(banner.textContent).toContain(
+      "while the host is offline; the original stays there.",
+    );
     expect(banner.textContent).not.toContain(CHAT_ARTIFACT.hostId);
     const body = screen.getByTestId(
       `chat-tile-pre-content-${CHAT_ARTIFACT.id}`,
     );
-    expect(body.textContent).toContain(
-      "Turn on the host and open Traycer there",
-    );
+    expect(body.textContent).toContain("Open Traycer on the host");
     expect(body.textContent).not.toContain(CHAT_ARTIFACT.hostId);
   });
 
@@ -474,9 +480,7 @@ describe("a dead-offline lease draws the Clone banner over a directory that has 
     const body = screen.getByTestId(
       `chat-tile-pre-content-${CHAT_ARTIFACT.id}`,
     );
-    expect(body.textContent).toContain(
-      'Turn on "Office Mac" and open Traycer there.',
-    );
+    expect(body.textContent).toContain('Open Traycer on "Office Mac".');
     expect(body.textContent).not.toContain("continue here");
   });
 

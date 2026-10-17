@@ -700,10 +700,12 @@ function hostGoneDetail(
 ): string | null {
   if (input.hostKind !== "remote" || input.hasReadySession) return null;
   if (deadStateOf(input).reason !== "offline") return null;
-  const turnOn = `Turn on ${host} and open Traycer there`;
+  // Says what to do on that machine and nothing about its power: a lease
+  // reads offline whether the machine is off or only unreachable from here.
+  const openThere = `Open Traycer on ${host}`;
   return axes.strip === "offline" && input.cloneAllowed
-    ? `${turnOn}, or continue here as a new agent.`
-    : `${turnOn}.`;
+    ? `${openThere}, or continue here as a new agent.`
+    : `${openThere}.`;
 }
 
 /** Arm 4's second line, first match wins. */

@@ -433,11 +433,15 @@ const CHAT_DEAD_TILE_BANNER_COPY: Record<
   ChatDeadTileBannerReason,
   ChatDeadTileBannerCopy
 > = {
-  // Leads with what the reader can do, beside the button that does it. The
-  // body below already says the host is offline when nothing is loaded.
+  // Leads with what the reader can do, beside the button that does it, and
+  // keeps the cause: over a loaded transcript there is no body below to say
+  // the host is offline, so this sentence is the only one that does.
   "host-offline": {
     message: (host) => (
-      <>Clone this agent to continue; the original stays on {host}.</>
+      <>
+        Clone this agent to continue while {host} is offline; the original stays
+        there.
+      </>
     ),
     // No button for this reader, so no action to lead with: what is true for
     // them, and why there is nothing to press.

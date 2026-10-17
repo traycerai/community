@@ -720,7 +720,7 @@ describe("arm 3: the host is gone", () => {
         hostKind: "remote",
         cloneAllowed: true,
       },
-      `Turn on "${LABEL}" and open Traycer there, or continue here as a new agent.`,
+      `Open Traycer on "${LABEL}", or continue here as a new agent.`,
     ],
     [
       "a remote host the directory still checks, with Clone offered",
@@ -730,7 +730,7 @@ describe("arm 3: the host is gone", () => {
         hostKind: "remote",
         cloneAllowed: true,
       },
-      `Turn on "${LABEL}" and open Traycer there, or continue here as a new agent.`,
+      `Open Traycer on "${LABEL}", or continue here as a new agent.`,
     ],
     [
       "a remote host the directory calls unreachable, with Clone offered",
@@ -740,7 +740,7 @@ describe("arm 3: the host is gone", () => {
         hostKind: "remote",
         cloneAllowed: true,
       },
-      `Turn on "${LABEL}" and open Traycer there, or continue here as a new agent.`,
+      `Open Traycer on "${LABEL}", or continue here as a new agent.`,
     ],
     [
       "a remote host with Clone withheld from this role",
@@ -750,7 +750,7 @@ describe("arm 3: the host is gone", () => {
         hostKind: "remote",
         cloneAllowed: false,
       },
-      `Turn on "${LABEL}" and open Traycer there.`,
+      `Open Traycer on "${LABEL}".`,
     ],
     [
       // The session proves the machine is on and running Traycer.
@@ -773,7 +773,7 @@ describe("arm 3: the host is gone", () => {
         hostLabel: null,
         cloneAllowed: true,
       },
-      "Turn on the host and open Traycer there, or continue here as a new agent.",
+      "Open Traycer on the host, or continue here as a new agent.",
     ],
     [
       "a remote host with no label and Clone withheld",
@@ -784,7 +784,7 @@ describe("arm 3: the host is gone", () => {
         hostLabel: null,
         cloneAllowed: false,
       },
-      "Turn on the host and open Traycer there.",
+      "Open Traycer on the host.",
     ],
     [
       "this machine's own host",
@@ -820,6 +820,9 @@ describe("arm 3: the host is gone", () => {
     const view = describeChatPreContent(input(overrides));
     expect(view.kind).toBe("host-gone");
     expect(view.detail).toBe(detail);
+    // The line says what to do on that machine, never that it is switched off:
+    // an offline lease also covers a machine that is on but unreachable here.
+    expect(view.detail ?? "").not.toContain("Turn on");
   });
 
   it("keeps the lease's own headline whatever the second line says", () => {
@@ -1185,7 +1188,7 @@ describe("negative controls over every input", () => {
     for (const value of inputs) {
       if (!value.hasReadySession) continue;
       ready += 1;
-      expect(bodyText(value)).not.toContain("Turn on");
+      expect(bodyText(value)).not.toContain("Open Traycer on");
     }
     expect(ready).toBeGreaterThan(0);
   });
