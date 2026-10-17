@@ -738,7 +738,7 @@ describe("a provider the account's plan cannot create (F45)", () => {
     expect(screen.queryByTestId("sandbox-create-submit")).toBeNull();
   }
 
-  it("replaces the size inputs, price and Create with one line naming the plan's memory", async () => {
+  it("replaces the size inputs, price and Create with the generic line when the plan's memory is too small", async () => {
     await openWith([
       provider(
         ["linux"],
@@ -748,8 +748,10 @@ describe("a provider the account's plan cannot create (F45)", () => {
       ),
     ]);
 
+    // Nothing about the plan is the person's to change, so the line says
+    // only that sandboxes can't be created here.
     expect(screen.getByTestId("sandbox-create-not-creatable").textContent).toBe(
-      "This account's sandbox plan allows 1 GB of memory per sandbox; a sandbox needs 2 GB. Sandboxes can be created once the plan allows 2 GB.",
+      "Sandboxes can't be created on this account right now.",
     );
     expectFormGone();
     expect(

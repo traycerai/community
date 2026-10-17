@@ -4,7 +4,6 @@ import type { AuthenticatedUser } from "@traycer/protocol/auth";
 import {
   SANDBOX_REFUSAL_CODE_ENVIRONMENT_NOT_FOUND,
   SANDBOX_REFUSAL_CODE_ENVIRONMENT_UNAVAILABLE,
-  SANDBOX_NOT_CREATABLE_REASON_PLAN_MEMORY,
   SANDBOX_REFUSAL_CODE_INSUFFICIENT_CREDIT,
   type SandboxCatalogue,
   type SandboxCatalogueProvider,
@@ -412,7 +411,9 @@ function formReplacement(
         className="text-ui-sm text-muted-foreground"
         data-testid="sandbox-create-not-creatable"
       >
-        {notCreatableLine(provider)}
+        {/* Whatever the catalogue's reason, nothing about it is the
+            person's to change: the line says only that. */}
+        Sandboxes can&apos;t be created on this account right now.
       </p>
       {/* A create sent from another OS still runs: say so here too. */}
       {osSelect.creating ? (
@@ -426,17 +427,6 @@ function formReplacement(
       <SandboxCreateFailure shown />
     </div>
   );
-}
-
-/** Why a provider cannot be created into, from the catalogue's own row. */
-function notCreatableLine(provider: SandboxCatalogueProvider): string {
-  if (
-    provider.notCreatableReason === SANDBOX_NOT_CREATABLE_REASON_PLAN_MEMORY
-  ) {
-    const needs = formatMemory(provider.shape.memoryMinMb);
-    return `This account's sandbox plan allows ${formatMemory(provider.shape.memoryMaxMb)} of memory per sandbox; a sandbox needs ${needs}. Sandboxes can be created once the plan allows ${needs}.`;
-  }
-  return "Sandboxes can't be created on this account right now.";
 }
 
 /** A read the form needs failed: say so, with a retry. */
