@@ -908,13 +908,22 @@ function deliveryIconClassName(
   return "text-primary";
 }
 
+// A foreground-alpha fill rather than `bg-muted`: the card this sits on is a
+// raised surface, where a muted fill collapses into the card in the preset
+// themes and the queued tag would vanish.
 function A2ADeliveryBadge(props: {
   readonly label: string;
   readonly undelivered: boolean;
 }) {
-  if (!props.undelivered) return <ToolStateBadge label={props.label} />;
   return (
-    <span className="shrink-0 rounded border border-destructive/40 bg-destructive/10 px-1 text-overline font-medium uppercase text-destructive">
+    <span
+      className={cn(
+        "shrink-0 rounded border px-1 text-overline font-medium uppercase",
+        props.undelivered
+          ? "border-destructive/40 bg-destructive/10 text-destructive"
+          : "border-border bg-foreground/8 text-muted-foreground",
+      )}
+    >
       {props.label}
     </span>
   );

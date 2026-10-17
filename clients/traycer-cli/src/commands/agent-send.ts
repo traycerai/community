@@ -88,15 +88,24 @@ export function buildAgentSendCommand(opts: {
 }
 
 /**
+ * A Windows path that names its drive (`C:\work`, `C:/work`) or a UNC share
+ * (`\\server\share`). `path.win32.isAbsolute` also accepts `\work`, which is
+ * rooted only on whatever drive the receiving process happens to be on.
+ */
+const WINDOWS_FULLY_QUALIFIED = /^(?:[A-Za-z]:[\\/]|\\\\[^\\/]+[\\/][^\\/]+)/;
+
+/**
  * The folder is on the RECEIVING agent's host, which may run another
  * platform, so it is checked as absolute in either form and passed through
- * as written rather than resolved against this machine.
+ * as written rather than resolved against this machine. A Windows path must
+ * name its drive or share, so its meaning cannot depend on the receiver's
+ * current drive.
  */
 function requireWorkspacePath(rawPath: string): string {
   const trimmed = rawPath.trim();
   if (
     trimmed.length === 0 ||
-    !(path.posix.isAbsolute(trimmed) || path.win32.isAbsolute(trimmed))
+    !(path.posix.isAbsolute(trimmed) || WINDOWS_FULLY_QUALIFIED.test(trimmed))
   ) {
     throw cliError({
       code: CLI_ERROR_CODES.INVALID_ARGUMENT,

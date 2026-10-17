@@ -858,6 +858,10 @@ describe("<ToolSegment /> cross-host send delivery", () => {
     renderDelivery("queued");
     expect(screen.getByText(/Queued for Work Laptop/)).toBeTruthy();
     expect(screen.getByText("queued")).toBeTruthy();
+    // The badge paints its own fill: `bg-muted` collapses into raised surfaces.
+    const badge = screen.getByText("queued");
+    expect(badge.className).toContain("bg-foreground/8");
+    expect(badge.className).not.toContain("bg-muted");
     expect(screen.getByText("Queued message").className).toContain("sr-only");
     expect(screen.queryByText("Sent message")).toBeNull();
   });

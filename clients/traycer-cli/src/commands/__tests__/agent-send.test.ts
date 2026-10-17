@@ -155,7 +155,28 @@ describe("agent send --workspace", () => {
     );
   });
 
-  it.each(["relative/dir", "./here", "", "   "])(
+  it.each(["C:\\work", "C:/work", "\\\\server\\share\\x"])(
+    "accepts the windows path %j and passes it through unchanged",
+    async (value) => {
+      await send(value);
+
+      expect(rpcMock).toHaveBeenCalledWith(
+        "agent.sendMessage",
+        expect.objectContaining({ workspace: value }),
+        expect.anything(),
+      );
+    },
+  );
+
+  it.each([
+    "relative/dir",
+    "./here",
+    "",
+    "   ",
+    "\\work",
+    "C:work",
+    "\\\\server",
+  ])(
     "rejects %j as INVALID_ARGUMENT before calling the host",
     async (value) => {
       const error = await rejection(send(value));
