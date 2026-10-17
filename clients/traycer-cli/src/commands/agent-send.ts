@@ -79,10 +79,13 @@ export function buildAgentSendCommand(opts: {
       sendAgentMessageResponseSchema,
       result,
     );
+    // Success means the host accepted the message, not that the receiver has
+    // it: an agent on another host may be offline, and a same-host send gets
+    // the same response, so the line claims neither "delivered" nor "queued".
     const human =
       responseId === null
-        ? `sent to ${opts.to}`
-        : `sent to ${opts.to} (responseId: ${responseId})`;
+        ? `Message accepted for ${opts.to}`
+        : `Message accepted for ${opts.to} (responseId: ${responseId})`;
     return { data: { responseId }, human, exitCode: 0 };
   };
 }

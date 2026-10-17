@@ -225,3 +225,24 @@ describe("agent send WORKSPACE_BINDING_REQUIRED hint", () => {
     expect(error.message).not.toContain("--workspace");
   });
 });
+
+describe("agent send human output", () => {
+  // A success only means the host accepted the message (a cross-host receiver
+  // may be offline), so the line claims neither sent, delivered nor queued.
+  it.each([
+    [null, "Message accepted for agent_2"],
+    ["resp_1", "Message accepted for agent_2 (responseId: resp_1)"],
+  ] as const)(
+    "with responseId %j says exactly %j",
+    async (responseId, human) => {
+      rpcMock.mockResolvedValue({ responseId });
+
+      const result = await send(null);
+
+      expect(result.human).toBe(human);
+      expect(result.data).toEqual({ responseId });
+      expect(result.human).not.toMatch(/sent|deliver|queued/i);
+      expect(result.exitCode).toBe(0);
+    },
+  );
+});
