@@ -998,7 +998,11 @@ import {
   chatAutoArchiveGetV10,
   chatAutoArchiveSetV10,
 } from "@traycer/protocol/host/chat-auto-archive/contracts";
-import { environmentListV10 } from "@traycer/protocol/host/environment/contracts";
+import {
+  environmentHostBindV10,
+  environmentHostReadV10,
+  environmentListV10,
+} from "@traycer/protocol/host/environment/contracts";
 import {
   sessionImportRunV10,
   sessionImportRunV11,
@@ -5747,6 +5751,34 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
       versions: {
         0: {
           contract: environmentListV10,
+          upgradeFromPreviousVersion: null,
+        },
+      },
+      downgradePathsFromLatest: {},
+    },
+  },
+  // The one environment this host is bound to, and rebinding it. Optional
+  // capabilities like `environment.list`.
+  "environment.host.read": {
+    degrade: { kind: "unsupported" },
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: {
+          contract: environmentHostReadV10,
+          upgradeFromPreviousVersion: null,
+        },
+      },
+      downgradePathsFromLatest: {},
+    },
+  },
+  "environment.host.bind": {
+    degrade: { kind: "unsupported" },
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: {
+          contract: environmentHostBindV10,
           upgradeFromPreviousVersion: null,
         },
       },
