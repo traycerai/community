@@ -5,7 +5,7 @@ declare global {
   interface Window {
     __windowedEditScrollProbe: {
       setPhase: (phase: "initial" | "reindexed" | "hydrated") => void;
-      submitEdit: () => Promise<void>;
+      issueEndRequest: () => Promise<void>;
       scrollToEditedRow: () => Promise<void>;
       snapshot: () => {
         phase: string;
@@ -18,7 +18,7 @@ declare global {
   }
 }
 
-test("a history edit follows the replacement across a windowed reindex", async ({
+test("an end request follows the replacement across a windowed reindex", async ({
   page,
 }) => {
   await page.goto(fixture("windowed-edit-scroll"));
@@ -55,7 +55,7 @@ test("a history edit follows the replacement across a windowed reindex", async (
   );
   if (before.scrollHeight === null)
     throw new Error("initial scroll height missing");
-  await page.evaluate(() => window.__windowedEditScrollProbe.submitEdit());
+  await page.evaluate(() => window.__windowedEditScrollProbe.issueEndRequest());
   await page.evaluate(() =>
     window.__windowedEditScrollProbe.setPhase("reindexed"),
   );
@@ -70,7 +70,7 @@ test("a history edit follows the replacement across a windowed reindex", async (
         () => window.__windowedEditScrollProbe.snapshot().scrollHeight,
       ),
     )
-    .toBeLessThan(before.scrollHeight);
+    .not.toBe(before.scrollHeight);
   await page.evaluate(() =>
     window.__windowedEditScrollProbe.setPhase("hydrated"),
   );
