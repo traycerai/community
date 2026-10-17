@@ -7,6 +7,7 @@ import {
   type ChatMessageScrollRequest,
 } from "@/components/chat/chat-messages";
 import { ChatConversationRequestContext } from "@/components/chat/chat-conversation-request-context";
+import { ChatContainerContext } from "@/components/chat/chat-container-context";
 import { queuedPromptMessageIds } from "@/components/chat/chat-queue-utils";
 import { useSubagentDrillIn } from "@/components/chat/segments/subagent-open-as-chat";
 import { TileErrorBoundary } from "@/components/epic-canvas/renderers/tile-error-boundary";
@@ -221,6 +222,7 @@ function BotChatTranscriptBody(props: {
     : null;
 
   return (
+    <ChatContainerContext.Provider value={botId}>
     <ChatConversationRequestContext.Provider
       value={linkRequests ? scrollToMessage : null}
     >
@@ -255,5 +257,6 @@ function BotChatTranscriptBody(props: {
         />
       </div>
     </ChatConversationRequestContext.Provider>
+    </ChatContainerContext.Provider>
   );
 }

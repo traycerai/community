@@ -4369,9 +4369,14 @@ min`): "The judge didn't finish in time, so it's asking you instead."
     whose handshake lacks `environment.host.read` the section shows one
     sentence saying the host predates environments; while the capability is
     unknown it renders nothing. The copy says the host's bots and the guide
-    below belong to the environment; the section does not restate which
-    hosts run which environment (Home's create form answers that per
-    environment).
+    below belong to the environment. The sidebar's host list shows each
+    host's environment label beside its name (`HostOptionRow`'s
+    `environmentLabel`, resolved by `useHostEnvironmentLabelResolver` in
+    `settings-sidebar.tsx`), read under the same rule as the update badges:
+    only over a session this client already holds (the local host, the
+    scoped host, a remote host with a borrowable session); any other row says
+    nothing. Every other host picker passes `environmentLabelForHost={null}`
+    and shows no label.
 - `Fallback` (section id `fallback`, route `/settings/fallback`,
   `panels/fallback-settings-panel.tsx` plus `panels/fallback/`) The whole
   configuration surface for **automatic provider fallback**: what the host does
