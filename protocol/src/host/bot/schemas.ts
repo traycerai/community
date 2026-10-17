@@ -185,19 +185,67 @@ export type BotClaimAuthorityResponse = z.infer<
 // ---- bot.subscribe ----------------------------------------------------- //
 
 /**
- * One task the bot created, as the stream lists it. The task tools and the
- * check-in composer (the tasks spec) fill these in; until then the list is
- * empty and the shape is fixed so clients can render it when it is not.
+ * How often the bot hears about one of its tasks: a periodic check-in every
+ * `seconds`, one check-in once the task's agents have all gone idle
+ * (`on-completion`), or none.
+ */
+export const botTaskCadenceSchema = lazySchema(() =>
+  z.discriminatedUnion("kind", [
+    z.object({
+      kind: z.literal("every"),
+      seconds: z.number().int().positive(),
+    }),
+    z.object({ kind: z.literal("on-completion") }),
+    z.object({ kind: z.literal("none") }),
+  ]),
+);
+export type BotTaskCadence = z.infer<typeof botTaskCadenceSchema>;
+
+/**
+ * One task the bot created, as the stream lists it (the bot row's task list,
+ * written by the task tools and the check-in composer). An ended entry stays
+ * listed with its reason; setting a cadence again re-arms it.
+ *
+ * Reshaped in place on `bot.subscribe@1.0`: the method has not shipped in a
+ * host release, and nothing filled the earlier shape.
  */
 export const botTaskEntrySchema = lazySchema(() =>
-  z.object({
-    taskId: z.string().min(1),
-    title: z.string(),
-    /** The check-in cadence set at creation, in seconds; null means none. */
-    checkInCadenceSeconds: z.number().int().positive().nullable(),
-    /** When the host last composed a check-in for this task; null if never. */
-    lastCheckInAt: z.number().int().nullable(),
-  }),
+  z
+    .object({
+      taskId: z.string().min(1),
+      cadence: botTaskCadenceSchema,
+      /** When the last check-in for this task was consumed; null if never. */
+      lastCheckinAt: z.number().int().nullable(),
+      /** When the next periodic check-in is due; null for any other cadence. */
+      nextAt: z.number().int().nullable(),
+      state: z.enum(["tracking", "ended"]),
+      /**
+       * Null while tracking. `by-bot`: the bot set `none`; `deleted`: the task
+       * was deleted; `archived`: its owner archived it; `completed`: an
+       * `on-completion` check-in fired.
+       */
+      endedReason: z
+        .enum(["by-bot", "deleted", "archived", "completed"])
+        .nullable(),
+    })
+    .superRefine((entry, ctx) => {
+      // The two invariants the fields document, enforced: an entry with a
+      // reason it ended is ended, and only a periodic cadence has a due time.
+      if ((entry.state === "ended") !== (entry.endedReason !== null)) {
+        ctx.addIssue({
+          code: "custom",
+          path: ["endedReason"],
+          message: "endedReason is set exactly when state is ended",
+        });
+      }
+      if (entry.nextAt !== null && entry.cadence.kind !== "every") {
+        ctx.addIssue({
+          code: "custom",
+          path: ["nextAt"],
+          message: "nextAt is null unless the cadence is every",
+        });
+      }
+    }),
 );
 export type BotTaskEntry = z.infer<typeof botTaskEntrySchema>;
 
