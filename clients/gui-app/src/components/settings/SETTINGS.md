@@ -2600,8 +2600,16 @@ window`, recorded in the type as `coverage.browsersAreMountedOnly` -
       (`provider-overrides.json.unreadable-<UTC time>`, never over an earlier
       one) and answers its name, which the success toast repeats. It refuses
       with `outcome: "readable"` when the document is usable by the time it
-      acts, and the toast says nothing was reset. Success invalidates
-      `PROVIDER_INVALIDATIONS` plus the status.
+      acts, and the toast says nothing was reset. A reset whose providers
+      could not all be restarted (`providersNotRestarted` non-empty) is still
+      committed: the warning toast names the set-aside file and says to
+      restart this host - not the app, since the host can be remote. Success
+      invalidates `PROVIDER_INVALIDATIONS`, which includes the status.
+    - The status itself is re-read on mount, on window focus (`"always"`,
+      against the app-wide `false`) and whenever `PROVIDER_INVALIDATIONS` is
+      invalidated - the Providers refresh, the providers-changed stream and
+      every provider mutation - so a file that goes bad while the panel is
+      open, or a first status read that failed, still brings the reset back.
   - **The detail pane is tabbed, and the tab RAIL is the only thing between the
     provider header and its config.** Order is `account` · `usage` · `general` ·
     `env` · `modelProviders` · `mcp` · `plugins` · `skills`, filtered per provider through
