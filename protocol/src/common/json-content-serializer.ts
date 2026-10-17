@@ -76,13 +76,16 @@ interface SerializerContext {
   // (see `escapeTableCellText` / `escapeTableCellCode`).
   inTableCell: boolean;
   // The placeholder for the space after an empty ordered or task marker; see
-  // `keptMarkerSpaceFor`.
+  // `keptMarkerSpaceFor`. Empty in the first rendering, which chooses it.
   keptMarkerSpace: string;
+  // How many empty items' marker spaces the rendering wrote, shared by every
+  // context derived from this one.
+  keptMarkerSpaceUses: { count: number };
 }
 
 function createContext(
   options: SerializerOptions,
-  content: JsonContent,
+  keptMarkerSpace: string,
 ): SerializerContext {
   return {
     options: {
@@ -95,7 +98,8 @@ function createContext(
     orderedListIndex: 0,
     inListItem: false,
     inTableCell: false,
-    keptMarkerSpace: keptMarkerSpaceFor(content),
+    keptMarkerSpace,
+    keptMarkerSpaceUses: { count: 0 },
   };
 }
 
@@ -970,15 +974,49 @@ const BARE_BULLET_LINE = /^[ \t]*[-*+][ \t]*$/;
  * `normalizeMarkdown` turns back into a space afterwards, on exactly the lines
  * the list serializer marked, never on text that merely looks like a marker.
  *
- * The placeholder is a run of the noncharacter U+FDD0 one longer than the
- * longest run in `content` (its text and its attributes), so it occurs nowhere
- * the user wrote and no character of theirs ever becomes a space. It sits only
- * between a marker and a line end, so no text of theirs touches it either.
+ * The placeholder is chosen against the document as rendered without it (see
+ * `renderMarkdown`), so it occurs nowhere else in the output, including where
+ * separate text nodes render side by side: the first noncharacter or
+ * private-use code point that rendering does not contain, else the first pair
+ * of them that never occurs side by side in it. A pair is always free: a string
+ * holds fewer adjacent pairs than the 71,966 squared there are. The placeholder
+ * sits only between a marker and a line end, ASCII on one side and a line
+ * break on the other, so no occurrence can straddle it either.
  */
-function keptMarkerSpaceFor(content: JsonContent): string {
-  const runs = JSON.stringify(content).match(/﷐+/g) ?? [];
-  const longest = runs.reduce((max, run) => Math.max(max, run.length), 0);
-  return "﷐".repeat(longest + 1);
+function keptMarkerSpaceFor(rendered: string): string {
+  const codePoints = Array.from(rendered, (char) => char.codePointAt(0) ?? 0);
+  const present = new Set(codePoints);
+  for (const candidate of keptMarkerSpaceCandidates()) {
+    if (!present.has(candidate)) return String.fromCodePoint(candidate);
+  }
+  const pairs = new Set<number>();
+  for (let index = 1; index < codePoints.length; index++) {
+    pairs.add(codePoints[index - 1] * CODE_POINT_SPAN + codePoints[index]);
+  }
+  for (const first of keptMarkerSpaceCandidates()) {
+    for (const second of keptMarkerSpaceCandidates()) {
+      if (!pairs.has(first * CODE_POINT_SPAN + second)) {
+        return String.fromCodePoint(first, second);
+      }
+    }
+  }
+  throw new Error("jsonContentToMarkdown: a free placeholder pair must exist");
+}
+
+const CODE_POINT_SPAN = 0x110000;
+
+const KEPT_MARKER_SPACE_RANGES: ReadonlyArray<readonly [number, number]> = [
+  [0xfdd0, 0xfdef],
+  [0xe000, 0xf8ff],
+  [0xf0000, 0xffffd],
+];
+
+function* keptMarkerSpaceCandidates(): Generator<number> {
+  for (const [first, last] of KEPT_MARKER_SPACE_RANGES) {
+    for (let codePoint = first; codePoint <= last; codePoint++) {
+      yield codePoint;
+    }
+  }
 }
 
 function keptMarkerSpaceLine(keptMarkerSpace: string): RegExp {
@@ -1041,10 +1079,12 @@ function serializeListItemWithMarker(
   const markerLine = `${baseIndent}${marker} ${checkbox}`;
   // An ordered or task marker line with nothing after it keeps its space
   // (see `keptMarkerSpaceFor`); a bare bullet marker needs none.
-  const emptyMarkerLine =
-    checkbox !== "" || ORDERED_MARKER_LINE.test(marker)
-      ? `${markerLine.trimEnd()}${ctx.keptMarkerSpace}`
-      : markerLine.trimEnd();
+  const keepsMarkerSpace = checkbox !== "" || ORDERED_MARKER_LINE.test(marker);
+  const emptyMarkerLine = (): string => {
+    if (!keepsMarkerSpace) return markerLine.trimEnd();
+    ctx.keptMarkerSpaceUses.count += 1;
+    return `${markerLine.trimEnd()}${ctx.keptMarkerSpace}`;
+  };
 
   if (node.content) {
     for (const child of node.content) {
@@ -1075,7 +1115,7 @@ function serializeListItemWithMarker(
           // writes, so both shapes read back the same. A nested list already
           // carries the content column. A rule behind the marker would read as
           // one rule (`- ---`), not an item holding one.
-          lines.push(emptyMarkerLine);
+          lines.push(emptyMarkerLine());
           for (const line of childLines) {
             lines.push(isList ? line : `${continuationIndent}${line}`);
           }
@@ -1086,7 +1126,7 @@ function serializeListItemWithMarker(
           // marker line as the item's paragraph, so the rest of it leaves the
           // item.
           const [head, ...rest] = childLines;
-          lines.push(head === "" ? emptyMarkerLine : `${markerLine}${head}`);
+          lines.push(head === "" ? emptyMarkerLine() : `${markerLine}${head}`);
           for (const line of rest) {
             lines.push(`${continuationIndent}${line}`);
           }
@@ -1130,7 +1170,7 @@ function serializeListItemWithMarker(
   // An item with no children still holds its place: the ordered item parser
   // gives `2. ` with nothing after it no paragraph, and dropping the line
   // would split the list around it.
-  if (lines.length === 0) lines.push(emptyMarkerLine);
+  if (lines.length === 0) lines.push(emptyMarkerLine());
 
   return lines.join("\n");
 }
@@ -1144,7 +1184,11 @@ function serializeListItemWithMarker(
  * space here.
  */
 function tableCellLine(rendered: string, keptMarkerSpace: string): string {
-  return rendered.split(keptMarkerSpace).join(" ").replace(/\n/g, "<br>");
+  const spaced =
+    keptMarkerSpace === ""
+      ? rendered
+      : rendered.split(keptMarkerSpace).join(" ");
+  return spaced.replace(/\n/g, "<br>");
 }
 
 function serializeTable(node: JsonContent, ctx: SerializerContext): string {
@@ -1309,19 +1353,41 @@ function serializeDocument(node: JsonContent, ctx: SerializerContext): string {
   return blocks.join("\n\n");
 }
 
+// Only spaces, tabs and line breaks are trimmed: a no-break space or any other
+// whitespace the user wrote at the start or end of the document is text.
 function normalizeMarkdown(md: string, keptMarkerSpace: string): string {
-  return md
+  const trimmed = md
     .replace(/\n{3,}/g, "\n\n")
     .replace(/[ \t]+$/gm, "")
-    .trim()
-    .replace(keptMarkerSpaceLine(keptMarkerSpace), "$1 ");
+    .replace(/^[ \t\n]+|[ \t\n]+$/g, "");
+  return keptMarkerSpace === ""
+    ? trimmed
+    : trimmed.replace(keptMarkerSpaceLine(keptMarkerSpace), "$1 ");
+}
+
+/**
+ * Renders a document with `render` and normalizes it. The document is rendered
+ * once without an empty item's marker-space placeholder; when that rendering
+ * wrote one, the placeholder is chosen against it (`keptMarkerSpaceFor`) and the
+ * document is rendered again with it. Rendering is otherwise the same both
+ * times, so the placeholder occurs in the second only where it was written.
+ */
+function renderMarkdown(
+  options: SerializerOptions,
+  render: (ctx: SerializerContext) => string,
+): string {
+  const draft = createContext(options, "");
+  const drafted = render(draft);
+  if (draft.keptMarkerSpaceUses.count === 0) {
+    return normalizeMarkdown(drafted, "");
+  }
+  const ctx = createContext(options, keptMarkerSpaceFor(drafted));
+  return normalizeMarkdown(render(ctx), ctx.keptMarkerSpace);
 }
 
 export function jsonContentToMarkdown(
   content: JsonContent,
   options: SerializerOptions,
 ): string {
-  const ctx = createContext(options, content);
-  const raw = serializeNode(content, ctx);
-  return normalizeMarkdown(raw, ctx.keptMarkerSpace);
+  return renderMarkdown(options, (ctx) => serializeNode(content, ctx));
 }

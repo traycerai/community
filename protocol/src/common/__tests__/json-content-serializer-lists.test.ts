@@ -1002,6 +1002,88 @@ describe("jsonContentToMarkdown writes paragraph text as typed", () => {
   }
 });
 
+describe("jsonContentToMarkdown placeholder against adjacent and very long input", () => {
+  const FDD0 = "\uFDD0";
+  const emptyOrdered = (): JsonContent =>
+    orderedBlock([listItem([{ type: "paragraph" }])], 1);
+
+  function adjacentRuns(): JsonContent {
+    return {
+      type: "paragraph",
+      content: [
+        { type: "text", text: FDD0, marks: [{ type: "textStyle" }] },
+        { type: "text", text: FDD0 },
+      ],
+    };
+  }
+
+  it("keeps two adjacent U+FDD0 nodes whose marks differ and still writes an empty item's space", () => {
+    const out = toMarkdown(docOf(adjacentRuns(), emptyOrdered()));
+    expect(out).toContain(`${FDD0}${FDD0}`);
+    expect(out).toBe(`${FDD0}${FDD0}\n\n1. `);
+  });
+
+  it("keeps two adjacent U+FDD0 nodes in a table cell, where the placeholder becomes a space", () => {
+    const table: JsonContent = {
+      type: "table",
+      content: [
+        {
+          type: "tableRow",
+          content: [{ type: "tableHeader", content: [textParagraph("h")] }],
+        },
+        {
+          type: "tableRow",
+          content: [{ type: "tableCell", content: [adjacentRuns()] }],
+        },
+      ],
+    };
+    const out = toMarkdown(docOf(table, emptyOrdered()));
+    expect(out).toBe(`| h |\n| --- |\n| ${FDD0}${FDD0} |\n\n1. `);
+  });
+
+  it("keeps adjacent U+FDD0 nodes beside text holding every noncharacter and private-use code point", () => {
+    let census = "";
+    for (const [first, last] of [
+      [0xfdd0, 0xfdef],
+      [0xe000, 0xf8ff],
+      [0xf0000, 0xffffd],
+    ] as const) {
+      for (let codePoint = first; codePoint <= last; codePoint++) {
+        census += String.fromCodePoint(codePoint);
+      }
+    }
+    const out = toMarkdown(
+      docOf(textParagraph(census), adjacentRuns(), emptyOrdered()),
+    );
+    expect(out).toBe(`${census}\n\n${FDD0}${FDD0}\n\n1. `);
+  });
+
+  it("writes thousands of empty items after a very long run in linear size", () => {
+    const run = FDD0.repeat(100000);
+    const count = 6000;
+    const items: JsonContent[] = [];
+    const lines: string[] = [];
+    for (let index = 1; index <= count; index++) {
+      items.push(listItem([{ type: "paragraph" }]));
+      lines.push(`${index}. `);
+    }
+    const out = toMarkdown(docOf(textParagraph(run), orderedBlock(items, 1)));
+    const expected = `${run}\n\n${lines.join("\n")}`;
+    expect(out.length).toBe(expected.length);
+    expect(out === expected).toBe(true);
+  });
+
+  it("leaves non-breaking spaces at a document's edges alone", () => {
+    expect(toMarkdown(docOf(textParagraph("\u00a0a\u00a0")))).toBe(
+      "\u00a0a\u00a0",
+    );
+  });
+
+  it("trims plain spaces at a document's edges", () => {
+    expect(toMarkdown(docOf(textParagraph(" a ")))).toBe("a");
+  });
+});
+
 function rule(): JsonContent {
   return { type: "horizontalRule" };
 }
