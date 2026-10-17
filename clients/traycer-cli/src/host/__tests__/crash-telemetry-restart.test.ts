@@ -38,7 +38,11 @@ const sentryMocks = vi.hoisted(() => ({
   pendingExtras: undefined as SentryExtras | undefined,
   flushes: [] as number[],
   /** When set, a flush with this timeout stays pending until released. */
-  heldFlush: null as { timeout: number; releases: (() => void)[] } | null,
+  heldFlush: null as {
+    timeout: number;
+    releases: (() => void)[];
+    onFlush?: () => void;
+  } | null,
 }));
 
 vi.mock("@sentry/node", () => ({
@@ -79,6 +83,7 @@ vi.mock("@sentry/node", () => ({
         held.releases.push(() => {
           resolve(true);
         });
+        held.onFlush?.();
       });
     }
     return Promise.resolve(true);
@@ -250,22 +255,31 @@ describe("host crash reports across supervisor restarts", () => {
     vi.advanceTimersByTime(3 * HOUR_MS);
     vi.resetModules();
     mod = await import("../crash-telemetry");
-    sentryMocks.heldFlush = {
+    let signalFlush: () => void = () => undefined;
+    const flushStarted = new Promise<void>((resolve) => {
+      signalFlush = resolve;
+    });
+    const heldFlush = {
       timeout: mod.HOST_CRASH_TRANSPORT_TIMEOUT_MS,
-      releases: [],
+      releases: [] as (() => void)[],
+      onFlush: signalFlush,
     };
+    sentryMocks.heldFlush = heldFlush;
     let resolved = false;
     const resuming = mod.resumeHostCrashReports("production").then(() => {
       resolved = true;
     });
-    for (let turn = 0; turn < 50; turn += 1) {
-      await new Promise<void>((resolve) => setImmediate(resolve));
+    try {
+      await flushStarted;
+      expect(summaries()).toEqual([{ suppressedCount: 3 }]);
+      expect(sentryMocks.flushes).toContain(
+        mod.HOST_CRASH_TRANSPORT_TIMEOUT_MS,
+      );
+      expect(resolved).toBe(false);
+    } finally {
+      for (const release of heldFlush.releases) release();
+      await resuming;
     }
-    expect(summaries()).toEqual([{ suppressedCount: 3 }]);
-    expect(sentryMocks.flushes).toContain(mod.HOST_CRASH_TRANSPORT_TIMEOUT_MS);
-    expect(resolved).toBe(false);
-    for (const release of sentryMocks.heldFlush.releases) release();
-    await resuming;
     expect(resolved).toBe(true);
   });
 
