@@ -746,8 +746,20 @@ async function readBounded(path: string): Promise<string> {
     const { size } = await handle.stat();
     if (size > MAX_PERSISTED_BYTES) return "";
     const buffer = Buffer.alloc(size + 1);
-    const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
-    return bytesRead > size ? "" : buffer.toString("utf8", 0, bytesRead);
+    // A read can return fewer bytes than asked without being at the end, so
+    // read until the buffer is full (the file grew) or the file ends.
+    let filled = 0;
+    while (filled < buffer.length) {
+      const { bytesRead } = await handle.read(
+        buffer,
+        filled,
+        buffer.length - filled,
+        filled,
+      );
+      if (bytesRead === 0) break;
+      filled += bytesRead;
+    }
+    return filled > size ? "" : buffer.toString("utf8", 0, filled);
   } finally {
     await handle.close();
   }
@@ -816,8 +828,15 @@ class HostCrashThrottleEntry {
    * (the transport within its own timeout). Never rejects.
    */
   async settled(): Promise<void> {
-    await this.writes;
-    await this.transport;
+    // A summary timer can queue more while this waits, so go round again
+    // until neither tail has moved.
+    for (;;) {
+      const writes = this.writes;
+      const transport = this.transport;
+      await writes;
+      await transport;
+      if (writes === this.writes && transport === this.transport) return;
+    }
   }
 
   private async write(text: string): Promise<void> {

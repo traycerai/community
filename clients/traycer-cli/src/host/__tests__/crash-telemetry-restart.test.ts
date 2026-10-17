@@ -37,8 +37,8 @@ const sentryMocks = vi.hoisted(() => ({
   messages: [] as SentryMessage[],
   pendingExtras: undefined as SentryExtras | undefined,
   flushes: [] as number[],
-  /** When set, the next flush with this timeout stays pending until opened. */
-  heldFlush: null as { timeout: number; release: () => void } | null,
+  /** When set, a flush with this timeout stays pending until released. */
+  heldFlush: null as { timeout: number; releases: (() => void)[] } | null,
 }));
 
 vi.mock("@sentry/node", () => ({
@@ -76,9 +76,9 @@ vi.mock("@sentry/node", () => ({
     const held = sentryMocks.heldFlush;
     if (held !== null && held.timeout === timeout) {
       return new Promise<boolean>((resolve) => {
-        held.release = () => {
+        held.releases.push(() => {
           resolve(true);
-        };
+        });
       });
     }
     return Promise.resolve(true);
@@ -252,7 +252,7 @@ describe("host crash reports across supervisor restarts", () => {
     mod = await import("../crash-telemetry");
     sentryMocks.heldFlush = {
       timeout: mod.HOST_CRASH_TRANSPORT_TIMEOUT_MS,
-      release: () => undefined,
+      releases: [],
     };
     let resolved = false;
     const resuming = mod.resumeHostCrashReports("production").then(() => {
@@ -264,7 +264,7 @@ describe("host crash reports across supervisor restarts", () => {
     expect(summaries()).toEqual([{ suppressedCount: 3 }]);
     expect(sentryMocks.flushes).toContain(mod.HOST_CRASH_TRANSPORT_TIMEOUT_MS);
     expect(resolved).toBe(false);
-    sentryMocks.heldFlush.release();
+    for (const release of sentryMocks.heldFlush.releases) release();
     await resuming;
     expect(resolved).toBe(true);
   });
@@ -281,7 +281,7 @@ describe("host crash reports across supervisor restarts", () => {
     }
     sentryMocks.heldFlush = {
       timeout: mod.HOST_CRASH_TRANSPORT_TIMEOUT_MS,
-      release: () => undefined,
+      releases: [],
     };
     vi.advanceTimersByTime(HOUR_MS);
     expect(summaries()).toEqual([{ suppressedCount: 3 }]);
@@ -294,7 +294,7 @@ describe("host crash reports across supervisor restarts", () => {
     }
     // The upload is still on its way, so the exit would still be waiting.
     expect(settledEarly).toBe(false);
-    sentryMocks.heldFlush.release();
+    for (const release of sentryMocks.heldFlush.releases) release();
     await settling;
 
     const stateDir = join(home, ".traycer", "cli");
@@ -305,6 +305,41 @@ describe("host crash reports across supervisor restarts", () => {
     // Sent and a whole window quiet since: nothing is left to carry over.
     expect(text).not.toContain('"suppressedCount":3');
     expect(text).toBe('{"version":1,"kinds":{}}\n');
+    vi.clearAllTimers();
+  });
+
+  it("keeps waiting for the write and upload a summary timer queues while the exit is already waiting", async () => {
+    vi.resetModules();
+    const mod = await import("../crash-telemetry");
+    const held = {
+      timeout: mod.HOST_CRASH_TRANSPORT_TIMEOUT_MS,
+      releases: [] as (() => void)[],
+    };
+    sentryMocks.heldFlush = held;
+    for (
+      let index = 0;
+      index < RELAUNCHES_PER_SUPERVISOR_LIFE + 1;
+      index += 1
+    ) {
+      await mod.reportHostCrashToSentry(crash(`attempt-${index}`, 1));
+    }
+    const uploadsBefore = held.releases.length;
+    let settledEarly = false;
+    const settling = mod.settleHostCrashThrottleWrites().then(() => {
+      settledEarly = true;
+    });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    // The summary timer fires while the exit is already waiting.
+    vi.advanceTimersByTime(HOUR_MS);
+    expect(held.releases.length).toBe(uploadsBefore + 1);
+    for (const release of held.releases.slice(0, uploadsBefore)) release();
+    for (let turn = 0; turn < 50; turn += 1) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    expect(settledEarly).toBe(false);
+    held.releases[uploadsBefore]();
+    await settling;
+    expect(settledEarly).toBe(true);
     vi.clearAllTimers();
   });
 
