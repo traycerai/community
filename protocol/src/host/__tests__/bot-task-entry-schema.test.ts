@@ -349,6 +349,7 @@ const LAST_CHECKIN: BotTaskLastCheckin = {
     },
     stillRunning: {
       state: "running",
+      reason: "working",
       agents: [{ agentId: "agent-1", agentTitle: null, tier: "turn" }],
       agentsOmitted: 0,
       shells: [
