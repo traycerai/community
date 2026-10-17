@@ -41,6 +41,317 @@ describe("jsonContentToMarkdown ordered lists", () => {
       }),
     ).toBe("- a\n  ```js\n  x\n  ```");
   });
+
+  it("renders a code block that is the only child of a bullet item on the line after an empty marker line", () => {
+    expect(
+      toMarkdown(docOf(bulletList([listItem([codeBlock("ts", "code")])]))),
+    ).toBe("-\n  ```ts\n  code\n  ```");
+  });
+
+  it("renders a mermaid block after the first child of a bullet item at the item's content column", () => {
+    expect(
+      toMarkdown(
+        docOf(
+          bulletList([
+            listItem([
+              textParagraph("a"),
+              { type: "mermaidBlock", attrs: { code: "graph TD" } },
+            ]),
+          ]),
+        ),
+      ),
+    ).toBe("- a\n  ```mermaid\n  graph TD\n  ```");
+  });
+
+  it("renders a UI preview block after the first child of a bullet item at the item's content column", () => {
+    expect(
+      toMarkdown(
+        docOf(
+          bulletList([
+            listItem([
+              textParagraph("a"),
+              { type: "uiPreviewBlock", attrs: { htmlContent: "<p>x</p>" } },
+            ]),
+          ]),
+        ),
+      ),
+    ).toBe("- a\n  ```wireframe\n  <p>x</p>\n  ```");
+  });
+
+  it("renders a code block after the first child of an ordered item at the three-space content column", () => {
+    expect(
+      toMarkdown(
+        docOf({
+          type: "orderedList",
+          content: [listItem([textParagraph("a"), codeBlock("", "code")])],
+        }),
+      ),
+    ).toBe("1. a\n   ```\n   code\n   ```");
+  });
+
+  it("renders a code block in a nested bullet item at that item's content column", () => {
+    expect(
+      toMarkdown(
+        docOf(
+          bulletList([
+            listItem([
+              textParagraph("a"),
+              bulletList([
+                listItem([textParagraph("b"), codeBlock("", "code")]),
+              ]),
+            ]),
+          ]),
+        ),
+      ),
+    ).toBe("- a\n  - b\n    ```\n    code\n    ```");
+  });
+
+  it.each([
+    [1, "   "],
+    [10, "    "],
+    [100, "     "],
+  ])(
+    "renders a code block after the first child of an ordered item numbered %i at its content column",
+    (start, pad) => {
+      expect(
+        toMarkdown(
+          docOf(
+            orderedBlock(
+              [listItem([textParagraph("a"), codeBlock("", "code")])],
+              start,
+            ),
+          ),
+        ),
+      ).toBe(`${start}. a\n${pad}\`\`\`\n${pad}code\n${pad}\`\`\``);
+    },
+  );
+
+  it.each([
+    [1, "   "],
+    [10, "    "],
+    [100, "     "],
+  ])(
+    "starts a task list nested under an ordered item numbered %i at the content column, with its code block two columns further",
+    (start, pad) => {
+      const body = `${pad}  `;
+      expect(
+        toMarkdown(
+          docOf(
+            orderedBlock(
+              [
+                listItem([
+                  textParagraph("a"),
+                  taskBlock([
+                    taskEntry([textParagraph("t"), codeBlock("", "code")]),
+                  ]),
+                ]),
+              ],
+              start,
+            ),
+          ),
+        ),
+      ).toBe(
+        `${start}. a\n${pad}- [ ] t\n${body}\`\`\`\n${body}code\n${body}\`\`\``,
+      );
+    },
+  );
+
+  it("nests an ordered list under a task item with a code block under the ordered item", () => {
+    expect(
+      toMarkdown(
+        docOf(
+          taskBlock([
+            taskEntry([
+              textParagraph("t"),
+              orderedBlock(
+                [listItem([textParagraph("a"), codeBlock("", "code")])],
+                1,
+              ),
+            ]),
+          ]),
+        ),
+      ),
+    ).toBe("- [ ] t\n  1. a\n     ```\n     code\n     ```");
+  });
+
+  it("nests an ordered list under an ordered item at the parent's content column", () => {
+    expect(
+      toMarkdown(
+        docOf(
+          orderedBlock(
+            [
+              listItem([textParagraph("one")]),
+              listItem([
+                textParagraph("two"),
+                orderedBlock(
+                  [listItem([textParagraph("nested"), codeBlock("", "x")])],
+                  1,
+                ),
+              ]),
+            ],
+            1,
+          ),
+        ),
+      ),
+    ).toBe("1. one\n2. two\n   1. nested\n      ```\n      x\n      ```");
+  });
+
+  it("nests a bullet list under an ordered item at three columns", () => {
+    expect(
+      toMarkdown(
+        docOf(
+          orderedBlock(
+            [
+              listItem([
+                textParagraph("a"),
+                bulletList([listItem([textParagraph("b")])]),
+              ]),
+            ],
+            1,
+          ),
+        ),
+      ),
+    ).toBe("1. a\n   - b");
+  });
+
+  it("nests an ordered list under a bullet item at two columns", () => {
+    expect(
+      toMarkdown(
+        docOf(
+          bulletList([
+            listItem([
+              textParagraph("a"),
+              orderedBlock([listItem([textParagraph("b")])], 1),
+            ]),
+          ]),
+        ),
+      ),
+    ).toBe("- a\n  1. b");
+  });
+
+  it("keeps a bullet list nested in a bullet list at two columns per level", () => {
+    expect(
+      toMarkdown(
+        docOf(
+          bulletList([
+            listItem([
+              textParagraph("a"),
+              bulletList([
+                listItem([
+                  textParagraph("b"),
+                  bulletList([listItem([textParagraph("c")])]),
+                ]),
+              ]),
+            ]),
+          ]),
+        ),
+      ),
+    ).toBe("- a\n  - b\n    - c");
+  });
+
+  it.each([
+    [1, "   "],
+    [10, "    "],
+    [100, "     "],
+  ])(
+    "starts a fence-first ordered item numbered %i on the line after an empty marker line, whether or not an empty paragraph leads",
+    (start, pad) => {
+      const expected = `${start}. \n${pad}\`\`\`\n${pad}code\n${pad}\`\`\``;
+      const only = listItem([codeBlock("", "code")]);
+      const afterEmpty = listItem([
+        { type: "paragraph" },
+        codeBlock("", "code"),
+      ]);
+      expect(toMarkdown(docOf(orderedBlock([only], start)))).toBe(expected);
+      expect(toMarkdown(docOf(orderedBlock([afterEmpty], start)))).toBe(
+        expected,
+      );
+    },
+  );
+
+  it("starts a fence-first task item on the line after an empty marker line, whether or not an empty paragraph leads", () => {
+    const expected = "- [ ] \n  ```\n  code\n  ```";
+    expect(
+      toMarkdown(docOf(taskBlock([taskEntry([codeBlock("", "code")])]))),
+    ).toBe(expected);
+    expect(
+      toMarkdown(
+        docOf(
+          taskBlock([
+            taskEntry([{ type: "paragraph" }, codeBlock("", "code")]),
+          ]),
+        ),
+      ),
+    ).toBe(expected);
+  });
+
+  it("writes the same text for a fence-first bullet item with or without a leading empty paragraph", () => {
+    expect(
+      toMarkdown(
+        docOf(
+          bulletList([
+            listItem([{ type: "paragraph" }, codeBlock("ts", "code")]),
+          ]),
+        ),
+      ),
+    ).toBe("-\n  ```ts\n  code\n  ```");
+  });
+
+  it("keeps an ordered item with no children mid-list", () => {
+    expect(
+      toMarkdown(
+        docOf(
+          orderedBlock(
+            [
+              listItem([textParagraph("a")]),
+              { type: "listItem" },
+              listItem([textParagraph("c")]),
+            ],
+            1,
+          ),
+        ),
+      ),
+    ).toBe("1. a\n2. \n3. c");
+  });
+
+  it("keeps an empty last item of a bullet list as its bare marker", () => {
+    expect(
+      toMarkdown(
+        docOf(
+          bulletList([
+            listItem([textParagraph("a")]),
+            { type: "listItem", content: [] },
+          ]),
+        ),
+      ),
+    ).toBe("- a\n-");
+  });
+
+  it("keeps the space after the marker of an empty last ordered item", () => {
+    expect(
+      toMarkdown(
+        docOf(
+          orderedBlock(
+            [listItem([textParagraph("a")]), { type: "listItem", content: [] }],
+            1,
+          ),
+        ),
+      ),
+    ).toBe("1. a\n2. ");
+  });
+
+  it("keeps the space after the checkbox of an empty last task item", () => {
+    expect(
+      toMarkdown(
+        docOf(
+          taskBlock([
+            taskEntry([textParagraph("a")]),
+            { type: "taskItem", attrs: { checked: false }, content: [] },
+          ]),
+        ),
+      ),
+    ).toBe("- [ ] a\n- [ ] ");
+  });
 });
 
 function orderedList(
@@ -72,4 +383,40 @@ function toMarkdown(content: JsonContent): string {
     mentionFormat: "llm",
     platform: "POSIX",
   });
+}
+
+function docOf(...content: JsonContent[]): JsonContent {
+  return { type: "doc", content };
+}
+
+function bulletList(items: JsonContent[]): JsonContent {
+  return { type: "bulletList", content: items };
+}
+
+function listItem(content: JsonContent[]): JsonContent {
+  return { type: "listItem", content };
+}
+
+function textParagraph(text: string): JsonContent {
+  return { type: "paragraph", content: [{ type: "text", text }] };
+}
+
+function codeBlock(language: string, text: string): JsonContent {
+  return {
+    type: "codeBlock",
+    attrs: language === "" ? undefined : { language },
+    content: [{ type: "text", text }],
+  };
+}
+
+function orderedBlock(items: JsonContent[], start: number): JsonContent {
+  return { type: "orderedList", attrs: { start }, content: items };
+}
+
+function taskBlock(items: JsonContent[]): JsonContent {
+  return { type: "taskList", content: items };
+}
+
+function taskEntry(content: JsonContent[]): JsonContent {
+  return { type: "taskItem", attrs: { checked: false }, content };
 }

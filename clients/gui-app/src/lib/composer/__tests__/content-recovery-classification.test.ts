@@ -164,10 +164,10 @@ const NESTED_LIST_AS_FIRST_CHILD_DOC: JsonContent = {
 };
 
 /**
- * `-LV74`: fence blocks carry `listDepth * 2` of their own on EVERY line, and
- * the continuation indent goes on TOP of that - so a top-level bullet's
- * continuation fence goes out at four columns, not two. Paragraphs get no
- * depth indent inside an item, so this is fence-specific.
+ * `-LV74`: a continuation fence goes out at the item's content column - two
+ * columns under a top-level bullet - on every line. The serializer renders a
+ * fence child at depth zero and indents it by the item, so a parse and
+ * re-serialize leaves it where it was.
  */
 const FENCE_AS_CONTINUATION_DOC: JsonContent = {
   type: "doc",
@@ -191,7 +191,7 @@ const FENCE_AS_CONTINUATION_DOC: JsonContent = {
   ],
 };
 
-/** Depth compounds: a fence one level in carries four of its own. */
+/** One level in, the inner item's content column is four. */
 const FENCE_IN_NESTED_ITEM_DOC: JsonContent = {
   type: "doc",
   content: [
@@ -228,7 +228,7 @@ const FENCE_IN_NESTED_ITEM_DOC: JsonContent = {
   ],
 };
 
-/** ...and as the FIRST child the marker precedes a fence already indented. */
+/** ...and as the FIRST child it starts on the line after an empty marker line. */
 const FENCE_AS_FIRST_CHILD_DOC: JsonContent = {
   type: "doc",
   content: [
@@ -242,6 +242,81 @@ const FENCE_AS_FIRST_CHILD_DOC: JsonContent = {
               type: "codeBlock",
               attrs: { language: "sh" },
               content: [{ type: "text", text: "echo hi" }],
+            },
+          ],
+        },
+      ],
+    },
+  ],
+};
+
+/** A sub-list under an ordered marker starts at the marker's content column. */
+const ORDERED_PARENT_SUBLIST_DOC: JsonContent = {
+  type: "doc",
+  content: [
+    {
+      type: "orderedList",
+      content: [
+        {
+          type: "listItem",
+          content: [
+            { type: "paragraph", content: [{ type: "text", text: "step" }] },
+            {
+              type: "bulletList",
+              content: [
+                {
+                  type: "listItem",
+                  content: [
+                    {
+                      type: "paragraph",
+                      content: [{ type: "text", text: "detail" }],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  ],
+};
+
+/** An item with no children still writes its marker line, space included. */
+const EMPTY_ORDERED_ITEM_DOC: JsonContent = {
+  type: "doc",
+  content: [
+    {
+      type: "orderedList",
+      content: [
+        {
+          type: "listItem",
+          content: [
+            { type: "paragraph", content: [{ type: "text", text: "a" }] },
+          ],
+        },
+        { type: "listItem" },
+      ],
+    },
+  ],
+};
+
+/** Under `10. ` the content column is four, and a fence body follows it. */
+const FENCE_UNDER_TWO_DIGIT_MARKER_DOC: JsonContent = {
+  type: "doc",
+  content: [
+    {
+      type: "orderedList",
+      attrs: { start: 10 },
+      content: [
+        {
+          type: "listItem",
+          content: [
+            { type: "paragraph", content: [{ type: "text", text: "run" }] },
+            {
+              type: "codeBlock",
+              attrs: { language: "ts" },
+              content: [{ type: "text", text: "a();\nb();" }],
             },
           ],
         },
@@ -464,6 +539,30 @@ describe("content recovery classification", () => {
     });
 
     expect(report.get("unknown")).toBe(1);
+  });
+
+  it("classifies a task list as unknown, as it was before it was named", () => {
+    const report = classifyContentRecovery({
+      type: "doc",
+      content: [
+        {
+          type: "taskList",
+          content: [
+            {
+              type: "taskItem",
+              attrs: { checked: false },
+              content: [
+                { type: "paragraph", content: [{ type: "text", text: "t" }] },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    // One for the list, one for the item.
+    expect(report.get("unknown")).toBe(2);
+    expect(report.size).toBe(1);
   });
 
   it("counts a loss nested inside another lossy node", () => {
@@ -1459,7 +1558,7 @@ describe("content recovery classification", () => {
     });
 
     // Numbering restarts per level, and the child sits under its parent.
-    expect(text).toBe("1. parent\n  1. child");
+    expect(text).toBe("1. parent\n   1. child");
   });
 
   // R12 `-BQcf`: an item whose nested list is followed by a continuation
@@ -1504,7 +1603,7 @@ describe("content recovery classification", () => {
       ],
     });
 
-    expect(text).toBe("1. step\n  - detail\n   after");
+    expect(text).toBe("1. step\n   - detail\n   after");
   });
 
   // The parity claim, checked against the REAL serializer rather than against
@@ -1525,6 +1624,9 @@ describe("content recovery classification", () => {
       FENCE_AS_CONTINUATION_DOC,
       FENCE_IN_NESTED_ITEM_DOC,
       FENCE_AS_FIRST_CHILD_DOC,
+      ORDERED_PARENT_SUBLIST_DOC,
+      FENCE_UNDER_TWO_DIGIT_MARKER_DOC,
+      EMPTY_ORDERED_ITEM_DOC,
       TABLE_WITH_HARD_BREAK_CELL_DOC,
       TABLE_WITH_MULTI_BLOCK_CELL_DOC,
       HEADING_LEVELS_DOC,
