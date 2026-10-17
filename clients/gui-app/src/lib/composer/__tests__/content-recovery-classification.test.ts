@@ -204,6 +204,61 @@ const NESTED_EMPTY_FIRST_PARAGRAPH_DOC = nestedEmptyBulletDoc([
   { type: "paragraph", content: [{ type: "text", text: "b" }] },
 ]);
 
+/**
+ * A list as an item's FIRST child: the item's marker line stays bare (an
+ * ordered marker keeps its trailing space) and the nested list starts on the
+ * next line at the item's content column.
+ */
+function listFirstChildDoc(
+  outer: "bulletList" | "orderedList",
+  outerStart: number,
+  inner: JsonContent,
+): JsonContent {
+  return {
+    type: "doc",
+    content: [
+      {
+        type: outer,
+        attrs: { start: outerStart },
+        content: [{ type: "listItem", content: [inner] }],
+      },
+    ],
+  };
+}
+
+function simpleList(
+  type: "bulletList" | "orderedList",
+  texts: ReadonlyArray<string>,
+): JsonContent {
+  return {
+    type,
+    content: texts.map((text): JsonContent => ({
+      type: "listItem",
+      content: [{ type: "paragraph", content: [{ type: "text", text }] }],
+    })),
+  };
+}
+
+const LIST_FIRST_CHILD_TWO_ITEMS_DOC = listFirstChildDoc(
+  "bulletList",
+  1,
+  simpleList("bulletList", ["x", "y"]),
+);
+const LIST_FIRST_CHILD_THREE_DEEP_DOC = listFirstChildDoc("bulletList", 1, {
+  type: "bulletList",
+  content: [
+    {
+      type: "listItem",
+      content: [simpleList("bulletList", ["x"])],
+    },
+  ],
+});
+const LIST_FIRST_CHILD_UNDER_TEN_DOC = listFirstChildDoc(
+  "orderedList",
+  10,
+  simpleList("bulletList", ["x"]),
+);
+
 /** ...and the same break in a LATER block, which does take the indent. */
 const HARD_BREAK_IN_CONTINUATION_DOC: JsonContent = {
   type: "doc",
@@ -1750,6 +1805,9 @@ describe("content recovery classification", () => {
       EMPTY_FIRST_PARAGRAPH_ORDERED_DOC,
       NESTED_EMPTY_BULLET_DOC,
       NESTED_EMPTY_FIRST_PARAGRAPH_DOC,
+      LIST_FIRST_CHILD_TWO_ITEMS_DOC,
+      LIST_FIRST_CHILD_THREE_DEEP_DOC,
+      LIST_FIRST_CHILD_UNDER_TEN_DOC,
       HARD_BREAK_IN_CONTINUATION_DOC,
       NESTED_LIST_AS_FIRST_CHILD_DOC,
       FENCE_AS_CONTINUATION_DOC,
@@ -1792,6 +1850,12 @@ describe("content recovery classification", () => {
     expect(recoveryTextFromContent(NESTED_EMPTY_BULLET_DOC)).toBe("- a\n\n  -");
     expect(recoveryTextFromContent(NESTED_EMPTY_FIRST_PARAGRAPH_DOC)).toBe(
       "- a\n\n  -\n    b",
+    );
+  });
+
+  it("opens an item whose first child is a list with a bare marker line", () => {
+    expect(recoveryTextFromContent(LIST_FIRST_CHILD_TWO_ITEMS_DOC)).toBe(
+      "-\n  - x\n  - y",
     );
   });
 
