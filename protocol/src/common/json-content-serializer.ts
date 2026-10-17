@@ -227,6 +227,8 @@ const TABLE_CELL_CONTAINER_TYPES: ReadonlySet<string> = new Set([
   "bulletList",
   "orderedList",
   "listItem",
+  "taskList",
+  "taskItem",
   "table",
 ]);
 
@@ -884,16 +886,63 @@ function serializeOrderedList(
   return items.join("\n");
 }
 
+function serializeTaskList(node: JsonContent, ctx: SerializerContext): string {
+  const items: string[] = [];
+  const childCtx: SerializerContext = {
+    ...ctx,
+    listDepth: ctx.listDepth + 1,
+  };
+
+  if (node.content) {
+    for (const child of node.content) {
+      if (child.type === "taskItem") {
+        items.push(serializeTaskItem(child, childCtx));
+      }
+    }
+  }
+
+  return items.join("\n");
+}
+
+// `- [ ] ` / `- [x] `, the GFM task list item the artifact parser reads back
+// as `taskItem` with `checked`. Continuation lines indent to the bullet's
+// content column, not past the checkbox: four more columns would re-parse
+// them as an indented code block.
+function serializeTaskItem(node: JsonContent, ctx: SerializerContext): string {
+  const checked = node.attrs?.checked === true;
+  return serializeListItemWithMarker(
+    node,
+    ctx,
+    ctx.options.bulletMarker ?? "-",
+    checked ? "[x] " : "[ ] ",
+  );
+}
+
 function serializeListItem(
   node: JsonContent,
   ctx: SerializerContext,
   ordered: boolean,
   index: number,
 ): string {
-  const baseIndent = " ".repeat(
-    (ctx.listDepth - 1) * (ctx.options.listIndent ?? 2),
-  );
   const marker = ordered ? `${index}.` : (ctx.options.bulletMarker ?? "-");
+  return serializeListItemWithMarker(node, ctx, marker, "");
+}
+
+const SELF_INDENTING_BLOCK_TYPES: ReadonlySet<string> = new Set([
+  "codeBlock",
+  "mermaidBlock",
+  "uiPreviewBlock",
+]);
+
+function serializeListItemWithMarker(
+  node: JsonContent,
+  ctx: SerializerContext,
+  marker: string,
+  checkbox: string,
+): string {
+  const baseIndent = " ".repeat(
+    Math.max(0, ctx.listDepth - 1) * (ctx.options.listIndent ?? 2),
+  );
 
   const lines: string[] = [];
   let firstLine = true;
@@ -905,10 +954,18 @@ function serializeListItem(
 
   if (node.content) {
     for (const child of node.content) {
-      const serialized = serializeNode(child, itemCtx);
+      // A fenced block indents itself by list depth; under an item it takes
+      // the continuation indent below instead, or every round trip would
+      // push it one level deeper.
+      const serialized = serializeNode(
+        child,
+        !firstLine && SELF_INDENTING_BLOCK_TYPES.has(child.type ?? "")
+          ? { ...itemCtx, listDepth: 0 }
+          : itemCtx,
+      );
 
       if (firstLine) {
-        lines.push(`${baseIndent}${marker} ${serialized}`);
+        lines.push(`${baseIndent}${marker} ${checkbox}${serialized}`);
         firstLine = false;
       } else {
         const continuationIndent = " ".repeat(
@@ -916,7 +973,11 @@ function serializeListItem(
         );
         const childLines = serialized.split("\n");
         for (const line of childLines) {
-          if (child.type === "bulletList" || child.type === "orderedList") {
+          if (
+            child.type === "bulletList" ||
+            child.type === "orderedList" ||
+            child.type === "taskList"
+          ) {
             lines.push(line);
           } else {
             lines.push(`${continuationIndent}${line}`);
@@ -1046,6 +1107,10 @@ function serializeNode(node: JsonContent, ctx: SerializerContext): string {
       return serializeOrderedList(node, ctx);
     case "listItem":
       return serializeListItem(node, ctx, false, 0);
+    case "taskList":
+      return serializeTaskList(node, ctx);
+    case "taskItem":
+      return serializeTaskItem(node, ctx);
     case "codeBlock":
       return serializeCodeBlock(node, ctx);
     case "mermaidBlock":
@@ -1082,11 +1147,24 @@ function serializeDocument(node: JsonContent, ctx: SerializerContext): string {
   return blocks.join("\n\n");
 }
 
+// An empty task item keeps the one space after its checkbox, on the last
+// line too: `- [ ]` alone re-parses as a bullet item whose text is `[ ]`,
+// losing the checkbox.
+const EMPTY_TASK_ITEM_LINE = /^[ \t]*[-*+] \[[ xX]\]$/;
+
 function normalizeMarkdown(md: string): string {
-  return md
+  const normalized = md
     .replace(/\n{3,}/g, "\n\n")
-    .replace(/[ \t]+$/gm, "")
-    .trim();
+    .replace(/^(.*?)[ \t]+$/gm, (_line: string, kept: string) =>
+      EMPTY_TASK_ITEM_LINE.test(kept) ? `${kept} ` : kept,
+    )
+    .trimStart();
+  const trimmed = normalized.trimEnd();
+  const lastLine = trimmed.slice(trimmed.lastIndexOf("\n") + 1);
+  return normalized.charAt(trimmed.length) === " " &&
+    EMPTY_TASK_ITEM_LINE.test(lastLine)
+    ? `${trimmed} `
+    : trimmed;
 }
 
 export function jsonContentToMarkdown(

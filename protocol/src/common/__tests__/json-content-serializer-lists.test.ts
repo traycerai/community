@@ -15,6 +15,32 @@ describe("jsonContentToMarkdown ordered lists", () => {
       "1. First\n2. Second",
     );
   });
+
+  it("renders a code block that follows the first child of a bullet item at the item's content column", () => {
+    expect(
+      toMarkdown({
+        type: "doc",
+        content: [
+          {
+            type: "bulletList",
+            content: [
+              {
+                type: "listItem",
+                content: [
+                  { type: "paragraph", content: [{ type: "text", text: "a" }] },
+                  {
+                    type: "codeBlock",
+                    attrs: { language: "js" },
+                    content: [{ type: "text", text: "x" }],
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      }),
+    ).toBe("- a\n  ```js\n  x\n  ```");
+  });
 });
 
 function orderedList(
