@@ -10,11 +10,23 @@ import type { BotRecord } from "@traycer/protocol/host/bot/schemas";
 import {
   openChatSubscribeWindowedServerFrameSchema,
   type ChatSubscribeWindowedClientFrame,
+  type OpenChatWindowedSnapshot,
 } from "@traycer/protocol/host/agent/gui/subscribe";
-import type { ChatIndexChange } from "@traycer/protocol/host/agent/gui/subscribe-windowed";
+import type {
+  ChatIndexChange,
+  ChatSkeletonChunk,
+  OpenChatRangeResponse,
+} from "@traycer/protocol/host/agent/gui/subscribe-windowed";
+import type { RowSkeletonEntry } from "@traycer/protocol/persistence/chat-transcript/row-skeleton";
+import {
+  isIncompatibleCloseForMethod,
+  type IStreamSession,
+  type StreamFrameEnvelope,
+} from "@traycer/protocol/host-transport/stream-session";
 import type { OpenMessage } from "@traycer/protocol/persistence/epic/open-harness-records";
 import { TRANSCRIPT_RANGE_MAX_BYTES } from "@traycer/protocol/persistence/chat-transcript/read-range";
 import {
+  botHostUpdateError,
   findBot,
   type BotStreamClient,
   listBots,
@@ -219,10 +231,22 @@ export function parseWaitDuration(value: string): number {
  * `requestId` is resolved, or `timeoutMs` passes.
  *
  * Resolution is recorded on the user row (`conversationRequest.resolvedAt`,
- * and `resolvedByMessageId` naming the reply). The snapshot's tail holds the
- * newest rows; after it, a change arrives as an `indexChanged` naming the rows
- * it touched, and their bodies are read with `loadRange`. A reconnect simply
- * re-subscribes and starts again from a fresh snapshot.
+ * and `resolvedByMessageId` naming the reply). The follower keeps the part of
+ * the windowed index it needs - epoch, revision, row count and the skeleton's
+ * row ids and roles - so it can tell which rows it has read:
+ *
+ * - The snapshot's tail holds the newest rows, but it is bounded and can be
+ *   empty, so a request or reply row outside it is found through the skeleton
+ *   and read with `loadRange`, newest candidate first.
+ * - A change arrives as an `indexChanged` naming the rows it touched; their
+ *   bodies are read with `loadRange`.
+ * - Any sign the index went stale - a skipped revision, rows appended past a
+ *   gap, a reindex, a newer epoch, a range whose rows are not the ones asked
+ *   for - asks for a fresh snapshot and forgets what was read, so nothing from
+ *   a superseded index can settle the wait.
+ *
+ * A reconnect re-subscribes on its own; the host then sends a fresh snapshot
+ * and skeleton, and the follower starts over within the person's timeout.
  */
 export function waitForBotReply(input: {
   readonly client: BotStreamClient;
@@ -231,159 +255,104 @@ export function waitForBotReply(input: {
   readonly requestId: string;
   readonly timeoutMs: number;
 }): Promise<BotReplyOutcome> {
-  const { client, botId, conversationId, requestId } = input;
   return new Promise<BotReplyOutcome>((resolve, reject) => {
-    let settled = false;
-    /** Reply text by message id, from every row read so far. */
-    const replies = new Map<string, string>();
-    /** The reply the resolved row names; undefined until it is resolved. */
-    let resolvedBy: string | null | undefined;
-    let resnapshotAsked = false;
-    /** Each outstanding `loadRange`'s last ordinal, to ask for a remainder. */
-    const rangeEnds = new Map<string, number>();
-    const session = client.subscribe("chat.subscribe", {
-      epicId: botId,
-      chatId: conversationId,
+    new ReplyFollower(input, resolve, reject).start();
+  });
+}
+
+/** What the follower knows about one row of the current index. */
+interface KnownRow {
+  readonly rowId: string;
+  readonly role: RowSkeletonEntry["role"];
+}
+
+interface OutstandingRange {
+  readonly epoch: number;
+  readonly fromOrdinal: number;
+  readonly toOrdinal: number;
+}
+
+class ReplyFollower {
+  private settled = false;
+  private timer: NodeJS.Timeout | null = null;
+  private session: IStreamSession | null = null;
+
+  // ---- the index, as of the last snapshot and the deltas since ---------- //
+  private epoch: number | null = null;
+  /** The last concrete revision; null until the first one is adopted. */
+  private revision: number | null = null;
+  private rowCount = 0;
+  private readonly rows = new Map<number, KnownRow>();
+  private skeletonComplete = false;
+  /** Ordinals whose current bodies have been read. */
+  private readonly read = new Set<number>();
+  /**
+   * Ordinals already fetched by the search, so a row the host serves as
+   * incomplete is not asked for again until it changes.
+   */
+  private readonly searched = new Set<number>();
+  private readonly outstanding = new Map<string, OutstandingRange>();
+  /**
+   * A `resnapshot` was sent and its rebuild (a snapshot announcing a fresh
+   * index) has not arrived. Anything from the old index still on the wire
+   * then finds no epoch to match, and asking again is skipped.
+   */
+  private awaitingRebuild = false;
+
+  // ---- what the rows read so far say ------------------------------------ //
+  /** Reply text by message id. */
+  private readonly replies = new Map<string, string>();
+  /** The request row as last read: open, or resolved by a reply (or none). */
+  private request:
+    | { readonly kind: "unseen" }
+    | { readonly kind: "open" }
+    | { readonly kind: "resolved"; readonly by: string | null } = {
+    kind: "unseen",
+  };
+  /** One fresh snapshot is spent looking for a reply row before giving up. */
+  private replyResnapshotSpent = false;
+
+  constructor(
+    private readonly input: {
+      readonly client: BotStreamClient;
+      readonly botId: string;
+      readonly conversationId: string;
+      readonly requestId: string;
+      readonly timeoutMs: number;
+    },
+    private readonly resolve: (outcome: BotReplyOutcome) => void,
+    private readonly reject: (error: unknown) => void,
+  ) {}
+
+  start(): void {
+    const session = this.input.client.subscribe("chat.subscribe", {
+      epicId: this.input.botId,
+      chatId: this.input.conversationId,
       resume: null,
     });
-    const timer = setTimeout(() => {
-      finish(() => resolve({ kind: "timed-out" }));
-    }, input.timeoutMs);
-    const finish = (act: () => void): void => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      session.close();
-      act();
-    };
-    const send = (frame: ChatSubscribeWindowedClientFrame): void => {
-      session.sendClientFrame(frame, null);
-    };
-    const resnapshot = (): void => {
-      send({
-        kind: "resnapshot",
-        hasBinaryPayload: false,
-        epicId: botId,
-        chatId: conversationId,
-      });
-    };
-    const loadRange = (
-      epoch: number,
-      fromOrdinal: number,
-      toOrdinal: number,
-    ): void => {
-      const rangeRequestId = randomUUID();
-      rangeEnds.set(rangeRequestId, toOrdinal);
-      send({
-        kind: "loadRange",
-        hasBinaryPayload: false,
-        epicId: botId,
-        chatId: conversationId,
-        request: {
-          requestId: rangeRequestId,
-          epoch,
-          fromOrdinal,
-          toOrdinal,
-          maxBytes: TRANSCRIPT_RANGE_MAX_BYTES,
-        },
-      });
-    };
-    const read = (messages: readonly OpenMessage[]): void => {
-      for (const message of messages) {
-        if (message.role === "assistant") {
-          replies.set(message.messageId, replyText(message));
-          continue;
-        }
-        const request = message.conversationRequest;
-        if (
-          request !== undefined &&
-          request.requestId === requestId &&
-          request.resolvedAt !== null
-        ) {
-          resolvedBy = request.resolvedByMessageId;
-        }
-      }
-    };
-    /** Settles once the request is resolved and its reply has been read. */
-    const settleIfResolved = (afterSnapshot: boolean): void => {
-      if (resolvedBy === undefined) return;
-      if (resolvedBy === null) {
-        finish(() => resolve({ kind: "resolved-without-reply" }));
-        return;
-      }
-      const replyMessageId = resolvedBy;
-      const text = replies.get(replyMessageId);
-      if (text !== undefined) {
-        finish(() => resolve({ kind: "replied", replyMessageId, text }));
-        return;
-      }
-      // The reply row was not among the rows read. A fresh snapshot's tail
-      // holds the newest rows; if it is not there either, report the id.
-      if (!resnapshotAsked) {
-        resnapshotAsked = true;
-        resnapshot();
-        return;
-      }
-      if (afterSnapshot) {
-        finish(() =>
-          resolve({ kind: "replied", replyMessageId, text: null }),
-        );
-      }
-    };
+    this.session = session;
+    this.timer = setTimeout(() => {
+      this.finish(() => this.resolve({ kind: "timed-out" }));
+    }, this.input.timeoutMs);
     session.onServerFrame((envelope) => {
       // A frame already in flight when the wait ended asks for nothing more.
-      if (settled) return;
-      const parsed = openChatSubscribeWindowedServerFrameSchema.safeParse(
-        envelope,
-      );
-      if (!parsed.success) {
-        // Only the frames that carry rows matter here; any other frame this
-        // CLI cannot read is not the one it is waiting for.
-        const kind = envelope.kind;
-        if (kind === "snapshot" || kind === "range" || kind === "indexChanged") {
-          finish(() => reject(unreadableStreamError()));
-        }
-        return;
-      }
-      const frame = parsed.data;
-      switch (frame.kind) {
-        case "snapshot":
-          read(frame.snapshot.tail.messages);
-          settleIfResolved(true);
-          return;
-        case "range": {
-          const { range } = frame;
-          read(range.messages);
-          const end = rangeEnds.get(range.requestId);
-          rangeEnds.delete(range.requestId);
-          // The host stops early to stay under the byte budget; ask for the
-          // rest of the span this range was asked for.
-          if (end !== undefined && range.truncatedAtOrdinal !== undefined) {
-            loadRange(range.epoch, range.truncatedAtOrdinal, end);
-          }
-          settleIfResolved(false);
-          return;
-        }
-        case "indexChanged": {
-          if (frame.changes.some((change) => change.type === "reindexed")) {
-            resnapshot();
-            return;
-          }
-          const span = touchedOrdinals(frame.changes, frame.rowCount);
-          if (span !== null) loadRange(frame.epoch, span.from, span.to);
-          return;
-        }
-        default:
-          return;
-      }
+      if (this.settled) return;
+      this.onFrame(envelope);
     });
     session.onStatusChange((status, reason) => {
       // A drop re-subscribes on its own and the new snapshot starts over;
       // the person's timeout bounds the wait either way.
       if (status !== "closed" || reason === null || reason.kind !== "fatalError")
         return;
-      finish(() =>
-        reject(
+      if (
+        this.input.client.getMethodSupport("chat.subscribe") === "unsupported" ||
+        isIncompatibleCloseForMethod(reason, "chat.subscribe")
+      ) {
+        this.finish(() => this.reject(botHostUpdateError()));
+        return;
+      }
+      this.finish(() =>
+        this.reject(
           cliError({
             code: CLI_ERROR_CODES.HOST_UNREACHABLE,
             message: `traycer: stopped following the conversation - ${reason.details.reason}. The message was sent; the request stays open.`,
@@ -393,8 +362,312 @@ export function waitForBotReply(input: {
         ),
       );
     });
-  });
+  }
+
+  private finish(act: () => void): void {
+    if (this.settled) return;
+    this.settled = true;
+    if (this.timer !== null) clearTimeout(this.timer);
+    this.session?.close();
+    act();
+  }
+
+  private onFrame(envelope: StreamFrameEnvelope): void {
+    const parsed = openChatSubscribeWindowedServerFrameSchema.safeParse(envelope);
+    if (!parsed.success) {
+      // Only the frames that carry the index or rows matter here; any other
+      // frame this CLI cannot read is not one it is waiting for.
+      if (ROW_BEARING_FRAME_KINDS.has(envelope.kind)) {
+        this.finish(() => this.reject(unreadableStreamError()));
+      }
+      return;
+    }
+    const frame = parsed.data;
+    switch (frame.kind) {
+      case "snapshot":
+        this.onSnapshot(frame.snapshot);
+        break;
+      case "skeletonChunk":
+        this.onSkeletonChunk(frame.chunk);
+        break;
+      case "indexChanged":
+        this.onIndexChanged(frame);
+        break;
+      case "range":
+        this.onRange(frame.range);
+        break;
+      default:
+        return;
+    }
+    this.advance();
+  }
+
+  private onSnapshot(snapshot: OpenChatWindowedSnapshot): void {
+    if (snapshot.indexRevision === null) {
+      // The host holds no index for this subscriber and streams a fresh
+      // skeleton next: start the index over.
+      this.awaitingRebuild = false;
+      this.resetIndex(snapshot.transcriptEpoch);
+    } else if (snapshot.transcriptEpoch !== this.epoch) {
+      // Also every snapshot still on the wire while a requested rebuild is
+      // pending (the epoch is forgotten then); `requestResnapshot` asks once.
+      this.requestResnapshot();
+      return;
+    } else if (
+      this.revision !== null &&
+      snapshot.indexRevision > this.revision
+    ) {
+      // Same epoch, a revision this follower never saw a delta for.
+      this.requestResnapshot();
+      return;
+    } else if (this.revision === null) {
+      // The first concrete revision after a rebuild is the new baseline.
+      this.revision = snapshot.indexRevision;
+    }
+    this.rowCount = snapshot.rowCount;
+    const tail = snapshot.tail;
+    for (let ordinal = tail.fromOrdinal; ordinal < snapshot.rowCount; ordinal++) {
+      this.read.add(ordinal);
+    }
+    this.readMessages(tail.messages);
+  }
+
+  private onSkeletonChunk(chunk: ChatSkeletonChunk): void {
+    if (chunk.epoch !== this.epoch) return;
+    chunk.entries.forEach((entry, index) => {
+      this.rows.set(chunk.fromOrdinal + index, {
+        rowId: entry.rowId,
+        role: entry.role,
+      });
+    });
+    if (chunk.isFinal) this.skeletonComplete = true;
+  }
+
+  private onIndexChanged(frame: {
+    readonly epoch: number;
+    readonly rowCount: number;
+    readonly indexRevision: number;
+    readonly changes: readonly ChatIndexChange[];
+  }): void {
+    if (this.epoch === null || frame.epoch < this.epoch) return;
+    if (
+      frame.epoch > this.epoch ||
+      frame.changes.some((change) => change.type === "reindexed")
+    ) {
+      this.requestResnapshot();
+      return;
+    }
+    // With no revision held (just after a rebuild) the frame's revision is
+    // the new baseline; otherwise it must be the next one.
+    if (this.revision !== null) {
+      // A duplicate or a straggler from before what this follower holds.
+      if (frame.indexRevision <= this.revision) return;
+      if (frame.indexRevision !== this.revision + 1) {
+        this.requestResnapshot();
+        return;
+      }
+    }
+    const appended = frame.changes.reduce(
+      (total, change) =>
+        change.type === "appended" ? total + change.entries.length : total,
+      0,
+    );
+    // The appended rows sit at the end of the frame's own count; a base past
+    // the rows this follower holds means an append frame was lost.
+    const appendBase = frame.rowCount - appended;
+    if (appendBase > this.rowCount) {
+      this.requestResnapshot();
+      return;
+    }
+    this.revision = frame.indexRevision;
+    let next = appendBase;
+    for (const change of frame.changes) {
+      if (change.type === "appended") {
+        for (const entry of change.entries) {
+          this.rows.set(next, { rowId: entry.rowId, role: entry.role });
+          this.read.delete(next);
+          this.searched.delete(next);
+          next += 1;
+        }
+      } else if (change.type === "updated") {
+        for (const { ordinal, entry } of change.entries) {
+          this.rows.set(ordinal, { rowId: entry.rowId, role: entry.role });
+          this.read.delete(ordinal);
+          this.searched.delete(ordinal);
+        }
+      }
+    }
+    this.rowCount = frame.rowCount;
+    const span = touchedOrdinals(frame.changes, frame.rowCount);
+    if (span !== null) this.loadRange(span.from, span.to);
+  }
+
+  private onRange(range: OpenChatRangeResponse): void {
+    const asked = this.outstanding.get(range.requestId);
+    // Not a range this index asked for: superseded, so not applied.
+    if (asked === undefined) return;
+    this.outstanding.delete(range.requestId);
+    if (range.epoch !== asked.epoch || range.epoch !== this.epoch) return;
+    // Row identity: every served row must be the row this index holds at
+    // that ordinal, or the bodies belong to some other index.
+    const mismatch = range.rowIds.some((rowId, index) => {
+      const known = this.rows.get(range.fromOrdinal + index);
+      return known !== undefined && known.rowId !== rowId;
+    });
+    if (mismatch) {
+      this.requestResnapshot();
+      return;
+    }
+    const incomplete = new Set(range.incompleteRowIds ?? []);
+    range.rowIds.forEach((rowId, index) => {
+      if (!incomplete.has(rowId)) this.read.add(range.fromOrdinal + index);
+    });
+    this.readMessages(range.messages);
+    if (range.truncatedAtOrdinal !== undefined) {
+      this.loadRange(range.truncatedAtOrdinal, asked.toOrdinal);
+    }
+  }
+
+  private readMessages(messages: readonly OpenMessage[]): void {
+    for (const message of messages) {
+      if (message.role === "assistant") {
+        this.replies.set(message.messageId, replyText(message));
+        continue;
+      }
+      const request = message.conversationRequest;
+      if (request === undefined || request.requestId !== this.input.requestId)
+        continue;
+      this.request =
+        request.resolvedAt === null
+          ? { kind: "open" }
+          : { kind: "resolved", by: request.resolvedByMessageId };
+    }
+  }
+
+  /** Settles if it can; otherwise reads the next row it needs, if any. */
+  private advance(): void {
+    if (this.settled) return;
+    const request = this.request;
+    if (request.kind === "resolved") {
+      if (request.by === null) {
+        this.finish(() => this.resolve({ kind: "resolved-without-reply" }));
+        return;
+      }
+      const replyMessageId = request.by;
+      const text = this.replies.get(replyMessageId);
+      if (text !== undefined) {
+        this.finish(() =>
+          this.resolve({ kind: "replied", replyMessageId, text }),
+        );
+        return;
+      }
+    }
+    // The open request waits for its next delta; nothing to look for.
+    if (request.kind === "open") return;
+    // A range in flight may hold what is missing: wait for it.
+    if (this.outstanding.size > 0 || !this.skeletonComplete) return;
+    const wanted: KnownRow["role"] =
+      request.kind === "unseen" ? "user" : "assistant";
+    const candidate = this.newestUnread(wanted);
+    if (candidate !== null) {
+      this.searched.add(candidate);
+      this.loadRange(candidate, candidate);
+      return;
+    }
+    if (request.kind === "resolved" && request.by !== null) {
+      // Every reply-shaped row has been read and none is the one named. Look
+      // once more from a fresh snapshot, then report the reply by its id.
+      if (!this.replyResnapshotSpent) {
+        this.replyResnapshotSpent = true;
+        this.requestResnapshot();
+        return;
+      }
+      const replyMessageId = request.by;
+      this.finish(() =>
+        this.resolve({ kind: "replied", replyMessageId, text: null }),
+      );
+    }
+    // An unseen request row with nothing left to read waits for a delta.
+  }
+
+  private newestUnread(role: KnownRow["role"]): number | null {
+    for (let ordinal = this.rowCount - 1; ordinal >= 0; ordinal--) {
+      const row = this.rows.get(ordinal);
+      if (
+        row !== undefined &&
+        row.role === role &&
+        !this.read.has(ordinal) &&
+        !this.searched.has(ordinal)
+      ) {
+        return ordinal;
+      }
+    }
+    return null;
+  }
+
+  private loadRange(fromOrdinal: number, toOrdinal: number): void {
+    if (this.epoch === null) return;
+    const requestId = randomUUID();
+    this.outstanding.set(requestId, {
+      epoch: this.epoch,
+      fromOrdinal,
+      toOrdinal,
+    });
+    this.send({
+      kind: "loadRange",
+      hasBinaryPayload: false,
+      epicId: this.input.botId,
+      chatId: this.input.conversationId,
+      request: {
+        requestId,
+        epoch: this.epoch,
+        fromOrdinal,
+        toOrdinal,
+        maxBytes: TRANSCRIPT_RANGE_MAX_BYTES,
+      },
+    });
+  }
+
+  /**
+   * Asks for a fresh snapshot and forgets everything read from the index it
+   * replaces, so only the new index can settle the wait.
+   */
+  private requestResnapshot(): void {
+    if (this.awaitingRebuild) return;
+    this.awaitingRebuild = true;
+    this.resetIndex(null);
+    this.replies.clear();
+    this.request = { kind: "unseen" };
+    this.send({
+      kind: "resnapshot",
+      hasBinaryPayload: false,
+      epicId: this.input.botId,
+      chatId: this.input.conversationId,
+    });
+  }
+
+  private resetIndex(epoch: number | null): void {
+    this.epoch = epoch;
+    this.revision = null;
+    this.rowCount = 0;
+    this.rows.clear();
+    this.skeletonComplete = false;
+    this.read.clear();
+    this.searched.clear();
+    this.outstanding.clear();
+  }
+
+  private send(frame: ChatSubscribeWindowedClientFrame): void {
+    this.session?.sendClientFrame(frame, null);
+  }
 }
+
+const ROW_BEARING_FRAME_KINDS: ReadonlySet<string> = new Set([
+  "snapshot",
+  "skeletonChunk",
+  "range",
+  "indexChanged",
+]);
 
 /**
  * The inclusive ordinal span an `indexChanged` touched: every `updated`

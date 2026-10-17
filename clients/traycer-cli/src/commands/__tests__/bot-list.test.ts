@@ -1,8 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BotRecord } from "@traycer/protocol/host/bot/schemas";
 import type { EnvironmentDescriptor } from "@traycer/protocol/host/environment/contracts";
 import type { StreamFrameEnvelope } from "@traycer/protocol/host-transport/stream-session";
-import { BOT_HOST_UPDATE_MESSAGE } from "../../internal/bot-host";
+import {
+  BOT_HOST_UPDATE_MESSAGE,
+  BOT_SNAPSHOT_DEADLINE_MS,
+} from "../../internal/bot-host";
 import { CLI_ERROR_CODES, CliError } from "../../runner/errors";
 import type { CommandResult } from "../../runner/runner";
 import {
@@ -16,6 +19,7 @@ import {
   botRecord,
   botSnapshotFrame,
   botSubscribeClient,
+  type FakeStreamSession,
   environmentDescriptor,
   fatalClose,
   makeCtx,
@@ -106,6 +110,38 @@ beforeEach(() => {
   vi.resetAllMocks();
   hoisted.resolveEndpoint.mockResolvedValue(ENDPOINT);
 });
+
+afterEach(() => {
+  vi.useRealTimers();
+});
+
+/**
+ * A client that notes, at the moment it is closed, how many times each
+ * session had been closed: a client closed before a read settled shows it.
+ */
+class RecordingClient extends FakeStreamClient {
+  readonly sessionClosesAtClose: (readonly number[])[] = [];
+
+  close(reason: string): void {
+    this.sessionClosesAtClose.push(
+      this.sessions.map((session) => session.closeCount),
+    );
+    super.close(reason);
+  }
+}
+
+function botIdOf(session: FakeStreamSession): string {
+  const params = session.params;
+  if (
+    typeof params !== "object" ||
+    params === null ||
+    !("botId" in params) ||
+    typeof params.botId !== "string"
+  ) {
+    throw new Error("a bot.subscribe without a bot id");
+  }
+  return params.botId;
+}
 
 describe("bot list", () => {
   it("groups bots under their environment, in environment.list order, and marks this host's bots", async () => {
@@ -411,8 +447,8 @@ describe("bot list", () => {
     expect(client.closeReasons).toEqual(["bot-list-settled"]);
   });
 
-  it("closes the stream client even when a snapshot read fails", async () => {
-    const bot = botRecord({ botId: BOT_ID_A });
+  it("lists a bot whose read fails as could-not-read, exits 1, and closes the client", async () => {
+    const bot = botRecord({ botId: BOT_ID_A, title: "Tracy" });
     const client = new FakeStreamClient((session) => {
       session.pushStatus(
         "closed",
@@ -429,12 +465,177 @@ describe("bot list", () => {
       client,
     });
 
-    await expect(runList()).rejects.toMatchObject({
-      code: CLI_ERROR_CODES.HOST_UNREACHABLE,
-      exitCode: 1,
-      message: expect.stringContaining("host blew up"),
+    const result = await runList();
+
+    expect(result.human).toBe(
+      [
+        "Personal",
+        `  Tracy  ${BOT_ID_A}  host ${THIS_HOST_ID} (this host)  could not read Tracy`,
+      ].join("\n"),
+    );
+    expect(result.data).toEqual({
+      environments: [
+        {
+          environmentId: "env-personal",
+          label: "Personal",
+          bots: [
+            {
+              botId: BOT_ID_A,
+              title: "Tracy",
+              boundHostId: THIS_HOST_ID,
+              boundToThisHost: true,
+              openRequestCount: null,
+            },
+          ],
+        },
+      ],
     });
+    expect(result.exitCode).toBe(1);
+    expect(client.sessions.map((session) => session.closeCount)).toEqual([1]);
     expect(client.closeReasons).toEqual(["bot-list-settled"]);
+  });
+
+  it("lists a bot whose stream is dropped as could-not-read, and the others normally", async () => {
+    const good = botRecord({ botId: BOT_ID_A, title: "Good" });
+    const dropped = botRecord({ botId: BOT_ID_B, title: "Dropped" });
+    const client = new FakeStreamClient((session) => {
+      if (botIdOf(session) === BOT_ID_A) {
+        session.pushFrame(botSnapshotFrame(good, [], 2));
+      } else {
+        session.pushStatus("closed", { kind: "caller" });
+      }
+    });
+    stage({
+      environments: [environmentDescriptor("env-personal", "Personal")],
+      bots: [good, dropped],
+      client,
+    });
+
+    const result = await runList();
+
+    expect(result.human).toBe(
+      [
+        "Personal",
+        `  Good  ${BOT_ID_A}  host ${THIS_HOST_ID} (this host)  2 open requests`,
+        `  Dropped  ${BOT_ID_B}  host ${THIS_HOST_ID} (this host)  could not read Dropped`,
+      ].join("\n"),
+    );
+    expect(result.exitCode).toBe(1);
+  });
+
+  it("exits 0 when every bot is read", async () => {
+    const bot = botRecord({ botId: BOT_ID_A });
+    stage({
+      environments: [environmentDescriptor("env-personal", "Personal")],
+      bots: [bot],
+      client: botSubscribeClient(snapshotAnswers([[bot, 0]])),
+    });
+
+    expect((await runList()).exitCode).toBe(0);
+  });
+
+  describe("a bot whose stream never answers", () => {
+    beforeEach(() => {
+      vi.useFakeTimers();
+    });
+
+    it("lists it as could-not-read after the deadline, lists the others normally, and closes everything once all settled", async () => {
+      const first = botRecord({ botId: BOT_ID_A, title: "First" });
+      const stalled = botRecord({ botId: BOT_ID_B, title: "Stalled" });
+      const third = botRecord({ botId: BOT_ID_C, title: "Third" });
+      const client = new RecordingClient((session) => {
+        const botId = botIdOf(session);
+        if (botId === BOT_ID_A)
+          session.pushFrame(botSnapshotFrame(first, [], 1));
+        if (botId === BOT_ID_C)
+          session.pushFrame(botSnapshotFrame(third, [], 4));
+        // BOT_ID_B: no answer, ever.
+      });
+      stage({
+        environments: [environmentDescriptor("env-personal", "Personal")],
+        bots: [first, stalled, third],
+        client,
+      });
+
+      const run = runList().then(
+        (result) => ({ result }),
+        (error: unknown) => ({ error }),
+      );
+      await vi.advanceTimersByTimeAsync(BOT_SNAPSHOT_DEADLINE_MS - 1);
+      // Nothing is printed, and nothing closed, while a read is still pending.
+      expect(client.closeReasons).toEqual([]);
+
+      await vi.advanceTimersByTimeAsync(1);
+      const settled = await run;
+      if (!("result" in settled)) throw settled.error;
+      const { result } = settled;
+
+      expect(result.human).toBe(
+        [
+          "Personal",
+          `  First  ${BOT_ID_A}  host ${THIS_HOST_ID} (this host)  1 open request`,
+          `  Stalled  ${BOT_ID_B}  host ${THIS_HOST_ID} (this host)  could not read Stalled`,
+          `  Third  ${BOT_ID_C}  host ${THIS_HOST_ID} (this host)  4 open requests`,
+        ].join("\n"),
+      );
+      expect(result.data).toMatchObject({
+        environments: [
+          {
+            bots: [
+              { botId: BOT_ID_A, openRequestCount: 1 },
+              { botId: BOT_ID_B, openRequestCount: null },
+              { botId: BOT_ID_C, openRequestCount: 4 },
+            ],
+          },
+        ],
+      });
+      expect(result.exitCode).toBe(1);
+      expect(client.sessions.map((session) => session.closeCount)).toEqual([
+        1, 1, 1,
+      ]);
+      // Closed once, and only after every read had settled and closed its
+      // session.
+      expect(client.closeReasons).toEqual(["bot-list-settled"]);
+      expect(client.sessionClosesAtClose).toEqual([[1, 1, 1]]);
+    });
+  });
+
+  it("waits for every read before it fails on a host-update close, then closes the client once", async () => {
+    const slow = botRecord({ botId: BOT_ID_A, title: "Slow" });
+    const old = botRecord({ botId: BOT_ID_B, title: "Old" });
+    const client = new RecordingClient((session) => {
+      if (botIdOf(session) === BOT_ID_B) {
+        session.pushStatus(
+          "closed",
+          fatalClose({
+            code: "INCOMPATIBLE",
+            reason: "host does not offer bot.subscribe",
+            incompatibleMethod: "bot.subscribe",
+          }),
+        );
+      } else {
+        // Answers a turn later than the failing one.
+        queueMicrotask(() => {
+          queueMicrotask(() => {
+            session.pushFrame(botSnapshotFrame(slow, [], 1));
+          });
+        });
+      }
+    });
+    stage({
+      environments: [environmentDescriptor("env-personal", "Personal")],
+      bots: [slow, old],
+      client,
+    });
+
+    const error: unknown = await runList().catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(CliError);
+    if (!(error instanceof CliError)) throw error;
+    expect(error.message).toBe(BOT_HOST_UPDATE_MESSAGE);
+    expect(error.code).toBe(CLI_ERROR_CODES.HOST_UNSUPPORTED);
+    expect(client.closeReasons).toEqual(["bot-list-settled"]);
+    expect(client.sessionClosesAtClose).toEqual([[1, 1]]);
   });
 });
 
@@ -512,7 +713,7 @@ describe("bot list on a host without bots", () => {
   });
 
   it("does not read an INCOMPATIBLE close about another method as a missing bots capability", async () => {
-    const bot = botRecord({ botId: BOT_ID_A });
+    const bot = botRecord({ botId: BOT_ID_A, title: "Tracy" });
     const client = new FakeStreamClient((session) => {
       session.pushStatus(
         "closed",
@@ -529,9 +730,12 @@ describe("bot list on a host without bots", () => {
       client,
     });
 
-    await expect(runList()).rejects.toMatchObject({
-      code: CLI_ERROR_CODES.HOST_UNREACHABLE,
-    });
+    // Not the update line: this bot could not be read, and it says so.
+    const result = await runList();
+
+    expect(result.human).toContain("could not read Tracy");
+    expect(result.human).not.toContain(BOT_HOST_UPDATE_MESSAGE);
+    expect(result.exitCode).toBe(1);
   });
 });
 

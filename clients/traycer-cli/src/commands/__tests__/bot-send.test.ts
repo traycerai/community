@@ -28,9 +28,11 @@ import {
   conversationRecord,
   fatalClose,
   indexChangedFrame,
+  type IndexChange,
   makeCtx,
   rangeFrame,
   routeRpc,
+  skeletonChunkFrame,
   skeletonEntry,
   unsupportedRpcError,
   userRow,
@@ -466,6 +468,7 @@ function resolvedSnapshot(
     conversationId: CONVERSATION_ID,
     epoch: 1,
     rowCount: 1 + extraRows.length,
+    indexRevision: null,
     tailFromOrdinal: 0,
     messages: [
       userRow({
@@ -527,9 +530,12 @@ describe("bot send --wait", () => {
     const { run, session } = await startWaitingSend("30s");
 
     session.pushFrame(resolvedSnapshot(REPLY_MESSAGE_ID, []));
-    // The reply row is unseen: the command asks for a fresh snapshot, which
-    // also lacks it.
+    session.pushFrame(skeletonOf(1, [skeletonEntry("r0", "user")]));
+    // No assistant row is left to read: the command asks for a fresh
+    // snapshot, which also lacks the reply.
+    expect(resnapshots(session)).toHaveLength(1);
     session.pushFrame(resolvedSnapshot(REPLY_MESSAGE_ID, []));
+    session.pushFrame(skeletonOf(1, [skeletonEntry("r0", "user")]));
     const result = await run;
 
     expect(result.human).toBe(
@@ -589,6 +595,25 @@ describe("bot send --wait", () => {
 
     const error = await rejection(run);
     expect(error.code).toBe(CLI_ERROR_CODES.HOST_UNREACHABLE);
+    expect(client.closeReasons).toEqual(["bot-send-wait-settled"]);
+  });
+
+  it("prints the host-update line when chat.subscribe closes as incompatible during the wait", async () => {
+    const { run, client, session } = await startWaitingSend("30s");
+
+    session.pushStatus(
+      "closed",
+      fatalClose({
+        code: "INCOMPATIBLE",
+        reason: "host does not offer chat.subscribe",
+        incompatibleMethod: "chat.subscribe",
+      }),
+    );
+
+    const error = await rejection(run);
+    expect(error.code).toBe(CLI_ERROR_CODES.HOST_UNSUPPORTED);
+    expect(error.message).toBe(BOT_HOST_UPDATE_MESSAGE);
+    expect(error.exitCode).toBe(1);
     expect(client.closeReasons).toEqual(["bot-send-wait-settled"]);
   });
 });
@@ -745,6 +770,12 @@ describe("touchedOrdinals", () => {
 
 // ---- waitForBotReply, driven frame by frame ------------------------------ //
 
+type Row = Record<string, unknown>;
+type LoadRangeRequest = Extract<
+  ChatSubscribeWindowedClientFrame,
+  { kind: "loadRange" }
+>["request"];
+
 function sentFrames(
   session: FakeStreamSession,
 ): ChatSubscribeWindowedClientFrame[] {
@@ -753,10 +784,25 @@ function sentFrames(
   );
 }
 
-function loadRanges(session: FakeStreamSession) {
+function loadRanges(session: FakeStreamSession): LoadRangeRequest[] {
   return sentFrames(session).flatMap((frame) =>
     frame.kind === "loadRange" ? [frame.request] : [],
   );
+}
+
+/** Each loadRange sent so far as `[fromOrdinal, toOrdinal]`. */
+function loadSpans(session: FakeStreamSession): (readonly [number, number])[] {
+  return loadRanges(session).map((request): readonly [number, number] => [
+    request.fromOrdinal,
+    request.toOrdinal,
+  ]);
+}
+
+function newestLoad(session: FakeStreamSession): LoadRangeRequest {
+  const asked = loadRanges(session);
+  const last = asked[asked.length - 1];
+  if (last === undefined) throw new Error("no loadRange was sent");
+  return last;
 }
 
 function resnapshots(session: FakeStreamSession) {
@@ -765,6 +811,7 @@ function resnapshots(session: FakeStreamSession) {
 
 function startWait(timeoutMs: number): {
   readonly session: FakeStreamSession;
+  readonly client: FakeStreamClient;
   readonly outcome: Promise<BotReplyOutcome>;
   readonly settled: () => boolean;
 } {
@@ -779,10 +826,13 @@ function startWait(timeoutMs: number): {
   }).finally(() => {
     done = true;
   });
+  // A test that ends on a rejection reads it itself; this keeps the ones
+  // that end earlier from reporting an unhandled rejection.
+  outcome.catch(() => undefined);
   const session = client.sessions[0];
   if (session === undefined)
     throw new Error("waitForBotReply never subscribed");
-  return { session, outcome, settled: () => done };
+  return { session, client, outcome, settled: () => done };
 }
 
 const openUserRow = userRow({
@@ -801,22 +851,134 @@ function resolvedUserRow(resolvedByMessageId: string | null) {
   });
 }
 
+/** A resolved user row of some other request, as an older turn left it. */
+function otherRequestRow(n: number, resolvedBy: string) {
+  return userRow({
+    messageId: `msg-other-${n}`,
+    requestId: `req-other-${n}`,
+    resolvedAt: 4_000,
+    resolvedByMessageId: resolvedBy,
+  });
+}
+
 const replyRow = assistantRow({
   messageId: REPLY_MESSAGE_ID,
   texts: ["Hello", "", "world"],
 });
 
-function snapshotOf(
-  messages: readonly Record<string, unknown>[],
-  epoch: number,
-) {
+const REPLY_TEXT = "Hello\nworld";
+
+/** A snapshot of `rowCount` rows whose tail starts at `tailFromOrdinal`. */
+function snapshotAt(input: {
+  readonly epoch: number;
+  readonly rowCount: number;
+  readonly indexRevision: number | null;
+  readonly tailFromOrdinal: number;
+  readonly messages: readonly Row[];
+}) {
   return chatSnapshotFrame({
     botId: BOT_ID_A,
     conversationId: CONVERSATION_ID,
+    ...input,
+  });
+}
+
+/** A fresh-index snapshot whose tail is the whole of `messages`. */
+function snapshotOf(messages: readonly Row[], epoch: number) {
+  return snapshotAt({
     epoch,
     rowCount: messages.length,
+    indexRevision: null,
     tailFromOrdinal: 0,
     messages,
+  });
+}
+
+function chunkAt(
+  epoch: number,
+  fromOrdinal: number,
+  entries: readonly Row[],
+  isFinal: boolean,
+) {
+  return skeletonChunkFrame({
+    botId: BOT_ID_A,
+    conversationId: CONVERSATION_ID,
+    epoch,
+    fromOrdinal,
+    entries,
+    isFinal,
+  });
+}
+
+/** The whole skeleton in one final chunk. */
+function skeletonOf(epoch: number, entries: readonly Row[]) {
+  return chunkAt(epoch, 0, entries, true);
+}
+
+function changedAt(input: {
+  readonly epoch: number;
+  readonly rowCount: number;
+  readonly indexRevision: number;
+  readonly changes: readonly IndexChange[];
+}) {
+  return indexChangedFrame({
+    botId: BOT_ID_A,
+    conversationId: CONVERSATION_ID,
+    ...input,
+  });
+}
+
+function rangeOf(input: {
+  readonly requestId: string;
+  readonly epoch: number;
+  readonly fromOrdinal: number;
+  readonly rowIds: readonly string[];
+  readonly messages: readonly Row[];
+  readonly truncatedAtOrdinal: number | null;
+}) {
+  return rangeFrame({
+    botId: BOT_ID_A,
+    conversationId: CONVERSATION_ID,
+    incompleteRowIds: null,
+    ...input,
+  });
+}
+
+/** Answers `request` the way the host would, with the rows named. */
+function serve(
+  session: FakeStreamSession,
+  request: LoadRangeRequest,
+  served: {
+    readonly rowIds: readonly string[];
+    readonly messages: readonly Row[];
+    readonly incompleteRowIds: readonly string[] | null;
+    readonly truncatedAtOrdinal: number | null;
+  },
+): void {
+  session.pushFrame(
+    rangeFrame({
+      botId: BOT_ID_A,
+      conversationId: CONVERSATION_ID,
+      requestId: request.requestId,
+      epoch: request.epoch,
+      fromOrdinal: request.fromOrdinal,
+      ...served,
+    }),
+  );
+}
+
+/** `serve` for a whole answer: no incomplete rows, nothing cut short. */
+function serveWhole(
+  session: FakeStreamSession,
+  request: LoadRangeRequest,
+  rowIds: readonly string[],
+  messages: readonly Row[],
+): void {
+  serve(session, request, {
+    rowIds,
+    messages,
+    incompleteRowIds: null,
+    truncatedAtOrdinal: null,
   });
 }
 
@@ -824,6 +986,15 @@ describe("fixtures", () => {
   it("are accepted by the real windowed chat.subscribe schema", () => {
     const frames = [
       snapshotOf([resolvedUserRow(REPLY_MESSAGE_ID), replyRow], 3),
+      snapshotAt({
+        epoch: 3,
+        rowCount: 2,
+        indexRevision: 7,
+        tailFromOrdinal: 1,
+        messages: [replyRow],
+      }),
+      chunkAt(3, 0, [skeletonEntry("r0", "user")], false),
+      chunkAt(3, 1, [skeletonEntry("r1", "assistant")], true),
       indexChangedFrame({
         botId: BOT_ID_A,
         conversationId: CONVERSATION_ID,
@@ -846,8 +1017,17 @@ describe("fixtures", () => {
         epoch: 3,
         fromOrdinal: 0,
         rowIds: ["r0", "r1"],
+        incompleteRowIds: ["r1"],
         messages: [resolvedUserRow(REPLY_MESSAGE_ID), replyRow],
         truncatedAtOrdinal: 1,
+      }),
+      rangeOf({
+        requestId: "range-2",
+        epoch: 3,
+        fromOrdinal: 0,
+        rowIds: ["r0"],
+        messages: [],
+        truncatedAtOrdinal: null,
       }),
     ];
 
@@ -887,7 +1067,7 @@ describe("waitForBotReply", () => {
     await expect(outcome).resolves.toEqual({
       kind: "replied",
       replyMessageId: REPLY_MESSAGE_ID,
-      text: "Hello\nworld",
+      text: REPLY_TEXT,
     });
     expect(session.closeCount).toBe(1);
     expect(session.sent).toEqual([]);
@@ -902,7 +1082,7 @@ describe("waitForBotReply", () => {
 
     await expect(outcome).resolves.toMatchObject({
       kind: "replied",
-      text: "Hello\nworld",
+      text: REPLY_TEXT,
     });
   });
 
@@ -918,14 +1098,13 @@ describe("waitForBotReply", () => {
 
   it("keeps waiting while the request is open, and while another request is the resolved one", async () => {
     const { session, outcome, settled } = startWait(60_000);
-    const otherResolved = userRow({
-      messageId: "msg-other",
-      requestId: "req-other",
-      resolvedAt: 5_000,
-      resolvedByMessageId: REPLY_MESSAGE_ID,
-    });
 
-    session.pushFrame(snapshotOf([otherResolved, openUserRow, replyRow], 1));
+    session.pushFrame(
+      snapshotOf(
+        [otherRequestRow(1, REPLY_MESSAGE_ID), openUserRow, replyRow],
+        1,
+      ),
+    );
     await vi.advanceTimersByTimeAsync(1_000);
 
     expect(settled()).toBe(false);
@@ -936,75 +1115,649 @@ describe("waitForBotReply", () => {
     await expect(outcome).resolves.toEqual({ kind: "timed-out" });
   });
 
-  it("asks for one loadRange over the updated and appended rows, and settles on the range answer", async () => {
-    const { session, outcome } = startWait(60_000);
-    session.pushFrame(snapshotOf([openUserRow], 4));
+  describe("an index change", () => {
+    it("asks for one loadRange over the updated and appended rows, and settles on the range answer", async () => {
+      const { session, outcome } = startWait(60_000);
+      session.pushFrame(
+        snapshotAt({
+          epoch: 4,
+          rowCount: 2,
+          indexRevision: null,
+          tailFromOrdinal: 0,
+          messages: [openUserRow],
+        }),
+      );
 
-    session.pushFrame(
-      indexChangedFrame({
-        botId: BOT_ID_A,
-        conversationId: CONVERSATION_ID,
-        epoch: 4,
-        rowCount: 4,
-        indexRevision: 1,
-        changes: [
-          {
-            type: "updated",
-            entries: [{ ordinal: 1, entry: skeletonEntry("r1", "user") }],
-          },
-          {
-            type: "appended",
-            entries: [
-              skeletonEntry("r2", "assistant"),
-              skeletonEntry("r3", "assistant"),
-            ],
-          },
-        ],
-      }),
-    );
+      session.pushFrame(
+        changedAt({
+          epoch: 4,
+          rowCount: 4,
+          indexRevision: 1,
+          changes: [
+            {
+              type: "updated",
+              entries: [{ ordinal: 1, entry: skeletonEntry("r1", "user") }],
+            },
+            {
+              type: "appended",
+              entries: [
+                skeletonEntry("r2", "assistant"),
+                skeletonEntry("r3", "assistant"),
+              ],
+            },
+          ],
+        }),
+      );
 
-    // updated ordinal 1, appended rows 2..3 of a 4-row index: 1..3 inclusive.
-    const asked = loadRanges(session);
-    expect(asked).toHaveLength(1);
-    expect(asked[0]).toMatchObject({
-      epoch: 4,
-      fromOrdinal: 1,
-      toOrdinal: 3,
-      maxBytes: TRANSCRIPT_RANGE_MAX_BYTES,
-    });
-    expect(session.sent).toHaveLength(1);
-    expect(session.closeCount).toBe(0);
-
-    session.pushFrame(
-      rangeFrame({
-        botId: BOT_ID_A,
-        conversationId: CONVERSATION_ID,
-        requestId: asked[0].requestId,
+      // updated ordinal 1, appended rows 2..3 of a 4-row index: 1..3 inclusive.
+      const asked = loadRanges(session);
+      expect(asked).toHaveLength(1);
+      expect(asked[0]).toMatchObject({
         epoch: 4,
         fromOrdinal: 1,
-        rowIds: ["r1", "r2", "r3"],
-        messages: [resolvedUserRow(REPLY_MESSAGE_ID), replyRow],
-        truncatedAtOrdinal: null,
-      }),
-    );
+        toOrdinal: 3,
+        maxBytes: TRANSCRIPT_RANGE_MAX_BYTES,
+      });
+      expect(session.sent).toHaveLength(1);
+      expect(session.closeCount).toBe(0);
 
-    await expect(outcome).resolves.toEqual({
-      kind: "replied",
-      replyMessageId: REPLY_MESSAGE_ID,
-      text: "Hello\nworld",
+      serveWhole(
+        session,
+        asked[0],
+        ["r1", "r2", "r3"],
+        [resolvedUserRow(REPLY_MESSAGE_ID), replyRow],
+      );
+
+      await expect(outcome).resolves.toEqual({
+        kind: "replied",
+        replyMessageId: REPLY_MESSAGE_ID,
+        text: REPLY_TEXT,
+      });
+      expect(session.closeCount).toBe(1);
+      // The answer arrived whole: nothing more was asked for.
+      expect(session.sent).toHaveLength(1);
     });
-    expect(session.closeCount).toBe(1);
-    // The answer arrived whole: nothing more was asked for.
-    expect(session.sent).toHaveLength(1);
+
+    it("asks for nothing when an index change touches no row", () => {
+      const { session } = startWait(60_000);
+      session.pushFrame(snapshotOf([openUserRow], 4));
+
+      session.pushFrame(
+        changedAt({ epoch: 4, rowCount: 1, indexRevision: 1, changes: [] }),
+      );
+
+      expect(session.sent).toEqual([]);
+    });
+
+    it("asks for a fresh snapshot, and no range, when the index was reindexed", async () => {
+      const { session, settled } = startWait(60_000);
+      session.pushFrame(snapshotOf([openUserRow], 4));
+
+      session.pushFrame(
+        changedAt({
+          epoch: 5,
+          rowCount: 3,
+          indexRevision: 1,
+          // A reindex among other changes still wins: their ordinals are stale.
+          changes: [
+            { type: "appended", entries: [skeletonEntry("r2", "assistant")] },
+            { type: "reindexed" },
+          ],
+        }),
+      );
+
+      expect(sentFrames(session)).toEqual([
+        {
+          kind: "resnapshot",
+          hasBinaryPayload: false,
+          epicId: BOT_ID_A,
+          chatId: CONVERSATION_ID,
+        },
+      ]);
+      expect(loadRanges(session)).toEqual([]);
+      expect(settled()).toBe(false);
+    });
+
+    it("asks for a fresh snapshot on a reindex within the same epoch", () => {
+      const { session } = startWait(60_000);
+      session.pushFrame(snapshotOf([openUserRow], 4));
+
+      session.pushFrame(
+        changedAt({
+          epoch: 4,
+          rowCount: 1,
+          indexRevision: 1,
+          changes: [{ type: "reindexed" }],
+        }),
+      );
+
+      expect(resnapshots(session)).toHaveLength(1);
+      expect(loadRanges(session)).toEqual([]);
+    });
+
+    it("asks for a fresh snapshot on a newer epoch, and ignores an older one", () => {
+      const { session } = startWait(60_000);
+      session.pushFrame(snapshotOf([openUserRow], 4));
+
+      session.pushFrame(
+        changedAt({
+          epoch: 3,
+          rowCount: 5,
+          indexRevision: 1,
+          changes: [
+            { type: "appended", entries: [skeletonEntry("r1", "assistant")] },
+          ],
+        }),
+      );
+      expect(session.sent).toEqual([]);
+
+      session.pushFrame(
+        changedAt({
+          epoch: 5,
+          rowCount: 1,
+          indexRevision: 1,
+          changes: [],
+        }),
+      );
+      expect(resnapshots(session)).toHaveLength(1);
+      expect(session.sent).toHaveLength(1);
+    });
+
+    it("adopts the first revision as the baseline, ignores a repeat or a straggler, and resnapshots on a gap", () => {
+      const { session } = startWait(60_000);
+      session.pushFrame(snapshotOf([openUserRow], 4));
+      const append = (rowCount: number, indexRevision: number) =>
+        changedAt({
+          epoch: 4,
+          rowCount,
+          indexRevision,
+          changes: [
+            {
+              type: "appended",
+              entries: [skeletonEntry(`n${rowCount}`, "assistant")],
+            },
+          ],
+        });
+
+      // The first concrete revision, whatever its number, is the baseline.
+      session.pushFrame(append(2, 7));
+      expect(loadSpans(session)).toEqual([[1, 1]]);
+
+      // The same revision again, and an older one: dropped, nothing asked.
+      session.pushFrame(append(3, 7));
+      session.pushFrame(append(3, 6));
+      expect(loadSpans(session)).toEqual([[1, 1]]);
+      expect(resnapshots(session)).toHaveLength(0);
+
+      // The next revision is applied.
+      session.pushFrame(append(3, 8));
+      expect(loadSpans(session)).toEqual([
+        [1, 1],
+        [2, 2],
+      ]);
+
+      // A revision other than the next is a lost frame.
+      session.pushFrame(append(4, 10));
+      expect(resnapshots(session)).toHaveLength(1);
+      expect(loadSpans(session)).toHaveLength(2);
+    });
+
+    it("asks for a fresh snapshot when rows were appended past a gap in the index", () => {
+      const { session } = startWait(60_000);
+      session.pushFrame(snapshotOf([openUserRow], 4));
+
+      // Five rows appended onto a one-row index: the rows between were lost.
+      session.pushFrame(
+        changedAt({
+          epoch: 4,
+          rowCount: 6,
+          indexRevision: 1,
+          changes: [
+            { type: "appended", entries: [skeletonEntry("r5", "assistant")] },
+          ],
+        }),
+      );
+
+      expect(resnapshots(session)).toHaveLength(1);
+      expect(loadRanges(session)).toEqual([]);
+    });
+  });
+
+  describe("a snapshot after the first", () => {
+    it("asks for a fresh snapshot when it names a different epoch", () => {
+      const { session } = startWait(60_000);
+      session.pushFrame(snapshotOf([openUserRow], 4));
+
+      session.pushFrame(
+        snapshotAt({
+          epoch: 5,
+          rowCount: 1,
+          indexRevision: 1,
+          tailFromOrdinal: 0,
+          messages: [resolvedUserRow(null)],
+        }),
+      );
+
+      expect(resnapshots(session)).toHaveLength(1);
+    });
+
+    it("asks for a fresh snapshot when its revision is above the one held", () => {
+      const { session } = startWait(60_000);
+      session.pushFrame(snapshotOf([openUserRow], 4));
+      session.pushFrame(
+        changedAt({ epoch: 4, rowCount: 1, indexRevision: 2, changes: [] }),
+      );
+
+      session.pushFrame(
+        snapshotAt({
+          epoch: 4,
+          rowCount: 1,
+          indexRevision: 4,
+          tailFromOrdinal: 0,
+          messages: [resolvedUserRow(null)],
+        }),
+      );
+      expect(resnapshots(session)).toHaveLength(1);
+    });
+
+    it("takes the first concrete revision as the baseline and applies its tail", async () => {
+      const { session, outcome } = startWait(60_000);
+      session.pushFrame(snapshotOf([openUserRow], 4));
+
+      // Same epoch, no revision held yet: not a gap, and its tail is read.
+      session.pushFrame(
+        snapshotAt({
+          epoch: 4,
+          rowCount: 1,
+          indexRevision: 7,
+          tailFromOrdinal: 0,
+          messages: [resolvedUserRow(null)],
+        }),
+      );
+
+      await expect(outcome).resolves.toEqual({
+        kind: "resolved-without-reply",
+      });
+      expect(session.sent).toEqual([]);
+    });
+
+    it("applies a snapshot at the held revision", async () => {
+      const { session, outcome } = startWait(60_000);
+      session.pushFrame(snapshotOf([openUserRow], 4));
+      session.pushFrame(
+        changedAt({ epoch: 4, rowCount: 1, indexRevision: 2, changes: [] }),
+      );
+
+      session.pushFrame(
+        snapshotAt({
+          epoch: 4,
+          rowCount: 1,
+          indexRevision: 2,
+          tailFromOrdinal: 0,
+          messages: [resolvedUserRow(null)],
+        }),
+      );
+
+      await expect(outcome).resolves.toEqual({
+        kind: "resolved-without-reply",
+      });
+      expect(session.sent).toEqual([]);
+    });
+  });
+
+  describe("a request row outside the snapshot tail (P1-1)", () => {
+    it("loads the newest user row, then older user rows until the request is found, then reads the reply", async () => {
+      const { session, outcome, settled } = startWait(60_000);
+      // Six rows, none in the tail. The request is row 2; rows 4 and 5 are a
+      // later request and its reply, rows 0 and 1 an earlier pair.
+      session.pushFrame(
+        snapshotAt({
+          epoch: 1,
+          rowCount: 6,
+          indexRevision: null,
+          tailFromOrdinal: 6,
+          messages: [],
+        }),
+      );
+      // Nothing is asked for before the skeleton is whole.
+      session.pushFrame(
+        chunkAt(
+          1,
+          0,
+          [
+            skeletonEntry("u0", "user"),
+            skeletonEntry("a1", "assistant"),
+            skeletonEntry("u2", "user"),
+          ],
+          false,
+        ),
+      );
+      expect(session.sent).toEqual([]);
+      session.pushFrame(
+        chunkAt(
+          1,
+          3,
+          [
+            skeletonEntry("a3", "assistant"),
+            skeletonEntry("u4", "user"),
+            skeletonEntry("a5", "assistant"),
+          ],
+          true,
+        ),
+      );
+
+      // The newest user row first, one row only.
+      expect(loadSpans(session)).toEqual([[4, 4]]);
+      serveWhole(
+        session,
+        newestLoad(session),
+        ["u4"],
+        [otherRequestRow(2, "msg-a5")],
+      );
+
+      // Another request's row: the next user row down.
+      expect(loadSpans(session)).toEqual([
+        [4, 4],
+        [2, 2],
+      ]);
+      serveWhole(
+        session,
+        newestLoad(session),
+        ["u2"],
+        [resolvedUserRow(REPLY_MESSAGE_ID)],
+      );
+
+      // The request is resolved by a reply not read yet: assistant rows now,
+      // newest first. Row 0 was never needed.
+      expect(loadSpans(session)).toEqual([
+        [4, 4],
+        [2, 2],
+        [5, 5],
+      ]);
+      serveWhole(
+        session,
+        newestLoad(session),
+        ["a5"],
+        [assistantRow({ messageId: "msg-a5", texts: ["a later answer"] })],
+      );
+      expect(settled()).toBe(false);
+      expect(loadSpans(session)).toEqual([
+        [4, 4],
+        [2, 2],
+        [5, 5],
+        [3, 3],
+      ]);
+      serveWhole(session, newestLoad(session), ["a3"], [replyRow]);
+
+      await expect(outcome).resolves.toEqual({
+        kind: "replied",
+        replyMessageId: REPLY_MESSAGE_ID,
+        text: REPLY_TEXT,
+      });
+      expect(resnapshots(session)).toHaveLength(0);
+      expect(session.closeCount).toBe(1);
+    });
+
+    it("loads an open request row from an empty tail, then waits for deltas", async () => {
+      const { session, outcome, settled } = startWait(60_000);
+      session.pushFrame(
+        snapshotAt({
+          epoch: 1,
+          rowCount: 1,
+          indexRevision: null,
+          tailFromOrdinal: 1,
+          messages: [],
+        }),
+      );
+      session.pushFrame(skeletonOf(1, [skeletonEntry("u0", "user")]));
+
+      expect(loadSpans(session)).toEqual([[0, 0]]);
+      serveWhole(session, newestLoad(session), ["u0"], [openUserRow]);
+      await vi.advanceTimersByTimeAsync(5_000);
+
+      // Open: nothing more to look for until the host says something changed.
+      expect(settled()).toBe(false);
+      expect(loadSpans(session)).toEqual([[0, 0]]);
+      expect(resnapshots(session)).toHaveLength(0);
+
+      session.pushFrame(
+        changedAt({
+          epoch: 1,
+          rowCount: 2,
+          indexRevision: 1,
+          changes: [
+            {
+              type: "updated",
+              entries: [{ ordinal: 0, entry: skeletonEntry("u0", "user") }],
+            },
+            { type: "appended", entries: [skeletonEntry("a1", "assistant")] },
+          ],
+        }),
+      );
+      expect(loadSpans(session)).toEqual([
+        [0, 0],
+        [0, 1],
+      ]);
+      serveWhole(
+        session,
+        newestLoad(session),
+        ["u0", "a1"],
+        [resolvedUserRow(REPLY_MESSAGE_ID), replyRow],
+      );
+
+      await expect(outcome).resolves.toEqual({
+        kind: "replied",
+        replyMessageId: REPLY_MESSAGE_ID,
+        text: REPLY_TEXT,
+      });
+    });
+
+    it("does not search before the skeleton is final, and waits when no user row is left unread", async () => {
+      const { session, settled } = startWait(60_000);
+      session.pushFrame(
+        snapshotAt({
+          epoch: 1,
+          rowCount: 2,
+          indexRevision: null,
+          tailFromOrdinal: 2,
+          messages: [],
+        }),
+      );
+      session.pushFrame(chunkAt(1, 0, [skeletonEntry("u0", "user")], false));
+      expect(session.sent).toEqual([]);
+
+      session.pushFrame(
+        chunkAt(1, 1, [skeletonEntry("a1", "assistant")], true),
+      );
+      serveWhole(
+        session,
+        newestLoad(session),
+        ["u0"],
+        [otherRequestRow(1, "x")],
+      );
+      await vi.advanceTimersByTimeAsync(1_000);
+
+      // The only user row was another request's: the request row is not in
+      // this index yet, so the wait goes on for a delta.
+      expect(settled()).toBe(false);
+      expect(loadSpans(session)).toEqual([[0, 0]]);
+      expect(resnapshots(session)).toHaveLength(0);
+    });
+  });
+
+  describe("an update-only change lost on the wire (P1-2)", () => {
+    it("resnapshots once when an update-only change is lost and a later append skips a revision", async () => {
+      const { session, outcome, settled } = startWait(60_000);
+      session.pushFrame(
+        snapshotAt({
+          epoch: 1,
+          rowCount: 1,
+          indexRevision: null,
+          tailFromOrdinal: 0,
+          messages: [openUserRow],
+        }),
+      );
+      session.pushFrame(skeletonOf(1, [skeletonEntry("u0", "user")]));
+
+      // Revision 1: an unrelated append, taken as the baseline.
+      session.pushFrame(
+        changedAt({
+          epoch: 1,
+          rowCount: 2,
+          indexRevision: 1,
+          changes: [
+            { type: "appended", entries: [skeletonEntry("x1", "assistant")] },
+          ],
+        }),
+      );
+      serveWhole(session, newestLoad(session), ["x1"], []);
+
+      // Revision 2 - the host resolving the request without a reply, as an
+      // update to row 0 - is never delivered. Revision 3 arrives.
+      session.pushFrame(
+        changedAt({
+          epoch: 1,
+          rowCount: 3,
+          indexRevision: 3,
+          changes: [
+            { type: "appended", entries: [skeletonEntry("x2", "assistant")] },
+          ],
+        }),
+      );
+
+      expect(resnapshots(session)).toHaveLength(1);
+      expect(loadSpans(session)).toEqual([[1, 1]]);
+      expect(settled()).toBe(false);
+
+      // The rebuilt index shows the row resolved without a reply.
+      session.pushFrame(
+        snapshotAt({
+          epoch: 1,
+          rowCount: 3,
+          indexRevision: null,
+          tailFromOrdinal: 0,
+          messages: [resolvedUserRow(null)],
+        }),
+      );
+
+      await expect(outcome).resolves.toEqual({
+        kind: "resolved-without-reply",
+      });
+      expect(resnapshots(session)).toHaveLength(1);
+    });
+  });
+
+  describe("a reply cut short by truncatedAtOrdinal (P2-3)", () => {
+    /**
+     * The request row is updated and two assistant rows are appended; the host
+     * serves only row 0 and says it stopped at ordinal 1.
+     */
+    function startTruncated() {
+      const started = startWait(60_000);
+      const { session } = started;
+      session.pushFrame(
+        snapshotAt({
+          epoch: 4,
+          rowCount: 1,
+          indexRevision: null,
+          tailFromOrdinal: 0,
+          messages: [openUserRow],
+        }),
+      );
+      session.pushFrame(skeletonOf(4, [skeletonEntry("u0", "user")]));
+      session.pushFrame(
+        changedAt({
+          epoch: 4,
+          rowCount: 3,
+          indexRevision: 1,
+          changes: [
+            {
+              type: "updated",
+              entries: [{ ordinal: 0, entry: skeletonEntry("u0", "user") }],
+            },
+            {
+              type: "appended",
+              entries: [
+                skeletonEntry("a1", "assistant"),
+                skeletonEntry("a2", "assistant"),
+              ],
+            },
+          ],
+        }),
+      );
+      expect(loadSpans(session)).toEqual([[0, 2]]);
+      serve(session, newestLoad(session), {
+        rowIds: ["u0"],
+        messages: [resolvedUserRow(REPLY_MESSAGE_ID)],
+        incompleteRowIds: null,
+        truncatedAtOrdinal: 1,
+      });
+      return started;
+    }
+
+    it("waits for the remainder instead of resnapshotting, then settles with the reply text", async () => {
+      const { session, outcome, settled } = startTruncated();
+
+      // The request is resolved by a reply not read yet, and the rest of the
+      // range is on its way: no second search, no fresh snapshot.
+      expect(loadSpans(session)).toEqual([
+        [0, 2],
+        [1, 2],
+      ]);
+      expect(resnapshots(session)).toHaveLength(0);
+      expect(settled()).toBe(false);
+
+      serveWhole(session, newestLoad(session), ["a1", "a2"], [replyRow]);
+
+      await expect(outcome).resolves.toEqual({
+        kind: "replied",
+        replyMessageId: REPLY_MESSAGE_ID,
+        text: REPLY_TEXT,
+      });
+      expect(resnapshots(session)).toHaveLength(0);
+    });
+
+    it("reports the reply by id only after one resnapshot whose rebuild also lacks it", async () => {
+      const { session, outcome, settled } = startTruncated();
+
+      // The remainder arrives and holds no reply row.
+      serveWhole(session, newestLoad(session), ["a1", "a2"], []);
+      expect(resnapshots(session)).toHaveLength(1);
+      expect(settled()).toBe(false);
+
+      // The rebuilt index does not hold it either.
+      session.pushFrame(
+        snapshotAt({
+          epoch: 4,
+          rowCount: 3,
+          indexRevision: null,
+          tailFromOrdinal: 0,
+          messages: [resolvedUserRow(REPLY_MESSAGE_ID)],
+        }),
+      );
+      expect(settled()).toBe(false);
+      session.pushFrame(
+        skeletonOf(4, [
+          skeletonEntry("u0", "user"),
+          skeletonEntry("a1", "assistant"),
+          skeletonEntry("a2", "assistant"),
+        ]),
+      );
+
+      await expect(outcome).resolves.toEqual({
+        kind: "replied",
+        replyMessageId: REPLY_MESSAGE_ID,
+        text: null,
+      });
+      expect(resnapshots(session)).toHaveLength(1);
+    });
   });
 
   it("asks for the remainder when a range stops early at truncatedAtOrdinal", async () => {
     const { session, outcome } = startWait(60_000);
     session.pushFrame(snapshotOf([openUserRow], 4));
     session.pushFrame(
-      indexChangedFrame({
-        botId: BOT_ID_A,
-        conversationId: CONVERSATION_ID,
+      changedAt({
         epoch: 4,
         rowCount: 6,
         indexRevision: 1,
@@ -1022,9 +1775,7 @@ describe("waitForBotReply", () => {
     expect(first).toMatchObject({ fromOrdinal: 1, toOrdinal: 5 });
 
     session.pushFrame(
-      rangeFrame({
-        botId: BOT_ID_A,
-        conversationId: CONVERSATION_ID,
+      rangeOf({
         requestId: first.requestId,
         epoch: 4,
         fromOrdinal: 1,
@@ -1046,9 +1797,7 @@ describe("waitForBotReply", () => {
 
     // A repeat of the answered range asks for nothing more.
     session.pushFrame(
-      rangeFrame({
-        botId: BOT_ID_A,
-        conversationId: CONVERSATION_ID,
+      rangeOf({
         requestId: first.requestId,
         epoch: 4,
         fromOrdinal: 1,
@@ -1060,9 +1809,7 @@ describe("waitForBotReply", () => {
     expect(loadRanges(session)).toHaveLength(2);
 
     session.pushFrame(
-      rangeFrame({
-        botId: BOT_ID_A,
-        conversationId: CONVERSATION_ID,
+      rangeOf({
         requestId: afterTruncation[1].requestId,
         epoch: 4,
         fromOrdinal: 3,
@@ -1074,134 +1821,365 @@ describe("waitForBotReply", () => {
     await expect(outcome).resolves.toEqual({ kind: "resolved-without-reply" });
   });
 
-  it("asks for a fresh snapshot, and no range, when the index was reindexed", async () => {
-    const { session, settled } = startWait(60_000);
-    session.pushFrame(snapshotOf([openUserRow], 4));
+  describe("a fresh snapshot for the reply", () => {
+    it("asks once when the reply row was not read, then reports its id without text", async () => {
+      const { session, outcome, settled } = startWait(60_000);
 
-    session.pushFrame(
-      indexChangedFrame({
-        botId: BOT_ID_A,
-        conversationId: CONVERSATION_ID,
-        epoch: 5,
-        rowCount: 3,
-        indexRevision: 1,
-        // A reindex among other changes still wins: their ordinals are stale.
-        changes: [
-          { type: "appended", entries: [skeletonEntry("r2", "assistant")] },
-          { type: "reindexed" },
-        ],
-      }),
-    );
+      session.pushFrame(snapshotOf([resolvedUserRow(REPLY_MESSAGE_ID)], 1));
+      // The skeleton is not whole yet, so nothing can be said to be missing.
+      expect(session.sent).toEqual([]);
+      session.pushFrame(skeletonOf(1, [skeletonEntry("u0", "user")]));
+      await vi.advanceTimersByTimeAsync(0);
 
-    expect(sentFrames(session)).toEqual([
-      {
-        kind: "resnapshot",
-        hasBinaryPayload: false,
-        epicId: BOT_ID_A,
-        chatId: CONVERSATION_ID,
-      },
-    ]);
-    expect(loadRanges(session)).toEqual([]);
-    expect(settled()).toBe(false);
-  });
+      expect(resnapshots(session)).toHaveLength(1);
+      expect(session.sent).toHaveLength(1);
+      expect(settled()).toBe(false);
+      expect(session.closeCount).toBe(0);
 
-  it("asks for nothing when an index change touches no row", () => {
-    const { session } = startWait(60_000);
-    session.pushFrame(snapshotOf([openUserRow], 4));
+      // The fresh snapshot's tail does not hold the reply row either.
+      session.pushFrame(snapshotOf([resolvedUserRow(REPLY_MESSAGE_ID)], 1));
+      expect(settled()).toBe(false);
+      session.pushFrame(skeletonOf(1, [skeletonEntry("u0", "user")]));
 
-    session.pushFrame(
-      indexChangedFrame({
-        botId: BOT_ID_A,
-        conversationId: CONVERSATION_ID,
-        epoch: 4,
-        rowCount: 1,
-        indexRevision: 1,
-        changes: [],
-      }),
-    );
-
-    expect(session.sent).toEqual([]);
-  });
-
-  it("asks once for a fresh snapshot when the reply row was not read, then reports its id without text", async () => {
-    const { session, outcome, settled } = startWait(60_000);
-
-    session.pushFrame(snapshotOf([resolvedUserRow(REPLY_MESSAGE_ID)], 1));
-    await vi.advanceTimersByTimeAsync(0);
-
-    expect(resnapshots(session)).toHaveLength(1);
-    expect(session.sent).toHaveLength(1);
-    expect(settled()).toBe(false);
-    expect(session.closeCount).toBe(0);
-
-    // The fresh snapshot's tail does not hold the reply row either.
-    session.pushFrame(snapshotOf([resolvedUserRow(REPLY_MESSAGE_ID)], 1));
-
-    await expect(outcome).resolves.toEqual({
-      kind: "replied",
-      replyMessageId: REPLY_MESSAGE_ID,
-      text: null,
+      await expect(outcome).resolves.toEqual({
+        kind: "replied",
+        replyMessageId: REPLY_MESSAGE_ID,
+        text: null,
+      });
+      expect(session.sent).toHaveLength(1);
+      expect(session.closeCount).toBe(1);
     });
-    expect(session.sent).toHaveLength(1);
-    expect(session.closeCount).toBe(1);
-  });
 
-  it("reports the reply text when the fresh snapshot does hold the reply row", async () => {
-    const { session, outcome } = startWait(60_000);
+    it("reports the reply text when the fresh snapshot does hold the reply row", async () => {
+      const { session, outcome } = startWait(60_000);
 
-    session.pushFrame(snapshotOf([resolvedUserRow(REPLY_MESSAGE_ID)], 1));
-    session.pushFrame(
-      snapshotOf([resolvedUserRow(REPLY_MESSAGE_ID), replyRow], 1),
-    );
+      session.pushFrame(snapshotOf([resolvedUserRow(REPLY_MESSAGE_ID)], 1));
+      session.pushFrame(skeletonOf(1, [skeletonEntry("u0", "user")]));
+      session.pushFrame(
+        snapshotOf([resolvedUserRow(REPLY_MESSAGE_ID), replyRow], 1),
+      );
 
-    await expect(outcome).resolves.toEqual({
-      kind: "replied",
-      replyMessageId: REPLY_MESSAGE_ID,
-      text: "Hello\nworld",
+      await expect(outcome).resolves.toEqual({
+        kind: "replied",
+        replyMessageId: REPLY_MESSAGE_ID,
+        text: REPLY_TEXT,
+      });
+      expect(resnapshots(session)).toHaveLength(1);
     });
-    expect(resnapshots(session)).toHaveLength(1);
+
+    it("does not settle on a range that resolves the request without the reply row", async () => {
+      const { session, outcome, settled } = startWait(60_000);
+      session.pushFrame(snapshotOf([openUserRow], 4));
+      session.pushFrame(skeletonOf(4, [skeletonEntry("u0", "user")]));
+      session.pushFrame(
+        changedAt({
+          epoch: 4,
+          rowCount: 2,
+          indexRevision: 1,
+          changes: [
+            { type: "appended", entries: [skeletonEntry("r1", "assistant")] },
+          ],
+        }),
+      );
+      const [asked] = loadRanges(session);
+
+      serveWhole(session, asked, ["r1"], [resolvedUserRow(REPLY_MESSAGE_ID)]);
+
+      // Only a rebuilt snapshot may report the id without text: a range is
+      // asked for its rows, and the reply may still be on its way.
+      expect(resnapshots(session)).toHaveLength(1);
+      expect(settled()).toBe(false);
+
+      session.pushFrame(snapshotOf([resolvedUserRow(REPLY_MESSAGE_ID)], 4));
+      expect(settled()).toBe(false);
+      session.pushFrame(skeletonOf(4, [skeletonEntry("u0", "user")]));
+      await expect(outcome).resolves.toEqual({
+        kind: "replied",
+        replyMessageId: REPLY_MESSAGE_ID,
+        text: null,
+      });
+    });
   });
 
-  it("does not settle on a range that resolves the request without the reply row", async () => {
-    const { session, outcome, settled } = startWait(60_000);
-    session.pushFrame(snapshotOf([openUserRow], 4));
-    session.pushFrame(
-      indexChangedFrame({
-        botId: BOT_ID_A,
-        conversationId: CONVERSATION_ID,
-        epoch: 4,
-        rowCount: 2,
-        indexRevision: 1,
-        changes: [
-          { type: "appended", entries: [skeletonEntry("r1", "assistant")] },
-        ],
-      }),
-    );
-    const [asked] = loadRanges(session);
+  describe("a range that does not belong to the index (P2-4)", () => {
+    it("ignores a range answered with a stale epoch after a reindex", async () => {
+      const { session, outcome, settled } = startWait(60_000);
+      session.pushFrame(snapshotOf([openUserRow], 4));
+      session.pushFrame(skeletonOf(4, [skeletonEntry("u0", "user")]));
+      session.pushFrame(
+        changedAt({
+          epoch: 4,
+          rowCount: 1,
+          indexRevision: 1,
+          changes: [{ type: "reindexed" }],
+        }),
+      );
+      expect(resnapshots(session)).toHaveLength(1);
 
-    session.pushFrame(
-      rangeFrame({
-        botId: BOT_ID_A,
-        conversationId: CONVERSATION_ID,
-        requestId: asked.requestId,
-        epoch: 4,
-        fromOrdinal: 1,
-        rowIds: ["r1"],
-        messages: [resolvedUserRow(REPLY_MESSAGE_ID)],
+      // The rebuilt index has a new epoch and nothing in its tail: the
+      // follower goes looking for the request row.
+      session.pushFrame(
+        snapshotAt({
+          epoch: 5,
+          rowCount: 1,
+          indexRevision: null,
+          tailFromOrdinal: 1,
+          messages: [],
+        }),
+      );
+      session.pushFrame(skeletonOf(5, [skeletonEntry("u0", "user")]));
+      const asked = newestLoad(session);
+      expect(asked).toMatchObject({ epoch: 5, fromOrdinal: 0, toOrdinal: 0 });
+
+      // The answer carries the old epoch: whatever it says is not this index.
+      session.pushFrame(
+        rangeOf({
+          requestId: asked.requestId,
+          epoch: 4,
+          fromOrdinal: 0,
+          rowIds: ["u0"],
+          messages: [resolvedUserRow(null)],
+          truncatedAtOrdinal: null,
+        }),
+      );
+
+      expect(settled()).toBe(false);
+      expect(resnapshots(session)).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(60_000);
+      await expect(outcome).resolves.toEqual({ kind: "timed-out" });
+    });
+
+    it("resnapshots, and does not apply the bodies, when the served row ids differ from the skeleton", async () => {
+      const { session, outcome, settled } = startWait(60_000);
+      session.pushFrame(snapshotOf([openUserRow], 4));
+      session.pushFrame(skeletonOf(4, [skeletonEntry("u0", "user")]));
+      session.pushFrame(
+        changedAt({
+          epoch: 4,
+          rowCount: 2,
+          indexRevision: 1,
+          changes: [
+            { type: "appended", entries: [skeletonEntry("r1", "assistant")] },
+          ],
+        }),
+      );
+      const asked = newestLoad(session);
+
+      // Ordinal 1 is `r1` in this index; the host served some other row.
+      serveWhole(session, asked, ["some-other-row"], [resolvedUserRow(null)]);
+
+      expect(resnapshots(session)).toHaveLength(1);
+      expect(settled()).toBe(false);
+      await vi.advanceTimersByTimeAsync(60_000);
+      await expect(outcome).resolves.toEqual({ kind: "timed-out" });
+    });
+
+    it("ignores a range for a request sent before a resnapshot", async () => {
+      const { session, outcome, settled } = startWait(60_000);
+      session.pushFrame(snapshotOf([openUserRow], 4));
+      session.pushFrame(skeletonOf(4, [skeletonEntry("u0", "user")]));
+      session.pushFrame(
+        changedAt({
+          epoch: 4,
+          rowCount: 2,
+          indexRevision: 1,
+          changes: [
+            { type: "appended", entries: [skeletonEntry("r1", "assistant")] },
+          ],
+        }),
+      );
+      const stale = newestLoad(session);
+      session.pushFrame(
+        changedAt({
+          epoch: 4,
+          rowCount: 2,
+          indexRevision: 2,
+          changes: [{ type: "reindexed" }],
+        }),
+      );
+      expect(resnapshots(session)).toHaveLength(1);
+
+      // Same epoch, same ordinals, and the right row id: only the request id
+      // says it was asked of the index that is gone.
+      serveWhole(session, stale, ["r1"], [resolvedUserRow(null)]);
+
+      expect(settled()).toBe(false);
+      expect(resnapshots(session)).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(60_000);
+      await expect(outcome).resolves.toEqual({ kind: "timed-out" });
+    });
+
+    it("forgets the reply rows read from the index a resnapshot replaces", async () => {
+      const { session, outcome, settled } = startWait(60_000);
+      // The request is open and the reply row is already in the tail.
+      session.pushFrame(snapshotOf([openUserRow, replyRow], 4));
+      session.pushFrame(
+        skeletonOf(4, [
+          skeletonEntry("u0", "user"),
+          skeletonEntry("a1", "assistant"),
+        ]),
+      );
+      session.pushFrame(
+        changedAt({
+          epoch: 4,
+          rowCount: 2,
+          indexRevision: 1,
+          changes: [{ type: "reindexed" }],
+        }),
+      );
+      expect(resnapshots(session)).toHaveLength(1);
+
+      // The rebuilt index resolves the request by that reply and no longer
+      // holds the reply row: the old text must not be reported for it.
+      session.pushFrame(snapshotOf([resolvedUserRow(REPLY_MESSAGE_ID)], 5));
+      session.pushFrame(skeletonOf(5, [skeletonEntry("u0", "user")]));
+
+      expect(settled()).toBe(false);
+      // The one extra fresh snapshot the follower allows itself.
+      expect(resnapshots(session)).toHaveLength(2);
+
+      session.pushFrame(
+        snapshotOf([resolvedUserRow(REPLY_MESSAGE_ID), replyRow], 5),
+      );
+      await expect(outcome).resolves.toEqual({
+        kind: "replied",
+        replyMessageId: REPLY_MESSAGE_ID,
+        text: REPLY_TEXT,
+      });
+    });
+
+    it("forgets the request row read from the index a resnapshot replaces", async () => {
+      const { session } = startWait(60_000);
+      session.pushFrame(snapshotOf([openUserRow], 4));
+      session.pushFrame(skeletonOf(4, [skeletonEntry("u0", "user")]));
+      session.pushFrame(
+        changedAt({
+          epoch: 4,
+          rowCount: 1,
+          indexRevision: 1,
+          changes: [{ type: "reindexed" }],
+        }),
+      );
+      expect(loadRanges(session)).toEqual([]);
+
+      // The rebuilt tail is empty: the request is not known to be open any
+      // more, so the follower has to find its row again.
+      session.pushFrame(
+        snapshotAt({
+          epoch: 5,
+          rowCount: 1,
+          indexRevision: null,
+          tailFromOrdinal: 1,
+          messages: [],
+        }),
+      );
+      session.pushFrame(skeletonOf(5, [skeletonEntry("u0", "user")]));
+
+      expect(loadSpans(session)).toEqual([[0, 0]]);
+      expect(newestLoad(session).epoch).toBe(5);
+    });
+  });
+
+  describe("a rebuild that has not arrived", () => {
+    it("asks once, however many snapshots of the old index arrive first", async () => {
+      const { session, outcome } = startWait(60_000);
+      session.pushFrame(snapshotOf([openUserRow], 4));
+      session.pushFrame(skeletonOf(4, [skeletonEntry("u0", "user")]));
+      session.pushFrame(
+        changedAt({
+          epoch: 4,
+          rowCount: 1,
+          indexRevision: 1,
+          changes: [{ type: "reindexed" }],
+        }),
+      );
+      expect(resnapshots(session)).toHaveLength(1);
+
+      // Snapshots still on the wire from the old index: a different epoch,
+      // and a revision above any held.
+      session.pushFrame(
+        snapshotAt({
+          epoch: 4,
+          rowCount: 1,
+          indexRevision: 5,
+          tailFromOrdinal: 0,
+          messages: [openUserRow],
+        }),
+      );
+      session.pushFrame(
+        snapshotAt({
+          epoch: 3,
+          rowCount: 1,
+          indexRevision: 6,
+          tailFromOrdinal: 0,
+          messages: [resolvedUserRow(null)],
+        }),
+      );
+
+      expect(resnapshots(session)).toHaveLength(1);
+      expect(session.sent).toHaveLength(1);
+
+      // The rebuild arrives and is followed; the old snapshots settled nothing.
+      session.pushFrame(snapshotOf([resolvedUserRow(null)], 6));
+      await expect(outcome).resolves.toEqual({
+        kind: "resolved-without-reply",
+      });
+      expect(resnapshots(session)).toHaveLength(1);
+    });
+  });
+
+  describe("a search for an incomplete row", () => {
+    it("does not ask again for a row the host served as incomplete, and moves to the next older candidate", async () => {
+      const { session, outcome } = startWait(60_000);
+      session.pushFrame(
+        snapshotAt({
+          epoch: 1,
+          rowCount: 4,
+          indexRevision: null,
+          tailFromOrdinal: 4,
+          messages: [],
+        }),
+      );
+      session.pushFrame(
+        skeletonOf(1, [
+          skeletonEntry("u0", "user"),
+          skeletonEntry("a1", "assistant"),
+          skeletonEntry("a2", "assistant"),
+          skeletonEntry("a3", "assistant"),
+        ]),
+      );
+      serveWhole(
+        session,
+        newestLoad(session),
+        ["u0"],
+        [resolvedUserRow(REPLY_MESSAGE_ID)],
+      );
+      expect(loadSpans(session)).toEqual([
+        [0, 0],
+        [3, 3],
+      ]);
+
+      // The newest assistant row comes back without its whole body.
+      serve(session, newestLoad(session), {
+        rowIds: ["a3"],
+        messages: [],
+        incompleteRowIds: ["a3"],
         truncatedAtOrdinal: null,
-      }),
-    );
+      });
 
-    // Only a snapshot may report the id without text: a range is asked for
-    // its rows, and the reply may still be on its way.
-    expect(resnapshots(session)).toHaveLength(1);
-    expect(settled()).toBe(false);
+      // Not row 3 again: the next older one.
+      expect(loadSpans(session)).toEqual([
+        [0, 0],
+        [3, 3],
+        [2, 2],
+      ]);
+      serveWhole(session, newestLoad(session), ["a2"], [replyRow]);
 
-    session.pushFrame(snapshotOf([resolvedUserRow(REPLY_MESSAGE_ID)], 4));
-    await expect(outcome).resolves.toEqual({
-      kind: "replied",
-      replyMessageId: REPLY_MESSAGE_ID,
-      text: null,
+      await expect(outcome).resolves.toEqual({
+        kind: "replied",
+        replyMessageId: REPLY_MESSAGE_ID,
+        text: REPLY_TEXT,
+      });
     });
   });
 
@@ -1218,25 +2196,83 @@ describe("waitForBotReply", () => {
     expect(session.closeCount).toBe(1);
   });
 
-  it("rejects with E_HOST_UNREACHABLE on a fatal close, and closes the session", async () => {
-    const { session, outcome } = startWait(60_000);
+  describe("a fatal close of the stream (P3-6)", () => {
+    it("rejects with E_HOST_UNREACHABLE on a fatal close, and closes the session", async () => {
+      const { session, outcome } = startWait(60_000);
 
-    session.pushStatus(
-      "closed",
-      fatalClose({
-        code: "INTERNAL",
-        reason: "lost the host",
-        incompatibleMethod: null,
-      }),
-    );
+      session.pushStatus(
+        "closed",
+        fatalClose({
+          code: "INTERNAL",
+          reason: "lost the host",
+          incompatibleMethod: null,
+        }),
+      );
 
-    await expect(outcome).rejects.toMatchObject({
-      code: CLI_ERROR_CODES.HOST_UNREACHABLE,
-      exitCode: 1,
-      message:
-        "traycer: stopped following the conversation - lost the host. The message was sent; the request stays open.",
+      await expect(outcome).rejects.toMatchObject({
+        code: CLI_ERROR_CODES.HOST_UNREACHABLE,
+        exitCode: 1,
+        message:
+          "traycer: stopped following the conversation - lost the host. The message was sent; the request stays open.",
+      });
+      expect(session.closeCount).toBe(1);
     });
-    expect(session.closeCount).toBe(1);
+
+    it("rejects with the host-update line when the close is incompatible for chat.subscribe", async () => {
+      const { session, outcome } = startWait(60_000);
+
+      session.pushStatus(
+        "closed",
+        fatalClose({
+          code: "INCOMPATIBLE",
+          reason: "host does not offer chat.subscribe",
+          incompatibleMethod: "chat.subscribe",
+        }),
+      );
+
+      await expect(outcome).rejects.toMatchObject({
+        code: CLI_ERROR_CODES.HOST_UNSUPPORTED,
+        exitCode: 1,
+        message: BOT_HOST_UPDATE_MESSAGE,
+      });
+      expect(session.closeCount).toBe(1);
+    });
+
+    it("rejects with the host-update line when the client reports chat.subscribe unsupported", async () => {
+      const { session, client, outcome } = startWait(60_000);
+      client.methodSupport = "unsupported";
+
+      session.pushStatus(
+        "closed",
+        fatalClose({
+          code: "INTERNAL",
+          reason: "anything",
+          incompatibleMethod: null,
+        }),
+      );
+
+      await expect(outcome).rejects.toMatchObject({
+        code: CLI_ERROR_CODES.HOST_UNSUPPORTED,
+        message: BOT_HOST_UPDATE_MESSAGE,
+      });
+    });
+
+    it("does not read an incompatible close about another method as missing bots", async () => {
+      const { session, outcome } = startWait(60_000);
+
+      session.pushStatus(
+        "closed",
+        fatalClose({
+          code: "INCOMPATIBLE",
+          reason: "protocol skew",
+          incompatibleMethod: "bot.subscribe",
+        }),
+      );
+
+      await expect(outcome).rejects.toMatchObject({
+        code: CLI_ERROR_CODES.HOST_UNREACHABLE,
+      });
+    });
   });
 
   it("rides out a reconnect or a caller close and stays bounded by the timeout", async () => {
@@ -1290,9 +2326,7 @@ describe("waitForBotReply", () => {
     await expect(outcome).resolves.toEqual({ kind: "resolved-without-reply" });
 
     session.pushFrame(
-      indexChangedFrame({
-        botId: BOT_ID_A,
-        conversationId: CONVERSATION_ID,
+      changedAt({
         epoch: 2,
         rowCount: 2,
         indexRevision: 1,

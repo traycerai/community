@@ -311,6 +311,8 @@ export function chatSnapshotFrame(input: {
   readonly conversationId: string;
   readonly epoch: number;
   readonly rowCount: number;
+  /** Null announces a fresh index whose skeleton streams next. */
+  readonly indexRevision: number | null;
   readonly tailFromOrdinal: number;
   readonly messages: readonly Row[];
 }): StreamFrameEnvelope {
@@ -342,7 +344,7 @@ export function chatSnapshotFrame(input: {
       accumulatedFileChangeCount: 0,
       transcriptEpoch: input.epoch,
       rowCount: input.rowCount,
-      indexRevision: null,
+      indexRevision: input.indexRevision,
       tail: {
         fromOrdinal: input.tailFromOrdinal,
         messages: input.messages,
@@ -358,6 +360,29 @@ export function chatSnapshotFrame(input: {
         latestAssistantAuthFailureTurnKey: null,
         setupCardWindows: [],
       },
+    },
+  };
+}
+
+/** One chunk of the skeleton a null-revision snapshot announces. */
+export function skeletonChunkFrame(input: {
+  readonly botId: string;
+  readonly conversationId: string;
+  readonly epoch: number;
+  readonly fromOrdinal: number;
+  readonly entries: readonly Row[];
+  readonly isFinal: boolean;
+}): StreamFrameEnvelope {
+  return {
+    kind: "skeletonChunk",
+    hasBinaryPayload: false,
+    epicId: input.botId,
+    chatId: input.conversationId,
+    chunk: {
+      epoch: input.epoch,
+      fromOrdinal: input.fromOrdinal,
+      entries: input.entries,
+      isFinal: input.isFinal,
     },
   };
 }
@@ -400,6 +425,8 @@ export function rangeFrame(input: {
   readonly epoch: number;
   readonly fromOrdinal: number;
   readonly rowIds: readonly string[];
+  /** Rows the host served without their whole body; null when it names none. */
+  readonly incompleteRowIds: readonly string[] | null;
   readonly messages: readonly Row[];
   readonly truncatedAtOrdinal: number | null;
 }): StreamFrameEnvelope {
@@ -413,6 +440,9 @@ export function rangeFrame(input: {
       epoch: input.epoch,
       fromOrdinal: input.fromOrdinal,
       rowIds: input.rowIds,
+      ...(input.incompleteRowIds === null
+        ? {}
+        : { incompleteRowIds: input.incompleteRowIds }),
       messages: input.messages,
       events: [],
       rowContext: {},

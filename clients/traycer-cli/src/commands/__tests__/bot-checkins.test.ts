@@ -1,8 +1,10 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BotRecord } from "@traycer/protocol/host/bot/schemas";
 import {
   BOT_HOST_UPDATE_MESSAGE,
+  BOT_SNAPSHOT_DEADLINE_MS,
   formatBotTime,
+  readBotSnapshot,
 } from "../../internal/bot-host";
 import { CLI_ERROR_CODES, CliError } from "../../runner/errors";
 import type { CommandResult } from "../../runner/runner";
@@ -106,6 +108,10 @@ async function rejection(promise: Promise<CommandResult>): Promise<CliError> {
 beforeEach(() => {
   vi.resetAllMocks();
   hoisted.resolveEndpoint.mockResolvedValue(ENDPOINT);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
 });
 
 describe("formatBotTime", () => {
@@ -464,5 +470,76 @@ describe("bot checkins on a host without bots", () => {
     stage({ bots: [tracy], client });
 
     await expectUpdateMessage(run({ bot: BOT_ID_A, taskId: null }));
+  });
+});
+
+describe("a bot.subscribe read that never answers", () => {
+  const NO_ANSWER_MESSAGE =
+    "traycer: could not read the bot from this host - no answer in time. Try again.";
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  it("readBotSnapshot rejects with E_HOST_UNREACHABLE after the deadline and closes its session", async () => {
+    const client = new FakeStreamClient(() => undefined);
+    const read = readBotSnapshot(client, BOT_ID_A).then(
+      () => null,
+      (caught: unknown) => caught,
+    );
+
+    await vi.advanceTimersByTimeAsync(BOT_SNAPSHOT_DEADLINE_MS - 1);
+    expect(client.sessions[0].closeCount).toBe(0);
+
+    await vi.advanceTimersByTimeAsync(1);
+    const error = await read;
+
+    expect(error).toBeInstanceOf(CliError);
+    if (!(error instanceof CliError)) throw new Error("expected a CliError");
+    expect(error.code).toBe(CLI_ERROR_CODES.HOST_UNREACHABLE);
+    expect(error.exitCode).toBe(1);
+    expect(error.message).toBe(NO_ANSWER_MESSAGE);
+    expect(client.sessions[0].closeCount).toBe(1);
+  });
+
+  it("readBotSnapshot ignores a snapshot that arrives after the deadline", async () => {
+    const client = new FakeStreamClient(() => undefined);
+    const read = readBotSnapshot(client, BOT_ID_A).then(
+      () => null,
+      (caught: unknown) => caught,
+    );
+    await vi.advanceTimersByTimeAsync(BOT_SNAPSHOT_DEADLINE_MS);
+    await read;
+
+    client.sessions[0].pushFrame(botSnapshotFrame(tracy, [], 3));
+
+    expect(client.sessions[0].closeCount).toBe(1);
+  });
+
+  it("readBotSnapshot spends no deadline once it has an answer", async () => {
+    const client = botSubscribeClient({
+      [BOT_ID_A]: botSnapshotFrame(tracy, [], 3),
+    });
+
+    const snapshot = await readBotSnapshot(client, BOT_ID_A);
+    await vi.advanceTimersByTimeAsync(BOT_SNAPSHOT_DEADLINE_MS);
+
+    expect(snapshot).toMatchObject({ openRequestCount: 3 });
+    expect(vi.getTimerCount()).toBe(0);
+    expect(client.sessions[0].closeCount).toBe(1);
+  });
+
+  it("bot checkins rejects with E_HOST_UNREACHABLE after the deadline and closes the client", async () => {
+    const client = new FakeStreamClient(() => undefined);
+    stage({ bots: [tracy], client });
+
+    const outcome = rejection(run({ bot: BOT_ID_A, taskId: null }));
+    await vi.advanceTimersByTimeAsync(BOT_SNAPSHOT_DEADLINE_MS);
+    const error = await outcome;
+
+    expect(error.code).toBe(CLI_ERROR_CODES.HOST_UNREACHABLE);
+    expect(error.message).toBe(NO_ANSWER_MESSAGE);
+    expect(client.sessions[0].closeCount).toBe(1);
+    expect(client.closeReasons).toEqual(["bot-checkins-settled"]);
   });
 });

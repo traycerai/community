@@ -34,6 +34,7 @@ import { cliError, CLI_ERROR_CODES, CliError } from "../runner/errors";
 import { resolveHostAuth } from "./host-auth";
 import {
   callHostRpc,
+  FRAME_TIMEOUT_MS,
   parseCanonicalHostResponse,
   resolveEndpoint,
   toAgentCliError,
@@ -177,9 +178,18 @@ const STREAM_INITIAL_BACKOFF_MS = 500;
 const STREAM_MAX_BACKOFF_MS = 30_000;
 
 /**
+ * The longest a one-shot `bot.subscribe` read waits for its snapshot: the
+ * stream's own dial and open deadlines, then the response deadline a unary
+ * call gets. No new number - the sum of the three the CLI already uses.
+ */
+export const BOT_SNAPSHOT_DEADLINE_MS =
+  DEFAULT_DIAL_TIMEOUT_MS + STREAM_OPEN_ACK_TIMEOUT_MS + FRAME_TIMEOUT_MS;
+
+/**
  * Reads one snapshot of `botId` and closes the session. `null` when the host
- * answers that the bot is gone (`deleted`). A drop or a refusal before the
- * snapshot fails the read: this is a one-shot command, not a watcher.
+ * answers that the bot is gone (`deleted`). A drop, a refusal or no answer
+ * within {@link BOT_SNAPSHOT_DEADLINE_MS} fails the read: this is a one-shot
+ * command, not a watcher.
  */
 export function readBotSnapshot(
   client: BotStreamClient,
@@ -188,9 +198,13 @@ export function readBotSnapshot(
   return new Promise<BotSnapshot | null>((resolve, reject) => {
     let settled = false;
     const session = client.subscribe("bot.subscribe", { botId });
+    const deadline = setTimeout(() => {
+      finish(() => reject(botReadFailedError(" - no answer in time")));
+    }, BOT_SNAPSHOT_DEADLINE_MS);
     const finish = (act: () => void): void => {
       if (settled) return;
       settled = true;
+      clearTimeout(deadline);
       session.close();
       act();
     };
@@ -226,17 +240,17 @@ export function readBotSnapshot(
         reason !== null && reason.kind === "fatalError"
           ? ` - ${reason.details.reason}`
           : "";
-      finish(() =>
-        reject(
-          cliError({
-            code: CLI_ERROR_CODES.HOST_UNREACHABLE,
-            message: `traycer: could not read the bot from this host${detail}. Try again.`,
-            details: null,
-            exitCode: 1,
-          }),
-        ),
-      );
+      finish(() => reject(botReadFailedError(detail)));
     });
+  });
+}
+
+function botReadFailedError(detail: string): CliError {
+  return cliError({
+    code: CLI_ERROR_CODES.HOST_UNREACHABLE,
+    message: `traycer: could not read the bot from this host${detail}. Try again.`,
+    details: null,
+    exitCode: 1,
   });
 }
 

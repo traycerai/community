@@ -1,10 +1,12 @@
 import type { BotRecord } from "@traycer/protocol/host/bot/schemas";
 import type { EnvironmentDescriptor } from "@traycer/protocol/host/environment/contracts";
+import { CliError, CLI_ERROR_CODES } from "../runner/errors";
 import {
   listBots,
   listEnvironments,
   openLocalStreamClient,
   readBotSnapshot,
+  type BotSnapshot,
 } from "../internal/bot-host";
 import type { CommandFn } from "../runner/runner";
 
@@ -14,7 +16,8 @@ export interface BotListRow {
   readonly title: string;
   readonly boundHostId: string;
   readonly boundToThisHost: boolean;
-  readonly openRequestCount: number;
+  /** Null when this bot could not be read; the other bots still are. */
+  readonly openRequestCount: number | null;
 }
 
 /** One environment and its bots, in the order the host lists environments. */
@@ -40,11 +43,26 @@ export function buildBotListCommand(): CommandFn {
       listBots(),
     ]);
     const { client, endpoint } = await openLocalStreamClient();
-    let rows: readonly (BotListRow | null)[];
+    // Every read settles (each has its own deadline) before the client
+    // closes, so no subscription outlives the command.
+    let settled: readonly PromiseSettledResult<BotListRow | null>[];
     try {
-      rows = await Promise.all(
+      settled = await Promise.allSettled(
         bots.map(async (bot): Promise<BotListRow | null> => {
-          const snapshot = await readBotSnapshot(client, bot.botId);
+          let snapshot: BotSnapshot | null;
+          try {
+            snapshot = await readBotSnapshot(client, bot.botId);
+          } catch (error) {
+            // A host without bots fails the whole command with one line; any
+            // other failure is this bot's alone.
+            if (
+              error instanceof CliError &&
+              error.code === CLI_ERROR_CODES.HOST_UNSUPPORTED
+            ) {
+              throw error;
+            }
+            return toRow(bot, null, endpoint.hostId);
+          }
           // Deleted between the list and the read: not a bot any more.
           if (snapshot === null) return null;
           return toRow(snapshot.bot, snapshot.openRequestCount, endpoint.hostId);
@@ -53,22 +71,25 @@ export function buildBotListCommand(): CommandFn {
     } finally {
       client.close("bot-list-settled");
     }
-    const groups = groupByEnvironment(
-      environments,
-      rows.filter((row): row is BotListRow => row !== null),
-      bots,
-    );
+    const rows = settled.map((result) => {
+      if (result.status === "rejected") throw result.reason;
+      return result.value;
+    });
+    const listed = rows.filter((row): row is BotListRow => row !== null);
+    const groups = groupByEnvironment(environments, listed, bots);
     return {
       data: { environments: groups },
       human: renderBotList(groups),
-      exitCode: 0,
+      // Every bot is printed either way; a bot that could not be read makes
+      // the run a failure a script can see.
+      exitCode: listed.some((row) => row.openRequestCount === null) ? 1 : 0,
     };
   };
 }
 
 function toRow(
   bot: BotRecord,
-  openRequestCount: number,
+  openRequestCount: number | null,
   thisHostId: string,
 ): BotListRow {
   return {
@@ -125,7 +146,7 @@ export function renderBotList(groups: readonly BotListGroup[]): string {
           ? ["  no bots"]
           : group.bots.map(
               (bot) =>
-                `  ${bot.title}  ${bot.botId}  host ${bot.boundHostId}${bot.boundToThisHost ? " (this host)" : ""}  ${formatOpenRequests(bot.openRequestCount)}`,
+                `  ${bot.title}  ${bot.botId}  host ${bot.boundHostId}${bot.boundToThisHost ? " (this host)" : ""}  ${bot.openRequestCount === null ? `could not read ${bot.title}` : formatOpenRequests(bot.openRequestCount)}`,
             );
       return [group.label, ...lines].join("\n");
     })
