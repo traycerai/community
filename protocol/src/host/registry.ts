@@ -554,6 +554,16 @@ import { hostRebindLocalStoreV10 } from "@traycer/protocol/host/local-store/cont
 import { chatForkGetV10 } from "@traycer/protocol/host/chat-fork/contracts";
 import { chatSearchV10 } from "@traycer/protocol/host/chat-search/contracts";
 import {
+  botClaimAuthorityV10,
+  botCreateV10,
+  botDeleteV10,
+  botListV10,
+  botReadV10,
+  botSubscribeV10,
+  botUpdateRunSettingsV10,
+  botUpdateTitleV10,
+} from "@traycer/protocol/host/bot/contracts";
+import {
   draftsDeleteV10,
   draftsListV10,
   draftsListV20,
@@ -8155,6 +8165,85 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
 // `_NoOverlappingHostRpcMethods` assertion below is what keeps a method from
 // silently existing in more than one of them.
 const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
+  // The `bot.*` namespace (Tracy Bots): optional capabilities, every one
+  // `degrade: { kind: "unsupported" }` - a host that predates bots advertises
+  // none of them and the client hides the surface. See `bot/contracts.ts`.
+  "bot.create": {
+    degrade: { kind: "unsupported" },
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: { contract: botCreateV10, upgradeFromPreviousVersion: null },
+      },
+      downgradePathsFromLatest: {},
+    },
+  },
+  "bot.list": {
+    degrade: { kind: "unsupported" },
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: { contract: botListV10, upgradeFromPreviousVersion: null },
+      },
+      downgradePathsFromLatest: {},
+    },
+  },
+  "bot.read": {
+    degrade: { kind: "unsupported" },
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: { contract: botReadV10, upgradeFromPreviousVersion: null },
+      },
+      downgradePathsFromLatest: {},
+    },
+  },
+  "bot.updateTitle": {
+    degrade: { kind: "unsupported" },
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: { contract: botUpdateTitleV10, upgradeFromPreviousVersion: null },
+      },
+      downgradePathsFromLatest: {},
+    },
+  },
+  "bot.updateRunSettings": {
+    degrade: { kind: "unsupported" },
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: {
+          contract: botUpdateRunSettingsV10,
+          upgradeFromPreviousVersion: null,
+        },
+      },
+      downgradePathsFromLatest: {},
+    },
+  },
+  "bot.delete": {
+    degrade: { kind: "unsupported" },
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: { contract: botDeleteV10, upgradeFromPreviousVersion: null },
+      },
+      downgradePathsFromLatest: {},
+    },
+  },
+  "bot.claimAuthority": {
+    degrade: { kind: "unsupported" },
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: {
+          contract: botClaimAuthorityV10,
+          upgradeFromPreviousVersion: null,
+        },
+      },
+      downgradePathsFromLatest: {},
+    },
+  },
   // Optional (non-floor) capability: narrow profile-only update of a chat's
   // persisted run settings - the host patches its own authoritative tuple, so
   // clients never rebuild (and stale-patch) the full tuple to move a chat's
@@ -13558,6 +13647,19 @@ const HOST_STREAM_RPC_REGISTRY_OTHER_DEFINITION = {
   //
   // @1.0 is frozen at the draft document `1.5.0` shipped; @1.1 is the first
   // minor whose `upsert` may carry a draft naming a later harness.
+  // `bot.subscribe` (Tracy Bots): a new stream name is additive on `/stream`
+  // (a released peer never subscribes to a method it has not heard of), so
+  // no baseline moves. See `bot/contracts.ts`.
+  "bot.subscribe": {
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: {
+          contract: botSubscribeV10,
+        },
+      },
+    },
+  },
   "drafts.subscribe": {
     1: {
       latestMinor: 1,
