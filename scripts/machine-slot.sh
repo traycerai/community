@@ -61,7 +61,7 @@
 #
 # `TRAYCER_MACHINE_SLOTS` (or an explicit count argument) is a pool of exactly
 # that size with no admission check: it turns admission off. Admission also
-# looks at up to 16 slot files for the name, not only this caller's pool, so a
+# looks at up to 16 existing slot files past this caller's own pool, so a
 # holder from a larger explicit pool is seen.
 #
 # Test-only, nothing else should set it: `TRAYCER_MACHINE_SLOT_MEMINFO`
@@ -275,8 +275,9 @@ RAMP_KIB = 12 * 1024 * 1024
 # The owner beats on every poll that gets through the admission gate, so a
 # stopped owner stops blocking others within a few seconds.
 HEARTBEAT_SECONDS = 5.0
-# Admission looks at this many slot files for the name, so a holder from a
-# larger explicit pool than the one this caller sized is seen too.
+# Admission looks at up to this many existing slot files past the pool this
+# caller sized, so a holder from a larger explicit pool is seen too, whatever
+# the size of the auto pool.
 PROBE_LIMIT = 16
 
 def available_kib():
@@ -302,10 +303,10 @@ def busy(error):
     return error.errno in (errno.EWOULDBLOCK, errno.EAGAIN, errno.EACCES)
 
 def open_extra_files():
-    # Existing slot files beyond the pool this caller sized, never created here. The
-    # first missing one ends the run.
+    # Up to PROBE_LIMIT existing slot files past the pool this caller sized,
+    # whatever its size, never created here. The first missing one ends the run.
     extras = []
-    for index in range(slots, max(slots, PROBE_LIMIT)):
+    for index in range(slots, slots + PROBE_LIMIT):
         path = os.path.join(directory, "traycer-slot-%s.%d.lock" % (name, index))
         try:
             extras.append(os.open(path, os.O_RDWR | os.O_NOFOLLOW))

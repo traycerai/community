@@ -1069,6 +1069,28 @@ describe("machine-slot.sh auto admission", () => {
     expect(readLogLines(logFile)).toEqual(["start:A", "end:A"]);
   }, 20000);
 
+  it("counts a holder on a slot file past an auto pool of 16 or more in its admission threshold", async () => {
+    const dir = freshSlotDir();
+    const logFile = join(dir, "log.txt");
+    // MemTotal 256 GiB: the auto pool is 16 slot files, as many as the probe
+    // limit. A holder of a larger explicit pool sits on slot file 16.
+    writeMeminfo(dir, { totalGib: 256, availableGib: 20 });
+    const env = admissionEnv(dir);
+    const holder = await holdFile(join(dir, "traycer-slot-bigpool.16.lock"));
+
+    const a = runSlot(["bigpool", "auto", ...markerCommand("A", "0.1")], env);
+    // 20 GiB would admit a lone caller (16 GiB), but with that holder counted
+    // the threshold is 28 GiB.
+    await pause(2000);
+    expect(readLogLines(logFile)).toEqual([]);
+
+    writeMeminfo(dir, { totalGib: 256, availableGib: 30 });
+    const result = await a.done;
+    expect(result.code, result.stderr).toBe(0);
+    expect(readLogLines(logFile)).toEqual(["start:A", "end:A"]);
+    holder.kill("SIGKILL");
+  }, 20000);
+
   it("runs three low-memory callers launched at once with nothing held strictly one at a time", async () => {
     const dir = freshSlotDir();
     const logFile = join(dir, "log.txt");
