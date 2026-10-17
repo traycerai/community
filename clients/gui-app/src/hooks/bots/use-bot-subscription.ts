@@ -192,7 +192,8 @@ export function useBotSubscriptionForClient(args: {
     // path REPLACES it with a fresh one (and migrates every other consumer
     // onto it) instead of treating the refresh as a frame to send - this
     // stream has no refresh frame.
-    const current = sessionKey === null ? undefined : subscriptions.get(sessionKey);
+    const current =
+      sessionKey === null ? undefined : subscriptions.get(sessionKey);
     if (current !== undefined && !current.isTerminal) {
       current.isTerminal = true;
       current.unsubscribeFromStream();

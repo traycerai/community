@@ -26,7 +26,9 @@ type BotTabView = "conversation" | "under-the-hood" | "settings";
 
 function isBotTabView(value: string): value is BotTabView {
   return (
-    value === "conversation" || value === "under-the-hood" || value === "settings"
+    value === "conversation" ||
+    value === "under-the-hood" ||
+    value === "settings"
   );
 }
 
@@ -129,7 +131,11 @@ function BotTabBody(props: {
         aria-busy="true"
         data-testid="bot-tab-connecting"
       >
-        <AgentSpinningDots className={undefined} testId={undefined} variant={undefined} />
+        <AgentSpinningDots
+          className={undefined}
+          testId={undefined}
+          variant={undefined}
+        />
       </div>
     );
   }
@@ -206,17 +212,26 @@ function BotTabContent(props: {
         className="flex min-h-0 flex-1 flex-col"
       >
         <TabsList aria-label="Bot view" className="mx-4 self-start">
-          <TabsTrigger value="conversation" data-testid="bot-tab-view-conversation">
+          <TabsTrigger
+            value="conversation"
+            data-testid="bot-tab-view-conversation"
+          >
             Conversation
           </TabsTrigger>
-          <TabsTrigger value="under-the-hood" data-testid="bot-tab-view-under-the-hood">
+          <TabsTrigger
+            value="under-the-hood"
+            data-testid="bot-tab-view-under-the-hood"
+          >
             Under the hood
           </TabsTrigger>
           <TabsTrigger value="settings" data-testid="bot-tab-view-settings">
             Settings
           </TabsTrigger>
         </TabsList>
-        <TabsContent value="conversation" className="flex min-h-0 flex-1 flex-col">
+        <TabsContent
+          value="conversation"
+          className="flex min-h-0 flex-1 flex-col"
+        >
           <BotConversationView
             botId={botId}
             hostId={hostId}
@@ -224,7 +239,10 @@ function BotTabContent(props: {
             offlineHostLabel={offlineHostLabel}
           />
         </TabsContent>
-        <TabsContent value="under-the-hood" className="flex min-h-0 flex-1 flex-col">
+        <TabsContent
+          value="under-the-hood"
+          className="flex min-h-0 flex-1 flex-col"
+        >
           <BotUnderTheHoodPanel
             botId={botId}
             hostId={hostId}
@@ -275,8 +293,7 @@ function BotTabHeader(props: {
   const directory = useHostDirectoryList();
   const environmentLabel = useMemo(() => {
     const match = environments.data?.environments.find(
-      (environment) =>
-        environment.environmentId === snapshot.bot.environmentId,
+      (environment) => environment.environmentId === snapshot.bot.environmentId,
     );
     return match?.label ?? snapshot.bot.environmentId;
   }, [environments.data, snapshot.bot.environmentId]);
@@ -304,7 +321,9 @@ function BotTabHeader(props: {
       </div>
       {openRequests !== null && openRequests > 0 ? (
         <Badge variant="warning" size="sm" data-testid="bot-tab-open-requests">
-          {openRequests === 1 ? "1 open request" : `${openRequests} open requests`}
+          {openRequests === 1
+            ? "1 open request"
+            : `${openRequests} open requests`}
         </Badge>
       ) : null}
     </header>

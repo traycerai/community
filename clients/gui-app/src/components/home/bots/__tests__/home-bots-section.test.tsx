@@ -15,13 +15,16 @@ const mocks = vi.hoisted(() => {
   const hostClient = { stub: "host-client" };
   const environmentRefetch = vi.fn(() => Promise.resolve());
   const botRefetch = vi.fn(() => Promise.resolve());
+  // The hook's three answers: unknown, supported, unsupported. A call, not a
+  // literal, so the slot keeps all three.
+  const initialSupport = (): boolean | null => true;
   return {
     hostClient,
     environmentRefetch,
     botRefetch,
     state: {
       hostId: "host-1",
-      support: true,
+      support: initialSupport(),
       environments: {
         data: undefined as
           | { environments: EnvironmentDescriptor[] }
@@ -36,7 +39,8 @@ const mocks = vi.hoisted(() => {
       },
       directory: [] as Array<{ hostId: string; label: string }>,
     },
-    useEnvironmentListQuery: vi.fn<(client: object, enabled: boolean) => unknown>(),
+    useEnvironmentListQuery:
+      vi.fn<(client: object, enabled: boolean) => unknown>(),
     useBotListQuery: vi.fn<(client: object, enabled: boolean) => unknown>(),
     useHostMethodSupport:
       vi.fn<(hostId: string | null, method: string) => boolean | null>(),
