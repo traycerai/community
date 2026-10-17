@@ -567,7 +567,13 @@ const TASK_CONTEXTS: ReadonlyArray<TaskContext> = [
   })),
 ];
 
-type BlockKind = "indentedCode" | "plain" | "block" | "joinedText";
+type BlockKind =
+  | "indentedCode"
+  | "plain"
+  | "block"
+  | "joinedText"
+  | "joinedInline"
+  | "openTagAlone";
 
 interface BlockLine {
   readonly name: string;
@@ -586,6 +592,22 @@ const BLOCK_LINES: ReadonlyArray<BlockLine> = [
   // back as a bare text node when treated as an underline.
   { name: "a setext underline", lines: ["==="], kind: "joinedText" },
   { name: "an HTML block", lines: ["<div>hi</div>"], kind: "block" },
+  // Only HTML block types 1-6 interrupt a paragraph. An autolink or an inline
+  // tag line is never a block, and a lone open tag (type 7) opens one only
+  // where no paragraph is open.
+  {
+    name: "an autolink",
+    lines: ["<https://example.com>"],
+    kind: "joinedInline",
+  },
+  { name: "an inline span", lines: ["<span>hi</span>"], kind: "joinedInline" },
+  {
+    name: "a mailto autolink",
+    lines: ["<user@example.com>"],
+    kind: "joinedInline",
+  },
+  { name: "an HTML comment", lines: ["<!-- c -->"], kind: "block" },
+  { name: "a lone open tag", lines: ["<span>"], kind: "openTagAlone" },
   { name: "a table", lines: ["| a |", "| - |"], kind: "block" },
   {
     name: "a table without leading pipes",
@@ -595,6 +617,12 @@ const BLOCK_LINES: ReadonlyArray<BlockLine> = [
   { name: "indented code", lines: ["    code"], kind: "indentedCode" },
   { name: "a plain line", lines: ["plain"], kind: "plain" },
 ];
+
+const INLINE_NEEDLES: Record<string, string> = {
+  "an autolink": "example.com",
+  "a mailto autolink": "user@example.com",
+  "an inline span": "hi",
+};
 
 function findTaskItem(parsed: JsonContent): JsonContent {
   const top = parsed.content ?? [];
@@ -622,6 +650,24 @@ describe("a task item's continuation joins its paragraph only where no block ope
           ].join("\n");
           const item = findTaskItem(parseMarkdown(markdown));
           const children = item.content ?? [];
+
+          if (block.kind === "joinedInline") {
+            const needle = INLINE_NEEDLES[block.name];
+            expect(childTypes(item)).toEqual(["paragraph"]);
+            expect(paragraphText(children[0])).toContain(needle);
+            if (first !== "") {
+              expect(paragraphText(children[0]).startsWith(`${first}\n`)).toBe(
+                true,
+              );
+            }
+            return;
+          }
+
+          if (block.kind === "openTagAlone" && first !== "") {
+            expect(childTypes(item)).toEqual(["paragraph"]);
+            expect(paragraphText(children[0]).startsWith("first\n")).toBe(true);
+            return;
+          }
 
           if (
             block.kind === "plain" ||
@@ -887,6 +933,31 @@ describe("an ordered list nested in another block under an ordered item stays in
     expect(roundTrip(md)).toBe(md);
   });
 
+  it("counts a tab as columns when a bullet list and an ordered list nest under an ordered item", () => {
+    const expected = orderedAt(
+      1,
+      textPara("outer"),
+      listWith("bulletList", [itemOf(textPara("b"), orderedX())], 1),
+    );
+    const parsed = parseMarkdown("1. outer\n\t- b\n\t\t1. x");
+    expect(skeleton(parsed)).toBe(skeleton(expected));
+  });
+
+  it("counts a tab as columns when a task list and an ordered list nest under an ordered item", () => {
+    const expected = orderedAt(1, textPara("outer"), {
+      type: "taskList",
+      content: [
+        {
+          type: "taskItem",
+          attrs: { checked: false },
+          content: [textPara("t"), orderedX()],
+        },
+      ],
+    });
+    const parsed = parseMarkdown("1. outer\n\t- [ ] t\n\t\t1. x");
+    expect(skeleton(parsed)).toBe(skeleton(expected));
+  });
+
   it("keeps a plain nested ordered list nested", () => {
     const expected = orderedAt(
       1,
@@ -910,5 +981,154 @@ describe("an ordered list nested in another block under an ordered item stays in
     expect(skeleton(parsed)).toBe(skeleton(expected));
     const md = roundTrip("1. a\n   - b\n   1. x");
     expect(roundTrip(md)).toBe(md);
+  });
+});
+
+// The ordered list written after a deeper list must stay in its own
+// container. Round trips converge after the first pass, so only the parsed
+// structure can show a list that moved out.
+
+describe("an ordered list after a deeper list stays in its container", () => {
+  function bulletOf(...items: JsonContent[]): JsonContent {
+    return listWith("bulletList", items, 1);
+  }
+  function orderedOf(...items: JsonContent[]): JsonContent {
+    return listWith("orderedList", items, 1);
+  }
+  function taskOf(text: string): JsonContent {
+    return {
+      type: "taskList",
+      content: [
+        {
+          type: "taskItem",
+          attrs: { checked: false },
+          content: [textPara(text)],
+        },
+      ],
+    };
+  }
+
+  for (const start of [1, 10, 100]) {
+    const at = `${String(start)}.`;
+
+    it(`keeps x in b after a bullet list c, inside an ordered item at ${at}`, () => {
+      expectStructureBack(
+        orderedAt(
+          start,
+          textPara("a"),
+          bulletOf(
+            itemOf(
+              textPara("b"),
+              bulletOf(itemOf(textPara("c"))),
+              orderedOf(itemOf(textPara("x"))),
+            ),
+          ),
+        ),
+      );
+    });
+
+    it(`keeps x in b after a task list c, inside an ordered item at ${at}`, () => {
+      expectStructureBack(
+        orderedAt(
+          start,
+          textPara("a"),
+          bulletOf(
+            itemOf(
+              textPara("b"),
+              taskOf("c"),
+              orderedOf(itemOf(textPara("x"))),
+            ),
+          ),
+        ),
+      );
+    });
+
+    it(`keeps y in c and x in b two levels deep, inside an ordered item at ${at}`, () => {
+      expectStructureBack(
+        orderedAt(
+          start,
+          textPara("a"),
+          bulletOf(
+            itemOf(
+              textPara("b"),
+              bulletOf(
+                itemOf(
+                  textPara("c"),
+                  bulletOf(itemOf(textPara("d"))),
+                  orderedOf(itemOf(textPara("y"))),
+                ),
+              ),
+              orderedOf(itemOf(textPara("x"))),
+            ),
+          ),
+        ),
+      );
+    });
+
+    it(`keeps x in b after a list and a tail paragraph, inside an ordered item at ${at}`, () => {
+      expectStructureBack(
+        orderedAt(
+          start,
+          textPara("a"),
+          bulletOf(
+            itemOf(
+              textPara("b"),
+              bulletOf(itemOf(textPara("c"))),
+              textPara("tail"),
+              orderedOf(itemOf(textPara("x"))),
+            ),
+          ),
+        ),
+      );
+    });
+  }
+});
+
+describe("keeps a continuation line's non-breaking spaces", () => {
+  const NBSP = " ";
+
+  function onlyTaskItemParagraph(markdown: string): JsonContent {
+    const item = onlyListItem(markdown, "taskList");
+    expect(childTypes(item)).toEqual(["paragraph"]);
+    return (item.content ?? [])[0];
+  }
+
+  it("leaves the non-breaking spaces after the content column in the text", () => {
+    const paragraph = onlyTaskItemParagraph(
+      `- [ ] First\n  ${NBSP}${NBSP}indented`,
+    );
+    expect(paragraphText(paragraph)).toBe(`First\n${NBSP}${NBSP}indented`);
+  });
+
+  it("leaves a non-breaking space in the text of an item with an empty first line", () => {
+    const paragraph = onlyTaskItemParagraph(`- [ ] \n  ${NBSP}x`);
+    expect(paragraphText(paragraph)).toBe(`${NBSP}x`);
+  });
+
+  it("keeps the non-breaking spaces of a hard-broken task item through the parse and converges", () => {
+    const source = listDoc({
+      type: "taskList",
+      content: [
+        {
+          type: "taskItem",
+          attrs: { checked: false },
+          content: [hardBreakParagraph("First", `${NBSP}${NBSP}x`)],
+        },
+      ],
+    });
+    const md1 = jsonContentToMarkdown(source, SERIALIZER_OPTIONS);
+    const parsed = parseMarkdown(md1);
+    const item = (parsed.content ?? [])[0].content?.[0];
+    expect(item).toBeDefined();
+    if (item === undefined) return;
+    expect(childTypes(item)).toEqual(["paragraph"]);
+    expect(paragraphText((item.content ?? [])[0])).toBe(
+      `First\n${NBSP}${NBSP}x`,
+    );
+
+    const md2 = jsonContentToMarkdown(parsed, SERIALIZER_OPTIONS);
+    const md3 = jsonContentToMarkdown(parseMarkdown(md2), SERIALIZER_OPTIONS);
+    expect(md2).toBe(md1);
+    expect(md3).toBe(md1);
   });
 });

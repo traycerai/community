@@ -1,8 +1,8 @@
 diff --git a/dist/index.cjs b/dist/index.cjs
-index d828422b45e463c229bd937d39ea416278055dde..24fe040236dd7899ec89f887a45df473ee1f74ea 100644
+index d828422b45e463c229bd937d39ea416278055dde..077db61b2f9b7c45acc7fae19aa84005b6ab3254 100644
 --- a/dist/index.cjs
 +++ b/dist/index.cjs
-@@ -4788,6 +4788,37 @@ function createInlineMarkdownSpec(options) {
+@@ -4788,6 +4788,49 @@ function createInlineMarkdownSpec(options) {
  }
 
  // src/utilities/markdown/parseIndentedBlocks.ts
@@ -15,6 +15,18 @@ index d828422b45e463c229bd937d39ea416278055dde..24fe040236dd7899ec89f887a45df473
 +    else break;
 +  }
 +  return column;
++}
++// The tag names of CommonMark's HTML block type 6.
++var HTML_BLOCK_TAG_NAMES = new Set(["address","article","aside","base","basefont","blockquote","body","caption","center","col","colgroup","dd","details","dialog","dir","div","dl","dt","fieldset","figcaption","figure","footer","form","frame","frameset","h1","h2","h3","h4","h5","h6","head","header","hr","html","iframe","legend","li","link","main","menu","menuitem","nav","noframes","ol","optgroup","option","p","param","search","section","summary","table","tbody","td","tfoot","th","thead","title","tr","track","ul"]);
++// Whether a line, without its indent, starts a CommonMark HTML block: types 1
++// to 6 always, and type 7 (one complete tag of any other name, alone on the
++// line) only while no paragraph is open, since it cannot interrupt one. An
++// autolink or an inline tag inside text starts none.
++function startsHtmlBlock(text, paragraphEmpty) {
++  if (/^<(?:script|pre|style|textarea)(?:\s|>|$)/i.test(text) || /^<!--/.test(text) || /^<\?/.test(text) || /^<![A-Za-z]/.test(text) || /^<!\[CDATA\[/.test(text)) return true;
++  const tag = /^<\/?([A-Za-z][A-Za-z0-9-]*)(?:\s|\/?>|$)/.exec(text);
++  if (tag && HTML_BLOCK_TAG_NAMES.has(tag[1].toLowerCase())) return true;
++  return paragraphEmpty && /^(?:<[A-Za-z][A-Za-z0-9-]*(?:\s[^<>]*)?\/?>|<\/[A-Za-z][A-Za-z0-9-]*\s*>)\s*$/.test(text);
 +}
 +// Whether a line is a GFM table delimiter row, such as `| --- | :-: |`.
 +function isTableDelimiterRow(line) {
@@ -34,20 +46,20 @@ index d828422b45e463c229bd937d39ea416278055dde..24fe040236dd7899ec89f887a45df473
 +  const column = leadingColumns(line);
 +  if (paragraphEmpty && column <= indentLevel) return true;
 +  if (column - contentColumn >= 4) return paragraphEmpty;
-+  const text = line.trimStart();
-+  return /^([-+*]|\d{1,9}[.)])(\s|$)/.test(text) || /^(```|~~~)/.test(text) || /^>/.test(text) || /^#{1,6}(\s|$)/.test(text) || /^([*_-])(\s*\1){2,}\s*$/.test(text) || /^<[A-Za-z/!?]/.test(text) || nextLine !== void 0 && text.includes("|") && isTableDelimiterRow(nextLine);
++  const text = line.replace(/^[ \t]+/, "");
++  return /^([-+*]|\d{1,9}[.)])(\s|$)/.test(text) || /^(```|~~~)/.test(text) || /^>/.test(text) || /^#{1,6}(\s|$)/.test(text) || /^([*_-])(\s*\1){2,}\s*$/.test(text) || startsHtmlBlock(text, paragraphEmpty) || nextLine !== void 0 && text.includes("|") && isTableDelimiterRow(nextLine);
 +}
  function parseIndentedBlocks(src, config, lexer) {
    var _a, _b, _c, _d;
    const lines = src.split("\n");
-@@ -4816,6 +4847,13 @@ function parseIndentedBlocks(src, config, lexer) {
+@@ -4816,6 +4859,13 @@ function parseIndentedBlocks(src, config, lexer) {
  `;
      const itemContent = [mainContent];
      i += 1;
 +    while (i < lines.length) {
 +      const nextLine = lines[i];
 +      if (nextLine.trim() === "" || config.itemPattern.test(nextLine) || opensItemBlock(nextLine, lines[i + 1], indentLevel, indentLevel + baseIndentSize, itemData.mainContent === "")) break;
-+      itemData.mainContent = itemData.mainContent === "" ? nextLine.trimStart() : `${itemData.mainContent}\n${nextLine.trimStart()}`;
++      itemData.mainContent = itemData.mainContent === "" ? nextLine.replace(/^[ \t]+/, "") : `${itemData.mainContent}\n${nextLine.replace(/^[ \t]+/, "")}`;
 +      totalRaw = `${totalRaw}${nextLine}\n`;
 +      i += 1;
 +    }
@@ -55,10 +67,10 @@ index d828422b45e463c229bd937d39ea416278055dde..24fe040236dd7899ec89f887a45df473
        const nextLine = lines[i];
        if (nextLine.trim() === "") {
 diff --git a/dist/index.js b/dist/index.js
-index a0f6db230e5c24f99066beda95637818680b3fd2..1d5774c74f8c572fde3b7e8921a2f06d217a3149 100644
+index a0f6db230e5c24f99066beda95637818680b3fd2..38264a485ce7d2101940409f5ad308034e25ef6f 100644
 --- a/dist/index.js
 +++ b/dist/index.js
-@@ -4626,6 +4626,37 @@ function createInlineMarkdownSpec(options) {
+@@ -4626,6 +4626,49 @@ function createInlineMarkdownSpec(options) {
  }
 
  // src/utilities/markdown/parseIndentedBlocks.ts
@@ -71,6 +83,18 @@ index a0f6db230e5c24f99066beda95637818680b3fd2..1d5774c74f8c572fde3b7e8921a2f06d
 +    else break;
 +  }
 +  return column;
++}
++// The tag names of CommonMark's HTML block type 6.
++var HTML_BLOCK_TAG_NAMES = new Set(["address","article","aside","base","basefont","blockquote","body","caption","center","col","colgroup","dd","details","dialog","dir","div","dl","dt","fieldset","figcaption","figure","footer","form","frame","frameset","h1","h2","h3","h4","h5","h6","head","header","hr","html","iframe","legend","li","link","main","menu","menuitem","nav","noframes","ol","optgroup","option","p","param","search","section","summary","table","tbody","td","tfoot","th","thead","title","tr","track","ul"]);
++// Whether a line, without its indent, starts a CommonMark HTML block: types 1
++// to 6 always, and type 7 (one complete tag of any other name, alone on the
++// line) only while no paragraph is open, since it cannot interrupt one. An
++// autolink or an inline tag inside text starts none.
++function startsHtmlBlock(text, paragraphEmpty) {
++  if (/^<(?:script|pre|style|textarea)(?:\s|>|$)/i.test(text) || /^<!--/.test(text) || /^<\?/.test(text) || /^<![A-Za-z]/.test(text) || /^<!\[CDATA\[/.test(text)) return true;
++  const tag = /^<\/?([A-Za-z][A-Za-z0-9-]*)(?:\s|\/?>|$)/.exec(text);
++  if (tag && HTML_BLOCK_TAG_NAMES.has(tag[1].toLowerCase())) return true;
++  return paragraphEmpty && /^(?:<[A-Za-z][A-Za-z0-9-]*(?:\s[^<>]*)?\/?>|<\/[A-Za-z][A-Za-z0-9-]*\s*>)\s*$/.test(text);
 +}
 +// Whether a line is a GFM table delimiter row, such as `| --- | :-: |`.
 +function isTableDelimiterRow(line) {
@@ -90,20 +114,20 @@ index a0f6db230e5c24f99066beda95637818680b3fd2..1d5774c74f8c572fde3b7e8921a2f06d
 +  const column = leadingColumns(line);
 +  if (paragraphEmpty && column <= indentLevel) return true;
 +  if (column - contentColumn >= 4) return paragraphEmpty;
-+  const text = line.trimStart();
-+  return /^([-+*]|\d{1,9}[.)])(\s|$)/.test(text) || /^(```|~~~)/.test(text) || /^>/.test(text) || /^#{1,6}(\s|$)/.test(text) || /^([*_-])(\s*\1){2,}\s*$/.test(text) || /^<[A-Za-z/!?]/.test(text) || nextLine !== void 0 && text.includes("|") && isTableDelimiterRow(nextLine);
++  const text = line.replace(/^[ \t]+/, "");
++  return /^([-+*]|\d{1,9}[.)])(\s|$)/.test(text) || /^(```|~~~)/.test(text) || /^>/.test(text) || /^#{1,6}(\s|$)/.test(text) || /^([*_-])(\s*\1){2,}\s*$/.test(text) || startsHtmlBlock(text, paragraphEmpty) || nextLine !== void 0 && text.includes("|") && isTableDelimiterRow(nextLine);
 +}
  function parseIndentedBlocks(src, config, lexer) {
    var _a, _b, _c, _d;
    const lines = src.split("\n");
-@@ -4654,6 +4685,13 @@ function parseIndentedBlocks(src, config, lexer) {
+@@ -4654,6 +4697,13 @@ function parseIndentedBlocks(src, config, lexer) {
  `;
      const itemContent = [mainContent];
      i += 1;
 +    while (i < lines.length) {
 +      const nextLine = lines[i];
 +      if (nextLine.trim() === "" || config.itemPattern.test(nextLine) || opensItemBlock(nextLine, lines[i + 1], indentLevel, indentLevel + baseIndentSize, itemData.mainContent === "")) break;
-+      itemData.mainContent = itemData.mainContent === "" ? nextLine.trimStart() : `${itemData.mainContent}\n${nextLine.trimStart()}`;
++      itemData.mainContent = itemData.mainContent === "" ? nextLine.replace(/^[ \t]+/, "") : `${itemData.mainContent}\n${nextLine.replace(/^[ \t]+/, "")}`;
 +      totalRaw = `${totalRaw}${nextLine}\n`;
 +      i += 1;
 +    }
@@ -111,10 +135,10 @@ index a0f6db230e5c24f99066beda95637818680b3fd2..1d5774c74f8c572fde3b7e8921a2f06d
        const nextLine = lines[i];
        if (nextLine.trim() === "") {
 diff --git a/src/utilities/markdown/parseIndentedBlocks.ts b/src/utilities/markdown/parseIndentedBlocks.ts
-index ae4956bd21ffe5489a64d08486cf323e82859c06..8728822523b0661b6c5c351bd20ea0459776c896 100644
+index ae4956bd21ffe5489a64d08486cf323e82859c06..1f29228480b6eaa5c4932a4d6b87aade2c9b9d65 100644
 --- a/src/utilities/markdown/parseIndentedBlocks.ts
 +++ b/src/utilities/markdown/parseIndentedBlocks.ts
-@@ -37,6 +37,67 @@ export interface BlockParserConfig {
+@@ -37,6 +37,101 @@ export interface BlockParserConfig {
    customNestedParser?: (dedentedContent: string) => any[] | undefined
  }
 
@@ -136,6 +160,37 @@ index ae4956bd21ffe5489a64d08486cf323e82859c06..8728822523b0661b6c5c351bd20ea045
 +}
 +
 +/**
++ * The tag names of CommonMark's HTML block type 6.
++ */
++const HTML_BLOCK_TAG_NAMES = new Set(["address","article","aside","base","basefont","blockquote","body","caption","center","col","colgroup","dd","details","dialog","dir","div","dl","dt","fieldset","figcaption","figure","footer","form","frame","frameset","h1","h2","h3","h4","h5","h6","head","header","hr","html","iframe","legend","li","link","main","menu","menuitem","nav","noframes","ol","optgroup","option","p","param","search","section","summary","table","tbody","td","tfoot","th","thead","title","tr","track","ul"])
++
++/**
++ * Whether a line, without its indent, starts a CommonMark HTML block: types 1
++ * to 6 always, and type 7 (one complete tag of any other name, alone on the
++ * line) only while no paragraph is open, since it cannot interrupt one. An
++ * autolink or an inline tag inside text starts none.
++ */
++function startsHtmlBlock(text: string, paragraphEmpty: boolean): boolean {
++  if (
++    /^<(?:script|pre|style|textarea)(?:\s|>|$)/i.test(text) ||
++    /^<!--/.test(text) ||
++    /^<\?/.test(text) ||
++    /^<![A-Za-z]/.test(text) ||
++    /^<!\[CDATA\[/.test(text)
++  ) {
++    return true
++  }
++  const tag = /^<\/?([A-Za-z][A-Za-z0-9-]*)(?:\s|\/?>|$)/.exec(text)
++  if (tag && HTML_BLOCK_TAG_NAMES.has(tag[1].toLowerCase())) {
++    return true
++  }
++  return (
++    paragraphEmpty &&
++    /^(?:<[A-Za-z][A-Za-z0-9-]*(?:\s[^<>]*)?\/?>|<\/[A-Za-z][A-Za-z0-9-]*\s*>)\s*$/.test(text)
++  )
++}
++
++/**
 + * Whether a line is a GFM table delimiter row, such as `| --- | :-: |`.
 + */
 +function isTableDelimiterRow(line: string): boolean {
@@ -151,7 +206,8 @@ index ae4956bd21ffe5489a64d08486cf323e82859c06..8728822523b0661b6c5c351bd20ea045
 + * indented code. Once the paragraph has text, indented code cannot interrupt
 + * it. Closer in, the line opens a block when, without its indent, it starts a
 + * list item, a fence, a blockquote, an ATX heading, a thematic break, an HTML
-+ * block or a table (a header line whose next line is a delimiter row).
++ * block (see `startsHtmlBlock`) or a table (a header line whose next line is a
++ * delimiter row).
 + */
 +function opensItemBlock(
 +  line: string,
@@ -167,14 +223,16 @@ index ae4956bd21ffe5489a64d08486cf323e82859c06..8728822523b0661b6c5c351bd20ea045
 +  if (column - contentColumn >= 4) {
 +    return paragraphEmpty
 +  }
-+  const text = line.trimStart()
++  // Markdown indents with spaces and tabs only; any other leading whitespace
++  // (a non-breaking space) is the line's text.
++  const text = line.replace(/^[ \t]+/, '')
 +  return (
 +    /^([-+*]|\d{1,9}[.)])(\s|$)/.test(text) ||
 +    /^(```|~~~)/.test(text) ||
 +    /^>/.test(text) ||
 +    /^#{1,6}(\s|$)/.test(text) ||
 +    /^([*_-])(\s*\1){2,}\s*$/.test(text) ||
-+    /^<[A-Za-z/!?]/.test(text) ||
++    startsHtmlBlock(text, paragraphEmpty) ||
 +    (nextLine !== undefined && text.includes('|') && isTableDelimiterRow(nextLine))
 +  )
 +}
@@ -182,7 +240,7 @@ index ae4956bd21ffe5489a64d08486cf323e82859c06..8728822523b0661b6c5c351bd20ea045
  /**
   * Parses markdown text into hierarchical indented blocks with proper nesting.
   *
-@@ -118,6 +179,32 @@ export function parseIndentedBlocks(
+@@ -118,6 +213,32 @@ export function parseIndentedBlocks(
      const itemContent = [mainContent] // Start with the main text
      i += 1
 
@@ -206,8 +264,8 @@ index ae4956bd21ffe5489a64d08486cf323e82859c06..8728822523b0661b6c5c351bd20ea045
 +      }
 +      itemData.mainContent =
 +        itemData.mainContent === ''
-+          ? nextLine.trimStart()
-+          : `${itemData.mainContent}\n${nextLine.trimStart()}`
++          ? nextLine.replace(/^[ \t]+/, '')
++          : `${itemData.mainContent}\n${nextLine.replace(/^[ \t]+/, '')}`
 +      totalRaw = `${totalRaw}${nextLine}\n`
 +      i += 1
 +    }
