@@ -1489,6 +1489,24 @@ describe("RoutingDestinationPicker", () => {
     });
   });
 
+  describe("a catalog read that is fresh on every render", () => {
+    // Stress the real RoutingCatalogSync effect beside RoutingModelPicker.
+    // Production queries keep cached data stable between updates; this mock
+    // deliberately changes array identity on every render. If a whole-store
+    // subscription moves into their shared parent, setCatalog feeds that
+    // parent's render and the next fresh catalog back into the effect.
+    it("opens and settles with the sync's inputs changing identity on every render", async () => {
+      kit.unstableCatalog = true;
+      kit.lease = heldLease("held", "tok-1");
+      mount(countdown());
+      await open();
+
+      expect(screen.getByRole("tab", { name: "Codex" })).not.toBeNull();
+      fireEvent.click(screen.getByRole("tab", { name: "Codex" }));
+      expect(option(/GPT-5/)).not.toBeNull();
+    });
+  });
+
   describe("the Max Mode label follows the tuple Switch sends", () => {
     // Max Mode is a Cursor fact: the kit adds a Cursor harness and model for
     // this block only.

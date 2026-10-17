@@ -1483,7 +1483,10 @@ function HarnessModelPickerTooltip({
         <TooltipSummaryRow label="Fast" value={fastModeLabel} />
       )}
       {maxModeLabel === null ? null : (
-        <TooltipSummaryRow label="Max Mode" value={maxModeLabel} />
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <span className="text-background/70">Max Mode</span>
+          <p className="whitespace-normal font-medium">{maxModeLabel}</p>
+        </div>
       )}
       {profileLabel === null ? null : (
         <TooltipSummaryRow label="Profile" value={profileLabel} />

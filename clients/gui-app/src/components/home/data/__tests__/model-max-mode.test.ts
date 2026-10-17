@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import type { ModelOption } from "@/components/home/data/landing-options";
 import {
+  chatMaxModeContextForToolbar,
   maxModeListedFor,
   maxModeOnlyRow,
   type MaxModeContext,
 } from "@/components/home/data/model-max-mode";
+import { buildChatRunSettings } from "@/lib/composer/chat-run-settings";
 
 const EFFORTS = ["low", "medium", "high"].map((id) => ({
   id,
@@ -196,5 +198,62 @@ describe("maxModeOnlyRow", () => {
   it("is false for missing or invalid metadata", () => {
     expect(maxModeOnlyRow(row({}), "chat")).toBe(false);
     expect(maxModeOnlyRow(row({ maxMode: 3 }), "judge")).toBe(false);
+  });
+});
+
+describe("chatMaxModeContextForToolbar", () => {
+  // The pre-send label must describe the tuple a send commits, and a send
+  // commits `buildChatRunSettings`'s normalization (blank effort -> null,
+  // trimmed tier, blank tier -> null). One shared helper keeps every picker
+  // call site on that same normalization instead of hand-rolled copies.
+  it.each([
+    ["blank effort and tier", "", ""],
+    ["whitespace-only tier", "high", "   "],
+    ["padded Fast", "high", " fast "],
+    ["plain Fast", "high", "fast"],
+    ["normal effort, no tier", "low", ""],
+  ])("builds the tuple a send commits: %s", (_name, reasoning, serviceTier) => {
+    const sent = buildChatRunSettings({
+      selection: { harnessId: "cursor", modelSlug: "example", profileId: null },
+      permission: "supervised",
+      reasoning,
+      serviceTier,
+    });
+
+    expect(chatMaxModeContextForToolbar(reasoning, serviceTier)).toEqual({
+      kind: "chat",
+      tuple: {
+        reasoningEffort: sent.reasoningEffort,
+        serviceTier: sent.serviceTier,
+      },
+    });
+  });
+
+  it("labels exactly the selections the send would key, for padded Fast and blank values", () => {
+    const fastRow = row({
+      maxMode: {
+        chat: [
+          { reasoningEffort: "high", fast: true },
+          { reasoningEffort: null, fast: false },
+        ],
+        judge: [],
+        fastServiceTierId: "fast",
+      },
+    });
+    for (const [reasoning, serviceTier, listed] of [
+      ["high", " fast ", true],
+      ["high", "fast", true],
+      ["high", "", false],
+      ["", "", true],
+      ["", "   ", true],
+      ["low", "fast", false],
+    ] as const) {
+      expect(
+        maxModeListedFor(
+          fastRow,
+          chatMaxModeContextForToolbar(reasoning, serviceTier),
+        ),
+      ).toBe(listed);
+    }
   });
 });

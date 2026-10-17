@@ -19,6 +19,21 @@ export function maxModeTooltipCopy(): string {
   return MAX_MODE_COPY;
 }
 
+/** The two toolbar values after the same normalization as a sent chat tuple. */
+export function chatMaxModeContextForToolbar(
+  reasoningEffort: string,
+  serviceTier: string,
+): MaxModeContext {
+  const tier = serviceTier.trim();
+  return {
+    kind: "chat",
+    tuple: {
+      reasoningEffort: reasoningEffort.length === 0 ? null : reasoningEffort,
+      serviceTier: tier.length === 0 ? null : tier,
+    },
+  };
+}
+
 function effectiveEffort(
   model: ModelOption,
   effort: string | null,

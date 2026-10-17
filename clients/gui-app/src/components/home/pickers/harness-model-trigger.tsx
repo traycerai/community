@@ -141,7 +141,12 @@ export function HarnessModelTrigger(props: HarnessModelTriggerProps) {
         />
       )}
       {maxModeRequired ? (
-        <span className="shrink-0 rounded border border-foreground/30 px-1 text-ui-xs">
+        <span
+          className={cn(
+            "shrink-0 rounded border border-foreground/30 px-1 text-ui-xs",
+            narrowHidden,
+          )}
+        >
           Max
         </span>
       ) : null}

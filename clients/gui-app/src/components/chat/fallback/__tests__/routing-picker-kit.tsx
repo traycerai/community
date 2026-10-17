@@ -230,6 +230,8 @@ interface CatalogCall {
 export const kit = {
   // Adds the Cursor harness and its Max Mode model to the catalog.
   withCursor: false,
+  // Every read returns fresh arrays (and fresh catalog entries) each call.
+  unstableCatalog: false,
   // Every `client` a host-backed read was handed, and whether it was enabled.
   catalogCalls: [] as CatalogCall[],
   providerCalls: [] as Array<string | null>,
@@ -275,6 +277,7 @@ export const kit = {
 
 export function resetKit(): void {
   kit.withCursor = false;
+  kit.unstableCatalog = false;
   kit.catalogCalls = [];
   kit.providerCalls = [];
   kit.labelCalls = [];
@@ -417,22 +420,35 @@ export function hostClientModule() {
 
 /** `@/hooks/harnesses/use-gui-harness-catalog`. */
 export function catalogModule() {
-  const harnessesNow = () =>
-    kit.withCursor
-      ? [CLAUDE_HARNESS, CODEX_HARNESS, CURSOR_HARNESS]
-      : [CLAUDE_HARNESS, CODEX_HARNESS];
   const modelsOf = (harnessId: string): ReadonlyArray<ModelOption> => {
     if (harnessId === "claude") return CLAUDE_MODELS;
     if (harnessId === "cursor") return CURSOR_MODELS;
     return CODEX_MODELS;
   };
-  const catalogNow = () =>
-    harnessesNow().map((entry) => ({
-      ...entry,
-      models: modelsOf(entry.id),
-      modelsLoading: false,
-      modelsError: null,
-    }));
+  const build = (withCursor: boolean) => {
+    const harnesses = withCursor
+      ? [CLAUDE_HARNESS, CODEX_HARNESS, CURSOR_HARNESS]
+      : [CLAUDE_HARNESS, CODEX_HARNESS];
+    return {
+      harnesses,
+      catalog: harnesses.map((entry) => ({
+        ...entry,
+        models: modelsOf(entry.id),
+        modelsLoading: false,
+        modelsError: null,
+      })),
+    };
+  };
+  // Referentially stable per variant, like react-query's structural sharing:
+  // a fresh array per render would feed the catalog sync effect a new input on
+  // every render. `kit.unstableCatalog` opts into exactly that, on purpose.
+  const STABLE = { plain: build(false), cursor: build(true) };
+  const current = () => {
+    if (kit.unstableCatalog) return build(kit.withCursor);
+    return kit.withCursor ? STABLE.cursor : STABLE.plain;
+  };
+  const harnessesNow = () => current().harnesses;
+  const catalogNow = () => current().catalog;
   return {
     harnessCatalogEntryNeedsRefresh: () => true,
     useGuiHarnessesQueryForClient: (
