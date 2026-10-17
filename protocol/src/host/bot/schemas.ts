@@ -334,6 +334,30 @@ const botCheckinWindowCostSchema = lazySchema(() =>
   }),
 );
 
+/** What a check-in's still-running part lists, whatever its state. */
+const botCheckinStillRunningListsSchema = lazySchema(() =>
+  z.object({
+    agents: z.array(
+      z.object({
+        agentId: z.string().min(1),
+        agentTitle: z.string().nullable(),
+        /** `turn`: mid-turn; `background`: background work running. */
+        tier: z.enum(["turn", "background"]),
+      }),
+    ),
+    agentsOmitted: z.number().int().nonnegative(),
+    shells: z.array(
+      z.object({
+        shellId: z.string().min(1),
+        description: z.string(),
+        agentId: z.string().min(1),
+        agentTitle: z.string().nullable(),
+      }),
+    ),
+    shellsOmitted: z.number().int().nonnegative(),
+  }),
+);
+
 /**
  * The five parts of a task's check-in, always all present, in the order the
  * prompt renders them. A part the host could not read says so
@@ -374,48 +398,36 @@ export const botCheckinSectionsSchema = lazySchema(() =>
       /** The task's whole-life total. */
       total: botCheckinCostTotalsSchema.nullable(),
     }),
-    stillRunning: z.object({
-      /**
-       * `idle`: nothing running; `running`: an agent is working, a shell is
-       * running or an agent still owes release work; `unknown`: the idle
-       * check could not be completed, so the task counted as running.
-       */
-      state: z.enum(["idle", "running", "unknown"]),
-      /**
-       * Why the task counts as running; `null` exactly when it is idle.
-       * `working`: the agents and shells listed here; `owed-release-work`: an
-       * agent still owes release work (a shell it stopped has not finished);
-       * `resumed-while-composing`: the task resumed between the reads, so
-       * nothing is listed; `check-failed`: the idle check could not be
-       * completed (`state: unknown`).
-       */
-      reason: z
-        .enum([
+    /**
+     * `state` says whether the task counted as running, and `reason` why, in
+     * the only pairings the host writes:
+     * - `idle`, reason `null`: nothing running;
+     * - `running`: an agent is working or a shell is running (`working`, the
+     *   agents and shells listed here), an agent still owes release work (a
+     *   shell it stopped has not finished; `owed-release-work`), or the task
+     *   resumed between the reads, so nothing is listed
+     *   (`resumed-while-composing`);
+     * - `unknown`, reason `check-failed`: the idle check could not be
+     *   completed, so the task counted as running.
+     */
+    stillRunning: z.discriminatedUnion("state", [
+      botCheckinStillRunningListsSchema.extend({
+        state: z.literal("idle"),
+        reason: z.null(),
+      }),
+      botCheckinStillRunningListsSchema.extend({
+        state: z.literal("running"),
+        reason: z.enum([
           "working",
           "owed-release-work",
           "resumed-while-composing",
-          "check-failed",
-        ])
-        .nullable(),
-      agents: z.array(
-        z.object({
-          agentId: z.string().min(1),
-          agentTitle: z.string().nullable(),
-          /** `turn`: mid-turn; `background`: background work running. */
-          tier: z.enum(["turn", "background"]),
-        }),
-      ),
-      agentsOmitted: z.number().int().nonnegative(),
-      shells: z.array(
-        z.object({
-          shellId: z.string().min(1),
-          description: z.string(),
-          agentId: z.string().min(1),
-          agentTitle: z.string().nullable(),
-        }),
-      ),
-      shellsOmitted: z.number().int().nonnegative(),
-    }),
+        ]),
+      }),
+      botCheckinStillRunningListsSchema.extend({
+        state: z.literal("unknown"),
+        reason: z.literal("check-failed"),
+      }),
+    ]),
   }),
 );
 export type BotCheckinSections = z.infer<typeof botCheckinSectionsSchema>;

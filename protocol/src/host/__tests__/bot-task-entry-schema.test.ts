@@ -473,22 +473,30 @@ describe("botTaskEntrySchema lastCheckin", () => {
     }
 
     it.each([
-      "working",
-      "owed-release-work",
-      "resumed-while-composing",
-      "check-failed",
-    ])("accepts the reason %s", (reason) => {
+      ["running", "working"],
+      ["running", "owed-release-work"],
+      ["running", "resumed-while-composing"],
+      ["unknown", "check-failed"],
+      ["idle", null],
+    ])("accepts state %s with reason %s", (state, reason) => {
       expect(
-        botTaskEntrySchema.safeParse(withStillRunning({ reason })).success,
+        botTaskEntrySchema.safeParse(withStillRunning({ state, reason }))
+          .success,
       ).toBe(true);
     });
 
-    it("accepts a null reason, as an idle task has", () => {
+    it.each([
+      ["running", "check-failed"],
+      ["running", null],
+      ["unknown", "working"],
+      ["unknown", null],
+      ["idle", "working"],
+      ["idle", "check-failed"],
+    ])("refuses state %s with reason %s", (state, reason) => {
       expect(
-        botTaskEntrySchema.safeParse(
-          withStillRunning({ state: "idle", reason: null }),
-        ).success,
-      ).toBe(true);
+        botTaskEntrySchema.safeParse(withStillRunning({ state, reason }))
+          .success,
+      ).toBe(false);
     });
 
     it("refuses a reason it does not know", () => {
