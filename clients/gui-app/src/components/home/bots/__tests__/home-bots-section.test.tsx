@@ -12,6 +12,7 @@ import type { BotRecord } from "@traycer/protocol/host/bot/schemas";
 import type { EnvironmentDescriptor } from "@traycer/protocol/host/environment/contracts";
 
 const mocks = vi.hoisted(() => {
+  const initialSupport = (): boolean | null => true;
   const hostClient = { stub: "host-client" };
   const environmentRefetch = vi.fn(() => Promise.resolve());
   const botRefetch = vi.fn(() => Promise.resolve());
@@ -21,7 +22,7 @@ const mocks = vi.hoisted(() => {
     botRefetch,
     state: {
       hostId: "host-1",
-      support: true,
+      support: initialSupport(),
       environments: {
         data: undefined as
           | { environments: EnvironmentDescriptor[] }
@@ -36,7 +37,8 @@ const mocks = vi.hoisted(() => {
       },
       directory: [] as Array<{ hostId: string; label: string }>,
     },
-    useEnvironmentListQuery: vi.fn<(client: object, enabled: boolean) => unknown>(),
+    useEnvironmentListQuery:
+      vi.fn<(client: object, enabled: boolean) => unknown>(),
     useBotListQuery: vi.fn<(client: object, enabled: boolean) => unknown>(),
     useHostMethodSupport:
       vi.fn<(hostId: string | null, method: string) => boolean | null>(),

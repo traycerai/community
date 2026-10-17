@@ -40,9 +40,8 @@ vi.mock("@/hooks/bots/use-bot-mutations", () => ({
   }),
 }));
 vi.mock("@/components/home/hooks/use-composer-toolbar-store", async () => {
-  const { createComposerToolbarStore } = await import(
-    "@/stores/composer/composer-toolbar-store"
-  );
+  const { createComposerToolbarStore } =
+    await import("@/stores/composer/composer-toolbar-store");
   return {
     useComposerToolbarStore: (
       _registerAs: string | null,
@@ -50,7 +49,8 @@ vi.mock("@/components/home/hooks/use-composer-toolbar-store", async () => {
     ): ComposerToolbarStore => {
       mocks.seeds.push(seedSource);
       const [store] = useState(() => {
-        const settings = seedSource.kind === "none" ? null : seedSource.settings;
+        const settings =
+          seedSource.kind === "none" ? null : seedSource.settings;
         const created = createComposerToolbarStore({
           purpose: "run",
           reasoningFallback: "model-default",

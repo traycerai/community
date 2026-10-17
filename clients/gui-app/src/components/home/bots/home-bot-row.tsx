@@ -50,8 +50,7 @@ export function HomeBotRow(props: {
   // When it cannot, the tab opens through the host this window reads
   // (offline state): the conversation list and a queued send go through it,
   // and the person may move the bot here. Never a clone.
-  const openHostId =
-    hostOffline && hostId !== null ? hostId : row.boundHostId;
+  const openHostId = hostOffline && hostId !== null ? hostId : row.boundHostId;
   const openRequests = row.openRequestCount ?? 0;
 
   return (

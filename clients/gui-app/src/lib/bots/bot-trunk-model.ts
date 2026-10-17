@@ -59,7 +59,10 @@ export function deliveredTaskCheckins(
 }
 
 function isTaskCheckinTrigger(title: string): boolean {
-  return title === TASK_CHECKIN_TRIGGER_TITLE || title.startsWith(`${TASK_CHECKIN_TRIGGER_TITLE}:`);
+  return (
+    title === TASK_CHECKIN_TRIGGER_TITLE ||
+    title.startsWith(`${TASK_CHECKIN_TRIGGER_TITLE}:`)
+  );
 }
 
 const MINUTE_S = 60;

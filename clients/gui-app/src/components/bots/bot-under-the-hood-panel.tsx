@@ -132,7 +132,8 @@ function BotTasksList(props: {
               <BotTaskRow
                 task={task}
                 title={
-                  contexts.tasksById.get(task.taskId)?.epic?.light?.title ?? null
+                  contexts.tasksById.get(task.taskId)?.epic?.light?.title ??
+                  null
                 }
                 now={now}
               />
@@ -278,7 +279,10 @@ function BotTrunkStateBody(props: {
           </p>
         ) : null}
         {pending.length === 0 ? null : (
-          <ul className="flex flex-col gap-1" data-testid="bot-checkins-pending">
+          <ul
+            className="flex flex-col gap-1"
+            data-testid="bot-checkins-pending"
+          >
             {pending.map((item) => (
               <li
                 key={item.queueItemId}
@@ -296,7 +300,10 @@ function BotTrunkStateBody(props: {
           </p>
         ) : null}
         {recentDelivered.length === 0 ? null : (
-          <ul className="flex flex-col gap-1" data-testid="bot-checkins-delivered">
+          <ul
+            className="flex flex-col gap-1"
+            data-testid="bot-checkins-delivered"
+          >
             {recentDelivered.map((entry) => (
               <li
                 key={entry.key}
