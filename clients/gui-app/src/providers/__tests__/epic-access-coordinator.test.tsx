@@ -20,6 +20,10 @@ import {
 } from "@/lib/cloud-epic-tasks-query";
 import { DELETED_EPIC_NOTIFICATION_STORAGE_KEY } from "@/lib/epics/deleted-epic-events";
 import {
+  deletedCloudEpicTasksPageEpicIdsForScope,
+  useCloudEpicTasksPagesStore,
+} from "@/stores/epics/cloud-epic-tasks-pages-store";
+import {
   clearSessionCreatedEpics,
   CREATED_EPIC_UNAVAILABLE_RETRY_DELAYS_MS,
   markEpicCreatedThisSession,
@@ -37,6 +41,7 @@ import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
 import { createEmptyCanvas } from "@/stores/epics/canvas/canvas-state";
 import type { EpicCanvasState, EpicViewTab } from "@/stores/epics/canvas/types";
 import { useTabsStore } from "@/stores/tabs/store";
+import { useSelectionAuthorityStore } from "@/stores/host/selection-authority-store";
 import { flattenLayoutRefs } from "@/stores/tabs/layout";
 import { tabCommandCoordinator } from "@/stores/tabs/tab-command-coordinator";
 import type { TabRef } from "@/stores/tabs/types";
@@ -452,6 +457,94 @@ describe("EpicAccessCoordinator", () => {
       'Epic "Broadcast Title" was deleted',
       { id: "epic-access:epic-1", cancel: null },
     );
+  });
+
+  it("scopes a broadcast's host-scoped deletion to the host that deleted it: caches, settings, announcement, teardown and navigation", async () => {
+    // Codex thread 4303240636 on d74e2198 and the round-7 cold review: a
+    // local-homed Task deleted on one host must stay open, announced as
+    // nothing and with its settings, where this window holds it on another.
+    useCloudEpicTasksPagesStore.setState({ deletedEpicIdsByScope: {} });
+    // This window holds its epics on "test-host" (`openStoreForTest`'s).
+    useSelectionAuthorityStore.setState({ effectiveHostId: "test-host" });
+    useAuthStore.getState().setSignedIn(
+      {
+        userId: "user-1",
+        userName: "Test User",
+        email: "test@example.com",
+        avatarUrl: null,
+      },
+      { userId: "user-1", username: "test-user" },
+      [],
+    );
+    registerSession("epic-local");
+    seedTabs(
+      [{ tabId: "tab-local", epicId: "epic-local", name: "Local Epic" }],
+      "tab-local",
+    );
+    const settings = useComposerRunSettingsStore.getState();
+    settings.setEpicRunSettings("epic-local", "test-host", TEST_SETTINGS, 1);
+    settings.setEpicRunSettings("epic-local", "host-source", TEST_SETTINGS, 1);
+    settings.setEpicRunSettings("epic-cloud", "test-host", TEST_SETTINGS, 1);
+    const { router } = renderCoordinatorAt("/epics/epic-local/tab-local");
+    await waitFor(() =>
+      expect(router.state.location.pathname).toBe(
+        "/epics/epic-local/tab-local",
+      ),
+    );
+
+    dispatchScopedDeletedEpicStorageEvent({
+      hostId: "host-source",
+      epicIds: ["epic-local", "epic-cloud"],
+      hostScopedEpicIds: ["epic-local"],
+      sequence: 41,
+    });
+
+    await waitFor(() =>
+      expect([
+        ...deletedCloudEpicTasksPageEpicIdsForScope("host-source", "user-1"),
+      ]).toEqual(expect.arrayContaining(["epic-local", "epic-cloud"])),
+    );
+    expect([
+      ...deletedCloudEpicTasksPageEpicIdsForScope("host-sibling", "user-1"),
+    ]).toEqual(["epic-cloud"]);
+    // The account-wide one is gone everywhere; the host-scoped one only on
+    // the host that deleted it.
+    const after = useComposerRunSettingsStore.getState();
+    expect(after.getEpicRunSettings("epic-cloud", "test-host")).toBeNull();
+    expect(after.getEpicRunSettings("epic-local", "host-source")).toBeNull();
+    expect(after.getEpicRunSettings("epic-local", "test-host")).toEqual(
+      TEST_SETTINGS,
+    );
+    // This window's copy is on "test-host", which did not delete it.
+    expect(useEpicCanvasStore.getState().openTabOrder).toEqual(["tab-local"]);
+    expect(router.state.location.pathname).toBe("/epics/epic-local/tab-local");
+    expect(toastInfo).not.toHaveBeenCalledWith(
+      expect.stringContaining("was deleted"),
+      { id: "epic-access:epic-local", cancel: null },
+    );
+
+    // The same scoped deletion by the host this window holds it on is this
+    // window's loss.
+    dispatchScopedDeletedEpicStorageEvent({
+      hostId: "test-host",
+      epicIds: ["epic-local"],
+      hostScopedEpicIds: ["epic-local"],
+      sequence: 42,
+    });
+    await waitFor(() =>
+      expect(useEpicCanvasStore.getState().openTabOrder).toEqual([]),
+    );
+    await waitFor(() => expect(router.state.location.pathname).toBe("/"));
+    expect(toastInfo).toHaveBeenCalledWith(
+      expect.stringContaining("was deleted"),
+      { id: "epic-access:epic-local", cancel: null },
+    );
+    expect(
+      useComposerRunSettingsStore
+        .getState()
+        .getEpicRunSettings("epic-local", "test-host"),
+    ).toBeNull();
+    useSelectionAuthorityStore.getState().reset();
   });
 
   it("T10: routes a multi-epic delete notification through ONE coordinated handleEpicAccessLoss call, not a per-epic loop", async () => {
@@ -922,6 +1015,31 @@ function dispatchDeletedEpicStorageEvent(
         userId,
         epicIds,
         epicTitlesById,
+      }),
+    }),
+  );
+}
+
+function dispatchScopedDeletedEpicStorageEvent(notice: {
+  readonly hostId: string;
+  readonly epicIds: ReadonlyArray<string>;
+  readonly hostScopedEpicIds: ReadonlyArray<string>;
+  readonly sequence: number;
+}): void {
+  window.dispatchEvent(
+    new StorageEvent("storage", {
+      key: DELETED_EPIC_NOTIFICATION_STORAGE_KEY,
+      newValue: JSON.stringify({
+        type: "epic-deleted",
+        version: 1,
+        originId: "other-window",
+        sequence: notice.sequence,
+        createdAt: Date.now(),
+        hostId: notice.hostId,
+        userId: "user-1",
+        epicIds: notice.epicIds,
+        hostScopedEpicIds: notice.hostScopedEpicIds,
+        epicTitlesById: {},
       }),
     }),
   );
