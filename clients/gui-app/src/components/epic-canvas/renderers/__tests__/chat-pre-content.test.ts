@@ -110,6 +110,7 @@ function input(overrides: Partial<ChatPreContentInput>): ChatPreContentInput {
     hostLabel: LABEL,
     hostBehindClient: false,
     cloneAllowed: true,
+    hasReadySession: false,
     elapsed: "early",
     ...overrides,
   };
@@ -205,16 +206,19 @@ function everyInput(): ChatPreContentInput[] {
           labels.flatMap((hostLabel) =>
             [true, false].flatMap((hostBehindClient) =>
               [true, false].flatMap((cloneAllowed) =>
-                ELAPSED.map((elapsed) => ({
-                  session,
-                  lease: leaseValue,
-                  reachabilityStatus,
-                  hostKind,
-                  hostLabel,
-                  hostBehindClient,
-                  cloneAllowed,
-                  elapsed,
-                })),
+                [true, false].flatMap((hasReadySession) =>
+                  ELAPSED.map((elapsed) => ({
+                    session,
+                    lease: leaseValue,
+                    reachabilityStatus,
+                    hostKind,
+                    hostLabel,
+                    hostBehindClient,
+                    cloneAllowed,
+                    hasReadySession,
+                    elapsed,
+                  })),
+                ),
               ),
             ),
           ),
@@ -369,27 +373,40 @@ describe("the wait anchor", () => {
 
 describe("the axes", () => {
   it.each<
-    [HostReachabilityStatus, HostLeaseSnapshot | null, ChatPreContentStrip]
+    [
+      HostReachabilityStatus,
+      HostLeaseSnapshot | null,
+      boolean,
+      ChatPreContentStrip,
+    ]
   >([
-    ["host-starting", null, "starting"],
-    ["host-starting", DEAD_OFFLINE, "starting"],
-    ["unreachable", null, "offline"],
-    ["unreachable", lease("ready"), "offline"],
-    ["reachable", lease("ready"), "none"],
-    ["reachable", null, "none"],
-    ["checking", null, "none"],
+    ["host-starting", null, false, "starting"],
+    ["host-starting", DEAD_OFFLINE, false, "starting"],
+    ["unreachable", null, false, "offline"],
+    ["unreachable", lease("ready"), false, "offline"],
+    ["reachable", lease("ready"), false, "none"],
+    ["reachable", null, false, "none"],
+    ["checking", null, false, "none"],
     // The lease is the stronger evidence: a dead-offline lease draws the
     // offline strip while the directory still says the host is connectable.
-    ["reachable", DEAD_OFFLINE, "offline"],
-    ["checking", DEAD_OFFLINE, "offline"],
+    ["reachable", DEAD_OFFLINE, false, "offline"],
+    ["checking", DEAD_OFFLINE, false, "offline"],
     // Only an offline lease does: a removed or incompatible host is not one
     // a clone helps with.
-    ["reachable", DEAD_REMOVED, "none"],
-    ["reachable", DEAD_INCOMPATIBLE, "none"],
+    ["reachable", DEAD_REMOVED, false, "none"],
+    ["reachable", DEAD_INCOMPATIBLE, false, "none"],
+    // A ready live session outranks a dead lease that has not caught up.
+    ["reachable", DEAD_OFFLINE, true, "none"],
+    ["checking", DEAD_OFFLINE, true, "none"],
+    // The directory arms do not read the session.
+    ["unreachable", DEAD_OFFLINE, true, "offline"],
+    ["host-starting", DEAD_OFFLINE, true, "starting"],
   ])(
-    "reads reachability %s under lease %o as the %s strip",
-    (status, leaseValue, strip) => {
-      expect(chatPreContentStrip(status, leaseValue)).toBe(strip);
+    "reads reachability %s under lease %o with ready session %s as the %s strip",
+    (status, leaseValue, hasReadySession, strip) => {
+      expect(chatPreContentStrip(status, leaseValue, hasReadySession)).toBe(
+        strip,
+      );
     },
   );
 
@@ -730,6 +747,17 @@ describe("arm 3: the host is gone", () => {
         reachabilityStatus: "reachable",
         hostKind: "remote",
         cloneAllowed: false,
+      },
+      `Turn on "${LABEL}" and open Traycer there.`,
+    ],
+    [
+      "a remote host with a ready live session, whatever Clone allows",
+      {
+        lease: DEAD_OFFLINE,
+        reachabilityStatus: "reachable",
+        hostKind: "remote",
+        cloneAllowed: true,
+        hasReadySession: true,
       },
       `Turn on "${LABEL}" and open Traycer there.`,
     ],
@@ -1117,7 +1145,11 @@ describe("negative controls over every input", () => {
     let offline = 0;
     for (const value of inputs) {
       if (
-        chatPreContentStrip(value.reachabilityStatus, value.lease) !== "offline"
+        chatPreContentStrip(
+          value.reachabilityStatus,
+          value.lease,
+          value.hasReadySession,
+        ) !== "offline"
       ) {
         continue;
       }
@@ -1133,9 +1165,13 @@ describe("negative controls over every input", () => {
     for (const value of inputs) {
       if (!bodyText(value).includes("continue here as a new agent")) continue;
       pointing += 1;
-      expect(chatPreContentStrip(value.reachabilityStatus, value.lease)).toBe(
-        "offline",
-      );
+      expect(
+        chatPreContentStrip(
+          value.reachabilityStatus,
+          value.lease,
+          value.hasReadySession,
+        ),
+      ).toBe("offline");
       expect(value.cloneAllowed).toBe(true);
     }
     expect(pointing).toBeGreaterThan(0);

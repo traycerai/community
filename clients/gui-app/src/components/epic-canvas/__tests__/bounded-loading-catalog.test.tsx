@@ -53,6 +53,21 @@ vi.mock(
   }),
 );
 
+// Hosts whose live session reads as ready. Empty by default, so every case
+// starts with no session to any host; a case adds its host and `afterEach`
+// clears it.
+const readySessionHostIds = vi.hoisted(() => new Set<string>());
+
+vi.mock(
+  "@traycer-clients/shared/host-transport/remote/index",
+  async (importOriginal) => ({
+    ...(await importOriginal<
+      typeof import("@traycer-clients/shared/host-transport/remote/index")
+    >()),
+    hasReadyRemoteSession: (hostId: string) => readySessionHostIds.has(hostId),
+  }),
+);
+
 const MOCK_HOST_CLIENT = {
   request: () => new Promise(() => {}),
   getActiveHostId: () => "host-test",
@@ -205,6 +220,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  readySessionHostIds.clear();
   cleanup();
   epicHarness.teardown();
   useSelectionAuthorityStore.getState().reset();
@@ -382,7 +398,7 @@ describe("a dead-offline lease draws the Clone banner over a directory that has 
 
     const banner = screen.getByTestId(bannerTestId);
     expect(banner.textContent).toContain(
-      'Clone this agent to continue on this device; the original stays on "Office Mac".',
+      'Clone this agent to continue; the original stays on "Office Mac".',
     );
     expect(screen.getByRole("button", { name: "Clone agent" })).not.toBeNull();
     // The body above the strip points at the button the strip draws.
@@ -420,6 +436,17 @@ describe("a dead-offline lease draws the Clone banner over a directory that has 
   it("draws no banner for a removed host the directory still lists", async () => {
     directoryState.data = [remoteEntry];
     publishLease(DEAD_REMOVED);
+    renderChatTile();
+    await settleEpicSession();
+
+    expect(screen.queryByTestId(bannerTestId)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Clone agent" })).toBeNull();
+  });
+
+  it("draws no banner while a live session to the host is ready, whatever the lease says", async () => {
+    directoryState.data = [remoteEntry];
+    readySessionHostIds.add(hostId);
+    publishLease(DEAD_OFFLINE);
     renderChatTile();
     await settleEpicSession();
 

@@ -437,17 +437,14 @@ const CHAT_DEAD_TILE_BANNER_COPY: Record<
   // body below already says the host is offline when nothing is loaded.
   "host-offline": {
     message: (host) => (
-      <>
-        Clone this agent to continue on this device; the original stays on{" "}
-        {host}.
-      </>
+      <>Clone this agent to continue; the original stays on {host}.</>
     ),
     // No button for this reader, so no action to lead with: what is true for
     // them, and why there is nothing to press.
     messageWithoutClone: (host) => (
       <>
-        This agent can&apos;t continue on this device while {host} is offline.
-        You have view-only access to this task, so it can&apos;t be cloned.
+        This agent can&apos;t continue here while {host} is offline. You have
+        view-only access to this task, so it can&apos;t be cloned.
       </>
     ),
     reportTitle: "Agent host is offline",

@@ -144,6 +144,8 @@ export interface ChatTilePreContentFrame {
   readonly reachability: HostReachability;
   /** See `ChatPreContentInput.cloneAllowed`. */
   readonly cloneAllowed: boolean;
+  /** See `ChatPreContentInput.hasReadySession`. */
+  readonly hasReadySession: boolean;
 }
 
 /**
@@ -277,6 +279,12 @@ export interface ChatPreContentInput {
    * points at a button the strip does not draw.
    */
   readonly cloneAllowed: boolean;
+  /**
+   * Whether this client holds a ready live session to the host
+   * (`useRemoteSessionPollReadiness`). It is firsthand proof the host is up,
+   * so a dead lease that has not caught up with it draws no offline strip.
+   */
+  readonly hasReadySession: boolean;
   readonly elapsed: ChatPreContentElapsed;
 }
 
@@ -291,10 +299,16 @@ export interface ChatPreContentInput {
  * minutes. Without this the body said the host was offline while nothing
  * above it offered a way to continue. A host that is starting keeps its
  * starting strip, which never offers Clone.
+ *
+ * A ready live session outranks the lease, as it outranks the directory in
+ * `useHostReachability`: the lease arrives on its own path and can still read
+ * dead for a render after the session to the host is up, and a Clone offer
+ * over a working chat invites a fork of a healthy agent.
  */
 export function chatPreContentStrip(
   status: HostReachabilityStatus,
   lease: HostLeaseSnapshot | null,
+  hasReadySession: boolean,
 ): ChatPreContentStrip {
   switch (status) {
     case "host-starting":
@@ -303,7 +317,7 @@ export function chatPreContentStrip(
       return "offline";
     case "checking":
     case "reachable":
-      return leaseReadsOffline(lease) ? "offline" : "none";
+      return !hasReadySession && leaseReadsOffline(lease) ? "offline" : "none";
   }
 }
 
@@ -369,7 +383,11 @@ export function chatPreContentElapsed(
 export function chatPreContentAxes(
   input: ChatPreContentInput,
 ): ChatPreContentAxes {
-  const strip = chatPreContentStrip(input.reachabilityStatus, input.lease);
+  const strip = chatPreContentStrip(
+    input.reachabilityStatus,
+    input.lease,
+    input.hasReadySession,
+  );
   return {
     fatal: chatPreContentFatal(input.session?.fatalClose ?? null),
     host: chatPreContentHost(input.lease, strip),

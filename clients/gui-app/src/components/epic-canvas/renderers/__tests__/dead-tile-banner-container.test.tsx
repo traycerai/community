@@ -279,7 +279,7 @@ describe("ChatDeadTileBannerContainer - ownership + role resolution", () => {
 
     const text = screen.getByTestId("banner-under-test").textContent;
     expect(text).toContain(
-      'Clone this agent to continue on this device; the original stays on "owner-host-1".',
+      'Clone this agent to continue; the original stays on "owner-host-1".',
     );
     expect(text).not.toContain("belongs to another collaborator");
   });

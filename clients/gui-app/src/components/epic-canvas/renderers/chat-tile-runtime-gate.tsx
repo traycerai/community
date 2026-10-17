@@ -116,6 +116,7 @@ export function ChatTilePreContent(props: {
       clientAppVersion: hostUpdate.clientAppVersion,
     }),
     cloneAllowed: frame.cloneAllowed,
+    hasReadySession: frame.hasReadySession,
     elapsed: chatPreContentElapsed(slow, overdue),
   };
   const view = describeChatPreContent(input);

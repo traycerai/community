@@ -201,6 +201,7 @@ import { useEpicSessionHostClient } from "@/hooks/epic/use-epic-session-host-cli
 import {
   resolvedHostLabel,
   useHostReachability,
+  useRemoteSessionPollReadiness,
   type HostReachability,
 } from "@/hooks/agent/use-host-reachability";
 import { useHostLease } from "@/hooks/host/use-host-lease";
@@ -457,6 +458,7 @@ function useChatCloneAllowed(): boolean {
 
 function useChatTilePreContentFrame(
   reachability: HostReachability,
+  hasReadySession: boolean,
 ): ChatTilePreContentFrame {
   const cloneAllowed = useChatCloneAllowed();
   const [wait, setWait] = useState<ChatLoadWait>(() => ({
@@ -472,8 +474,8 @@ function useChatTilePreContentFrame(
     });
   }, []);
   return useMemo(
-    () => ({ wait, restartWait, reachability, cloneAllowed }),
-    [wait, restartWait, reachability, cloneAllowed],
+    () => ({ wait, restartWait, reachability, cloneAllowed, hasReadySession }),
+    [wait, restartWait, reachability, cloneAllowed, hasReadySession],
   );
 }
 
@@ -597,6 +599,7 @@ function ChatTileForChat(props: ChatTileProps) {
   }, [handle, epicId, tabHostId, node.id, node.instanceId]);
   const reachability = useHostReachability(tabHostId);
   const lease = useHostLease(tabHostId);
+  const hasReadySession = useRemoteSessionPollReadiness(tabHostId);
   // The chat's own bounded load (invariant 6), for both halves of the wait:
   // while `handle === null`, and after it until the first snapshot. The
   // handle-pending half has THREE causes that look identical from here: the
@@ -606,7 +609,10 @@ function ChatTileForChat(props: ChatTileProps) {
   // on the difference, so all three get one sentence naming the host - and an
   // end. The wait is recorded here, above the branch, so the handle arriving
   // restarts none of its deadlines.
-  const preContentFrame = useChatTilePreContentFrame(reachability);
+  const preContentFrame = useChatTilePreContentFrame(
+    reachability,
+    hasReadySession,
+  );
   // Feeds `TombstonedProfileProvider` below - "ran on <label> (removed)" for
   // a message anchored to a since-tombstoned profile. Shares the same
   // tab-scoped query the reauth gate/rate-limit prompt already read, so this
@@ -629,7 +635,11 @@ function ChatTileForChat(props: ChatTileProps) {
   // offline strip and its Clone offer while the directory still says the
   // host is reachable.
   const deadTileBanner = (() => {
-    const strip = chatPreContentStrip(reachability.status, lease);
+    const strip = chatPreContentStrip(
+      reachability.status,
+      lease,
+      hasReadySession,
+    );
     if (strip === "offline") {
       return (
         <ChatDeadTileBannerContainer

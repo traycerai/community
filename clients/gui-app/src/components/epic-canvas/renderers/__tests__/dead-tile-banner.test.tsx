@@ -109,7 +109,12 @@ describe("<ChatDeadTileBanner />", () => {
     // The clone fires immediately from this banner, so it is the only place the
     // user is told the original stays where it is.
     expect(screen.getByTestId("chat-dead").textContent).toContain(
-      'Clone this agent to continue on this device; the original stays on "mac-mini".',
+      'Clone this agent to continue; the original stays on "mac-mini".',
+    );
+    // The clone lands on the app's active host, which need not be the machine
+    // the reader is at, so the sentence names no place for it.
+    expect(screen.getByTestId("chat-dead").textContent).not.toContain(
+      "on this device",
     );
     expect(screen.getByRole("button", { name: "Clone agent" })).toBeTruthy();
     // "thread" is outside the approved vocabulary.
@@ -135,9 +140,10 @@ describe("<ChatDeadTileBanner />", () => {
 
     const text = screen.getByTestId("chat-dead-viewer").textContent;
     expect(text).toContain(
-      `This agent can't continue on this device while "mac-mini" is offline. You have view-only access to this task, so it can't be cloned.`,
+      `This agent can't continue here while "mac-mini" is offline. You have view-only access to this task, so it can't be cloned.`,
     );
     expect(text).not.toContain("Clone this agent");
+    expect(text).not.toContain("on this device");
     expect(screen.queryByRole("button", { name: "Clone agent" })).toBeNull();
   });
 

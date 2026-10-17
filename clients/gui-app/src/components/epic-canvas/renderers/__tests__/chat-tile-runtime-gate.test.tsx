@@ -106,6 +106,7 @@ function frameFor(
     restartWait,
     reachability: reachability(status),
     cloneAllowed: true,
+    hasReadySession: false,
   };
 }
 
