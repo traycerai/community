@@ -14,6 +14,7 @@ import type { MigrationId } from "@traycer/protocol/config/data-migration-contra
 import { isErrnoException } from "../../runner/errors";
 import {
   isPrefixOfVerifiedFile,
+  unlinkIfUnchanged,
   isTempNonce,
   newTempNonce,
   ownedTempNonces,
@@ -194,6 +195,9 @@ async function lstatOrNull(path: string): Promise<BigIntStats | null> {
   }
 }
 
+/** A proven copy temp and its metadata as read before the proof. */
+type ProvenTemp = { readonly path: string; readonly stats: BigIntStats };
+
 /**
  * Every destination entry must be one the copy owns. Returns the proven copy
  * temps found (left by a crash), which the caller removes; an unproven temp,
@@ -205,7 +209,7 @@ async function auditDestination(input: {
   readonly inventory: ContentInventory;
   readonly migrationId: MigrationId;
   readonly platform: NodeJS.Platform;
-}): Promise<readonly string[]> {
+}): Promise<readonly ProvenTemp[]> {
   const known = new Map<string, ContentInventory["entries"][number]>();
   for (const entry of input.inventory.entries) known.set(entry.path, entry);
   const evidence = `${RELOCATION_EVIDENCE_DIRNAME}/migrations/${input.migrationId}`;
@@ -217,7 +221,7 @@ async function auditDestination(input: {
     migrationEvidenceDir(input.destinationRoot, input.migrationId),
   );
   const tempsPerNonce = new Map<string, number>();
-  const temps: string[] = [];
+  const temps: ProvenTemp[] = [];
   const stack: string[] = [""];
   while (stack.length > 0) {
     const relative = stack.pop() ?? "";
@@ -258,7 +262,7 @@ async function auditDestination(input: {
             platform: input.platform,
           }));
         if (proven) {
-          temps.push(child);
+          temps.push({ path: child, stats });
           continue;
         }
         throw destinationConflict(
@@ -446,8 +450,20 @@ export async function copyInventory(input: {
   let current = input.destinationRoot;
   try {
     for (const temp of await auditDestination(input)) {
-      current = temp;
-      await unlink(underRoot(input.destinationRoot, temp));
+      current = temp.path;
+      // Changed since its proof read it: no longer proven, so never deleted.
+      if (
+        (await unlinkIfUnchanged(
+          underRoot(input.destinationRoot, temp.path),
+          temp.stats,
+        )) === "changed"
+      ) {
+        throw destinationConflict(
+          "destination-temp-unproven",
+          temp.path,
+          "the destination holds a copy temp this migration cannot prove it wrote; it is left in place",
+        );
+      }
     }
     let nonce: string | null = null;
     for (const entry of input.inventory.entries) {

@@ -168,5 +168,24 @@ describe.skipIf(SKIP)(
       expect(result.stdout).toContain("migrate");
       expect(listTree(home)).toEqual([]);
     });
+
+    it("help under --json prints the help text as one ok result", async () => {
+      for (const args of [
+        ["data", "--help", "--json"],
+        ["data", "status", "--help", "--json"],
+      ]) {
+        const result = await runCli(home, args);
+
+        expect(result.code, result.stderr).toBe(0);
+        const envelope = singleEnvelope(result.stdout);
+        expect(envelope.type).toBe("result");
+        expect(envelope.status).toBe("ok");
+        const output = record(envelope.data).output;
+        expect(typeof output).toBe("string");
+        expect(String(output)).toContain("Usage:");
+        expect(String(output)).toBe(String(output).trimEnd());
+      }
+      expect(listTree(home)).toEqual([]);
+    });
   },
 );

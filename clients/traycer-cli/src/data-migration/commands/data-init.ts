@@ -19,6 +19,7 @@ import {
 } from "@traycer/protocol/config/data-root";
 import { parseSetupDataRootInput } from "@traycer/protocol/config/data-root-setup-input";
 import { CLI_ERROR_CODES, isErrnoException } from "../../runner/errors";
+import { coordinatorLockRefusalMessage } from "../engine/coordinator-lock";
 import {
   dataRootOperationAvailable,
   unavailableMessage,
@@ -124,7 +125,7 @@ export async function dataInit(
   if (!acquired.acquired) {
     return failed(
       CLI_ERROR_CODES.DATA_MIGRATION_BLOCKED,
-      "another Traycer data command is running; try again when it finishes",
+      coordinatorLockRefusalMessage(acquired.reason),
       { ...details, lock: acquired.reason },
       text,
     );

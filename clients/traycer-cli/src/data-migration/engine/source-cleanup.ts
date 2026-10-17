@@ -1,11 +1,7 @@
 import type { BigIntStats } from "node:fs";
 import { lstat, readdir, rmdir, unlink } from "node:fs/promises";
 import { basename, join } from "node:path";
-import {
-  acquireMigrationCoordinatorLock,
-  MigrationAdmissionError,
-  type MigrationCoordinatorLock,
-} from "@traycer/protocol/config/data-migration-admission";
+import { MigrationAdmissionError } from "@traycer/protocol/config/data-migration-admission";
 import {
   BootstrapRecordError,
   migrationLocationOf,
@@ -17,10 +13,7 @@ import {
   type MigrationId,
   type MigrationJournal,
 } from "@traycer/protocol/config/data-migration-contracts";
-import {
-  dataBootstrapDir,
-  dataRootPathsOverlap,
-} from "@traycer/protocol/config/data-root";
+import { dataRootPathsOverlap } from "@traycer/protocol/config/data-root";
 import { isErrnoException } from "../../runner/errors";
 import { samePath } from "../external-actions/ledger";
 import { externalActionStage } from "../external-actions/reconcile";
@@ -39,9 +32,10 @@ import {
 import {
   isPrefixOfVerifiedFile,
   ownedTempNonces,
+  unlinkIfUnchanged,
   removeOwnedTempRecords,
 } from "./byte-evidence";
-import { assertCallerPreconditions } from "./caller-preconditions";
+import { withCoordinatorLock } from "./coordinator-lock";
 import { isOwnedCopyTemp, parseCopyTemp } from "./copy-engine";
 import type { MigrationEngineDeps } from "./engine-deps";
 import {
@@ -79,70 +73,6 @@ import { checkRootIdentity } from "./root-identity";
  * only when empty. Bootstrap journals and the destination's evidence are
  * never touched.
  */
-
-async function withLock(
-  deps: MigrationEngineDeps,
-  fn: (
-    lock: MigrationCoordinatorLock,
-    bootstrapDir: string,
-  ) => Promise<EngineResult>,
-): Promise<EngineResult> {
-  const bootstrapDir = dataBootstrapDir(deps.homeDir);
-  const acquired = await acquireMigrationCoordinatorLock({
-    bootstrapDir,
-    probe: deps.probe,
-  });
-  if (!acquired.acquired) {
-    return stopped(
-      "blocked",
-      null,
-      [
-        engineBlocker(
-          `coordinator-${acquired.reason}`,
-          null,
-          "another Traycer data migration, recovery or cleanup is running",
-        ),
-      ],
-      null,
-    );
-  }
-  try {
-    await assertCallerPreconditions({
-      bootstrapDir,
-      probe: deps.probe,
-      selfPid: process.pid,
-    });
-    return await fn(acquired.lock, bootstrapDir);
-  } catch (error) {
-    if (error instanceof EngineStop)
-      return stopped(error.reason, null, error.blockers, error.impact);
-    if (error instanceof MigrationAdmissionError) {
-      return stopped(
-        error.code === "record-damaged" ? "damaged" : "blocked",
-        null,
-        [engineBlocker(`admission-${error.code}`, null, error.message)],
-        null,
-      );
-    }
-    if (error instanceof BootstrapRecordError) {
-      return stopped(
-        error.code === "record-damaged" ? "damaged" : "conflict",
-        null,
-        [
-          engineBlocker(
-            `bootstrap-${error.code}`,
-            error.recordPath,
-            error.message,
-          ),
-        ],
-        null,
-      );
-    }
-    throw error;
-  } finally {
-    await acquired.lock.release();
-  }
-}
 
 function readJournal(bootstrapDir: string, id: MigrationId): MigrationJournal {
   const read = readMigrationJournalSync(bootstrapDir, id);
@@ -243,7 +173,7 @@ export async function cleanupSource(
   deps: MigrationEngineDeps,
   input: { readonly migrationId: MigrationId },
 ): Promise<EngineResult> {
-  return withLock(deps, async (lock, bootstrapDir) => {
+  return withCoordinatorLock(deps, async ({ lock, bootstrapDir }) => {
     const journal = readJournal(bootstrapDir, input.migrationId);
     const session = JournalSession.resume({
       bootstrapDir,
@@ -485,6 +415,19 @@ async function runCleanup(
         );
       }
       await deps.checkpoint("before-cleanup-delete");
+      // Re-read after the hash: a write into bytes the hash had already read
+      // leaves the digest equal, but never the metadata.
+      const current = await statBig(path);
+      if (current === null) continue;
+      if (!sameFileFacts(current, entry)) {
+        await persist();
+        throw stopWith(
+          "conflict",
+          "source-modified",
+          entry.path,
+          "a source file changed; cleanup stopped before deleting it",
+        );
+      }
       await unlink(path);
       await deps.checkpoint("after-cleanup-delete");
       removedBytes += entry.size;
@@ -555,7 +498,7 @@ export async function discardRolledBackDestination(
   deps: MigrationEngineDeps,
   input: { readonly migrationId: MigrationId },
 ): Promise<EngineResult> {
-  return withLock(deps, async (_lock, bootstrapDir) => {
+  return withCoordinatorLock(deps, async ({ bootstrapDir }) => {
     const journal = readJournal(bootstrapDir, input.migrationId);
     if (journal.phase !== "rolled-back") {
       throw stopWith(
@@ -654,17 +597,18 @@ async function removeEmptyDir(path: string): Promise<void> {
   }
 }
 
-async function equalsFrozen(
+/** The file's metadata as read before hashing it, when its bytes equal the frozen bytes; otherwise null. */
+async function frozenStats(
   path: string,
   entry: ContentFileEntry,
-): Promise<boolean> {
+): Promise<BigIntStats | null> {
   const stats = await statBig(path);
-  return (
-    stats !== null &&
+  return stats !== null &&
     stats.isFile() &&
     Number(stats.size) === entry.size &&
     (await sha256File(path)) === entry.sha256
-  );
+    ? stats
+    : null;
 }
 
 async function discardContents(
@@ -698,7 +642,10 @@ async function discardContents(
       tempsPerNonce.set(temp.nonce, (tempsPerNonce.get(temp.nonce) ?? 0) + 1);
   }
   // Temps before the finals they may be proven against.
-  const temps: DestinationFile[] = [];
+  const temps: {
+    readonly file: DestinationFile;
+    readonly stats: BigIntStats;
+  }[] = [];
   const finals: DestinationFile[] = [];
   for (const file of files) {
     const temp = parseCopyTemp(file.relative, journal.id);
@@ -707,6 +654,9 @@ async function discardContents(
       finals.push(file);
       continue;
     }
+    // Read before the proof, so a write during it is seen at the unlink.
+    const before = await statBig(file.absolute);
+    if (before === null) continue;
     let proven = false;
     if (tempsPerNonce.get(temp.nonce) === 1) {
       for (const reference of [
@@ -723,7 +673,7 @@ async function discardContents(
         if (proven) break;
       }
     }
-    if (proven) temps.push(file);
+    if (proven) temps.push({ file, stats: before });
     else
       retain(
         "discard-temp-unproven",
@@ -731,11 +681,27 @@ async function discardContents(
         "left in place: a copy temp this migration cannot prove it wrote",
       );
   }
-  for (const file of temps) await unlink(file.absolute);
+  for (const { file, stats } of temps) {
+    if ((await unlinkIfUnchanged(file.absolute, stats)) === "changed") {
+      retain(
+        "discard-temp-unproven",
+        file.relative,
+        "left in place: a copy temp this migration cannot prove it wrote",
+      );
+    }
+  }
   for (const file of finals) {
     const entry = frozen.get(file.relative);
-    if (entry !== undefined && (await equalsFrozen(file.absolute, entry))) {
-      await unlink(file.absolute);
+    const frozenCopy =
+      entry === undefined ? null : await frozenStats(file.absolute, entry);
+    if (frozenCopy !== null) {
+      if ((await unlinkIfUnchanged(file.absolute, frozenCopy)) === "changed") {
+        retain(
+          "discard-modified",
+          file.relative,
+          "left in place: the file no longer equals the bytes the migration copied",
+        );
+      }
     } else if (repairedKeys.has(file.relative)) {
       retain(
         "discard-repaired-store",
@@ -792,6 +758,8 @@ async function discardContents(
   for (const name of evidenceNames) {
     if (name === basename(inventoryFile) || name === "owned-temps") continue;
     const nonce = parseInventoryTempName(name);
+    const before = await statBig(join(evidenceDir, name));
+    if (before === null) continue;
     const proven =
       nonce !== null &&
       nonces.has(nonce) &&
@@ -801,8 +769,10 @@ async function discardContents(
         referenceSha256: pinnedHex,
         platform,
       }));
-    if (proven) await unlink(join(evidenceDir, name));
-    else
+    if (
+      !proven ||
+      (await unlinkIfUnchanged(join(evidenceDir, name), before)) === "changed"
+    )
       retain(
         "discard-evidence-unknown",
         `${evidenceRelative}/${name}`,

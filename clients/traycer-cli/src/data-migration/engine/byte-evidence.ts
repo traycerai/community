@@ -1,11 +1,13 @@
 import { createHash, randomUUID } from "node:crypto";
-import { constants } from "node:fs";
+import { constants, type BigIntStats } from "node:fs";
 import {
+  lstat,
   mkdir,
   open,
   readdir,
   rm,
   rmdir,
+  unlink,
   type FileHandle,
 } from "node:fs/promises";
 import { join } from "node:path";
@@ -221,4 +223,44 @@ export async function isPrefixOfVerifiedFile(input: {
   } finally {
     await candidate.close();
   }
+}
+
+/** `lstat` with bigint times, or null when the path no longer exists. */
+async function currentStats(path: string): Promise<BigIntStats | null> {
+  try {
+    return await lstat(path, { bigint: true });
+  } catch (error) {
+    if (
+      isErrnoException(error) &&
+      (error.code === "ENOENT" || error.code === "ENOTDIR")
+    )
+      return null;
+    throw error;
+  }
+}
+
+/**
+ * Unlinks `path` only while it is still the file `before` describes, re-read
+ * right before the unlink: a write into bytes a proof had already read leaves
+ * the proof's verdict standing, but never the size, times or inode. `gone`
+ * when it no longer exists; `changed` (left in place) otherwise.
+ */
+export async function unlinkIfUnchanged(
+  path: string,
+  before: BigIntStats,
+): Promise<"removed" | "gone" | "changed"> {
+  const current = await currentStats(path);
+  if (current === null) return "gone";
+  if (
+    !current.isFile() ||
+    current.size !== before.size ||
+    current.mtimeNs !== before.mtimeNs ||
+    current.ctimeNs !== before.ctimeNs ||
+    current.dev !== before.dev ||
+    current.ino !== before.ino
+  ) {
+    return "changed";
+  }
+  await unlink(path);
+  return "removed";
 }

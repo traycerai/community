@@ -14,6 +14,7 @@ import type {
   MigrationId,
   MigrationJournal,
 } from "@traycer/protocol/config/data-migration-contracts";
+import { MIGRATION_COORDINATOR_LOCK_FILENAME } from "@traycer/protocol/config/data-migration-admission";
 import {
   newTempNonce,
   ownedTempNonces,
@@ -278,6 +279,25 @@ describe.skipIf(process.platform === "win32")(
             harness.initial.facts,
           );
         });
+
+        it("cleanup refuses a corrupt coordinator lock with the never-taken-over message", async () => {
+          const { harness, journal } = await completed();
+          await writeFile(
+            join(harness.bootstrapDir, MIGRATION_COORDINATOR_LOCK_FILENAME),
+            "{ torn",
+            { mode: 0o600 },
+          );
+          const result = assertStopped(
+            await cleanupSource(harness.makeDestinationDeps({}), {
+              migrationId: journal.id,
+            }),
+          );
+          expect(blockerCodes(result)).toEqual(["coordinator-corrupt"]);
+          expect(result.blockers[0]?.message).toContain(
+            "never taken over automatically",
+          );
+          expect(await allSourceFilesExist(harness)).toBe(true);
+        });
       });
 
       describe("interruption", () => {
@@ -386,6 +406,50 @@ describe.skipIf(process.platform === "win32")(
           ).toBe("late");
           expect(result.journal?.phase).toBe("cleaning");
           expect(await pathExists(harness.sourceRoot)).toBe(true);
+        });
+
+        it("a source file modified in place while cleanup hashes it is kept and stops source-modified", async () => {
+          const { harness, journal } = await completed();
+          // The checkpoint cannot see which file is next, so every seeded file
+          // is overwritten in place with the same size and different bytes.
+          const rewritten = new Map<string, Buffer>();
+          let fired = false;
+          const result = assertStopped(
+            await cleanupSource(
+              harness.makeDestinationDeps({
+                checkpoint: async (point) => {
+                  if (point !== "before-cleanup-delete" || fired) return;
+                  fired = true;
+                  for (const path of harness.tree.filePaths) {
+                    const absolute = underRoot(harness.sourceRoot, path);
+                    const bytes = Buffer.from(await readFile(absolute));
+                    bytes[0] = bytes[0] === 0x7a ? 0x79 : 0x7a;
+                    rewritten.set(path, bytes);
+                    await writeFile(absolute, bytes);
+                  }
+                },
+              }),
+              { migrationId: journal.id },
+            ),
+          );
+          expect(fired).toBe(true);
+          expect(result.reason).toBe("conflict");
+          expect(blockerCodes(result)).toEqual(["source-modified"]);
+          const kept = result.blockers[0]?.object ?? "";
+          const expected = rewritten.get(kept);
+          if (expected === undefined)
+            throw new Error("the blocker names no seeded file");
+          expect(await readFile(underRoot(harness.sourceRoot, kept))).toEqual(
+            expected,
+          );
+          // Including the file whose delete was pending at the checkpoint:
+          // nothing rewritten is deleted.
+          for (const [path, bytes] of rewritten) {
+            expect(await readFile(underRoot(harness.sourceRoot, path))).toEqual(
+              bytes,
+            );
+          }
+          expect(result.journal?.phase).toBe("cleaning");
         });
       });
     });

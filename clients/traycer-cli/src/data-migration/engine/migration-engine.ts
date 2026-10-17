@@ -2,7 +2,6 @@ import { readFileSync } from "node:fs";
 import { lstat, readdir, rmdir } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
-  acquireMigrationCoordinatorLock,
   MigrationAdmissionError,
   surveyAdmittedProcesses,
   type MigrationCoordinatorLock,
@@ -57,6 +56,7 @@ import {
   storeContentInventory,
   type LoadedContentInventory,
 } from "./content-inventory";
+import { withCoordinatorLock } from "./coordinator-lock";
 import { copyInventory } from "./copy-engine";
 import type { MigrationEngineDeps } from "./engine-deps";
 import {
@@ -76,7 +76,6 @@ import {
   stageApplied,
   verifyLedger,
 } from "./external-ledger";
-import { assertCallerPreconditions } from "./caller-preconditions";
 import {
   installedParticipantBlockers,
   regularFileSha256,
@@ -122,79 +121,6 @@ import { excludeCoordinator } from "./root-user-census";
  */
 
 // ---- Shared setup -----------------------------------------------------------
-
-type Held = {
-  readonly lock: MigrationCoordinatorLock;
-  readonly bootstrapDir: string;
-};
-
-async function withCoordinatorLock(
-  deps: MigrationEngineDeps,
-  fn: (held: Held) => Promise<EngineResult>,
-): Promise<EngineResult> {
-  const bootstrapDir = dataBootstrapDir(deps.homeDir);
-  const acquired = await acquireMigrationCoordinatorLock({
-    bootstrapDir,
-    probe: deps.probe,
-  });
-  if (!acquired.acquired) {
-    return stopped(
-      "blocked",
-      null,
-      [
-        engineBlocker(
-          `coordinator-${acquired.reason}`,
-          acquired.holder === null ? null : String(acquired.holder.pid),
-          acquired.reason === "held"
-            ? "another Traycer data migration, recovery or cleanup is running"
-            : acquired.reason === "ambiguous"
-              ? "a previous migration process may still be running and could not be proven gone"
-              : acquired.reason === "corrupt"
-                ? "the migration lock is unreadable; it is never taken over automatically"
-                : "this process cannot read its own process identity",
-        ),
-      ],
-      null,
-    );
-  }
-  try {
-    await assertCallerPreconditions({
-      bootstrapDir,
-      probe: deps.probe,
-      selfPid: process.pid,
-    });
-    return await fn({ lock: acquired.lock, bootstrapDir });
-  } catch (error) {
-    if (error instanceof EngineStop) {
-      return stopped(error.reason, null, error.blockers, error.impact);
-    }
-    if (error instanceof MigrationAdmissionError) {
-      return stopped(
-        error.code === "record-damaged" ? "damaged" : "blocked",
-        null,
-        [engineBlocker(`admission-${error.code}`, null, error.message)],
-        null,
-      );
-    }
-    if (error instanceof BootstrapRecordError) {
-      return stopped(
-        error.code === "record-damaged" ? "damaged" : "conflict",
-        null,
-        [
-          engineBlocker(
-            `bootstrap-${error.code}`,
-            error.recordPath,
-            error.message,
-          ),
-        ],
-        null,
-      );
-    }
-    throw error;
-  } finally {
-    await acquired.lock.release();
-  }
-}
 
 /** Runs `fn` and converts an operational stop into a result carrying the journal. */
 async function guarded(

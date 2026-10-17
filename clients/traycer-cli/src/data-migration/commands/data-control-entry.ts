@@ -143,11 +143,14 @@ const READONLY_REFUSAL =
 
 /**
  * The `data` program. Each action stores its outcome in `settle`; the caller
- * renders it. Exported for fixtures, which drive it with their own deps.
+ * renders it. Under `--json`, what Commander would print on stdout (help)
+ * goes to `bufferJsonOut` instead, for the caller to wrap in one result
+ * envelope. Exported for fixtures, which drive it with their own deps.
  */
 export function buildDataProgram(
   deps: DataCommandDeps,
   settle: (outcome: DataCommandOutcome) => void,
+  bufferJsonOut: (text: string) => void,
 ): Command {
   const program = new Command("traycer")
     .option("--json", "Emit NDJSON on stdout instead of text")
@@ -159,7 +162,8 @@ export function buildDataProgram(
     .exitOverride()
     .configureOutput({
       writeOut: (text) => {
-        if (!deps.io.json) writeStdout(text);
+        if (deps.io.json) bufferJsonOut(text);
+        else writeStdout(text);
       },
       writeErr: (text) => {
         if (!deps.io.json) writeStderr(text);
@@ -416,10 +420,14 @@ export async function runDataControlEntry(
     abort.abort();
   };
   process.on("SIGINT", onInterrupt);
+  let jsonOut = "";
   const program = buildDataProgram(
     productionDataCommandDeps(io, abort.signal),
     (outcome) => {
       state.outcome = outcome;
+    },
+    (text) => {
+      jsonOut += text;
     },
   );
   let exitCode = 0;
@@ -428,9 +436,18 @@ export async function runDataControlEntry(
     await program.parseAsync([...argv]);
   } catch (error) {
     if (error instanceof CommanderError) {
-      // Help prints and exits 0; a parse failure already printed its message
-      // in human mode.
-      if (error.exitCode !== 0 && io.json) {
+      // Help exits 0: printed in human mode, buffered under --json and
+      // wrapped in one result here, as the ordinary entry does. A parse
+      // failure already printed its message in human mode.
+      if (error.exitCode === 0 && io.json) {
+        const event: ResultOkEvent = {
+          type: "result",
+          status: "ok",
+          data: { output: jsonOut.trimEnd() },
+          timestamp: new Date().toISOString(),
+        };
+        writeStdout(`${JSON.stringify(event)}\n`);
+      } else if (error.exitCode !== 0 && io.json) {
         renderError(
           CLI_ERROR_CODES.INVALID_ARGUMENT,
           error.message.replace(/^error:\s*/i, ""),

@@ -1,6 +1,7 @@
-import { rm } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { MIGRATION_COORDINATOR_LOCK_FILENAME } from "@traycer/protocol/config/data-migration-admission";
 import { currentComponentHandshake } from "@traycer/protocol/config/data-migration-contracts";
 import { CLI_ERROR_CODES } from "../../../runner/errors";
 import {
@@ -105,6 +106,55 @@ describe.skipIf(process.platform === "win32")(
   { timeout: 120_000 },
   () => {
     const scope = harnessScope();
+
+    describe("lock refusals", () => {
+      class NoIdentityProbe extends FakeProcessProbe {
+        override ownStartIdentity(): Promise<string | null> {
+          return Promise.resolve(null);
+        }
+      }
+
+      it("data init names each lock refusal reason", async () => {
+        const corrupt = await scope.create();
+        await emptyHome(corrupt);
+        await mkdir(corrupt.bootstrapDir, { recursive: true, mode: 0o700 });
+        await writeFile(
+          join(corrupt.bootstrapDir, MIGRATION_COORDINATOR_LOCK_FILENAME),
+          "{ torn",
+          { mode: 0o600 },
+        );
+        const corruptOutcome = errorOf(
+          await dataInit(
+            enabled(corrupt, { TRAYCER_DATA_DIR: corrupt.destinationRoot }),
+            { to: null, yes: true },
+          ),
+        );
+        expect(corruptOutcome.message).toContain(
+          "never taken over automatically",
+        );
+        expect(corruptOutcome.details?.lock).toBe("corrupt");
+        expect(await pathExists(corrupt.destinationRoot)).toBe(false);
+
+        const unreadable = await scope.create();
+        await emptyHome(unreadable);
+        const identityOutcome = errorOf(
+          await dataInit(
+            depsFor(unreadable, {
+              env: { TRAYCER_DATA_DIR: unreadable.destinationRoot },
+              availability: ENABLED,
+              probe: new NoIdentityProbe(),
+              io: new ScriptedIo(false, []),
+            }),
+            { to: null, yes: true },
+          ),
+        );
+        expect(identityOutcome.message).toContain(
+          "cannot read its own process identity",
+        );
+        expect(identityOutcome.details?.lock).toBe("identity-unavailable");
+        expect(await pathExists(unreadable.destinationRoot)).toBe(false);
+      });
+    });
 
     describe("choosing the folder", () => {
       it("--to wins over TRAYCER_DATA_DIR", async () => {

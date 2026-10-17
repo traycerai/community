@@ -69,9 +69,13 @@ async function run(
 ): Promise<{ outcomes: DataCommandOutcome[]; engineCalls: number }> {
   const { deps, engineCalls } = depsFor(harness);
   const outcomes: DataCommandOutcome[] = [];
-  const program = buildDataProgram(deps, (outcome) => {
-    outcomes.push(outcome);
-  });
+  const program = buildDataProgram(
+    deps,
+    (outcome) => {
+      outcomes.push(outcome);
+    },
+    () => undefined,
+  );
   await program.parseAsync(["node", "traycer", "data", ...args]);
   return { outcomes, engineCalls: engineCalls() };
 }
@@ -149,9 +153,13 @@ describe.skipIf(process.platform === "win32")(
       const harness = await scope.create();
       const { deps, engineCalls } = depsFor(harness);
       const outcomes: DataCommandOutcome[] = [];
-      const program = buildDataProgram(deps, (outcome) => {
-        outcomes.push(outcome);
-      });
+      const program = buildDataProgram(
+        deps,
+        (outcome) => {
+          outcomes.push(outcome);
+        },
+        () => undefined,
+      );
       await expect(
         program.parseAsync(["node", "traycer", "data", "foo"]),
       ).rejects.toBeInstanceOf(CommanderError);
