@@ -160,7 +160,7 @@ const VERIFIED_ALTERNATE_GATE: Readonly<Record<string, string>> = {
   "bot.create":
     "sibling-method proxy gate: CreateBotForm renders only inside HomeBotsSection (home-bots-group.tsx), which gates on bot.list (home-bots-section.tsx); onError toasts an E_HOST_UNSUPPORTED like any other refusal (use-bot-mutations.ts)",
   "bot.delete":
-    "same bot.list proxy as bot.create: a bot tab is created only from HomeBotRow and CreateBotForm under that gate (home-bot-row.tsx, create-bot-form.tsx); a tab restored from bot-tabs-store re-targets the same bound host, and the hook's onError toasts the refusal",
+    "same bot.list proxy as bot.create: a bot tab is created only from HomeBotRow and CreateBotForm under that gate (home-bot-row.tsx, create-bot-form.tsx), and BotTabSurface re-checks bot.list on its own host before drawing any control (bot-tab-surface.tsx), so a tab restored from bot-tabs-store onto a host without bots shows the update notice; the hook's onError toasts the refusal",
   "bot.updateTitle":
     "same bot.list proxy and onError toast as bot.delete (bot-settings-panel.tsx)",
   "bot.updateRunSettings":
