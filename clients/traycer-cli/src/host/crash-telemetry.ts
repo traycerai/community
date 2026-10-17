@@ -512,10 +512,9 @@ export class HostCrashReportThrottle {
    * kind this process has seen more recently keeps its own state. A count that
    * was left open is sent when its window ends, at once when it already has:
    * the supervisor that opened it may not have lived to send it, and a kind
-   * with a count still unsent never counts as quiet. Returns how many
-   * summaries were sent at once.
+   * with a count still unsent never counts as quiet.
    */
-  restore(persisted: PersistedHostCrashThrottle): number {
+  restore(persisted: PersistedHostCrashThrottle): void {
     const now = this.deps.now();
     for (const [key, kind] of persisted) {
       // No time in the state may lie ahead of now, so a clock that stepped
@@ -538,7 +537,6 @@ export class HostCrashReportThrottle {
             : { ...kind.lastSuppressed, extra: {} },
       });
     }
-    let sentNow = 0;
     for (const [key, state] of [...this.states]) {
       if (
         state.suppressedCount === 0 ||
@@ -550,12 +548,11 @@ export class HostCrashReportThrottle {
       const remaining =
         state.windowStartedAt + HOST_CRASH_SUMMARY_WINDOW_MS - now;
       if (remaining <= 0) {
-        if (this.sendSummary(key)) sentNow += 1;
+        this.sendSummary(key);
       } else {
         this.scheduleSummary(key, remaining);
       }
     }
-    return sentNow;
   }
 
   private scheduleSummary(key: string, delayMs: number): void {
@@ -581,7 +578,7 @@ export class HostCrashReportThrottle {
     );
   }
 
-  private sendSummary(key: string): boolean {
+  private sendSummary(key: string): void {
     this.scheduled.delete(key);
     const state = this.states.get(key);
     if (
@@ -589,7 +586,7 @@ export class HostCrashReportThrottle {
       state.suppressedCount === 0 ||
       state.lastSuppressed === null
     ) {
-      return false;
+      return;
     }
     try {
       this.deps.captureSummary(
@@ -600,12 +597,11 @@ export class HostCrashReportThrottle {
     } catch {
       // Runs from a timer, where a throw would be an uncaught exception in
       // the supervisor. The count stays for the next window's summary.
-      return false;
+      return;
     }
     state.suppressedCount = 0;
     state.lastSuppressed = null;
     this.persist();
-    return true;
   }
 
   private persist(): void {
@@ -767,6 +763,7 @@ class HostCrashThrottleEntry {
   readonly throttle: HostCrashReportThrottle;
   private readonly path: string;
   private writes: Promise<void> = Promise.resolve();
+  private transport: Promise<void> = Promise.resolve();
 
   constructor(environment: Environment) {
     this.path = hostCrashThrottlePath(environment);
@@ -775,7 +772,7 @@ class HostCrashThrottleEntry {
       capture: captureHostCrashEvent,
       captureSummary: (event, suppressedCount, windowStartedAt) => {
         captureHostCrashSummary(event, suppressedCount, windowStartedAt);
-        retireStalledTransportAfterBudget();
+        this.trackTransport(retireStalledTransportAfterBudget());
       },
       schedule: (callback, delayMs) => {
         const timer = setTimeout(callback, delayMs);
@@ -789,19 +786,38 @@ class HostCrashThrottleEntry {
   }
 
   /** Read the file into the throttle; a missing or unreadable file is empty. */
-  async load(): Promise<number> {
+  async load(): Promise<void> {
     let text = "";
     try {
       text = await readBounded(this.path);
     } catch {
       // No file yet, or none readable: nothing carries over.
     }
-    return this.throttle.restore(parsePersistedHostCrashThrottle(text));
+    this.throttle.restore(parsePersistedHostCrashThrottle(text));
   }
 
   /** Resolves once every write queued so far has settled. Never rejects. */
-  settled(): Promise<void> {
+  writesSettled(): Promise<void> {
     return this.writes;
+  }
+
+  /**
+   * Remember an envelope still on its way out. A summary clears its count on
+   * disk when it is queued, so one lost with the process is not retried.
+   */
+  trackTransport(delivery: Promise<void>): void {
+    this.transport = Promise.all([this.transport, delivery]).then(
+      () => undefined,
+    );
+  }
+
+  /**
+   * Resolves once the state writes and the envelopes sent so far have settled
+   * (the transport within its own timeout). Never rejects.
+   */
+  async settled(): Promise<void> {
+    await this.writes;
+    await this.transport;
   }
 
   private async write(text: string): Promise<void> {
@@ -833,9 +849,10 @@ function hostCrashThrottleFor(
 
 /**
  * Resolves once every throttle state write queued so far, by a crash report or
- * by a summary timer, has settled. Never rejects. The supervisor's exit waits
- * for it, so a summary a timer sent just before a clean stop is not sent again
- * by the next supervisor.
+ * by a summary timer, and every envelope sent with them has settled (an upload
+ * within its transport timeout). Never rejects. The supervisor's exit waits for
+ * it, so a summary a timer sent just before a clean stop is neither sent again
+ * by the next supervisor nor lost with the process.
  */
 export async function settleHostCrashThrottleWrites(): Promise<void> {
   await Promise.all(
@@ -846,12 +863,12 @@ export async function settleHostCrashThrottleWrites(): Promise<void> {
 /**
  * Called when a supervisor starts: take the throttle state the previous
  * supervisor left, so a count it left open is sent when its window ends even
- * if this one never sees a crash. A count sent at once is also given time to
- * leave the machine before this resolves: its count is already cleared on
- * disk, so a supervisor that exits with the upload still queued (an early exit
- * for a live incumbent) would otherwise lose it. The supervisor's exit waits
- * {@link HOST_CRASH_REPORT_TIMEOUT_MS} for the whole of this (read, write and
- * flush); the flush's own timeout is the same ceiling, not an extra budget.
+ * if this one never sees a crash. This resolves once what it sent has been
+ * written to disk and has left the machine (or its transport timeout passed):
+ * a summary clears its count on disk when it is queued, so a supervisor that
+ * exits with the upload still queued (an early exit for a live incumbent)
+ * would otherwise lose it. The supervisor's exit waits
+ * {@link HOST_CRASH_REPORT_TIMEOUT_MS} for the whole of this.
  * Never throws.
  */
 export async function resumeHostCrashReports(
@@ -859,11 +876,8 @@ export async function resumeHostCrashReports(
 ): Promise<void> {
   try {
     const entry = hostCrashThrottleFor(environment);
-    const sentNow = await entry.load();
+    await entry.load();
     await entry.settled();
-    if (sentNow > 0) {
-      await Sentry.flush(HOST_CRASH_REPORT_TIMEOUT_MS).catch(() => false);
-    }
   } catch {
     // Best-effort, like every step of this module.
   }
@@ -901,12 +915,11 @@ export async function reportHostCrashToSentry(
     entry.throttle.report(buildHostCrashEvent(telemetry, identity));
     // The supervisor may exit right after its last relaunch; the state it
     // leaves for the next one has to be on disk by then.
-    await entry.settled();
+    await entry.writesSettled();
+    entry.trackTransport(retireStalledTransportAfterBudget());
   } catch {
     // Intentionally silent: see the module comment.
-    return;
   }
-  retireStalledTransportAfterBudget();
 }
 
 /**
@@ -916,8 +929,8 @@ export async function reportHostCrashToSentry(
  * socket. `flush` resolves early when the queue drains, so a healthy upload
  * costs nothing; only a stalled one reaches the destroy.
  */
-function retireStalledTransportAfterBudget(): void {
-  void Sentry.flush(HOST_CRASH_TRANSPORT_TIMEOUT_MS)
+function retireStalledTransportAfterBudget(): Promise<void> {
+  return Sentry.flush(HOST_CRASH_TRANSPORT_TIMEOUT_MS)
     .then((drained) => {
       if (!drained) destroySentryTransportRequests();
     })

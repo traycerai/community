@@ -242,16 +242,16 @@ describe("host crash reports across supervisor restarts", () => {
     sentryMocks.flushes.length = 0;
     await mod.resumeHostCrashReports("production");
     expect(summaries()).toEqual([]);
-    expect(sentryMocks.flushes).not.toContain(mod.HOST_CRASH_REPORT_TIMEOUT_MS);
+    expect(sentryMocks.flushes).toEqual([]);
     vi.clearAllTimers();
 
     // Overdue: sent at once, and the resume stays pending until the transport
-    // flush for it (within the bound) has settled.
+    // flush for it (within its own timeout) has settled.
     vi.advanceTimersByTime(3 * HOUR_MS);
     vi.resetModules();
     mod = await import("../crash-telemetry");
     sentryMocks.heldFlush = {
-      timeout: mod.HOST_CRASH_REPORT_TIMEOUT_MS,
+      timeout: mod.HOST_CRASH_TRANSPORT_TIMEOUT_MS,
       release: () => undefined,
     };
     let resolved = false;
@@ -262,14 +262,14 @@ describe("host crash reports across supervisor restarts", () => {
       await new Promise<void>((resolve) => setImmediate(resolve));
     }
     expect(summaries()).toEqual([{ suppressedCount: 3 }]);
-    expect(sentryMocks.flushes).toContain(mod.HOST_CRASH_REPORT_TIMEOUT_MS);
+    expect(sentryMocks.flushes).toContain(mod.HOST_CRASH_TRANSPORT_TIMEOUT_MS);
     expect(resolved).toBe(false);
     sentryMocks.heldFlush.release();
     await resuming;
     expect(resolved).toBe(true);
   });
 
-  it("leaves a summary a timer sent just before a clean stop cleared on disk once the throttle writes have settled", async () => {
+  it("keeps a summary a timer sent just before a clean stop from being lost or sent again: the exit waits for its upload and its cleared state", async () => {
     vi.resetModules();
     const mod = await import("../crash-telemetry");
     for (
@@ -279,9 +279,23 @@ describe("host crash reports across supervisor restarts", () => {
     ) {
       await mod.reportHostCrashToSentry(crash(`attempt-${index}`, 1));
     }
+    sentryMocks.heldFlush = {
+      timeout: mod.HOST_CRASH_TRANSPORT_TIMEOUT_MS,
+      release: () => undefined,
+    };
     vi.advanceTimersByTime(HOUR_MS);
     expect(summaries()).toEqual([{ suppressedCount: 3 }]);
-    await mod.settleHostCrashThrottleWrites();
+    let settledEarly = false;
+    const settling = mod.settleHostCrashThrottleWrites().then(() => {
+      settledEarly = true;
+    });
+    for (let turn = 0; turn < 50; turn += 1) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+    // The upload is still on its way, so the exit would still be waiting.
+    expect(settledEarly).toBe(false);
+    sentryMocks.heldFlush.release();
+    await settling;
 
     const stateDir = join(home, ".traycer", "cli");
     const files = readdirSync(stateDir).filter((name) =>

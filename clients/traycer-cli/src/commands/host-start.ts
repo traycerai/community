@@ -3866,15 +3866,17 @@ const pendingCrashTelemetry = new Set<Promise<void>>();
 
 /** Wait, for at most the report bound, for the reports still in flight. */
 async function settlePendingCrashTelemetry(): Promise<void> {
-  // The throttle's own writes are waited for too: a summary timer can fire
-  // just before a clean stop, and nothing else would await its write.
-  const waiting = [
-    ...pendingCrashTelemetry,
-    settleHostCrashThrottleWrites().catch(() => undefined),
-  ];
+  const waiting = [...pendingCrashTelemetry];
   let timer: NodeJS.Timeout | undefined;
   await Promise.race([
-    Promise.allSettled(waiting),
+    (async () => {
+      await Promise.allSettled(waiting);
+      // After the reports, not beside them: a summary timer can fire while
+      // they are awaited, and its write and upload are queued only then. The
+      // throttle's own writes and uploads are waited for within the same
+      // deadline, since nothing else awaits them before a clean stop.
+      await settleHostCrashThrottleWrites().catch(() => undefined);
+    })(),
     new Promise<void>((resolve) => {
       // Referenced on purpose: with the report's own timer unref'd, this is
       // what keeps the process alive until the wait ends.
