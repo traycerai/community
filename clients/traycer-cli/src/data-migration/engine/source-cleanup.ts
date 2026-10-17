@@ -623,6 +623,9 @@ async function discardContents(
     for (const suffix of ["", "-wal", "-shm", "-journal"])
       repairedKeys.add(`${receipt.storeKey}${suffix}`);
   }
+  // Read before the digest proof below, so the pinned inventory is deleted
+  // last only while it is still the file that proof read.
+  const inventoryBefore = await statBig(contentInventoryPath(root, journal.id));
   const inventory = await pinnedInventory(journal);
   const frozen = new Map<string, ContentFileEntry>();
   for (const entry of inventory?.entries ?? [])
@@ -780,9 +783,19 @@ async function discardContents(
       );
   }
   if (retained.length > 0) return retained;
-  await unlink(inventoryFile).catch((error: unknown) => {
-    if (!isErrnoException(error) || error.code !== "ENOENT") throw error;
-  });
+  const inventoryKept =
+    inventoryBefore === null
+      ? (await statBig(inventoryFile)) !== null
+      : (await unlinkIfUnchanged(inventoryFile, inventoryBefore)) === "changed";
+  if (inventoryKept) {
+    return [
+      engineBlocker(
+        "discard-evidence-unknown",
+        `${evidenceRelative}/${basename(inventoryFile)}`,
+        "left in place: the inventory changed after the migration proved it",
+      ),
+    ];
+  }
   await removeOwnedTempRecords(evidenceDir, nonces);
   for (const dir of [
     evidenceDir,
