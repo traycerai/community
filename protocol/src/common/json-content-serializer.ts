@@ -82,10 +82,6 @@ interface SerializerContext {
   // (`jsonContentToMarkdown`), because a model or a person reads those
   // directly and gains nothing from a backslash.
   escapeText: boolean;
-  // True while rendering the content of a task item (not of a list nested in
-  // one). The parser splits a task item's lines into paragraphs, so a hard
-  // break there cannot be written as one; see `serializeHardBreak`.
-  inTaskItem: boolean;
 }
 
 function createContext(
@@ -104,7 +100,6 @@ function createContext(
     inListItem: false,
     inTableCell: false,
     escapeText,
-    inTaskItem: false,
   };
 }
 
@@ -975,11 +970,10 @@ function serializeText(node: JsonContent): string {
 // A bare newline is a soft break to the parser: in artifact Markdown, which
 // is parsed back, the hard break would come back as a newline inside the
 // text. A backslash before the newline is CommonMark's hard break, and reads
-// back as one. Two places keep the bare newline: a table cell, which cannot
-// hold a line break at all, and a task item, whose parser splits the item's
-// lines into paragraphs and would keep the backslash as text.
+// back as one. A table cell keeps the bare newline: it cannot hold a line
+// break at all.
 function serializeHardBreak(ctx: SerializerContext): string {
-  return ctx.escapeText && !ctx.inTableCell && !ctx.inTaskItem ? "\\\n" : "\n";
+  return ctx.escapeText && !ctx.inTableCell ? "\\\n" : "\n";
 }
 
 function serializeCodeBlock(node: JsonContent, ctx: SerializerContext): string {
@@ -1099,7 +1093,6 @@ function serializeArtifactBlockquote(
     listDepth: 0,
     listColumn: 0,
     inListItem: false,
-    inTaskItem: false,
   };
   const blocks = (node.content ?? [])
     .map((child) => serializeNode(child, quoteCtx))
@@ -1259,7 +1252,6 @@ function serializeListItemWithMarker(
   const itemCtx: SerializerContext = {
     ...ctx,
     inListItem: true,
-    inTaskItem: checkbox !== "",
   };
 
   const continuationIndent = " ".repeat(baseIndent.length + marker.length + 1);

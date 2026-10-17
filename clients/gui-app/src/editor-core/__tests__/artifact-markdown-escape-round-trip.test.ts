@@ -264,3 +264,270 @@ describe("leading spaces before an escaped block marker", () => {
     expect(serialize(fragmentOf(json2))).toBe(md1);
   });
 });
+
+/**
+ * A hard break inside a list item is a backslash and newline, and the line
+ * after it is the item's own text whatever it looks like: the item stays ONE
+ * paragraph holding the hard break, never a nested list, quote, heading or
+ * fence. Each document is built as JSON, written, parsed back and written
+ * again; the parse must reproduce the original document exactly.
+ */
+type ItemKind =
+  | "bullet"
+  | "task"
+  | "task-checked"
+  | "ordered-1"
+  | "ordered-10"
+  | "ordered-100";
+
+const ITEM_KINDS: ReadonlyArray<ItemKind> = [
+  "bullet",
+  "task",
+  "task-checked",
+  "ordered-1",
+  "ordered-10",
+  "ordered-100",
+];
+
+const LINES_AFTER_BREAK: ReadonlyArray<string> = [
+  "- s",
+  "1. s",
+  "> q",
+  "# h",
+  "===",
+  "```",
+  "<div>",
+];
+
+function textParagraph(content: JsonContent[]): JsonContent {
+  return content.length === 0
+    ? { type: "paragraph" }
+    : { type: "paragraph", content };
+}
+
+function plainText(value: string): JsonContent {
+  return { type: "text", text: value };
+}
+
+function brokenParagraph(next: string): JsonContent {
+  return textParagraph([
+    plainText("First"),
+    { type: "hardBreak" },
+    plainText(next),
+  ]);
+}
+
+/** A list of `kind` whose single item holds `content`. */
+function listOf(kind: ItemKind, content: JsonContent[]): JsonContent {
+  switch (kind) {
+    case "bullet":
+      return {
+        type: "bulletList",
+        content: [{ type: "listItem", content }],
+      };
+    case "task":
+    case "task-checked":
+      return {
+        type: "taskList",
+        content: [
+          {
+            type: "taskItem",
+            attrs: { checked: kind === "task-checked" },
+            content,
+          },
+        ],
+      };
+    case "ordered-1":
+    case "ordered-10":
+    case "ordered-100":
+      return {
+        type: "orderedList",
+        attrs: { start: Number(kind.slice("ordered-".length)), type: null },
+        content: [{ type: "listItem", content }],
+      };
+  }
+}
+
+function hardBreakCount(node: JsonContent): number {
+  return (
+    (node.type === "hardBreak" ? 1 : 0) +
+    (node.content ?? []).reduce((sum, child) => sum + hardBreakCount(child), 0)
+  );
+}
+
+interface ListCase {
+  readonly name: string;
+  readonly doc: JsonContent;
+  // How many hard breaks the document holds; the pass must keep every one.
+  readonly breaks: number;
+}
+
+const LIST_CASES: ReadonlyArray<ListCase> = [
+  ...ITEM_KINDS.flatMap((kind) =>
+    LINES_AFTER_BREAK.map((line) => ({
+      name: `${kind} item, line after the break ${JSON.stringify(line)}`,
+      doc: { type: "doc", content: [listOf(kind, [brokenParagraph(line)])] },
+      breaks: 1,
+    })),
+  ),
+  // The same kinds nested once: a bullet item holding a nested list of that
+  // kind, with the hard break in the nested item.
+  ...ITEM_KINDS.map((kind) => ({
+    name: `${kind} item nested in a bullet item`,
+    doc: {
+      type: "doc",
+      content: [
+        listOf("bullet", [
+          textParagraph([plainText("a")]),
+          listOf(kind, [brokenParagraph("- s")]),
+        ]),
+      ],
+    },
+    breaks: 1,
+  })),
+  // traycer#2574 shape C: an item whose first line is empty, then a nested
+  // list whose item has the hard break.
+  ...ITEM_KINDS.map((kind) => ({
+    name: `${kind} item nested in an item with an empty first line`,
+    doc: {
+      type: "doc",
+      content: [
+        listOf("bullet", [
+          textParagraph([]),
+          listOf(kind, [brokenParagraph("- s")]),
+        ]),
+      ],
+    },
+    breaks: 1,
+  })),
+  // traycer#2574 shape E: an ordered list under a bullet item, under a task
+  // item, and a task list under an ordered item holding an ordered list, with
+  // the hard break in the innermost item.
+  {
+    name: "ordered item under a bullet item",
+    doc: {
+      type: "doc",
+      content: [
+        listOf("bullet", [
+          textParagraph([plainText("a")]),
+          listOf("ordered-1", [brokenParagraph("- s")]),
+        ]),
+      ],
+    },
+    breaks: 1,
+  },
+  {
+    name: "ordered item under a task item",
+    doc: {
+      type: "doc",
+      content: [
+        listOf("task", [
+          textParagraph([plainText("a")]),
+          listOf("ordered-1", [brokenParagraph("- s")]),
+        ]),
+      ],
+    },
+    breaks: 1,
+  },
+  {
+    name: "ordered item under a task item inside an ordered item",
+    doc: {
+      type: "doc",
+      content: [
+        listOf("ordered-10", [
+          textParagraph([plainText("a")]),
+          listOf("task", [
+            textParagraph([plainText("b")]),
+            listOf("ordered-100", [brokenParagraph("1. s")]),
+          ]),
+        ]),
+      ],
+    },
+    breaks: 1,
+  },
+  // Control for shape C: the same empty-first-line item with no hard break.
+  {
+    name: "bullet item nested in an item with an empty first line, no hard break",
+    doc: {
+      type: "doc",
+      content: [
+        listOf("bullet", [
+          textParagraph([]),
+          listOf("bullet", [textParagraph([plainText("s")])]),
+        ]),
+      ],
+    },
+    breaks: 0,
+  },
+  // Control: the same nesting with no hard break at all.
+  {
+    name: "ordered item under a task item inside an ordered item, no hard break",
+    doc: {
+      type: "doc",
+      content: [
+        listOf("ordered-10", [
+          textParagraph([plainText("a")]),
+          listOf("task", [
+            textParagraph([plainText("b")]),
+            listOf("ordered-100", [textParagraph([plainText("c")])]),
+          ]),
+        ]),
+      ],
+    },
+    breaks: 0,
+  },
+];
+
+describe("a hard break inside a list item keeps its next line as text (traycer#1563)", () => {
+  describe.each(LIST_CASES)("$name", ({ doc, breaks }) => {
+    const fragment0 = fragmentOf(doc);
+    const md1 = serialize(fragment0);
+    const json1 = parseJson(md1);
+    const fragment1 = fragmentOf(json1);
+    const md2 = serialize(fragment1);
+    const json2 = parseJson(md2);
+    const fragment2 = fragmentOf(json2);
+
+    it("is a fixed point over two passes", () => {
+      expect(md2).toBe(md1);
+      expect(serialize(fragment2)).toBe(md1);
+    });
+
+    it("parses back to the identical Yjs document", () => {
+      expect(proseMirrorJsonOf(fragment1)).toEqual(
+        proseMirrorJsonOf(fragment0),
+      );
+      expect(fragment1.toJSON()).toBe(fragment0.toJSON());
+      expect(proseMirrorJsonOf(fragment2)).toEqual(
+        proseMirrorJsonOf(fragment0),
+      );
+    });
+
+    it("keeps the text and the hard break, with no escape backslash in the text", () => {
+      expect(textOf(json1)).toBe(textOf(proseMirrorJsonOf(fragment0)));
+      // The input must survive the schema, or the pass proves nothing.
+      expect(hardBreakCount(proseMirrorJsonOf(fragment0))).toBe(breaks);
+      expect(hardBreakCount(json1)).toBe(breaks);
+    });
+  });
+});
+
+describe("an indented code block after an empty task item line (traycer#2574)", () => {
+  it("stays a code block over two passes", () => {
+    const md0 = "- [ ] \n      code";
+    const json1 = parseJson(md0);
+    const fragment1 = fragmentOf(json1);
+    const md1 = serialize(fragment1);
+    const json2 = parseJson(md1);
+    const fragment2 = fragmentOf(json2);
+
+    const codeBlocksOf = (node: JsonContent): string[] =>
+      (node.type === "codeBlock" ? [textOf(node)] : []).concat(
+        (node.content ?? []).flatMap(codeBlocksOf),
+      );
+    expect(codeBlocksOf(json1)).toEqual(["code"]);
+    expect(codeBlocksOf(json2)).toEqual(["code"]);
+    expect(serialize(fragment2)).toBe(md1);
+    expect(proseMirrorJsonOf(fragment2)).toEqual(proseMirrorJsonOf(fragment1));
+  });
+});

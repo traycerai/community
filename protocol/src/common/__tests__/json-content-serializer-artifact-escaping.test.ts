@@ -368,7 +368,7 @@ describe("artifact hard breaks", () => {
     expect(artifactOf("a\\\nb")).toBe("a\\\\\nb");
   });
 
-  it("keeps the bare newline in a task item, whose parser would keep the backslash as text", () => {
+  it("writes a hard break in a task item as a backslash and newline, like any other list item", () => {
     const content = doc([
       {
         type: "taskList",
@@ -381,7 +381,33 @@ describe("artifact hard breaks", () => {
         ],
       },
     ]);
-    expect(artifact(content)).toBe("- [ ] First\n  Second");
+    expect(artifact(content)).toBe("- [ ] First\\\n  Second");
+  });
+
+  // traycer#1563: a hard break in a task item is a backslash and newline like
+  // any other list item's, and the line after it keeps its escape.
+  const taskDoc = (checked: boolean, next: string): JsonContent =>
+    doc([
+      {
+        type: "taskList",
+        content: [
+          {
+            type: "taskItem",
+            attrs: { checked },
+            content: [paragraph([plain("a"), hardBreak, plain(next)])],
+          },
+        ],
+      },
+    ]);
+
+  it("writes a hard break in a task item as a backslash and newline, and escapes the next line", () => {
+    expect(artifact(taskDoc(false, "- s"))).toBe("- [ ] a\\\n  \\- s");
+    expect(artifact(taskDoc(true, "# h"))).toBe("- [x] a\\\n  \\# h");
+    expect(artifact(taskDoc(false, "plain"))).toBe("- [ ] a\\\n  plain");
+  });
+
+  it("still writes a plain newline for a task item's hard break in a prompt", () => {
+    expect(prompt(taskDoc(false, "s"))).toBe("- [ ] a\n  s");
   });
 
   it("keeps the bare newline in a table cell, as the prompt serializer does", () => {
