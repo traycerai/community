@@ -1,5 +1,5 @@
 diff --git a/dist/index.cjs b/dist/index.cjs
-index d828422b45e463c229bd937d39ea416278055dde..7dfb6b849c7a50d35a972fc5555d443abb0d382a 100644
+index d828422b45e463c229bd937d39ea416278055dde..a33339b9783a60a4f76f0fd638b7dd229259e5d3 100644
 --- a/dist/index.cjs
 +++ b/dist/index.cjs
 @@ -4788,6 +4788,85 @@ function createInlineMarkdownSpec(options) {
@@ -102,6 +102,15 @@ index d828422b45e463c229bd937d39ea416278055dde..7dfb6b849c7a50d35a972fc5555d443a
      while (i < lines.length) {
        const nextLine = lines[i];
        if (nextLine.trim() === "") {
+@@ -4848,7 +4934,7 @@ function parseIndentedBlocks(src, config, lexer) {
+     let nestedTokens;
+     const nestedContent = itemContent.slice(1);
+     if (nestedContent.length > 0) {
+-      const dedentedNested = nestedContent.map((nestedLine) => nestedLine.slice(indentLevel + baseIndentSize)).join("\n");
++      const dedentedNested = nestedContent.map((nestedLine) => stripColumns(nestedLine, indentLevel + baseIndentSize)).join("\n");
+       if (dedentedNested.trim()) {
+         if (config.customNestedParser) {
+           nestedTokens = config.customNestedParser(dedentedNested);
 diff --git a/dist/index.d.cts b/dist/index.d.cts
 index 6f803b5c646b232b8507e7a9dfd9857606d02161..36b599def85fa59ce2d17208b711408ee9e2594a 100644
 --- a/dist/index.d.cts
@@ -157,7 +166,7 @@ index 6f803b5c646b232b8507e7a9dfd9857606d02161..36b599def85fa59ce2d17208b711408e
      items: ParsedBlock[];
      raw: string;
 diff --git a/dist/index.js b/dist/index.js
-index a0f6db230e5c24f99066beda95637818680b3fd2..e8525da4ce320bede9dce8217f2156cebb5a509e 100644
+index a0f6db230e5c24f99066beda95637818680b3fd2..e83b217b9a86c74c4bf26cbc84a285ec85c64649 100644
 --- a/dist/index.js
 +++ b/dist/index.js
 @@ -4626,6 +4626,85 @@ function createInlineMarkdownSpec(options) {
@@ -260,6 +269,15 @@ index a0f6db230e5c24f99066beda95637818680b3fd2..e8525da4ce320bede9dce8217f2156ce
      while (i < lines.length) {
        const nextLine = lines[i];
        if (nextLine.trim() === "") {
+@@ -4686,7 +4772,7 @@ function parseIndentedBlocks(src, config, lexer) {
+     let nestedTokens;
+     const nestedContent = itemContent.slice(1);
+     if (nestedContent.length > 0) {
+-      const dedentedNested = nestedContent.map((nestedLine) => nestedLine.slice(indentLevel + baseIndentSize)).join("\n");
++      const dedentedNested = nestedContent.map((nestedLine) => stripColumns(nestedLine, indentLevel + baseIndentSize)).join("\n");
+       if (dedentedNested.trim()) {
+         if (config.customNestedParser) {
+           nestedTokens = config.customNestedParser(dedentedNested);
 diff --git a/src/types.ts b/src/types.ts
 index 0fdbb9f8a835b3bb43310ce5ebc1ef4b10595558..409bb2c00b9a03978c9cf899fc09300934eeab6d 100644
 --- a/src/types.ts
@@ -281,7 +299,7 @@ index 0fdbb9f8a835b3bb43310ce5ebc1ef4b10595558..409bb2c00b9a03978c9cf899fc093009
 
  /** Custom tokenizer function for marked.js extensions */
 diff --git a/src/utilities/markdown/parseIndentedBlocks.ts b/src/utilities/markdown/parseIndentedBlocks.ts
-index ae4956bd21ffe5489a64d08486cf323e82859c06..2002283508a9a3a20f10e7bed70939d4f0c30f91 100644
+index ae4956bd21ffe5489a64d08486cf323e82859c06..c7ad3233454340831955b982c2b51aa70584421d 100644
 --- a/src/utilities/markdown/parseIndentedBlocks.ts
 +++ b/src/utilities/markdown/parseIndentedBlocks.ts
 @@ -37,6 +37,133 @@ export interface BlockParserConfig {
@@ -463,3 +481,13 @@ index ae4956bd21ffe5489a64d08486cf323e82859c06..2002283508a9a3a20f10e7bed70939d4
      // Look ahead for nested content (indented more than current item)
      while (i < lines.length) {
        const nextLine = lines[i]
+@@ -165,7 +323,8 @@ export function parseIndentedBlocks(
+     if (nestedContent.length > 0) {
+       // Remove the base indentation from nested content
+       const dedentedNested = nestedContent
+-        .map(nestedLine => nestedLine.slice(indentLevel + baseIndentSize)) // Remove base indent + 2 spaces
++        // Remove base indent + 2 spaces, counted in columns: a tab is not one.
++        .map(nestedLine => stripColumns(nestedLine, indentLevel + baseIndentSize))
+         .join('\n')
+
+       if (dedentedNested.trim()) {

@@ -1879,3 +1879,254 @@ describe("a continuation probe leaves no reference definition behind", () => {
     expect(linkHrefs(lastTopParagraph(parsed))).toEqual(["/def"]);
   });
 });
+
+// ---- H. the ordered content column is measured from one to four spaces
+
+describe("an ordered item's content column follows the spaces after its marker", () => {
+  it("keeps a fence indented from a three-space gap inside the item", () => {
+    const parsed = parseMarkdown(
+      "1.   a\n        ```\n        2. x\n        ```\n2. b",
+    );
+    const top = parsed.content ?? [];
+    expect(top.map((node) => node.type)).toEqual(["orderedList"]);
+    const items = top[0].content ?? [];
+    expect(items).toHaveLength(2);
+    expect(childTypes(items[0])).toEqual(["paragraph", "codeBlock"]);
+    expect(paragraphText((items[0].content ?? [])[0])).toBe("a");
+    expect(collectText((items[0].content ?? [])[1]).join("")).toBe("2. x");
+    expect(childTypes(items[1])).toEqual(["paragraph"]);
+    expect(paragraphText((items[1].content ?? [])[0])).toBe("b");
+  });
+
+  it("joins a continuation indented to a two-space gap", () => {
+    const item = onlyListItem("1.  a\n    b", "orderedList");
+    expect(childTypes(item)).toEqual(["paragraph"]);
+    expect(paragraphText((item.content ?? [])[0])).toBe("a\nb");
+  });
+});
+
+// ---- H2. a fence indented up to three spaces keeps its code
+//
+// CommonMark lets a fence sit up to three spaces in, and marked reads it so;
+// the code block parser used to drop any fence that did not start at column
+// zero, so the code vanished.
+
+describe("a fence indented up to three spaces keeps its code", () => {
+  const ROWS: ReadonlyArray<readonly [string, string, ReadonlyArray<string>]> =
+    [
+      ["at the top level", "   ```\n   code\n   ```", ["codeBlock"]],
+      ["one space in", " ```\n code\n ```", ["codeBlock"]],
+      [
+        "under a bullet item",
+        "- a\n\n     ```\n     code\n     ```",
+        ["bulletList"],
+      ],
+      [
+        "under a task item",
+        "- [ ] a\n\n     ```\n     code\n     ```",
+        ["taskList"],
+      ],
+      [
+        "under an ordered item",
+        "1. a\n\n      ```\n      code\n      ```",
+        ["orderedList"],
+      ],
+    ];
+  for (const [name, markdown, topTypes] of ROWS) {
+    it(`keeps the code ${name}`, () => {
+      const parsed = parseMarkdown(markdown);
+      expect(childTypes(parsed)).toEqual(topTypes);
+      expect(hasNodeType(parsed, "codeBlock")).toBe(true);
+      expect(collectText(parsed).join("")).toContain("code");
+      expect(collectText(parsed).join("")).not.toContain("```");
+    });
+  }
+
+  it("keeps an ordered list's tab-indented task list and its nested list", () => {
+    const parsed = parseMarkdown("1. outer\n\t- [ ] t\n\t\t1. x");
+    expect(collectText(parsed).join("|")).toBe("outer|t|x");
+  });
+});
+
+// ---- I. a table cell's blocks stay in the table
+
+describe("a table cell holding a task list comes back as one table", () => {
+  it("parses the cell's <br>-joined lines into a two-row, one-cell table", () => {
+    const source: JsonContent = {
+      type: "doc",
+      content: [
+        {
+          type: "table",
+          content: [
+            {
+              type: "tableRow",
+              content: [
+                {
+                  type: "tableHeader",
+                  content: [textPara("h")],
+                },
+              ],
+            },
+            {
+              type: "tableRow",
+              content: [
+                {
+                  type: "tableCell",
+                  content: [
+                    {
+                      type: "taskList",
+                      content: [
+                        {
+                          type: "taskItem",
+                          attrs: { checked: false },
+                          content: [textPara("a")],
+                        },
+                        {
+                          type: "taskItem",
+                          attrs: { checked: true },
+                          content: [textPara("b")],
+                        },
+                      ],
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+    const md = jsonContentToMarkdown(source, SERIALIZER_OPTIONS);
+    expect(md.split("\n")).toHaveLength(3);
+    const parsed = parseMarkdown(md);
+    const top = parsed.content ?? [];
+    expect(top.map((node) => node.type)).toEqual(["table"]);
+    const rows = top[0].content ?? [];
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row.content ?? []).toHaveLength(1);
+    }
+    expect(hasNodeType(parsed, "taskList")).toBe(false);
+  });
+});
+
+// ---- J. a marker that is only text stays text
+
+// Only the list serializer's own empty marker lines keep their space. Text
+// that looks like a marker is trimmed like any other line; reading it back as
+// a paragraph needs the artifact serializer's line-start escaping (#2584),
+// since `1.` alone is an empty ordered item to marked.
+describe("a paragraph that reads like an empty marker keeps no marker space", () => {
+  it("trims '1. ' to '1.'", () => {
+    const md = jsonContentToMarkdown(
+      { type: "doc", content: [textPara("1. ")] },
+      SERIALIZER_OPTIONS,
+    );
+    expect(md).toBe("1.");
+  });
+});
+
+// ---- K. an empty nested item keeps its list under every bullet marker
+
+describe("an empty nested bullet item under text comes back as a nested list", () => {
+  for (const bulletMarker of ["-", "*", "+"] as const) {
+    it(`keeps the nested list written with ${bulletMarker}`, () => {
+      const source = listDoc(
+        listWith(
+          "bulletList",
+          [
+            itemOf(
+              textPara("parent"),
+              listWith("bulletList", [itemOf({ type: "paragraph" })], 1),
+            ),
+          ],
+          1,
+        ),
+      );
+      const md = jsonContentToMarkdown(source, {
+        ...SERIALIZER_OPTIONS,
+        bulletMarker,
+      });
+      expect(md).toBe(`${bulletMarker} parent\n\n  ${bulletMarker}`);
+      const parsed = parseMarkdown(md);
+      expect(skeleton(parsed)).toBe(skeleton(source));
+    });
+  }
+});
+
+// ---- L. the serializer's own markers never read as the user's text
+
+describe("a U+FDD0 the user typed comes back byte-identical", () => {
+  const FDD0 = "\uFDD0";
+
+  it("keeps the character in a paragraph, a bullet item and a table cell beside an empty item", () => {
+    const source: JsonContent = {
+      type: "doc",
+      content: [
+        textPara(`x${FDD0}y`),
+        listWith("bulletList", [itemOf(textPara(FDD0))], 1),
+        {
+          type: "table",
+          content: [
+            {
+              type: "tableRow",
+              content: [{ type: "tableHeader", content: [textPara("h")] }],
+            },
+            {
+              type: "tableRow",
+              content: [
+                { type: "tableCell", content: [textPara(`a${FDD0}b`)] },
+              ],
+            },
+          ],
+        },
+        listWith("orderedList", [itemOf({ type: "paragraph" })], 1),
+      ],
+    };
+    const md = jsonContentToMarkdown(source, SERIALIZER_OPTIONS);
+    expect(md.split(FDD0)).toHaveLength(4);
+    expect(md.endsWith("\n1. ")).toBe(true);
+    const texts = collectText(parseMarkdown(md));
+    expect(texts).toContain(`x${FDD0}y`);
+    expect(texts).toContain(FDD0);
+    expect(texts).toContain(`a${FDD0}b`);
+  });
+
+  it("keeps a paragraph that is exactly '1.' and the character", () => {
+    const md = jsonContentToMarkdown(
+      { type: "doc", content: [textPara(`1.${FDD0}`)] },
+      SERIALIZER_OPTIONS,
+    );
+    expect(md).toBe(`1.${FDD0}`);
+    expect(collectText(parseMarkdown(md)).join("")).toBe(`1.${FDD0}`);
+  });
+});
+
+describe("a <br> typed in a table cell comes back as that text", () => {
+  for (const typed of ["a<br>b", "a<BR/>b"]) {
+    it(`keeps ${typed} as literal text with no hard break`, () => {
+      const source: JsonContent = {
+        type: "doc",
+        content: [
+          {
+            type: "table",
+            content: [
+              {
+                type: "tableRow",
+                content: [{ type: "tableHeader", content: [textPara("h")] }],
+              },
+              {
+                type: "tableRow",
+                content: [{ type: "tableCell", content: [textPara(typed)] }],
+              },
+            ],
+          },
+        ],
+      };
+      const md = jsonContentToMarkdown(source, SERIALIZER_OPTIONS);
+      const parsed = parseMarkdown(md);
+      expect(hasNodeType(parsed, "hardBreak")).toBe(false);
+      expect(collectText(parsed).join("")).toContain(typed);
+    });
+  }
+});

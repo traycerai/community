@@ -1,5 +1,5 @@
 diff --git a/dist/index.cjs b/dist/index.cjs
-index 4c729511471466d470d01dae4ae2ab7393eb6e2d..9eccc05e525757f4648ba5c7297f569de8123961 100644
+index 4c729511471466d470d01dae4ae2ab7393eb6e2d..49d55be1eac0e802eed845180915648ab019ca8e 100644
 --- a/dist/index.cjs
 +++ b/dist/index.cjs
 @@ -487,7 +487,10 @@ var ListItem = import_core3.Node.create({
@@ -108,7 +108,7 @@ index 4c729511471466d470d01dae4ae2ab7393eb6e2d..9eccc05e525757f4648ba5c7297f569d
      let nextLineIndex = currentLineIndex + 1;
      const itemLines = [line];
      let sawBlankLine = false;
-+    const itemContentColumn = leadingIndentColumns(indent) + marker.length + _separator.length + 1;
++    const itemContentColumn = containerContentColumn(line.trimStart(), leadingIndentColumns(indent), marker.length + _separator.length);
 +    const innerBlocks = [];
 +    let openFence;
      while (nextLineIndex < lines.length) {
@@ -154,6 +154,15 @@ index 4c729511471466d470d01dae4ae2ab7393eb6e2d..9eccc05e525757f4648ba5c7297f569d
        } else {
          if (sawBlankLine || interruptsLazyContinuation(nextLine)) {
            break;
+@@ -1042,7 +1125,7 @@ function buildNestedStructure(items, baseIndent, lexer) {
+           tokens: lexer.inlineTokens(mainText)
+         });
+       }
+-      const additionalContent = blockLines.join("\n").trim();
++      const additionalContent = blockLines.join("\n").replace(/^(?:[ \t]*\n)+/, "").trimEnd();
+       if (additionalContent) {
+         const blockTokens = lexer.blockTokens(additionalContent);
+         tokens.push(...blockTokens);
 @@ -1101,6 +1184,9 @@ function parseListItems(items, helpers) {
          }
        });
@@ -165,7 +174,7 @@ index 4c729511471466d470d01dae4ae2ab7393eb6e2d..9eccc05e525757f4648ba5c7297f569d
        type: "listItem",
        content
 diff --git a/dist/index.js b/dist/index.js
-index ef3bc656fac8359ebc0ba0bf0a4f36aa9f4ca413..8c169c9d893f2e8ca7a3d2d4114011b79fc7ff97 100644
+index ef3bc656fac8359ebc0ba0bf0a4f36aa9f4ca413..3383a9be91c40958a52428f121c238c1c5766f7f 100644
 --- a/dist/index.js
 +++ b/dist/index.js
 @@ -447,7 +447,10 @@ var ListItem = Node2.create({
@@ -274,7 +283,7 @@ index ef3bc656fac8359ebc0ba0bf0a4f36aa9f4ca413..8c169c9d893f2e8ca7a3d2d4114011b7
      let nextLineIndex = currentLineIndex + 1;
      const itemLines = [line];
      let sawBlankLine = false;
-+    const itemContentColumn = leadingIndentColumns(indent) + marker.length + _separator.length + 1;
++    const itemContentColumn = containerContentColumn(line.trimStart(), leadingIndentColumns(indent), marker.length + _separator.length);
 +    const innerBlocks = [];
 +    let openFence;
      while (nextLineIndex < lines.length) {
@@ -320,6 +329,15 @@ index ef3bc656fac8359ebc0ba0bf0a4f36aa9f4ca413..8c169c9d893f2e8ca7a3d2d4114011b7
        } else {
          if (sawBlankLine || interruptsLazyContinuation(nextLine)) {
            break;
+@@ -1002,7 +1085,7 @@ function buildNestedStructure(items, baseIndent, lexer) {
+           tokens: lexer.inlineTokens(mainText)
+         });
+       }
+-      const additionalContent = blockLines.join("\n").trim();
++      const additionalContent = blockLines.join("\n").replace(/^(?:[ \t]*\n)+/, "").trimEnd();
+       if (additionalContent) {
+         const blockTokens = lexer.blockTokens(additionalContent);
+         tokens.push(...blockTokens);
 @@ -1061,6 +1144,9 @@ function parseListItems(items, helpers) {
          }
        });
@@ -417,7 +435,7 @@ index d5416b99b4bc59f801ea3ce6496fbc3793ca0a3f..a0883fe1b0ce47466b4beaf187f2b287
      }
      return {
 diff --git a/dist/kit/index.cjs b/dist/kit/index.cjs
-index 1b3f64617adf858090a503bca2cbb567b7fb5e7a..56b8fb5295d8d4eaaa3fb27a9e562040fd038ef0 100644
+index 1b3f64617adf858090a503bca2cbb567b7fb5e7a..002c60de6e987593eb12563aceb88df57a3f96e1 100644
 --- a/dist/kit/index.cjs
 +++ b/dist/kit/index.cjs
 @@ -468,7 +468,10 @@ var ListItem = import_core3.Node.create({
@@ -526,7 +544,7 @@ index 1b3f64617adf858090a503bca2cbb567b7fb5e7a..56b8fb5295d8d4eaaa3fb27a9e562040
      let nextLineIndex = currentLineIndex + 1;
      const itemLines = [line];
      let sawBlankLine = false;
-+    const itemContentColumn = leadingIndentColumns(indent) + marker.length + _separator.length + 1;
++    const itemContentColumn = containerContentColumn(line.trimStart(), leadingIndentColumns(indent), marker.length + _separator.length);
 +    const innerBlocks = [];
 +    let openFence;
      while (nextLineIndex < lines.length) {
@@ -572,6 +590,15 @@ index 1b3f64617adf858090a503bca2cbb567b7fb5e7a..56b8fb5295d8d4eaaa3fb27a9e562040
        } else {
          if (sawBlankLine || interruptsLazyContinuation(nextLine)) {
            break;
+@@ -1020,7 +1103,7 @@ function buildNestedStructure(items, baseIndent, lexer) {
+           tokens: lexer.inlineTokens(mainText)
+         });
+       }
+-      const additionalContent = blockLines.join("\n").trim();
++      const additionalContent = blockLines.join("\n").replace(/^(?:[ \t]*\n)+/, "").trimEnd();
+       if (additionalContent) {
+         const blockTokens = lexer.blockTokens(additionalContent);
+         tokens.push(...blockTokens);
 @@ -1079,6 +1162,9 @@ function parseListItems(items, helpers) {
          }
        });
@@ -583,7 +610,7 @@ index 1b3f64617adf858090a503bca2cbb567b7fb5e7a..56b8fb5295d8d4eaaa3fb27a9e562040
        type: "listItem",
        content
 diff --git a/dist/kit/index.js b/dist/kit/index.js
-index 4a488ae7c7bdacfe3b7fac3cb5c0ace143a8d4df..3af0b8617e5783a648e9b129b147d13126908ded 100644
+index 4a488ae7c7bdacfe3b7fac3cb5c0ace143a8d4df..1d1da4e4f3c2e06a9083a596eab39f2f6ebe621b 100644
 --- a/dist/kit/index.js
 +++ b/dist/kit/index.js
 @@ -450,7 +450,10 @@ var ListItem = Node2.create({
@@ -692,7 +719,7 @@ index 4a488ae7c7bdacfe3b7fac3cb5c0ace143a8d4df..3af0b8617e5783a648e9b129b147d131
      let nextLineIndex = currentLineIndex + 1;
      const itemLines = [line];
      let sawBlankLine = false;
-+    const itemContentColumn = leadingIndentColumns(indent) + marker.length + _separator.length + 1;
++    const itemContentColumn = containerContentColumn(line.trimStart(), leadingIndentColumns(indent), marker.length + _separator.length);
 +    const innerBlocks = [];
 +    let openFence;
      while (nextLineIndex < lines.length) {
@@ -738,6 +765,15 @@ index 4a488ae7c7bdacfe3b7fac3cb5c0ace143a8d4df..3af0b8617e5783a648e9b129b147d131
        } else {
          if (sawBlankLine || interruptsLazyContinuation(nextLine)) {
            break;
+@@ -1002,7 +1085,7 @@ function buildNestedStructure(items, baseIndent, lexer) {
+           tokens: lexer.inlineTokens(mainText)
+         });
+       }
+-      const additionalContent = blockLines.join("\n").trim();
++      const additionalContent = blockLines.join("\n").replace(/^(?:[ \t]*\n)+/, "").trimEnd();
+       if (additionalContent) {
+         const blockTokens = lexer.blockTokens(additionalContent);
+         tokens.push(...blockTokens);
 @@ -1061,6 +1144,9 @@ function parseListItems(items, helpers) {
          }
        });
@@ -749,7 +785,7 @@ index 4a488ae7c7bdacfe3b7fac3cb5c0ace143a8d4df..3af0b8617e5783a648e9b129b147d131
        type: "listItem",
        content
 diff --git a/dist/ordered-list/index.cjs b/dist/ordered-list/index.cjs
-index 07719ef761bdc543488fcf637043115f5bb032fe..61b0f130689f5675214545010cda47fb5690370d 100644
+index 07719ef761bdc543488fcf637043115f5bb032fe..9fe0c09de7561dab6b3d150f255c71aedc4cf807 100644
 --- a/dist/ordered-list/index.cjs
 +++ b/dist/ordered-list/index.cjs
 @@ -278,6 +278,62 @@ function splitItemContent(contentLines) {
@@ -819,7 +855,7 @@ index 07719ef761bdc543488fcf637043115f5bb032fe..61b0f130689f5675214545010cda47fb
      let nextLineIndex = currentLineIndex + 1;
      const itemLines = [line];
      let sawBlankLine = false;
-+    const itemContentColumn = leadingIndentColumns(indent) + marker.length + _separator.length + 1;
++    const itemContentColumn = containerContentColumn(line.trimStart(), leadingIndentColumns(indent), marker.length + _separator.length);
 +    const innerBlocks = [];
 +    let openFence;
      while (nextLineIndex < lines.length) {
@@ -865,6 +901,15 @@ index 07719ef761bdc543488fcf637043115f5bb032fe..61b0f130689f5675214545010cda47fb
        } else {
          if (sawBlankLine || interruptsLazyContinuation(nextLine)) {
            break;
+@@ -390,7 +469,7 @@ function buildNestedStructure(items, baseIndent, lexer) {
+           tokens: lexer.inlineTokens(mainText)
+         });
+       }
+-      const additionalContent = blockLines.join("\n").trim();
++      const additionalContent = blockLines.join("\n").replace(/^(?:[ \t]*\n)+/, "").trimEnd();
+       if (additionalContent) {
+         const blockTokens = lexer.blockTokens(additionalContent);
+         tokens.push(...blockTokens);
 @@ -449,6 +528,9 @@ function parseListItems(items, helpers) {
          }
        });
@@ -876,7 +921,7 @@ index 07719ef761bdc543488fcf637043115f5bb032fe..61b0f130689f5675214545010cda47fb
        type: "listItem",
        content
 diff --git a/dist/ordered-list/index.js b/dist/ordered-list/index.js
-index ecaf30387d3b89c25955a8faa5495c8d1032dfe9..a29604997669d3699103dc63ea7497231cca68d2 100644
+index ecaf30387d3b89c25955a8faa5495c8d1032dfe9..38cb3dbdf77fff3d334118d7afa81e0a70ca2a0c 100644
 --- a/dist/ordered-list/index.js
 +++ b/dist/ordered-list/index.js
 @@ -241,6 +241,62 @@ function splitItemContent(contentLines) {
@@ -946,7 +991,7 @@ index ecaf30387d3b89c25955a8faa5495c8d1032dfe9..a29604997669d3699103dc63ea749723
      let nextLineIndex = currentLineIndex + 1;
      const itemLines = [line];
      let sawBlankLine = false;
-+    const itemContentColumn = leadingIndentColumns(indent) + marker.length + _separator.length + 1;
++    const itemContentColumn = containerContentColumn(line.trimStart(), leadingIndentColumns(indent), marker.length + _separator.length);
 +    const innerBlocks = [];
 +    let openFence;
      while (nextLineIndex < lines.length) {
@@ -992,6 +1037,15 @@ index ecaf30387d3b89c25955a8faa5495c8d1032dfe9..a29604997669d3699103dc63ea749723
        } else {
          if (sawBlankLine || interruptsLazyContinuation(nextLine)) {
            break;
+@@ -353,7 +432,7 @@ function buildNestedStructure(items, baseIndent, lexer) {
+           tokens: lexer.inlineTokens(mainText)
+         });
+       }
+-      const additionalContent = blockLines.join("\n").trim();
++      const additionalContent = blockLines.join("\n").replace(/^(?:[ \t]*\n)+/, "").trimEnd();
+       if (additionalContent) {
+         const blockTokens = lexer.blockTokens(additionalContent);
+         tokens.push(...blockTokens);
 @@ -412,6 +491,9 @@ function parseListItems(items, helpers) {
          }
        });
@@ -1058,7 +1112,7 @@ index e1227a05262b8e337a1406e7f63685d4f4f00fea..42df91215ab6f5e651a6b9ab6e853a33
      }
 
 diff --git a/src/ordered-list/utils.ts b/src/ordered-list/utils.ts
-index d0a3b84aa4c0ccb7bae75384aef5897fae102c70..4ec87c69df8df5d92b76b1dea0e8399c2b0d73e7 100644
+index d0a3b84aa4c0ccb7bae75384aef5897fae102c70..edd36c920417725c0801c19800ac6157fe5a4240 100644
 --- a/src/ordered-list/utils.ts
 +++ b/src/ordered-list/utils.ts
 @@ -116,6 +116,93 @@ function splitItemContent(contentLines: string[]): {
@@ -1155,11 +1209,17 @@ index d0a3b84aa4c0ccb7bae75384aef5897fae102c70..4ec87c69df8df5d92b76b1dea0e8399c
  /**
   * Collects all ordered list items from lines, parsing them into a flat array
   * with indentation information. Stops collecting continuation content when
-@@ -148,14 +235,54 @@ export function collectOrderedListItems(lines: string[]): [OrderedListItem[], nu
+@@ -148,14 +235,60 @@ export function collectOrderedListItems(lines: string[]): [OrderedListItem[], nu
      let nextLineIndex = currentLineIndex + 1
      const itemLines = [line]
      let sawBlankLine = false
-+    const itemContentColumn = leadingIndentColumns(indent) + marker.length + _separator.length + 1
++    // Where the item's content starts: past the 1 to 4 columns of space after
++    // the marker, or one column when more follow.
++    const itemContentColumn = containerContentColumn(
++      line.trimStart(),
++      leadingIndentColumns(indent),
++      marker.length + _separator.length,
++    )
 +    // The containers (bullet items, blockquotes, nested ordered items) open
 +    // inside this item's content, outermost first, with their marker and
 +    // content columns; and an open fence, with the run that opened it and the
@@ -1212,7 +1272,7 @@ index d0a3b84aa4c0ccb7bae75384aef5897fae102c70..4ec87c69df8df5d92b76b1dea0e8399c
          break
        }
 
-@@ -169,12 +296,41 @@ export function collectOrderedListItems(lines: string[]): [OrderedListItem[], nu
+@@ -169,12 +302,41 @@ export function collectOrderedListItems(lines: string[]): [OrderedListItem[], nu
        } else if (nextLine.match(INDENTED_LINE_REGEX)) {
          // Indented content - part of this item (but not a list item).
          // Strip the indentation only up to the whitespace that is actually present,
@@ -1258,7 +1318,21 @@ index d0a3b84aa4c0ccb7bae75384aef5897fae102c70..4ec87c69df8df5d92b76b1dea0e8399c
        } else {
          if (sawBlankLine || interruptsLazyContinuation(nextLine)) {
            break
-@@ -391,6 +547,13 @@ export function parseListItems(
+@@ -291,7 +453,12 @@ export function buildNestedStructure(
+         })
+       }
+
+-      const additionalContent = blockLines.join('\n').trim()
++      // Leading blank lines go, but not the first block line's indent: a
++      // fence indented up to 3 columns strips that much from its content.
++      const additionalContent = blockLines
++        .join('\n')
++        .replace(/^(?:[ \t]*\n)+/, '')
++        .trimEnd()
+       if (additionalContent) {
+         const blockTokens = lexer.blockTokens(additionalContent)
+         tokens.push(...blockTokens)
+@@ -391,6 +558,13 @@ export function parseListItems(
        })
      }
 

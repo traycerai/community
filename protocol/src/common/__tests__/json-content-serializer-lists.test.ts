@@ -815,6 +815,114 @@ describe("jsonContentToMarkdown horizontal rules", () => {
   });
 });
 
+describe("jsonContentToMarkdown bare bullet markers under text", () => {
+  const MARKER_ROWS = [
+    ["-", "- parent\n\n  -"],
+    ["*", "* parent\n\n  *"],
+    ["+", "+ parent\n\n  +"],
+  ] as const;
+
+  for (const [bulletMarker, bytes] of MARKER_ROWS) {
+    it(`puts a blank line before an empty nested ${bulletMarker} item under text`, () => {
+      expect(
+        jsonContentToMarkdown(
+          docOf(
+            bulletList([
+              listItem([
+                textParagraph("parent"),
+                bulletList([listItem([{ type: "paragraph" }])]),
+              ]),
+            ]),
+          ),
+          { mentionFormat: "llm", platform: "POSIX", bulletMarker },
+        ),
+      ).toBe(bytes);
+    });
+  }
+});
+
+describe("jsonContentToMarkdown keeps the marker space only on a real empty item", () => {
+  const KEPT_SPACE = "\uFDD0";
+  const empty: JsonContent = { type: "paragraph" };
+
+  function check(content: JsonContent, bytes: string): void {
+    const out = toMarkdown(content);
+    expect(out).toBe(bytes);
+    expect(out).not.toContain(KEPT_SPACE);
+  }
+
+  it("trims a paragraph whose text is an ordered marker and a space", () => {
+    check(docOf(textParagraph("1. ")), "1.");
+  });
+
+  it("trims a paragraph whose text is an empty task marker and a space", () => {
+    check(docOf(textParagraph("- [ ] ")), "- [ ]");
+  });
+
+  it("keeps the space of an empty ordered item that ends the document", () => {
+    check(docOf(orderedBlock([listItem([empty])], 1)), "1. ");
+  });
+
+  it("keeps the space of an empty ordered item before a paragraph", () => {
+    check(
+      docOf(orderedBlock([listItem([empty])], 1), textParagraph("x")),
+      "1. \n\nx",
+    );
+  });
+
+  it("keeps the space of an empty task item that ends the document", () => {
+    check(docOf(taskBlock([taskEntry([empty])])), "- [ ] ");
+  });
+});
+
+describe("jsonContentToMarkdown placeholder never collides with the user's text", () => {
+  const FDD0 = "\uFDD0";
+
+  function collisionDoc(): JsonContent {
+    return docOf(
+      textParagraph(`x${FDD0}y`),
+      bulletList([listItem([textParagraph(FDD0)])]),
+      {
+        type: "table",
+        content: [
+          {
+            type: "tableRow",
+            content: [
+              {
+                type: "tableHeader",
+                content: [textParagraph("h")],
+              },
+            ],
+          },
+          {
+            type: "tableRow",
+            content: [
+              {
+                type: "tableCell",
+                content: [textParagraph(`a${FDD0}b`)],
+              },
+            ],
+          },
+        ],
+      },
+      orderedBlock([listItem([{ type: "paragraph" }])], 1),
+    );
+  }
+
+  it("keeps the user's U+FDD0 where it was typed and still writes an empty item's space", () => {
+    const out = toMarkdown(collisionDoc());
+    expect(out.split(FDD0)).toHaveLength(4);
+    expect(out).toContain(`x${FDD0}y`);
+    expect(out).toContain(`- ${FDD0}`);
+    expect(out).toContain(`| a${FDD0}b |`);
+    expect(out.endsWith("\n1. ")).toBe(true);
+  });
+
+  it("writes a paragraph whose text is exactly '1.' and U+FDD0 as it was typed", () => {
+    expect(toMarkdown(docOf(textParagraph(`1.${FDD0}`)))).toBe(`1.${FDD0}`);
+  });
+});
+
 function rule(): JsonContent {
   return { type: "horizontalRule" };
 }

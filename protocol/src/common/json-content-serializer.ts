@@ -75,9 +75,15 @@ interface SerializerContext {
   // escaped per text node, mark-aware, so a literal `|` cannot split the cell
   // (see `escapeTableCellText` / `escapeTableCellCode`).
   inTableCell: boolean;
+  // The placeholder for the space after an empty ordered or task marker; see
+  // `keptMarkerSpaceFor`.
+  keptMarkerSpace: string;
 }
 
-function createContext(options: SerializerOptions): SerializerContext {
+function createContext(
+  options: SerializerOptions,
+  content: JsonContent,
+): SerializerContext {
   return {
     options: {
       listIndent: 2,
@@ -89,6 +95,7 @@ function createContext(options: SerializerOptions): SerializerContext {
     orderedListIndex: 0,
     inListItem: false,
     inTableCell: false,
+    keptMarkerSpace: keptMarkerSpaceFor(content),
   };
 }
 
@@ -186,7 +193,12 @@ const noEscaping: TextRunEscaping = {
 // every backslash keeps a literal `\` literal and guarantees the `\|` we add
 // is read as escaped even after a trailing `\`.
 function escapeTableCellText(text: string): string {
-  return text.replace(/\\/g, "\\\\").replace(/\|/g, "\\|");
+  // A typed `<br>` is escaped too: in a cell `<br>` is the serializer's own
+  // line break (`tableCellLine`), so a literal one has to read back as text.
+  return text
+    .replace(/\\/g, "\\\\")
+    .replace(/\|/g, "\\|")
+    .replace(/<(?=br\b)/gi, "\\<");
 }
 
 // Inside inline code CommonMark processes no escapes, so a doubled backslash
@@ -947,7 +959,44 @@ const LIST_BLOCK_TYPES: ReadonlySet<string> = new Set([
   "taskList",
 ]);
 
-const BARE_BULLET_LINE = /^[ \t]*-[ \t]*$/;
+const BARE_BULLET_LINE = /^[ \t]*[-*+][ \t]*$/;
+
+/**
+ * The space after an empty task or ordered item's marker, as the list
+ * serializer writes it: `- [ ]` alone re-parses as a bullet item whose text is
+ * `[ ]`, losing the checkbox, and `1.` alone is not an ordered item to the
+ * artifact parser, which needs whitespace after the number. Trailing spaces are
+ * trimmed from every line, so this one is written as a placeholder that
+ * `normalizeMarkdown` turns back into a space afterwards, on exactly the lines
+ * the list serializer marked, never on text that merely looks like a marker.
+ *
+ * The placeholder is a code point that occurs nowhere in `content` (its text
+ * and its attributes), so no character of the user's ever becomes a space:
+ * the first free noncharacter, else the first free private-use code point.
+ */
+function keptMarkerSpaceFor(content: JsonContent): string {
+  const source = JSON.stringify(content);
+  for (const [first, last] of KEPT_MARKER_SPACE_RANGES) {
+    for (let codePoint = first; codePoint <= last; codePoint++) {
+      const candidate = String.fromCodePoint(codePoint);
+      if (!source.includes(candidate)) return candidate;
+    }
+  }
+  throw new Error("jsonContentToMarkdown: no free placeholder code point");
+}
+
+const KEPT_MARKER_SPACE_RANGES: ReadonlyArray<readonly [number, number]> = [
+  [0xfdd0, 0xfdef],
+  [0xe000, 0xf8ff],
+  [0xf0000, 0xffffd],
+];
+
+function keptMarkerSpaceLine(keptMarkerSpace: string): RegExp {
+  return new RegExp(
+    `^([ \\t]*(?:[-*+] \\[[ xX]\\]|\\d{1,9}[.)]))${keptMarkerSpace}$`,
+    "gmu",
+  );
+}
 
 /** The number an ordered list item's line starts with, if it is one. */
 const ORDERED_MARKER_LINE = /^[ \t]*(\d{1,9})[.)]/;
@@ -958,6 +1007,8 @@ const ORDERED_MARKER_LINE = /^[ \t]*(\d{1,9})[.)]/;
  * ordered marker other than 1 cannot interrupt a paragraph.
  */
 function readsAsTextUnderText(firstLine: string): boolean {
+  // Any bullet marker alone: `-` is also a setext underline, and an empty
+  // item of any marker cannot interrupt a paragraph.
   if (BARE_BULLET_LINE.test(firstLine)) return true;
   const ordered = ORDERED_MARKER_LINE.exec(firstLine);
   return ordered !== null && Number(ordered[1]) !== 1;
@@ -998,6 +1049,12 @@ function serializeListItemWithMarker(
   };
 
   const markerLine = `${baseIndent}${marker} ${checkbox}`;
+  // An ordered or task marker line with nothing after it keeps its space
+  // (see `keptMarkerSpaceFor`); a bare bullet marker needs none.
+  const emptyMarkerLine =
+    checkbox !== "" || ORDERED_MARKER_LINE.test(marker)
+      ? `${markerLine.trimEnd()}${ctx.keptMarkerSpace}`
+      : markerLine.trimEnd();
 
   if (node.content) {
     for (const child of node.content) {
@@ -1028,7 +1085,7 @@ function serializeListItemWithMarker(
           // writes, so both shapes read back the same. A nested list already
           // carries the content column. A rule behind the marker would read as
           // one rule (`- ---`), not an item holding one.
-          lines.push(markerLine);
+          lines.push(emptyMarkerLine);
           for (const line of childLines) {
             lines.push(isList ? line : `${continuationIndent}${line}`);
           }
@@ -1039,7 +1096,7 @@ function serializeListItemWithMarker(
           // marker line as the item's paragraph, so the rest of it leaves the
           // item.
           const [head, ...rest] = childLines;
-          lines.push(`${markerLine}${head}`);
+          lines.push(head === "" ? emptyMarkerLine : `${markerLine}${head}`);
           for (const line of rest) {
             lines.push(`${continuationIndent}${line}`);
           }
@@ -1083,9 +1140,21 @@ function serializeListItemWithMarker(
   // An item with no children still holds its place: the ordered item parser
   // gives `2. ` with nothing after it no paragraph, and dropping the line
   // would split the list around it.
-  if (lines.length === 0) lines.push(`${baseIndent}${marker} ${checkbox}`);
+  if (lines.length === 0) lines.push(emptyMarkerLine);
 
   return lines.join("\n");
+}
+
+/**
+ * A rendered cell as one line of its row. A hard break, or a list's or a later
+ * block's line break, would end the row there and spill the rest of the cell
+ * below the table, so every line break is written `<br>`, GFM's line break in
+ * a cell. A `<br>` the user typed is escaped as text (`escapeTableCellText`),
+ * so it cannot read back as one. An empty item's kept marker space is a plain
+ * space here.
+ */
+function tableCellLine(rendered: string, keptMarkerSpace: string): string {
+  return rendered.split(keptMarkerSpace).join(" ").replace(/\n/g, "<br>");
 }
 
 function serializeTable(node: JsonContent, ctx: SerializerContext): string {
@@ -1109,7 +1178,10 @@ function serializeTable(node: JsonContent, ctx: SerializerContext): string {
         // `escapeTableCellRun`) - never on the rendered cell string, which
         // cannot tell code text from plain text.
         cells.push(
-          serializeChildren(cell.content, { ...ctx, inTableCell: true }),
+          tableCellLine(
+            serializeChildren(cell.content, { ...ctx, inTableCell: true }),
+            ctx.keptMarkerSpace,
+          ),
         );
       }
     }
@@ -1247,32 +1319,19 @@ function serializeDocument(node: JsonContent, ctx: SerializerContext): string {
   return blocks.join("\n\n");
 }
 
-// An empty task or ordered item keeps the one space after its marker, on the
-// last line too. `- [ ]` alone re-parses as a bullet item whose text is
-// `[ ]`, losing the checkbox, and `1.` alone is not an ordered item to the
-// artifact parser, which needs whitespace after the number.
-const EMPTY_ITEM_MARKER_LINE = /^[ \t]*(?:[-*+] \[[ xX]\]|\d+[.)])$/;
-
-function normalizeMarkdown(md: string): string {
-  const normalized = md
+function normalizeMarkdown(md: string, keptMarkerSpace: string): string {
+  return md
     .replace(/\n{3,}/g, "\n\n")
-    .replace(/^(.*?)[ \t]+$/gm, (_line: string, kept: string) =>
-      EMPTY_ITEM_MARKER_LINE.test(kept) ? `${kept} ` : kept,
-    )
-    .trimStart();
-  const trimmed = normalized.trimEnd();
-  const lastLine = trimmed.slice(trimmed.lastIndexOf("\n") + 1);
-  return normalized.charAt(trimmed.length) === " " &&
-    EMPTY_ITEM_MARKER_LINE.test(lastLine)
-    ? `${trimmed} `
-    : trimmed;
+    .replace(/[ \t]+$/gm, "")
+    .trim()
+    .replace(keptMarkerSpaceLine(keptMarkerSpace), "$1 ");
 }
 
 export function jsonContentToMarkdown(
   content: JsonContent,
   options: SerializerOptions,
 ): string {
-  const ctx = createContext(options);
+  const ctx = createContext(options, content);
   const raw = serializeNode(content, ctx);
-  return normalizeMarkdown(raw);
+  return normalizeMarkdown(raw, ctx.keptMarkerSpace);
 }
