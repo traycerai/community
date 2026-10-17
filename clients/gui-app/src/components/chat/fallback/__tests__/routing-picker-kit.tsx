@@ -187,6 +187,34 @@ const CODEX_MODELS: ReadonlyArray<ModelOption> = [
     ],
   }),
   model({ harnessId: "codex", slug: "gpt-4.1", label: "GPT-4.1" }),
+  // Speed-tier fixtures: one model advertising Fast only, two advertising
+  // Fast and Ultrafast, for the routing speed-notice tests.
+  model({
+    harnessId: "codex",
+    slug: "gpt-6-sol",
+    label: "GPT-6-Sol",
+    supportedServiceTiers: [
+      { id: "priority", label: "Fast", description: null },
+    ],
+  }),
+  model({
+    harnessId: "codex",
+    slug: "gpt-6.1-sol",
+    label: "GPT-6.1-Sol",
+    supportedServiceTiers: [
+      { id: "priority", label: "Fast", description: null },
+      { id: "ultrafast", label: "Ultrafast", description: null },
+    ],
+  }),
+  model({
+    harnessId: "codex",
+    slug: "gpt-6-astra",
+    label: "GPT-6-Astra",
+    supportedServiceTiers: [
+      { id: "priority", label: "Fast", description: null },
+      { id: "ultrafast", label: "Ultrafast", description: null },
+    ],
+  }),
 ];
 
 interface CatalogCall {
@@ -236,6 +264,8 @@ export const kit = {
   refetchCalls: 0,
   // Model labels: `harnessId:model` -> label; `null` passes the slug through.
   modelLabels: null as ReadonlyMap<string, string> | null,
+  // The catalog may list a destination while its targeted model read fails.
+  modelsQueryUnavailableFor: null as string | null,
   openSettings: vi.fn<() => void>(),
 };
 
@@ -261,6 +291,7 @@ export function resetKit(): void {
   kit.providers = [];
   kit.refetchCalls = 0;
   kit.modelLabels = null;
+  kit.modelsQueryUnavailableFor = null;
   kit.openSettings.mockReset();
   session.reset();
 }
@@ -424,7 +455,9 @@ export function catalogModule() {
       });
       return {
         data:
-          activity.enabled && client !== null
+          activity.enabled &&
+          client !== null &&
+          harnessId !== kit.modelsQueryUnavailableFor
             ? { harnessId, models: modelsOf(harnessId) }
             : undefined,
         isPending: false,

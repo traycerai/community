@@ -7,8 +7,8 @@ import type { ProviderProfile } from "@traycer/protocol/host/provider-schemas";
 import type { WorktreeBindingOwnerKind } from "@traycer/protocol/host/worktree-schemas";
 import {
   findReasoningLabel,
-  isFastModeEnabled,
   modelDisplayLabel,
+  selectedServiceTierOption,
   type ModelOption,
   type PermissionMode,
   type ProviderId,
@@ -33,7 +33,7 @@ export interface OwnerSettingsHeaderView {
   readonly harnessName: string;
   readonly modelLabel: string | null;
   readonly reasoningLabel: string | null;
-  readonly fastMode: boolean;
+  readonly serviceTierLabel: string | null;
   /** Corner badge for the harness mark, NOT a text segment: the profile name
    *  used to ride at the end of the line, where a long label ("Anthropic work
    *  account") wrapped the row onto a second line and pushed the permission
@@ -101,7 +101,11 @@ function deriveChatHeader(
     harnessName: entry?.label ?? harnessId,
     modelLabel: model === null ? settings.model : modelDisplayLabel(model),
     reasoningLabel: resolveReasoningLabel(settings.reasoningEffort, model),
-    fastMode: isFastModeEnabled(settings.serviceTier),
+    serviceTierLabel:
+      settings.serviceTier === null || settings.serviceTier.trim().length === 0
+        ? null
+        : (selectedServiceTierOption(settings.serviceTier, model)?.label ??
+          settings.serviceTier),
     profileAccentDot: resolveProfileAccentDot(
       settings.profileId,
       input.profiles,
@@ -123,7 +127,7 @@ function deriveTerminalAgentHeader(
     harnessName: entry?.label ?? harnessId,
     modelLabel: model === null ? input.tuiModel : modelDisplayLabel(model),
     reasoningLabel: resolveReasoningLabel(input.tuiReasoningEffort, model),
-    fastMode: false,
+    serviceTierLabel: null,
     // Terminal `null` is the unbadged ambient identity. A tombstoned managed
     // id also resolves to null below rather than leaking an opaque id.
     profileAccentDot:

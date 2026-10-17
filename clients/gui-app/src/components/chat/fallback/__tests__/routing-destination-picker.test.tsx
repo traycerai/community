@@ -1045,14 +1045,16 @@ describe("RoutingDestinationPicker", () => {
             chatId: CHAT_ID,
             traversalId: TRAVERSAL_ID,
             revision: 2,
-            target: hostTarget,
+            target: { ...hostTarget, serviceTier: null },
             leaseToken: "tok-1",
           },
         },
       ]);
+      // The host target's own paid tier is never trusted over the failed
+      // tuple's: the failed tuple ran Standard, so the target does too.
       expect(kit.mutations[0]).toMatchObject({
         variables: {
-          target: { permissionMode: "full_access", serviceTier: "fast" },
+          target: { permissionMode: "full_access", serviceTier: null },
         },
       });
     });
@@ -1083,7 +1085,7 @@ describe("RoutingDestinationPicker", () => {
 
       expect(kit.mutations).toHaveLength(1);
       expect(kit.mutations[0]).toMatchObject({
-        variables: { target: hostTarget },
+        variables: { target: { ...hostTarget, serviceTier: null } },
       });
     });
 
@@ -1111,7 +1113,7 @@ describe("RoutingDestinationPicker", () => {
 
       expect(kit.mutations).toHaveLength(1);
       expect(kit.mutations[0]).toMatchObject({
-        variables: { target: hostTarget },
+        variables: { target: { ...hostTarget, serviceTier: null } },
       });
     });
 
@@ -1191,6 +1193,136 @@ describe("RoutingDestinationPicker", () => {
             serviceTier: null,
           },
         },
+      });
+    });
+
+    describe("speed tier", () => {
+      const ULTRA_FAILED: ChatRunSettings = {
+        ...TARGET,
+        model: "gpt-6.1-sol",
+        profileId: null,
+        serviceTier: "ultrafast",
+      };
+
+      async function mountFailedAt(
+        seed: ChatRunSettings,
+        modelTargets: ReadonlyArray<FallbackModelTarget>,
+      ): Promise<void> {
+        kit.listData = listingOf({
+          failedTuple: seed,
+          profileTargets: [],
+          modelTargets,
+        });
+        mount({
+          kind: "failed-turn",
+          attempt: failedAttempt(["switch"]),
+          seedTuple: seed,
+        });
+        await open();
+        fireEvent.click(screen.getByRole("tab", { name: "Codex" }));
+      }
+
+      it("keeps ultrafast on a destination that advertises it, with no notice", async () => {
+        await mountFailedAt(ULTRA_FAILED, []);
+
+        fireEvent.click(option(/GPT-6-Astra/));
+        expect(screen.queryByText(/This runs at Standard/)).toBeNull();
+        fireEvent.click(footerConfirm());
+
+        expect(kit.mutations[0]).toMatchObject({
+          variables: {
+            target: { model: "gpt-6-astra", serviceTier: "ultrafast" },
+          },
+        });
+      });
+
+      it("clears ultrafast to Standard on a priority-only destination and says so before confirming", async () => {
+        await mountFailedAt(ULTRA_FAILED, []);
+
+        fireEvent.click(option(/GPT-6-Sol/));
+
+        expect(
+          screen.getByText(
+            "Ultrafast isn't available on GPT-6-Sol. This runs at Standard.",
+          ),
+        ).not.toBeNull();
+        fireEvent.click(footerConfirm());
+        expect(kit.mutations[0]).toMatchObject({
+          variables: { target: { model: "gpt-6-sol", serviceTier: null } },
+        });
+      });
+
+      it("says availability could not be confirmed when the target model read is unavailable", async () => {
+        kit.modelsQueryUnavailableFor = "codex";
+        await mountFailedAt(ULTRA_FAILED, []);
+
+        fireEvent.click(option(/GPT-6-Sol/));
+
+        expect(
+          screen.getByText(
+            "Couldn't confirm ultrafast on gpt-6-sol. This runs at Standard.",
+          ),
+        ).not.toBeNull();
+        fireEvent.click(footerConfirm());
+        expect(kit.mutations[0]).toMatchObject({
+          variables: { target: { model: "gpt-6-sol", serviceTier: null } },
+        });
+      });
+
+      it("never substitutes another paid tier: a Claude fast tuple on a Codex destination runs Standard", async () => {
+        kit.listData = listingOf({
+          failedTuple: { ...FAILED, serviceTier: "fast" },
+          profileTargets: [],
+          modelTargets: [],
+        });
+        mount({
+          kind: "failed-turn",
+          attempt: failedAttempt(["switch"]),
+          seedTuple: { ...FAILED, serviceTier: "fast" },
+        });
+        await open();
+        fireEvent.click(screen.getByRole("tab", { name: "Codex" }));
+
+        fireEvent.click(option(/GPT-6-Sol/));
+        fireEvent.click(footerConfirm());
+
+        expect(kit.mutations[0]).toMatchObject({
+          variables: { target: { model: "gpt-6-sol", serviceTier: null } },
+        });
+        expect(kit.mutations[0]).not.toMatchObject({
+          variables: { target: { serviceTier: "priority" } },
+        });
+      });
+
+      it("clamps a listed destination's host-built tier the same way", async () => {
+        const hostTarget: ChatRunSettings = {
+          ...ULTRA_FAILED,
+          model: "gpt-6-sol",
+          serviceTier: "priority",
+        };
+        await mountFailedAt(ULTRA_FAILED, [
+          modelTargetOf({ groupId: "grp-s", target: hostTarget }),
+        ]);
+
+        fireEvent.click(option(/GPT-6-Sol/));
+        expect(
+          screen.getByText(
+            "Ultrafast isn't available on GPT-6-Sol. This runs at Standard.",
+          ),
+        ).not.toBeNull();
+        fireEvent.click(footerConfirm());
+
+        expect(kit.mutations[0]).toMatchObject({
+          variables: { target: { model: "gpt-6-sol", serviceTier: null } },
+        });
+      });
+
+      it("shows no speed notice when the failed tuple requested no tier", async () => {
+        await mountFailedAt({ ...ULTRA_FAILED, serviceTier: null }, []);
+
+        fireEvent.click(option(/GPT-6-Sol/));
+
+        expect(screen.queryByText(/This runs at Standard/)).toBeNull();
       });
     });
 
