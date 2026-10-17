@@ -12,12 +12,10 @@ import type { BotRecord } from "@traycer/protocol/host/bot/schemas";
 import type { EnvironmentDescriptor } from "@traycer/protocol/host/environment/contracts";
 
 const mocks = vi.hoisted(() => {
+  const initialSupport = (): boolean | null => true;
   const hostClient = { stub: "host-client" };
   const environmentRefetch = vi.fn(() => Promise.resolve());
   const botRefetch = vi.fn(() => Promise.resolve());
-  // The hook's three answers: unknown, supported, unsupported. A call, not a
-  // literal, so the slot keeps all three.
-  const initialSupport = (): boolean | null => true;
   return {
     hostClient,
     environmentRefetch,
@@ -108,7 +106,7 @@ function bot(botId: string, environmentId: string, title: string): BotRecord {
   return {
     botId,
     environmentId,
-    ownerUserId: "user-1",
+    createdByUserId: "user-1",
     title,
     harness: "claude",
     model: "opus",

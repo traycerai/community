@@ -11,8 +11,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { BotConversationSendDelivery } from "@traycer/protocol/host/bot/conversation-schemas";
 
 const mocks = vi.hoisted(() => {
-  // A call, not a literal: the tests set both members, and a literal (or a
-  // const initialised with one) would type the slot as the one value.
   const initialDelivery = (): BotConversationSendDelivery => "written";
   return {
     hostClient: { stub: "tab-host-client" },

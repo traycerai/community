@@ -39,7 +39,12 @@ export const botRecordSchema = lazySchema(() =>
     botId: botIdSchema,
     /** The environment (team or personal) the bot lives in. */
     environmentId: z.string().min(1),
-    ownerUserId: z.string().min(1),
+    /**
+     * The member who created the bot. Attribution only, never authority;
+     * null once that account was erased, since a team bot outlives its
+     * creator.
+     */
+    createdByUserId: z.string().min(1).nullable(),
     title: botTitleSchema,
     harness: botHarnessSchema,
     model: botModelSchema,
@@ -47,8 +52,11 @@ export const botRecordSchema = lazySchema(() =>
     profile: botProfileSchema,
     /** The trunk chat: a chat row under `task_id = botId`. */
     trunkChatId: z.string().min(1),
-    /** Which host runs the trunk now; `bot.claimAuthority` rebinds it. */
-    boundHostId: hostIdSchema,
+    /**
+     * Which host runs the trunk now; `bot.claimAuthority` rebinds it. Null
+     * when no host runs it until a member claims it onto one.
+     */
+    boundHostId: hostIdSchema.nullable(),
     /** Authority generation: 0 at create, +1 per claim. */
     hostEpoch: z.number().int().nonnegative(),
     createdAt: z.number().int(),
@@ -534,7 +542,8 @@ export const botSubscribeServerFrameSchema = lazySchema(() =>
       openRequestCount: z.number().int().nonnegative().nullable(),
       /** `boundHostId` and `hostEpoch` restated for cheap comparison. */
       boundHost: z.object({
-        hostId: hostIdSchema,
+        /** Null when no host runs the bot. */
+        hostId: hostIdSchema.nullable(),
         epoch: z.number().int().nonnegative(),
         /** Whether the serving host is the bound one. */
         isThisHost: z.boolean(),

@@ -38,7 +38,7 @@ function bot(
   return {
     botId,
     environmentId,
-    ownerUserId: "user-1",
+    createdByUserId: "user-1",
     title,
     harness: "claude",
     model: "opus",
@@ -64,10 +64,10 @@ function trackingTask(
         ? { kind: "on-completion" }
         : { kind: "every", seconds: 60 },
     lastCheckinAt,
+    lastCheckin: null,
     nextAt,
     state: "tracking",
     endedReason: null,
-    lastCheckin: null,
   };
 }
 
@@ -76,10 +76,10 @@ function endedTask(taskId: string, lastCheckinAt: number | null): BotTaskEntry {
     taskId,
     cadence: { kind: "none" },
     lastCheckinAt,
+    lastCheckin: null,
     nextAt: null,
     state: "ended",
     endedReason: "by-bot",
-    lastCheckin: null,
   };
 }
 
