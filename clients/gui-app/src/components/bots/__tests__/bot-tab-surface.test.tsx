@@ -25,7 +25,7 @@ const mocks = vi.hoisted(() => ({
     directory: [] as Array<{ hostId: string; label: string }>,
     listedBotIds: undefined as string[] | undefined,
     claimPending: false,
-    support: true as boolean | null,
+    support: null as boolean | null,
   },
 }));
 
