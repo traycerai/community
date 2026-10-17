@@ -1796,3 +1796,86 @@ describe("a horizontal rule survives the serializer in every position", () => {
     expect(jsonContentToMarkdown(parsed, SERIALIZER_OPTIONS)).toBe(md);
   });
 });
+
+// ---- G. a continuation probe must not register what it looked at
+
+function linkHrefs(node: JsonContent): string[] {
+  const own = (node.marks ?? [])
+    .filter((mark) => mark.type === "link")
+    .map((mark) => {
+      const href = mark.attrs?.href;
+      return typeof href === "string" ? href : "";
+    });
+  return [...own, ...(node.content ?? []).flatMap(linkHrefs)];
+}
+
+function lastTopParagraph(parsed: JsonContent): JsonContent {
+  const top = parsed.content ?? [];
+  const last = top[top.length - 1];
+  expect(last).toBeDefined();
+  expect(last.type).toBe("paragraph");
+  return last;
+}
+
+describe("a continuation probe leaves no reference definition behind", () => {
+  it("keeps a later [x] plain after a task item whose first line looks like a definition", () => {
+    const parsed = parseMarkdown("- [ ] [x]: /wrong\n  continuation\n\n[x]");
+    const item = findTaskItem(parsed);
+    expect(childTypes(item)).toEqual(["paragraph"]);
+    const text = paragraphText((item.content ?? [])[0]);
+    expect(text).toContain("[x]: /wrong");
+    expect(text).toContain("continuation");
+    const last = lastTopParagraph(parsed);
+    expect(paragraphText(last)).toBe("[x]");
+    expect(linkHrefs(last)).toEqual([]);
+  });
+
+  it("keeps a [x] in a following task item plain", () => {
+    const parsed = parseMarkdown(
+      "- [ ] [x]: /wrong\n  continuation\n- [ ] [x]",
+    );
+    const list = (parsed.content ?? [])[0];
+    expect(list.type).toBe("taskList");
+    const items = list.content ?? [];
+    expect(items).toHaveLength(2);
+    expect(paragraphText((items[1].content ?? [])[0])).toBe("[x]");
+    expect(linkHrefs(items[1])).toEqual([]);
+    expect(linkHrefs(parsed)).toEqual([]);
+  });
+
+  it("still reads a definition at the start of a bullet item's content as a definition", () => {
+    const parsed = parseMarkdown("- [x]: /wrong\n  continuation\n\n[x]");
+    expect(linkHrefs(lastTopParagraph(parsed))).toEqual(["/wrong"]);
+    const item = onlyListItem("- [x]: /wrong\n  continuation", "bulletList");
+    expect(collectText(item).join("")).toContain("continuation");
+  });
+
+  it("reads an ordered item's first line as text, never as a definition", () => {
+    const parsed = parseMarkdown("1. [x]: /wrong\n   continuation\n\n[x]");
+    const top = parsed.content ?? [];
+    expect(top.map((node) => node.type)).toEqual(["orderedList", "paragraph"]);
+    const item = (top[0].content ?? [])[0];
+    expect(childTypes(item)).toEqual(["paragraph"]);
+    const text = paragraphText((item.content ?? [])[0]);
+    expect(text).toContain("[x]: /wrong");
+    expect(text).toContain("continuation");
+    const last = lastTopParagraph(parsed);
+    expect(paragraphText(last)).toBe("[x]");
+    expect(linkHrefs(last)).toEqual([]);
+  });
+
+  it("still defines a top-level definition for a later [x]", () => {
+    const parsed = parseMarkdown("[x]: /right\n\n- [ ] a\n  b\n\n[x]");
+    expect(linkHrefs(lastTopParagraph(parsed))).toEqual(["/right"]);
+  });
+
+  it("still defines a definition nested in a task item for a later [x]", () => {
+    const parsed = parseMarkdown("- [ ] a\n\n  [x]: /right\n\n[x]");
+    expect(linkHrefs(lastTopParagraph(parsed))).toEqual(["/right"]);
+  });
+
+  it("reads a definition under an empty task paragraph as a real definition", () => {
+    const parsed = parseMarkdown("- [ ] \n  [x]: /def\n\n[x]");
+    expect(linkHrefs(lastTopParagraph(parsed))).toEqual(["/def"]);
+  });
+});

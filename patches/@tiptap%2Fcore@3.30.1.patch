@@ -1,8 +1,8 @@
 diff --git a/dist/index.cjs b/dist/index.cjs
-index d828422b45e463c229bd937d39ea416278055dde..4b7f0e2d8bbb7ce87303f90a41186d089b53a70b 100644
+index d828422b45e463c229bd937d39ea416278055dde..7dfb6b849c7a50d35a972fc5555d443abb0d382a 100644
 --- a/dist/index.cjs
 +++ b/dist/index.cjs
-@@ -4788,6 +4788,87 @@ function createInlineMarkdownSpec(options) {
+@@ -4788,6 +4788,85 @@ function createInlineMarkdownSpec(options) {
  }
 
  // src/utilities/markdown/parseIndentedBlocks.ts
@@ -50,12 +50,12 @@ index d828422b45e463c229bd937d39ea416278055dde..4b7f0e2d8bbb7ce87303f90a41186d08
 +// `paragraphLine` alone opens some other block.
 +function continuesParagraph(paragraphLine, line, nextLine, lexer) {
 +  const probe = nextLine === void 0 ? [paragraphLine, line] : [paragraphLine, line, nextLine];
-+  const [first] = lexer.blockTokens(probe.join("\n"));
++  const [first] = lexer.probeBlockTokens(probe.join("\n"));
 +  if (first === void 0 || first.type !== "paragraph" && !isSetextHeading(first)) return void 0;
 +  const coveredLines = first.raw.replace(/\n+$/, "").split("\n").length;
 +  if (coveredLines < 2) return false;
 +  if (coveredLines === 2 && isSetextHeading(first)) {
-+    const [alone] = lexer.blockTokens(line);
++    const [alone] = lexer.probeBlockTokens(line);
 +    return alone !== void 0 && alone.type === "paragraph";
 +  }
 +  return true;
@@ -63,7 +63,10 @@ index d828422b45e463c229bd937d39ea416278055dde..4b7f0e2d8bbb7ce87303f90a41186d08
 +// Whether this line cannot continue the item's first paragraph. While that
 +// paragraph is empty, a line at or left of the item's own indent has no
 +// paragraph to continue, so the item ends. Otherwise the decision is
-+// marked's, the lexer the nested content is parsed with: the line and the one
++// marked's, the lexer the nested content is parsed with, asked through
++// `probeBlockTokens`: in top mode, the mode of CommonMark's paragraph rules,
++// and without leaving a reference definition, queued inline work or a state
++// change on the document's lexer. The line and the one
 +// after it, without the item's content column of indent, are lexed after the
 +// paragraph's last line, or alone while the paragraph is empty, and the line
 +// continues the paragraph only if the lexer reads it as paragraph text. So
@@ -72,15 +75,10 @@ index d828422b45e463c229bd937d39ea416278055dde..4b7f0e2d8bbb7ce87303f90a41186d08
 +function opensItemBlock(line, nextLine, indentLevel, contentColumn, paragraph, lexer) {
 +  var _a;
 +  if (paragraph === "" && leadingColumns(line) <= indentLevel) return true;
-+  // marked lexes a list item's content in its non-top mode, where a list or an
-+  // HTML tag interrupts text, and every `blockTokens` call leaves the lexer in
-+  // top mode. The item's nested content is lexed after these probes, so in top
-+  // mode: start every probe there too, so it reads the line as that parse will.
-+  lexer.blockTokens("");
 +  const text = stripColumns(line, contentColumn);
 +  const next = nextLine === void 0 ? void 0 : stripColumns(nextLine, contentColumn);
 +  if (paragraph === "") {
-+    const [first] = lexer.blockTokens(next === void 0 ? text : `${text}\n${next}`);
++    const [first] = lexer.probeBlockTokens(next === void 0 ? text : `${text}\n${next}`);
 +    return first === void 0 || first.type !== "paragraph" && !isSetextHeading(first);
 +  }
 +  const lastLine = paragraph.slice(paragraph.lastIndexOf("\n") + 1);
@@ -90,7 +88,7 @@ index d828422b45e463c229bd937d39ea416278055dde..4b7f0e2d8bbb7ce87303f90a41186d08
  function parseIndentedBlocks(src, config, lexer) {
    var _a, _b, _c, _d;
    const lines = src.split("\n");
-@@ -4816,6 +4897,13 @@ function parseIndentedBlocks(src, config, lexer) {
+@@ -4816,6 +4895,13 @@ function parseIndentedBlocks(src, config, lexer) {
  `;
      const itemContent = [mainContent];
      i += 1;
@@ -104,11 +102,65 @@ index d828422b45e463c229bd937d39ea416278055dde..4b7f0e2d8bbb7ce87303f90a41186d08
      while (i < lines.length) {
        const nextLine = lines[i];
        if (nextLine.trim() === "") {
+diff --git a/dist/index.d.cts b/dist/index.d.cts
+index 6f803b5c646b232b8507e7a9dfd9857606d02161..36b599def85fa59ce2d17208b711408ee9e2594a 100644
+--- a/dist/index.d.cts
++++ b/dist/index.d.cts
+@@ -2266,6 +2266,14 @@ type MarkdownLexerConfiguration = {
+      * @returns Array of block-level tokens
+      */
+     blockTokens: (src: string) => MarkdownToken[];
++    /**
++     * Transforms source text into block-level tokens in top mode without leaving
++     * any trace on the lexer: no reference definition, queued inline work or
++     * state change survives the call. For a tokenizer that only looks ahead.
++     * @param src
++     * @returns Array of block-level tokens
++     */
++    probeBlockTokens: (src: string) => MarkdownToken[];
+ };
+ /** Custom tokenizer function for marked.js extensions */
+ type MarkdownTokenizer = {
+@@ -5584,6 +5592,7 @@ interface BlockParserConfig {
+ declare function parseIndentedBlocks(src: string, config: BlockParserConfig, lexer: {
+     inlineTokens: (src: string) => any[];
+     blockTokens: (src: string) => any[];
++    probeBlockTokens: (src: string) => any[];
+ }): {
+     items: ParsedBlock[];
+     raw: string;
+diff --git a/dist/index.d.ts b/dist/index.d.ts
+index 6f803b5c646b232b8507e7a9dfd9857606d02161..36b599def85fa59ce2d17208b711408ee9e2594a 100644
+--- a/dist/index.d.ts
++++ b/dist/index.d.ts
+@@ -2266,6 +2266,14 @@ type MarkdownLexerConfiguration = {
+      * @returns Array of block-level tokens
+      */
+     blockTokens: (src: string) => MarkdownToken[];
++    /**
++     * Transforms source text into block-level tokens in top mode without leaving
++     * any trace on the lexer: no reference definition, queued inline work or
++     * state change survives the call. For a tokenizer that only looks ahead.
++     * @param src
++     * @returns Array of block-level tokens
++     */
++    probeBlockTokens: (src: string) => MarkdownToken[];
+ };
+ /** Custom tokenizer function for marked.js extensions */
+ type MarkdownTokenizer = {
+@@ -5584,6 +5592,7 @@ interface BlockParserConfig {
+ declare function parseIndentedBlocks(src: string, config: BlockParserConfig, lexer: {
+     inlineTokens: (src: string) => any[];
+     blockTokens: (src: string) => any[];
++    probeBlockTokens: (src: string) => any[];
+ }): {
+     items: ParsedBlock[];
+     raw: string;
 diff --git a/dist/index.js b/dist/index.js
-index a0f6db230e5c24f99066beda95637818680b3fd2..0a59a77345ce98eec8edb8ba3b6212f816a88482 100644
+index a0f6db230e5c24f99066beda95637818680b3fd2..e8525da4ce320bede9dce8217f2156cebb5a509e 100644
 --- a/dist/index.js
 +++ b/dist/index.js
-@@ -4626,6 +4626,87 @@ function createInlineMarkdownSpec(options) {
+@@ -4626,6 +4626,85 @@ function createInlineMarkdownSpec(options) {
  }
 
  // src/utilities/markdown/parseIndentedBlocks.ts
@@ -156,12 +208,12 @@ index a0f6db230e5c24f99066beda95637818680b3fd2..0a59a77345ce98eec8edb8ba3b6212f8
 +// `paragraphLine` alone opens some other block.
 +function continuesParagraph(paragraphLine, line, nextLine, lexer) {
 +  const probe = nextLine === void 0 ? [paragraphLine, line] : [paragraphLine, line, nextLine];
-+  const [first] = lexer.blockTokens(probe.join("\n"));
++  const [first] = lexer.probeBlockTokens(probe.join("\n"));
 +  if (first === void 0 || first.type !== "paragraph" && !isSetextHeading(first)) return void 0;
 +  const coveredLines = first.raw.replace(/\n+$/, "").split("\n").length;
 +  if (coveredLines < 2) return false;
 +  if (coveredLines === 2 && isSetextHeading(first)) {
-+    const [alone] = lexer.blockTokens(line);
++    const [alone] = lexer.probeBlockTokens(line);
 +    return alone !== void 0 && alone.type === "paragraph";
 +  }
 +  return true;
@@ -169,7 +221,10 @@ index a0f6db230e5c24f99066beda95637818680b3fd2..0a59a77345ce98eec8edb8ba3b6212f8
 +// Whether this line cannot continue the item's first paragraph. While that
 +// paragraph is empty, a line at or left of the item's own indent has no
 +// paragraph to continue, so the item ends. Otherwise the decision is
-+// marked's, the lexer the nested content is parsed with: the line and the one
++// marked's, the lexer the nested content is parsed with, asked through
++// `probeBlockTokens`: in top mode, the mode of CommonMark's paragraph rules,
++// and without leaving a reference definition, queued inline work or a state
++// change on the document's lexer. The line and the one
 +// after it, without the item's content column of indent, are lexed after the
 +// paragraph's last line, or alone while the paragraph is empty, and the line
 +// continues the paragraph only if the lexer reads it as paragraph text. So
@@ -178,15 +233,10 @@ index a0f6db230e5c24f99066beda95637818680b3fd2..0a59a77345ce98eec8edb8ba3b6212f8
 +function opensItemBlock(line, nextLine, indentLevel, contentColumn, paragraph, lexer) {
 +  var _a;
 +  if (paragraph === "" && leadingColumns(line) <= indentLevel) return true;
-+  // marked lexes a list item's content in its non-top mode, where a list or an
-+  // HTML tag interrupts text, and every `blockTokens` call leaves the lexer in
-+  // top mode. The item's nested content is lexed after these probes, so in top
-+  // mode: start every probe there too, so it reads the line as that parse will.
-+  lexer.blockTokens("");
 +  const text = stripColumns(line, contentColumn);
 +  const next = nextLine === void 0 ? void 0 : stripColumns(nextLine, contentColumn);
 +  if (paragraph === "") {
-+    const [first] = lexer.blockTokens(next === void 0 ? text : `${text}\n${next}`);
++    const [first] = lexer.probeBlockTokens(next === void 0 ? text : `${text}\n${next}`);
 +    return first === void 0 || first.type !== "paragraph" && !isSetextHeading(first);
 +  }
 +  const lastLine = paragraph.slice(paragraph.lastIndexOf("\n") + 1);
@@ -196,7 +246,7 @@ index a0f6db230e5c24f99066beda95637818680b3fd2..0a59a77345ce98eec8edb8ba3b6212f8
  function parseIndentedBlocks(src, config, lexer) {
    var _a, _b, _c, _d;
    const lines = src.split("\n");
-@@ -4654,6 +4735,13 @@ function parseIndentedBlocks(src, config, lexer) {
+@@ -4654,6 +4733,13 @@ function parseIndentedBlocks(src, config, lexer) {
  `;
      const itemContent = [mainContent];
      i += 1;
@@ -210,11 +260,31 @@ index a0f6db230e5c24f99066beda95637818680b3fd2..0a59a77345ce98eec8edb8ba3b6212f8
      while (i < lines.length) {
        const nextLine = lines[i];
        if (nextLine.trim() === "") {
+diff --git a/src/types.ts b/src/types.ts
+index 0fdbb9f8a835b3bb43310ce5ebc1ef4b10595558..409bb2c00b9a03978c9cf899fc09300934eeab6d 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -1023,6 +1023,15 @@ export type MarkdownLexerConfiguration = {
+    * @returns Array of block-level tokens
+    */
+   blockTokens: (src: string) => MarkdownToken[]
++
++  /**
++   * Transforms source text into block-level tokens in top mode without leaving
++   * any trace on the lexer: no reference definition, queued inline work or
++   * state change survives the call. For a tokenizer that only looks ahead.
++   * @param src
++   * @returns Array of block-level tokens
++   */
++  probeBlockTokens: (src: string) => MarkdownToken[]
+ }
+
+ /** Custom tokenizer function for marked.js extensions */
 diff --git a/src/utilities/markdown/parseIndentedBlocks.ts b/src/utilities/markdown/parseIndentedBlocks.ts
-index ae4956bd21ffe5489a64d08486cf323e82859c06..f755686bdc6033d97b7fe8515a7f65482f02e7aa 100644
+index ae4956bd21ffe5489a64d08486cf323e82859c06..2002283508a9a3a20f10e7bed70939d4f0c30f91 100644
 --- a/src/utilities/markdown/parseIndentedBlocks.ts
 +++ b/src/utilities/markdown/parseIndentedBlocks.ts
-@@ -37,6 +37,135 @@ export interface BlockParserConfig {
+@@ -37,6 +37,133 @@ export interface BlockParserConfig {
    customNestedParser?: (dedentedContent: string) => any[] | undefined
  }
 
@@ -267,7 +337,7 @@ index ae4956bd21ffe5489a64d08486cf323e82859c06..f755686bdc6033d97b7fe8515a7f6548
 +  return leadingColumns(text) >= 4 ? text.replace(/^[ \t]+/, '') : text
 +}
 +
-+type BlockLexer = { blockTokens: (src: string) => any[] }
++type BlockLexer = { probeBlockTokens: (src: string) => any[] }
 +
 +/**
 + * Whether a block token is a setext heading: text underlined by `===` or `---`.
@@ -291,7 +361,7 @@ index ae4956bd21ffe5489a64d08486cf323e82859c06..f755686bdc6033d97b7fe8515a7f6548
 +  lexer: BlockLexer,
 +): boolean | undefined {
 +  const probe = nextLine === undefined ? [paragraphLine, line] : [paragraphLine, line, nextLine]
-+  const [first] = lexer.blockTokens(probe.join('\n'))
++  const [first] = lexer.probeBlockTokens(probe.join('\n'))
 +  if (first === undefined || (first.type !== 'paragraph' && !isSetextHeading(first))) {
 +    return undefined
 +  }
@@ -300,7 +370,7 @@ index ae4956bd21ffe5489a64d08486cf323e82859c06..f755686bdc6033d97b7fe8515a7f6548
 +    return false
 +  }
 +  if (coveredLines === 2 && isSetextHeading(first)) {
-+    const [alone] = lexer.blockTokens(line)
++    const [alone] = lexer.probeBlockTokens(line)
 +    return alone !== undefined && alone.type === 'paragraph'
 +  }
 +  return true
@@ -310,7 +380,10 @@ index ae4956bd21ffe5489a64d08486cf323e82859c06..f755686bdc6033d97b7fe8515a7f6548
 + * Whether this line cannot continue the item's first paragraph. While that
 + * paragraph is empty, a line at or left of the item's own indent has no
 + * paragraph to continue, so the item ends. Otherwise the decision is marked's,
-+ * the lexer the nested content is parsed with: the line and the one after it,
++ * the lexer the nested content is parsed with, asked through
++ * `probeBlockTokens`: in top mode, the mode of CommonMark's paragraph rules,
++ * and without leaving a reference definition, queued inline work or a state
++ * change on the document's lexer. The line and the one after it,
 + * without the item's content column of indent, are lexed after the
 + * paragraph's last line, or alone while the paragraph is empty, and the line
 + * continues the paragraph only if the lexer reads it as paragraph text. So
@@ -328,15 +401,10 @@ index ae4956bd21ffe5489a64d08486cf323e82859c06..f755686bdc6033d97b7fe8515a7f6548
 +  if (paragraph === '' && leadingColumns(line) <= indentLevel) {
 +    return true
 +  }
-+  // marked lexes a list item's content in its non-top mode, where a list or an
-+  // HTML tag interrupts text, and every `blockTokens` call leaves the lexer in
-+  // top mode. The item's nested content is lexed after these probes, so in top
-+  // mode: start every probe there too, so it reads the line as that parse will.
-+  lexer.blockTokens('')
 +  const text = stripColumns(line, contentColumn)
 +  const next = nextLine === undefined ? undefined : stripColumns(nextLine, contentColumn)
 +  if (paragraph === '') {
-+    const [first] = lexer.blockTokens(next === undefined ? text : `${text}\n${next}`)
++    const [first] = lexer.probeBlockTokens(next === undefined ? text : `${text}\n${next}`)
 +    return first === undefined || (first.type !== 'paragraph' && !isSetextHeading(first))
 +  }
 +  // A paragraph line that opens a block on its own (the item's text can be
@@ -350,7 +418,15 @@ index ae4956bd21ffe5489a64d08486cf323e82859c06..f755686bdc6033d97b7fe8515a7f6548
  /**
   * Parses markdown text into hierarchical indented blocks with proper nesting.
   *
-@@ -118,6 +247,36 @@ export function parseIndentedBlocks(
+@@ -80,6 +207,7 @@ export function parseIndentedBlocks(
+   lexer: {
+     inlineTokens: (src: string) => any[]
+     blockTokens: (src: string) => any[]
++    probeBlockTokens: (src: string) => any[]
+   },
+ ):
+   | {
+@@ -118,6 +246,36 @@ export function parseIndentedBlocks(
      const itemContent = [mainContent] // Start with the main text
      i += 1
 

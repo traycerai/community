@@ -1,0 +1,172 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+index 71985dc9ef879f8cfed92a960c6d8b6f15fad6a1..64ffa5d463167445bb0e10133a66d2c9925a20fb 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -292,8 +292,40 @@ function htmlContainsUnrecognizedTag(html, schemaTags) {
+   });
+ }
+
+ // src/MarkdownManager.ts
++// Lexes `src` as blocks, in top mode, on the document's own lexer (so with
++// its tokenizer, extensions and options), and then puts back everything that
++// call can write. In marked 17 that is: the lexer's `state` (`top`, `inLink`,
++// `inRawBlock`), the reference definitions it registers in `tokens.links`,
++// the inline work it queues in `inlineQueue` (and the `src` of an entry it
++// rewrites there), and the shared tokenizer's `lexer` pointer. The probe's
++// tokens are returned with their inline tokens never filled; a caller reads
++// their types and raw text only.
++function probeBlockTokens(lexer, src) {
++  const links = { ...lexer.tokens.links };
++  const queue = [...lexer.inlineQueue];
++  const queuedSources = queue.map((entry) => entry.src);
++  const state = { ...lexer.state };
++  const tokenizerLexer = lexer.tokenizer.lexer;
++  lexer.state.top = true;
++  try {
++    return lexer.blockTokens(src, []);
++  } finally {
++    Object.keys(lexer.tokens.links).forEach((tag) => {
++      if (!(tag in links)) {
++        delete lexer.tokens.links[tag];
++      }
++    });
++    Object.assign(lexer.tokens.links, links);
++    lexer.inlineQueue.splice(0, lexer.inlineQueue.length, ...queue);
++    queue.forEach((entry, index) => {
++      entry.src = queuedSources[index];
++    });
++    Object.assign(lexer.state, state);
++    lexer.tokenizer.lexer = tokenizerLexer;
++  }
++}
+ var MarkdownManager = class {
+   /**
+    * Create a MarkdownManager.
+    * @param options.marked Optional marked instance to use (injected).
+@@ -409,9 +441,10 @@ var MarkdownManager = class {
+   }
+   createTokenizerHelpers(lexer) {
+     return {
+       inlineTokens: (src) => lexer.inlineTokens(src),
+-      blockTokens: (src) => lexer.blockTokens(src)
++      blockTokens: (src) => lexer.blockTokens(src),
++      probeBlockTokens: (src) => probeBlockTokens(lexer, src)
+     };
+   }
+   tokenizeInline(src) {
+     var _a;
+diff --git a/dist/index.js b/dist/index.js
+index 2626d82021300047fc9e46ba99487097719f8ef9..8ed83556f3fa24f8a5fe236eedda76115cc38d96 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -292,8 +292,40 @@ function htmlContainsUnrecognizedTag(html, schemaTags) {
+   });
+ }
+
+ // src/MarkdownManager.ts
++// Lexes `src` as blocks, in top mode, on the document's own lexer (so with
++// its tokenizer, extensions and options), and then puts back everything that
++// call can write. In marked 17 that is: the lexer's `state` (`top`, `inLink`,
++// `inRawBlock`), the reference definitions it registers in `tokens.links`,
++// the inline work it queues in `inlineQueue` (and the `src` of an entry it
++// rewrites there), and the shared tokenizer's `lexer` pointer. The probe's
++// tokens are returned with their inline tokens never filled; a caller reads
++// their types and raw text only.
++function probeBlockTokens(lexer, src) {
++  const links = { ...lexer.tokens.links };
++  const queue = [...lexer.inlineQueue];
++  const queuedSources = queue.map((entry) => entry.src);
++  const state = { ...lexer.state };
++  const tokenizerLexer = lexer.tokenizer.lexer;
++  lexer.state.top = true;
++  try {
++    return lexer.blockTokens(src, []);
++  } finally {
++    Object.keys(lexer.tokens.links).forEach((tag) => {
++      if (!(tag in links)) {
++        delete lexer.tokens.links[tag];
++      }
++    });
++    Object.assign(lexer.tokens.links, links);
++    lexer.inlineQueue.splice(0, lexer.inlineQueue.length, ...queue);
++    queue.forEach((entry, index) => {
++      entry.src = queuedSources[index];
++    });
++    Object.assign(lexer.state, state);
++    lexer.tokenizer.lexer = tokenizerLexer;
++  }
++}
+ var MarkdownManager = class {
+   /**
+    * Create a MarkdownManager.
+    * @param options.marked Optional marked instance to use (injected).
+@@ -409,9 +441,10 @@ var MarkdownManager = class {
+   }
+   createTokenizerHelpers(lexer) {
+     return {
+       inlineTokens: (src) => lexer.inlineTokens(src),
+-      blockTokens: (src) => lexer.blockTokens(src)
++      blockTokens: (src) => lexer.blockTokens(src),
++      probeBlockTokens: (src) => probeBlockTokens(lexer, src)
+     };
+   }
+   tokenizeInline(src) {
+     var _a;
+diff --git a/src/MarkdownManager.ts b/src/MarkdownManager.ts
+index f5478f13e769850a5b3ffeeb60c41a0f6704e441..7a2dd13e45faa2bca03f2afac7a7220c7b06c83b 100644
+--- a/src/MarkdownManager.ts
++++ b/src/MarkdownManager.ts
+@@ -34,8 +34,43 @@ import {
+   wrapInMarkdownBlock,
+ } from './utils.js'
+ import { htmlContainsUnrecognizedTag } from './utils/htmlTagDetection.js'
+
++/**
++ * Lexes `src` as blocks, in top mode, on the document's own lexer (so with its
++ * tokenizer, extensions and options), and then puts back everything that call
++ * can write. In marked 17 that is: the lexer's `state` (`top`, `inLink`,
++ * `inRawBlock`), the reference definitions it registers in `tokens.links`, the
++ * inline work it queues in `inlineQueue` (and the `src` of an entry it
++ * rewrites there), and the shared tokenizer's `lexer` pointer. The probe's
++ * tokens are returned with their inline tokens never filled; a caller reads
++ * their types and raw text only.
++ */
++function probeBlockTokens(lexer: Lexer, src: string): Token[] {
++  const links = { ...lexer.tokens.links }
++  const queue = [...lexer.inlineQueue]
++  const queuedSources = queue.map(entry => entry.src)
++  const state = { ...lexer.state }
++  const tokenizerLexer = lexer.tokenizer.lexer
++  lexer.state.top = true
++  try {
++    return lexer.blockTokens(src, [])
++  } finally {
++    Object.keys(lexer.tokens.links).forEach(tag => {
++      if (!(tag in links)) {
++        delete lexer.tokens.links[tag]
++      }
++    })
++    Object.assign(lexer.tokens.links, links)
++    lexer.inlineQueue.splice(0, lexer.inlineQueue.length, ...queue)
++    queue.forEach((entry, index) => {
++      entry.src = queuedSources[index]
++    })
++    Object.assign(lexer.state, state)
++    lexer.tokenizer.lexer = tokenizerLexer
++  }
++}
++
+ export class MarkdownManager {
+   private markedInstance: typeof marked
+   private activeParseLexer: Lexer | null = null
+   private registry: Map<string, MarkdownExtensionSpec[]>
+@@ -200,8 +235,9 @@ export class MarkdownManager {
+   private createTokenizerHelpers(lexer: Lexer): MarkdownLexerConfiguration {
+     return {
+       inlineTokens: (src: string) => lexer.inlineTokens(src),
+       blockTokens: (src: string) => lexer.blockTokens(src),
++      probeBlockTokens: (src: string) => probeBlockTokens(lexer, src),
+     }
+   }
+
+   private tokenizeInline(src: string): MarkdownToken[] {
