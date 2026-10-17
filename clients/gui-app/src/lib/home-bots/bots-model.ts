@@ -98,13 +98,21 @@ export function buildHomeBotRow(
   bot: BotRecord,
   snapshot: BotSubscriptionSnapshot | null,
 ): HomeBotRowModel {
-  const live = snapshot?.bot ?? bot;
+  // Two reads of the same bot, each possibly stale: the `bot.list` record
+  // and the stream's last snapshot. A claim made from another host bumps
+  // `hostEpoch`, so the read carrying the higher epoch is the fresher one
+  // for the bound host and the title; on a tie the snapshot wins, being the
+  // live reading. Neither is authoritative by its channel alone - a stream
+  // that opened before the claim keeps restating the old host.
+  const snapshotWins =
+    snapshot !== null && snapshot.bot.hostEpoch >= bot.hostEpoch;
+  const live = snapshotWins ? snapshot.bot : bot;
   const checkins = snapshot === null ? null : foldTaskCheckins(snapshot.tasks);
   return {
     botId: bot.botId,
     title: live.title,
     environmentId: live.environmentId,
-    boundHostId: snapshot?.boundHost.hostId ?? bot.boundHostId,
+    boundHostId: snapshotWins ? snapshot.boundHost.hostId : bot.boundHostId,
     harness: live.harness,
     model: live.model,
     openRequestCount: snapshot?.openRequestCount ?? null,

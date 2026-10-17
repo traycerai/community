@@ -1,4 +1,13 @@
-import { useCallback, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useState,
+  type ReactNode,
+} from "react";
+import type { TranscriptRowLocator } from "@traycer/protocol/persistence/chat-transcript/locate-row";
+import { useChatLocateRow } from "@/hooks/chats/use-chat-locate-row";
+import { replyRowIdFor } from "@/lib/bots/reply-row";
 import { useStore } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
@@ -128,6 +137,7 @@ function BotChatTranscriptBody(props: {
       backgroundItems: s.backgroundItems,
       reportVisibleTranscriptRange: s.reportVisibleTranscriptRange,
       requestFindReadOrdinal: s.requestFindReadOrdinal,
+      requestTranscriptOrdinal: s.requestTranscriptOrdinal,
     })),
   );
   const profile = useAuthStore((s) => s.profile);
@@ -198,18 +208,75 @@ function BotChatTranscriptBody(props: {
   );
   const subagentDrillIn = useSubagentDrillIn(state.snapshotLoaded);
 
+  // "See reply" names the reply's MESSAGE id; the list lands by RENDERED ROW
+  // key, so the id is resolved to the row that renders it (see
+  // `replyRowIdFor`). A reply outside the hydrated window has no row yet: the
+  // id is held as pending, the host locates its ordinal, the store hydrates
+  // around it (`requestTranscriptOrdinal`), and the scroll is issued the
+  // moment the row renders.
   const [scrollRequest, setScrollRequest] =
     useState<ChatMessageScrollRequest | null>(null);
-  const requestCounter = useRef(0);
-  const scrollToMessage = useCallback((messageId: string) => {
-    requestCounter.current += 1;
-    setScrollRequest({
+  const [pendingReplyId, setPendingReplyId] = useState<string | null>(null);
+  const issueScroll = useCallback((rowId: string) => {
+    setScrollRequest((previous) => ({
       kind: "message",
-      messageId,
+      messageId: rowId,
       blockId: null,
-      requestId: requestCounter.current,
-    });
+      requestId: (previous?.requestId ?? 0) + 1,
+    }));
   }, []);
+  const scrollToMessage = useCallback(
+    (messageId: string) => {
+      const rowId = replyRowIdFor(messages, messageId);
+      if (rowId !== null) {
+        setPendingReplyId(null);
+        issueScroll(rowId);
+        return;
+      }
+      setPendingReplyId(messageId);
+    },
+    [issueScroll, messages],
+  );
+  // The row a pending jump waited on has rendered: settle it during render
+  // (the adjust-state-on-prop-change pattern), so the scroll is issued in the
+  // same pass the row appears in and no effect sets state.
+  const pendingRowId =
+    pendingReplyId === null ? null : replyRowIdFor(messages, pendingReplyId);
+  if (pendingRowId !== null) {
+    setPendingReplyId(null);
+    issueScroll(pendingRowId);
+  }
+  const pendingTarget = useMemo<TranscriptRowLocator | null>(
+    () =>
+      pendingReplyId === null
+        ? null
+        : { kind: "message", messageId: pendingReplyId },
+    [pendingReplyId],
+  );
+  const locatedOrdinal = useChatLocateRow({
+    client: tabClient,
+    epicId: botId,
+    chatId,
+    target: pendingTarget,
+    epoch: state.transcriptWindow.epoch,
+  });
+  const { requestTranscriptOrdinal } = state;
+  // The store's pending-jump ordinal follows the pending reply: named while
+  // the host has located it and the row is still missing, cleared the moment
+  // the jump settles (or the transcript goes away).
+  useEffect(() => {
+    if (pendingReplyId === null || locatedOrdinal === null) {
+      requestTranscriptOrdinal(null);
+      return;
+    }
+    requestTranscriptOrdinal(locatedOrdinal);
+  }, [locatedOrdinal, pendingReplyId, requestTranscriptOrdinal]);
+  useEffect(
+    () => () => {
+      requestTranscriptOrdinal(null);
+    },
+    [requestTranscriptOrdinal],
+  );
   const onScrollRequestSettled = useCallback((requestId: number) => {
     setScrollRequest((current) =>
       current !== null && current.requestId === requestId ? null : current,

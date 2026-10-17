@@ -13,6 +13,7 @@ import { useTabHostClient } from "@/hooks/host/use-tab-host-client";
 import { useBotConversationListQuery } from "@/hooks/bots/use-bot-conversation-list-query";
 import { useBotConversationSendMutation } from "@/hooks/bots/use-bot-mutations";
 import { BotChatTranscript } from "@/components/bots/bot-chat-transcript";
+import { BotTranscriptOffline } from "@/components/bots/bot-transcript-offline";
 
 const MESSAGE_MAX = 100_000;
 
@@ -31,8 +32,16 @@ export function BotConversationView(props: {
   readonly botId: string;
   readonly hostId: string;
   readonly botTitle: string;
+  /**
+   * The bound host's label when the tab is NOT on the bound host and that
+   * host cannot be dialled (the offline state): the transcript is that
+   * host's to serve, so a placeholder stands in for it, while the list and
+   * the composer keep working through this tab's host - a send is accepted
+   * and queued for the bound host's return.
+   */
+  readonly offlineHostLabel: string | null;
 }): ReactNode {
-  const { botId, hostId, botTitle } = props;
+  const { botId, hostId, botTitle, offlineHostLabel } = props;
   const client = useTabHostClient();
   const conversations = useBotConversationListQuery(client, botId, true);
   // The app conversation is the bot's first; later ones (A2A, other
@@ -78,14 +87,18 @@ export function BotConversationView(props: {
   }
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="bot-conversation">
-      <BotChatTranscript
-        botId={botId}
-        chatId={conversation.conversationId}
-        hostId={hostId}
-        title={botTitle}
-        instanceId={`bot-conversation:${botId}`}
-        linkRequests
-      />
+      {offlineHostLabel === null ? (
+        <BotChatTranscript
+          botId={botId}
+          chatId={conversation.conversationId}
+          hostId={hostId}
+          title={botTitle}
+          instanceId={`bot-conversation:${botId}`}
+          linkRequests
+        />
+      ) : (
+        <BotTranscriptOffline hostLabel={offlineHostLabel} />
+      )}
       <BotConversationComposer
         botId={botId}
         conversationId={conversation.conversationId}

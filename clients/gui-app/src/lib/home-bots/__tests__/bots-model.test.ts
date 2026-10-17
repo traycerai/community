@@ -277,4 +277,71 @@ describe("buildHomeBotRow", () => {
     expect(row.openRequestCount).toBeNull();
     expect(row.boundHere).toBe(false);
   });
+
+  describe("which read is fresher", () => {
+    const listed: BotRecord = {
+      ...record,
+      title: "List title",
+      boundHostId: "host-c",
+      hostEpoch: 3,
+    };
+
+    function snapshotAt(
+      hostEpoch: number,
+      title: string,
+      hostId: string,
+    ): BotSubscriptionSnapshot {
+      return snapshot({
+        record: { ...record, title, boundHostId: hostId, hostEpoch },
+        tasks: [],
+        openRequestCount: 0,
+        hostId,
+        isThisHost: false,
+      });
+    }
+
+    it("takes the list record's host and title when the snapshot is at a lower epoch (a stale stream)", () => {
+      const row = buildHomeBotRow(
+        listed,
+        snapshotAt(2, "Stale title", "host-a"),
+      );
+      expect(row.boundHostId).toBe("host-c");
+      expect(row.title).toBe("List title");
+    });
+
+    it("takes the snapshot's host and title when it is at a higher epoch", () => {
+      const row = buildHomeBotRow(
+        listed,
+        snapshotAt(4, "Snapshot title", "host-d"),
+      );
+      expect(row.boundHostId).toBe("host-d");
+      expect(row.title).toBe("Snapshot title");
+    });
+
+    it("takes the snapshot on a tie, being the live reading", () => {
+      const row = buildHomeBotRow(
+        listed,
+        snapshotAt(3, "Snapshot title", "host-b"),
+      );
+      expect(row.boundHostId).toBe("host-b");
+      expect(row.title).toBe("Snapshot title");
+    });
+
+    it("keeps the snapshot's live facts even when the record wins the host", () => {
+      const row = buildHomeBotRow(
+        listed,
+        snapshot({
+          record: { ...record, hostEpoch: 2, boundHostId: "host-a" },
+          tasks: [trackingTask("t1", 700, 40)],
+          openRequestCount: 5,
+          hostId: "host-a",
+          isThisHost: true,
+        }),
+      );
+      expect(row.boundHostId).toBe("host-c");
+      expect(row.openRequestCount).toBe(5);
+      expect(row.tasksTracking).toBe(1);
+      expect(row.boundHere).toBe(true);
+    });
+  });
 });

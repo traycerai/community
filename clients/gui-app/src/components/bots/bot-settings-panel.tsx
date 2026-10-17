@@ -1,6 +1,9 @@
-import { useId, useState, type ReactNode } from "react";
+import { useId, useMemo, useState, type ReactNode } from "react";
 import { useStore } from "zustand";
 import type { BotRecord } from "@traycer/protocol/host/bot/schemas";
+import { guiHarnessIdSchema } from "@traycer/protocol/host/index";
+import type { ChatRunSettings } from "@traycer/protocol/host/agent/gui/subscribe";
+import { useSettingsStore } from "@/stores/settings/settings-store";
 import { AgentSpinningDots } from "@/components/ui/agent-spinning-dots";
 import { Button } from "@/components/ui/button";
 import { ConfirmDestructiveDialog } from "@/components/ui/confirm-destructive-dialog";
@@ -107,9 +110,27 @@ function BotRunSettingsForm(props: {
   const client = useTabHostClient();
   const hostId = useTabHostId();
   const update = useBotUpdateRunSettingsMutation(client);
+  // The picker opens on what the bot RUNS, not on the app default: seeded
+  // from the bot row's harness, model, effort and profile, so Apply has
+  // nothing to apply until the person changes something. Permission and
+  // agent mode are not the bot's to set; the seed carries the app's.
+  const defaultPermission = useSettingsStore((s) => s.defaultPermission);
+  const botSeed = useMemo<ChatRunSettings | null>(() => {
+    const harness = guiHarnessIdSchema.safeParse(bot.harness);
+    if (!harness.success) return null;
+    return {
+      harnessId: harness.data,
+      model: bot.model,
+      permissionMode: defaultPermission,
+      reasoningEffort: bot.effort,
+      serviceTier: null,
+      agentMode: "regular",
+      profileId: bot.profile,
+    };
+  }, [bot.effort, bot.harness, bot.model, bot.profile, defaultPermission]);
   const toolbarStore = useComposerToolbarStore(
     null,
-    fallbackSeedSource(null, client),
+    fallbackSeedSource(botSeed, client),
     null,
     { hostClient: client, hostId, tuiOnly: false, chatLineCarriesAutoMode: null },
   );

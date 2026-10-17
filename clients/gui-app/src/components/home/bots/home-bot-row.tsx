@@ -46,6 +46,12 @@ export function HomeBotRow(props: {
 
   const hostLabel = hostLabels.get(row.boundHostId) ?? row.boundHostId;
   const hostOffline = !connectableHostIds.has(row.boundHostId);
+  // The tab binds to the host the bot RUNS on when that host can be dialled.
+  // When it cannot, the tab opens through the host this window reads
+  // (offline state): the conversation list and a queued send go through it,
+  // and the person may move the bot here. Never a clone.
+  const openHostId =
+    hostOffline && hostId !== null ? hostId : row.boundHostId;
   const openRequests = row.openRequestCount ?? 0;
 
   return (
@@ -55,7 +61,7 @@ export function HomeBotRow(props: {
       data-bot-id={row.botId}
       className="group flex w-full items-center gap-3 rounded-md px-2 py-2 text-left transition-colors hover:bg-foreground/6 focus-visible:outline-2 focus-visible:outline-ring focus-visible:-outline-offset-2"
       onClick={() => {
-        openBotTab({ botId: row.botId, hostId: row.boundHostId, title: row.title });
+        openBotTab({ botId: row.botId, hostId: openHostId, title: row.title });
         navigateToTabIntent(navigate, botTabIntent(row.botId), undefined);
       }}
     >
