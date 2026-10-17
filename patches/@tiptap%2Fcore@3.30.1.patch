@@ -1,0 +1,592 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+index d828422b45e463c229bd937d39ea416278055dde..6e7482f753468e2e3ea9e2564623aa5944230c61 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -4788,6 +4788,85 @@ function createInlineMarkdownSpec(options) {
+ }
+
+ // src/utilities/markdown/parseIndentedBlocks.ts
++// The column a line's text starts at, a tab advancing to the next stop of 4.
++function leadingColumns(line) {
++  let column = 0;
++  for (const char of line) {
++    if (char === " ") column += 1;
++    else if (char === "\t") column += 4 - column % 4;
++    else break;
++  }
++  return column;
++}
++// A line without its first `columns` columns of indent, a tab advancing to
++// the next stop of 4. A tab that reaches past `columns` keeps the rest of its
++// width as spaces, and a line indented less loses all of its indent.
++function stripColumns(line, columns) {
++  let column = 0;
++  let index = 0;
++  while (index < line.length && column < columns) {
++    const char = line[index];
++    if (char === " ") column += 1;
++    else if (char === "\t") column += 4 - column % 4;
++    else break;
++    index += 1;
++  }
++  return " ".repeat(Math.max(column - columns, 0)) + line.slice(index);
++}
++// A paragraph continuation line as text: without the item's content column
++// of indent, keeping up to 3 more spaces, and without all of its indent when
++// 4 or more remain.
++function continuationText(line, contentColumn) {
++  const text = stripColumns(line, contentColumn);
++  return leadingColumns(text) >= 4 ? stripColumns(text, 4) : text;
++}
++// Whether a block token is a setext heading: text underlined by `===` or `---`.
++function isSetextHeading(token) {
++  return token.type === "heading" && !/^ {0,3}#/.test(token.raw);
++}
++// Whether marked's block lexer reads `line` as more of the paragraph whose
++// last line is `paragraphLine`. It does when its first block covers both
++// lines as a paragraph or as a setext heading. When `line` is that heading's
++// underline, the item's paragraph keeps it as text only if the underline
++// alone is a paragraph (`===`), not a thematic break (`---`). Undefined when
++// `paragraphLine` alone opens some other block.
++function continuesParagraph(paragraphLine, line, nextLine, lexer) {
++  const probe = nextLine === void 0 ? [paragraphLine, line] : [paragraphLine, line, nextLine];
++  const [first] = lexer.probeBlockTokens(probe.join("\n"));
++  if (first === void 0 || first.type !== "paragraph" && !isSetextHeading(first)) return void 0;
++  const coveredLines = first.raw.replace(/\n+$/, "").split("\n").length;
++  if (coveredLines < 2) return false;
++  if (coveredLines === 2 && isSetextHeading(first)) {
++    const [alone] = lexer.probeBlockTokens(line);
++    return alone !== void 0 && alone.type === "paragraph";
++  }
++  return true;
++}
++// Whether this line cannot continue the item's first paragraph. While that
++// paragraph is empty, a line at or left of the item's own indent has no
++// paragraph to continue, so the item ends. Otherwise the decision is
++// marked's, the lexer the nested content is parsed with, asked through
++// `probeBlockTokens`: in top mode, the mode of CommonMark's paragraph rules,
++// and without leaving a reference definition, queued inline work or a state
++// change on the document's lexer. The line and the one
++// after it, without the item's content column of indent, are lexed after the
++// paragraph's last line, or alone while the paragraph is empty, and the line
++// continues the paragraph only if the lexer reads it as paragraph text. So
++// indented code, a list, a fence, a blockquote, a heading, a thematic break,
++// an HTML block or a table opens here exactly when marked would open it.
++function opensItemBlock(line, nextLine, indentLevel, contentColumn, paragraph, lexer) {
++  var _a;
++  if (paragraph === "" && leadingColumns(line) <= indentLevel) return true;
++  const text = stripColumns(line, contentColumn);
++  const next = nextLine === void 0 ? void 0 : stripColumns(nextLine, contentColumn);
++  if (paragraph === "") {
++    const [first] = lexer.probeBlockTokens(next === void 0 ? text : `${text}\n${next}`);
++    return first === void 0 || first.type !== "paragraph" && !isSetextHeading(first);
++  }
++  const lastLine = paragraph.slice(paragraph.lastIndexOf("\n") + 1);
++  const continues = (_a = continuesParagraph(lastLine, text, next, lexer)) != null ? _a : continuesParagraph("a", text, next, lexer);
++  return continues !== true;
++}
+ function parseIndentedBlocks(src, config, lexer) {
+   var _a, _b, _c, _d;
+   const lines = src.split("\n");
+@@ -4801,7 +4880,7 @@ function parseIndentedBlocks(src, config, lexer) {
+     if (!itemMatch) {
+       if (items.length > 0) {
+         break;
+-      } else if (currentLine.trim() === "") {
++      } else if (!/[^ \t]/.test(currentLine)) {
+         i += 1;
+         totalRaw = `${totalRaw}${currentLine}
+ `;
+@@ -4818,13 +4897,20 @@ function parseIndentedBlocks(src, config, lexer) {
+     i += 1;
+     while (i < lines.length) {
+       const nextLine = lines[i];
+-      if (nextLine.trim() === "") {
+-        const nextNonEmptyIndex = lines.slice(i + 1).findIndex((l) => l.trim() !== "");
++      if (!/[^ \t]/.test(nextLine) || config.itemPattern.test(nextLine) || opensItemBlock(nextLine, lines[i + 1], indentLevel, indentLevel + baseIndentSize, itemData.mainContent, lexer)) break;
++      itemData.mainContent = itemData.mainContent === "" ? continuationText(nextLine, indentLevel + baseIndentSize) : `${itemData.mainContent}\n${continuationText(nextLine, indentLevel + baseIndentSize)}`;
++      totalRaw = `${totalRaw}${nextLine}\n`;
++      i += 1;
++    }
++    while (i < lines.length) {
++      const nextLine = lines[i];
++      if (!/[^ \t]/.test(nextLine)) {
++        const nextNonEmptyIndex = lines.slice(i + 1).findIndex((l) => /[^ \t]/.test(l));
+         if (nextNonEmptyIndex === -1) {
+           break;
+         }
+         const nextNonEmpty = lines[i + 1 + nextNonEmptyIndex];
+-        const nextIndent2 = ((_b = (_a = nextNonEmpty.match(/^(\s*)/)) == null ? void 0 : _a[1]) == null ? void 0 : _b.length) || 0;
++        const nextIndent2 = ((_b = (_a = nextNonEmpty.match(/^([ \t]*)/)) == null ? void 0 : _a[1]) == null ? void 0 : _b.length) || 0;
+         if (nextIndent2 > indentLevel) {
+           itemContent.push(nextLine);
+           totalRaw = `${totalRaw}${nextLine}
+@@ -4835,7 +4921,7 @@ function parseIndentedBlocks(src, config, lexer) {
+           break;
+         }
+       }
+-      const nextIndent = ((_d = (_c = nextLine.match(/^(\s*)/)) == null ? void 0 : _c[1]) == null ? void 0 : _d.length) || 0;
++      const nextIndent = ((_d = (_c = nextLine.match(/^([ \t]*)/)) == null ? void 0 : _c[1]) == null ? void 0 : _d.length) || 0;
+       if (nextIndent > indentLevel) {
+         itemContent.push(nextLine);
+         totalRaw = `${totalRaw}${nextLine}
+@@ -4848,8 +4934,8 @@ function parseIndentedBlocks(src, config, lexer) {
+     let nestedTokens;
+     const nestedContent = itemContent.slice(1);
+     if (nestedContent.length > 0) {
+-      const dedentedNested = nestedContent.map((nestedLine) => nestedLine.slice(indentLevel + baseIndentSize)).join("\n");
+-      if (dedentedNested.trim()) {
++      const dedentedNested = nestedContent.map((nestedLine) => stripColumns(nestedLine, indentLevel + baseIndentSize)).join("\n");
++      if (/[^ \t\n]/.test(dedentedNested)) {
+         if (config.customNestedParser) {
+           nestedTokens = config.customNestedParser(dedentedNested);
+         } else {
+diff --git a/dist/index.d.cts b/dist/index.d.cts
+index 6f803b5c646b232b8507e7a9dfd9857606d02161..36b599def85fa59ce2d17208b711408ee9e2594a 100644
+--- a/dist/index.d.cts
++++ b/dist/index.d.cts
+@@ -2266,6 +2266,14 @@ type MarkdownLexerConfiguration = {
+      * @returns Array of block-level tokens
+      */
+     blockTokens: (src: string) => MarkdownToken[];
++    /**
++     * Transforms source text into block-level tokens in top mode without leaving
++     * any trace on the lexer: no reference definition, queued inline work or
++     * state change survives the call. For a tokenizer that only looks ahead.
++     * @param src
++     * @returns Array of block-level tokens
++     */
++    probeBlockTokens: (src: string) => MarkdownToken[];
+ };
+ /** Custom tokenizer function for marked.js extensions */
+ type MarkdownTokenizer = {
+@@ -5584,6 +5592,7 @@ interface BlockParserConfig {
+ declare function parseIndentedBlocks(src: string, config: BlockParserConfig, lexer: {
+     inlineTokens: (src: string) => any[];
+     blockTokens: (src: string) => any[];
++    probeBlockTokens: (src: string) => any[];
+ }): {
+     items: ParsedBlock[];
+     raw: string;
+diff --git a/dist/index.d.ts b/dist/index.d.ts
+index 6f803b5c646b232b8507e7a9dfd9857606d02161..36b599def85fa59ce2d17208b711408ee9e2594a 100644
+--- a/dist/index.d.ts
++++ b/dist/index.d.ts
+@@ -2266,6 +2266,14 @@ type MarkdownLexerConfiguration = {
+      * @returns Array of block-level tokens
+      */
+     blockTokens: (src: string) => MarkdownToken[];
++    /**
++     * Transforms source text into block-level tokens in top mode without leaving
++     * any trace on the lexer: no reference definition, queued inline work or
++     * state change survives the call. For a tokenizer that only looks ahead.
++     * @param src
++     * @returns Array of block-level tokens
++     */
++    probeBlockTokens: (src: string) => MarkdownToken[];
+ };
+ /** Custom tokenizer function for marked.js extensions */
+ type MarkdownTokenizer = {
+@@ -5584,6 +5592,7 @@ interface BlockParserConfig {
+ declare function parseIndentedBlocks(src: string, config: BlockParserConfig, lexer: {
+     inlineTokens: (src: string) => any[];
+     blockTokens: (src: string) => any[];
++    probeBlockTokens: (src: string) => any[];
+ }): {
+     items: ParsedBlock[];
+     raw: string;
+diff --git a/dist/index.js b/dist/index.js
+index a0f6db230e5c24f99066beda95637818680b3fd2..0dcc9b07404125f524de7235f77f665ef22b8b4f 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -4626,6 +4626,85 @@ function createInlineMarkdownSpec(options) {
+ }
+
+ // src/utilities/markdown/parseIndentedBlocks.ts
++// The column a line's text starts at, a tab advancing to the next stop of 4.
++function leadingColumns(line) {
++  let column = 0;
++  for (const char of line) {
++    if (char === " ") column += 1;
++    else if (char === "\t") column += 4 - column % 4;
++    else break;
++  }
++  return column;
++}
++// A line without its first `columns` columns of indent, a tab advancing to
++// the next stop of 4. A tab that reaches past `columns` keeps the rest of its
++// width as spaces, and a line indented less loses all of its indent.
++function stripColumns(line, columns) {
++  let column = 0;
++  let index = 0;
++  while (index < line.length && column < columns) {
++    const char = line[index];
++    if (char === " ") column += 1;
++    else if (char === "\t") column += 4 - column % 4;
++    else break;
++    index += 1;
++  }
++  return " ".repeat(Math.max(column - columns, 0)) + line.slice(index);
++}
++// A paragraph continuation line as text: without the item's content column
++// of indent, keeping up to 3 more spaces, and without all of its indent when
++// 4 or more remain.
++function continuationText(line, contentColumn) {
++  const text = stripColumns(line, contentColumn);
++  return leadingColumns(text) >= 4 ? stripColumns(text, 4) : text;
++}
++// Whether a block token is a setext heading: text underlined by `===` or `---`.
++function isSetextHeading(token) {
++  return token.type === "heading" && !/^ {0,3}#/.test(token.raw);
++}
++// Whether marked's block lexer reads `line` as more of the paragraph whose
++// last line is `paragraphLine`. It does when its first block covers both
++// lines as a paragraph or as a setext heading. When `line` is that heading's
++// underline, the item's paragraph keeps it as text only if the underline
++// alone is a paragraph (`===`), not a thematic break (`---`). Undefined when
++// `paragraphLine` alone opens some other block.
++function continuesParagraph(paragraphLine, line, nextLine, lexer) {
++  const probe = nextLine === void 0 ? [paragraphLine, line] : [paragraphLine, line, nextLine];
++  const [first] = lexer.probeBlockTokens(probe.join("\n"));
++  if (first === void 0 || first.type !== "paragraph" && !isSetextHeading(first)) return void 0;
++  const coveredLines = first.raw.replace(/\n+$/, "").split("\n").length;
++  if (coveredLines < 2) return false;
++  if (coveredLines === 2 && isSetextHeading(first)) {
++    const [alone] = lexer.probeBlockTokens(line);
++    return alone !== void 0 && alone.type === "paragraph";
++  }
++  return true;
++}
++// Whether this line cannot continue the item's first paragraph. While that
++// paragraph is empty, a line at or left of the item's own indent has no
++// paragraph to continue, so the item ends. Otherwise the decision is
++// marked's, the lexer the nested content is parsed with, asked through
++// `probeBlockTokens`: in top mode, the mode of CommonMark's paragraph rules,
++// and without leaving a reference definition, queued inline work or a state
++// change on the document's lexer. The line and the one
++// after it, without the item's content column of indent, are lexed after the
++// paragraph's last line, or alone while the paragraph is empty, and the line
++// continues the paragraph only if the lexer reads it as paragraph text. So
++// indented code, a list, a fence, a blockquote, a heading, a thematic break,
++// an HTML block or a table opens here exactly when marked would open it.
++function opensItemBlock(line, nextLine, indentLevel, contentColumn, paragraph, lexer) {
++  var _a;
++  if (paragraph === "" && leadingColumns(line) <= indentLevel) return true;
++  const text = stripColumns(line, contentColumn);
++  const next = nextLine === void 0 ? void 0 : stripColumns(nextLine, contentColumn);
++  if (paragraph === "") {
++    const [first] = lexer.probeBlockTokens(next === void 0 ? text : `${text}\n${next}`);
++    return first === void 0 || first.type !== "paragraph" && !isSetextHeading(first);
++  }
++  const lastLine = paragraph.slice(paragraph.lastIndexOf("\n") + 1);
++  const continues = (_a = continuesParagraph(lastLine, text, next, lexer)) != null ? _a : continuesParagraph("a", text, next, lexer);
++  return continues !== true;
++}
+ function parseIndentedBlocks(src, config, lexer) {
+   var _a, _b, _c, _d;
+   const lines = src.split("\n");
+@@ -4639,7 +4718,7 @@ function parseIndentedBlocks(src, config, lexer) {
+     if (!itemMatch) {
+       if (items.length > 0) {
+         break;
+-      } else if (currentLine.trim() === "") {
++      } else if (!/[^ \t]/.test(currentLine)) {
+         i += 1;
+         totalRaw = `${totalRaw}${currentLine}
+ `;
+@@ -4656,13 +4735,20 @@ function parseIndentedBlocks(src, config, lexer) {
+     i += 1;
+     while (i < lines.length) {
+       const nextLine = lines[i];
+-      if (nextLine.trim() === "") {
+-        const nextNonEmptyIndex = lines.slice(i + 1).findIndex((l) => l.trim() !== "");
++      if (!/[^ \t]/.test(nextLine) || config.itemPattern.test(nextLine) || opensItemBlock(nextLine, lines[i + 1], indentLevel, indentLevel + baseIndentSize, itemData.mainContent, lexer)) break;
++      itemData.mainContent = itemData.mainContent === "" ? continuationText(nextLine, indentLevel + baseIndentSize) : `${itemData.mainContent}\n${continuationText(nextLine, indentLevel + baseIndentSize)}`;
++      totalRaw = `${totalRaw}${nextLine}\n`;
++      i += 1;
++    }
++    while (i < lines.length) {
++      const nextLine = lines[i];
++      if (!/[^ \t]/.test(nextLine)) {
++        const nextNonEmptyIndex = lines.slice(i + 1).findIndex((l) => /[^ \t]/.test(l));
+         if (nextNonEmptyIndex === -1) {
+           break;
+         }
+         const nextNonEmpty = lines[i + 1 + nextNonEmptyIndex];
+-        const nextIndent2 = ((_b = (_a = nextNonEmpty.match(/^(\s*)/)) == null ? void 0 : _a[1]) == null ? void 0 : _b.length) || 0;
++        const nextIndent2 = ((_b = (_a = nextNonEmpty.match(/^([ \t]*)/)) == null ? void 0 : _a[1]) == null ? void 0 : _b.length) || 0;
+         if (nextIndent2 > indentLevel) {
+           itemContent.push(nextLine);
+           totalRaw = `${totalRaw}${nextLine}
+@@ -4673,7 +4759,7 @@ function parseIndentedBlocks(src, config, lexer) {
+           break;
+         }
+       }
+-      const nextIndent = ((_d = (_c = nextLine.match(/^(\s*)/)) == null ? void 0 : _c[1]) == null ? void 0 : _d.length) || 0;
++      const nextIndent = ((_d = (_c = nextLine.match(/^([ \t]*)/)) == null ? void 0 : _c[1]) == null ? void 0 : _d.length) || 0;
+       if (nextIndent > indentLevel) {
+         itemContent.push(nextLine);
+         totalRaw = `${totalRaw}${nextLine}
+@@ -4686,8 +4772,8 @@ function parseIndentedBlocks(src, config, lexer) {
+     let nestedTokens;
+     const nestedContent = itemContent.slice(1);
+     if (nestedContent.length > 0) {
+-      const dedentedNested = nestedContent.map((nestedLine) => nestedLine.slice(indentLevel + baseIndentSize)).join("\n");
+-      if (dedentedNested.trim()) {
++      const dedentedNested = nestedContent.map((nestedLine) => stripColumns(nestedLine, indentLevel + baseIndentSize)).join("\n");
++      if (/[^ \t\n]/.test(dedentedNested)) {
+         if (config.customNestedParser) {
+           nestedTokens = config.customNestedParser(dedentedNested);
+         } else {
+diff --git a/src/types.ts b/src/types.ts
+index 0fdbb9f8a835b3bb43310ce5ebc1ef4b10595558..409bb2c00b9a03978c9cf899fc09300934eeab6d 100644
+--- a/src/types.ts
++++ b/src/types.ts
+@@ -1023,6 +1023,15 @@ export type MarkdownLexerConfiguration = {
+    * @returns Array of block-level tokens
+    */
+   blockTokens: (src: string) => MarkdownToken[]
++
++  /**
++   * Transforms source text into block-level tokens in top mode without leaving
++   * any trace on the lexer: no reference definition, queued inline work or
++   * state change survives the call. For a tokenizer that only looks ahead.
++   * @param src
++   * @returns Array of block-level tokens
++   */
++  probeBlockTokens: (src: string) => MarkdownToken[]
+ }
+
+ /** Custom tokenizer function for marked.js extensions */
+diff --git a/src/utilities/markdown/parseIndentedBlocks.ts b/src/utilities/markdown/parseIndentedBlocks.ts
+index ae4956bd21ffe5489a64d08486cf323e82859c06..f26bfe6b0d4f9368c4c774f5bf55019b17e7c286 100644
+--- a/src/utilities/markdown/parseIndentedBlocks.ts
++++ b/src/utilities/markdown/parseIndentedBlocks.ts
+@@ -37,6 +37,133 @@ export interface BlockParserConfig {
+   customNestedParser?: (dedentedContent: string) => any[] | undefined
+ }
+
++/**
++ * The column a line's text starts at, a tab advancing to the next stop of 4.
++ */
++function leadingColumns(line: string): number {
++  let column = 0
++  for (const char of line) {
++    if (char === ' ') {
++      column += 1
++    } else if (char === '\t') {
++      column += 4 - (column % 4)
++    } else {
++      break
++    }
++  }
++  return column
++}
++
++/**
++ * A line without its first `columns` columns of indent, a tab advancing to the
++ * next stop of 4. A tab that reaches past `columns` keeps the rest of its width
++ * as spaces, and a line indented less loses all of its indent.
++ */
++function stripColumns(line: string, columns: number): string {
++  let column = 0
++  let index = 0
++  while (index < line.length && column < columns) {
++    const char = line[index]
++    if (char === ' ') {
++      column += 1
++    } else if (char === '\t') {
++      column += 4 - (column % 4)
++    } else {
++      break
++    }
++    index += 1
++  }
++  return ' '.repeat(Math.max(column - columns, 0)) + line.slice(index)
++}
++
++/**
++ * A paragraph continuation line as text, as marked reads one in a bullet item:
++ * without the item's content column of indent, keeping up to 3 more columns,
++ * and 4 columns fewer when 4 or more remain.
++ */
++function continuationText(line: string, contentColumn: number): string {
++  const text = stripColumns(line, contentColumn)
++  return leadingColumns(text) >= 4 ? stripColumns(text, 4) : text
++}
++
++type BlockLexer = { probeBlockTokens: (src: string) => any[] }
++
++/**
++ * Whether a block token is a setext heading: text underlined by `===` or `---`.
++ */
++function isSetextHeading(token: any): boolean {
++  return token.type === 'heading' && !/^ {0,3}#/.test(token.raw)
++}
++
++/**
++ * Whether marked's block lexer reads `line` as more of the paragraph whose last
++ * line is `paragraphLine`. It does when its first block covers both lines as a
++ * paragraph or as a setext heading. When `line` is that heading's underline,
++ * the item's paragraph keeps it as text only if the underline alone is a
++ * paragraph (`===`), not a thematic break (`---`). Undefined when
++ * `paragraphLine` alone opens some other block.
++ */
++function continuesParagraph(
++  paragraphLine: string,
++  line: string,
++  nextLine: string | undefined,
++  lexer: BlockLexer,
++): boolean | undefined {
++  const probe = nextLine === undefined ? [paragraphLine, line] : [paragraphLine, line, nextLine]
++  const [first] = lexer.probeBlockTokens(probe.join('\n'))
++  if (first === undefined || (first.type !== 'paragraph' && !isSetextHeading(first))) {
++    return undefined
++  }
++  const coveredLines = first.raw.replace(/\n+$/, '').split('\n').length
++  if (coveredLines < 2) {
++    return false
++  }
++  if (coveredLines === 2 && isSetextHeading(first)) {
++    const [alone] = lexer.probeBlockTokens(line)
++    return alone !== undefined && alone.type === 'paragraph'
++  }
++  return true
++}
++
++/**
++ * Whether this line cannot continue the item's first paragraph. While that
++ * paragraph is empty, a line at or left of the item's own indent has no
++ * paragraph to continue, so the item ends. Otherwise the decision is marked's,
++ * the lexer the nested content is parsed with, asked through
++ * `probeBlockTokens`: in top mode, the mode of CommonMark's paragraph rules,
++ * and without leaving a reference definition, queued inline work or a state
++ * change on the document's lexer. The line and the one after it,
++ * without the item's content column of indent, are lexed after the
++ * paragraph's last line, or alone while the paragraph is empty, and the line
++ * continues the paragraph only if the lexer reads it as paragraph text. So
++ * indented code, a list, a fence, a blockquote, a heading, a thematic break,
++ * an HTML block or a table opens here exactly when marked would open it.
++ */
++function opensItemBlock(
++  line: string,
++  nextLine: string | undefined,
++  indentLevel: number,
++  contentColumn: number,
++  paragraph: string,
++  lexer: BlockLexer,
++): boolean {
++  if (paragraph === '' && leadingColumns(line) <= indentLevel) {
++    return true
++  }
++  const text = stripColumns(line, contentColumn)
++  const next = nextLine === undefined ? undefined : stripColumns(nextLine, contentColumn)
++  if (paragraph === '') {
++    const [first] = lexer.probeBlockTokens(next === undefined ? text : `${text}\n${next}`)
++    return first === undefined || (first.type !== 'paragraph' && !isSetextHeading(first))
++  }
++  // A paragraph line that opens a block on its own (the item's text can be
++  // `# x`) is still paragraph text here, so a plain line stands in for it.
++  const lastLine = paragraph.slice(paragraph.lastIndexOf('\n') + 1)
++  const continues =
++    continuesParagraph(lastLine, text, next, lexer) ?? continuesParagraph('a', text, next, lexer)
++  return continues !== true
++}
++
+ /**
+  * Parses markdown text into hierarchical indented blocks with proper nesting.
+  *
+@@ -80,6 +207,7 @@ export function parseIndentedBlocks(
+   lexer: {
+     inlineTokens: (src: string) => any[]
+     blockTokens: (src: string) => any[]
++    probeBlockTokens: (src: string) => any[]
+   },
+ ):
+   | {
+@@ -101,7 +229,7 @@ export function parseIndentedBlocks(
+       // Not a matching item - stop if we have items, otherwise this isn't our block type
+       if (items.length > 0) {
+         break
+-      } else if (currentLine.trim() === '') {
++      } else if (!/[^ \t]/.test(currentLine)) {
+         i += 1
+         totalRaw = `${totalRaw}${currentLine}\n`
+         continue
+@@ -118,20 +246,50 @@ export function parseIndentedBlocks(
+     const itemContent = [mainContent] // Start with the main text
+     i += 1
+
++    // A paragraph continuation of the item's first line (indented, or lazy at
++    // column 0) joins it, so a hard break stays inside the item's paragraph.
++    // An item with an empty first line takes the continuation as its text.
++    // A continuation line loses the item's content column of indent and keeps
++    // up to 3 spaces past it as text, as in a bullet item; 4 or more are the
++    // indent of a code line that cannot interrupt the paragraph, and go.
++    while (i < lines.length) {
++      const nextLine = lines[i]
++      if (
++        !/[^ \t]/.test(nextLine) ||
++        config.itemPattern.test(nextLine) ||
++        opensItemBlock(
++          nextLine,
++          lines[i + 1],
++          indentLevel,
++          indentLevel + baseIndentSize,
++          itemData.mainContent,
++          lexer,
++        )
++      ) {
++        break
++      }
++      itemData.mainContent =
++        itemData.mainContent === ''
++          ? continuationText(nextLine, indentLevel + baseIndentSize)
++          : `${itemData.mainContent}\n${continuationText(nextLine, indentLevel + baseIndentSize)}`
++      totalRaw = `${totalRaw}${nextLine}\n`
++      i += 1
++    }
++
+     // Look ahead for nested content (indented more than current item)
+     while (i < lines.length) {
+       const nextLine = lines[i]
+
+-      if (nextLine.trim() === '') {
++      if (!/[^ \t]/.test(nextLine)) {
+         // Empty line - might be end of nested content
+-        const nextNonEmptyIndex = lines.slice(i + 1).findIndex(l => l.trim() !== '')
++        const nextNonEmptyIndex = lines.slice(i + 1).findIndex(l => /[^ \t]/.test(l))
+         if (nextNonEmptyIndex === -1) {
+           // No more content
+           break
+         }
+
+         const nextNonEmpty = lines[i + 1 + nextNonEmptyIndex]
+-        const nextIndent = nextNonEmpty.match(/^(\s*)/)?.[1]?.length || 0
++        const nextIndent = nextNonEmpty.match(/^([ \t]*)/)?.[1]?.length || 0
+
+         if (nextIndent > indentLevel) {
+           // Nested content continues after empty line
+@@ -145,7 +303,7 @@ export function parseIndentedBlocks(
+         }
+       }
+
+-      const nextIndent = nextLine.match(/^(\s*)/)?.[1]?.length || 0
++      const nextIndent = nextLine.match(/^([ \t]*)/)?.[1]?.length || 0
+
+       if (nextIndent > indentLevel) {
+         // This is nested content for the current item
+@@ -165,10 +323,11 @@ export function parseIndentedBlocks(
+     if (nestedContent.length > 0) {
+       // Remove the base indentation from nested content
+       const dedentedNested = nestedContent
+-        .map(nestedLine => nestedLine.slice(indentLevel + baseIndentSize)) // Remove base indent + 2 spaces
++        // Remove base indent + 2 spaces, counted in columns: a tab is not one.
++        .map(nestedLine => stripColumns(nestedLine, indentLevel + baseIndentSize))
+         .join('\n')
+
+-      if (dedentedNested.trim()) {
++      if (/[^ \t\n]/.test(dedentedNested)) {
+         // Use custom nested parser if provided, otherwise fall back to default
+         if (config.customNestedParser) {
+           nestedTokens = config.customNestedParser(dedentedNested)
