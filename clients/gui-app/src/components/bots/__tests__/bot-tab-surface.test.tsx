@@ -121,7 +121,7 @@ const BOUND_HOST = "host-bound";
 const BOT: BotRecord = {
   botId: BOT_ID,
   environmentId: "env-personal",
-  ownerUserId: "user-1",
+  createdByUserId: "user-1",
   title: "Release Bot",
   harness: "claude",
   model: "opus",

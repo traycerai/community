@@ -38,7 +38,7 @@ function bot(
   return {
     botId,
     environmentId,
-    ownerUserId: "user-1",
+    createdByUserId: "user-1",
     title,
     harness: "claude",
     model: "opus",

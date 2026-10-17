@@ -39,7 +39,12 @@ export const botRecordSchema = lazySchema(() =>
     botId: botIdSchema,
     /** The environment (team or personal) the bot lives in. */
     environmentId: z.string().min(1),
-    ownerUserId: z.string().min(1),
+    /**
+     * The member who created the bot. Attribution only, never authority;
+     * null once that account was erased, since a team bot outlives its
+     * creator.
+     */
+    createdByUserId: z.string().min(1).nullable(),
     title: botTitleSchema,
     harness: botHarnessSchema,
     model: botModelSchema,

@@ -86,7 +86,7 @@ import { useSettingsStore } from "@/stores/settings/settings-store";
 const BOT: BotRecord = {
   botId: "bot_01ARZ3NDEKTSV4RRFFQ69G5FAV",
   environmentId: "env-personal",
-  ownerUserId: "user-1",
+  createdByUserId: "user-1",
   title: "Release Bot",
   harness: "claude",
   model: "model-b",
