@@ -1030,18 +1030,13 @@ describe("<SandboxCard /> secrets section", () => {
     expect(screen.queryByTestId("sandbox-card-repair")).toBeNull();
   });
 
-  it("shows the section and the Docker note for an awake, ready sandbox", () => {
+  it("shows the section and no Docker note for an awake, ready sandbox", () => {
     renderCard(sandboxOf("awake", false, { phase: "ready" }));
 
-    const section = screen.getByTestId("sandbox-card-secrets");
-    // Node ignores the proxy line before 24 and needs its own switch from
-    // 24 on, so the note names both paths and not the proxy line alone.
-    const note = within(section).getByTestId("sandbox-card-docker-note");
-    expect(note.textContent).toContain("HTTPS_PROXY=http://<bridge address>");
-    expect(note.textContent).toContain("NODE_USE_ENV_PROXY=1");
-    expect(note.textContent).toContain("NODE_EXTRA_CA_CERTS");
-    expect(note.textContent).toContain("--add-host <alias>:<bridge address>");
-    expect(note.textContent).toContain("$SSH_AUTH_SOCK");
+    // No sandbox image carries Docker (F60), so the card says nothing about
+    // using secrets from a container.
+    expect(screen.getByTestId("sandbox-card-secrets")).toBeTruthy();
+    expect(screen.queryByTestId("sandbox-card-docker-note")).toBeNull();
   });
 
   it("shows no event list while there are no events", () => {

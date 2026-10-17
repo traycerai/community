@@ -770,44 +770,7 @@ function SandboxSecretsLive(props: {
         </ul>
       )}
       {props.awake ? <SandboxRepairAction hostId={props.hostId} /> : null}
-      <SandboxDockerNote />
     </>
-  );
-}
-
-function SandboxDockerNote(): ReactNode {
-  return (
-    <details
-      className="text-ui-xs leading-snug text-muted-foreground"
-      data-testid="sandbox-card-docker-note"
-    >
-      <summary className="cursor-pointer">
-        Using secrets from a Docker container
-      </summary>
-      <ul className="mt-1 flex list-disc flex-col gap-1 pl-4">
-        <li>
-          curl and other proxy-aware clients: pass the proxy line,{" "}
-          <code>-e HTTPS_PROXY=http://&lt;bridge address&gt;:3128</code>.
-        </li>
-        <li>
-          Node 24 and later: the proxy line plus{" "}
-          <code>-e NODE_USE_ENV_PROXY=1</code>. Older Node ignores the proxy
-          line and is covered only by{" "}
-          <code>--add-host &lt;alias&gt;:&lt;bridge address&gt;</code> with{" "}
-          <code>NODE_EXTRA_CA_CERTS</code>.
-        </li>
-        <li>
-          A database, broker or other native destination:{" "}
-          <code>--add-host &lt;alias&gt;:&lt;bridge address&gt;</code> and that
-          destination&apos;s container port. The sandbox&apos;s egress file
-          prints the exact form for each one.
-        </li>
-        <li>
-          SSH: mount the sandbox&apos;s agent socket (
-          <code>$SSH_AUTH_SOCK</code>) into the container.
-        </li>
-      </ul>
-    </details>
   );
 }
 
