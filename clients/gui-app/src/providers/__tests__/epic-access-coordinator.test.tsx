@@ -20,6 +20,10 @@ import {
 } from "@/lib/cloud-epic-tasks-query";
 import { DELETED_EPIC_NOTIFICATION_STORAGE_KEY } from "@/lib/epics/deleted-epic-events";
 import {
+  deletedCloudEpicTasksPageEpicIdsForScope,
+  useCloudEpicTasksPagesStore,
+} from "@/stores/epics/cloud-epic-tasks-pages-store";
+import {
   clearSessionCreatedEpics,
   CREATED_EPIC_UNAVAILABLE_RETRY_DELAYS_MS,
   markEpicCreatedThisSession,
@@ -452,6 +456,53 @@ describe("EpicAccessCoordinator", () => {
       'Epic "Broadcast Title" was deleted',
       { id: "epic-access:epic-1", cancel: null },
     );
+  });
+
+  it("tombstones a broadcast's host-scoped ids under the deleting host and the rest account-wide", async () => {
+    // Codex thread 4303240636 on d74e2198: a local-homed Task deleted on one
+    // host must stay visible in a sibling host's History.
+    useCloudEpicTasksPagesStore.setState({ deletedEpicIdsByScope: {} });
+    useAuthStore.getState().setSignedIn(
+      {
+        userId: "user-1",
+        userName: "Test User",
+        email: "test@example.com",
+        avatarUrl: null,
+      },
+      { userId: "user-1", username: "test-user" },
+      [],
+    );
+    renderCoordinatorAt("/");
+    await waitFor(() =>
+      expect(document.querySelector('[data-testid="landing"]')).not.toBeNull(),
+    );
+
+    window.dispatchEvent(
+      new StorageEvent("storage", {
+        key: DELETED_EPIC_NOTIFICATION_STORAGE_KEY,
+        newValue: JSON.stringify({
+          type: "epic-deleted",
+          version: 1,
+          originId: "other-window",
+          sequence: 41,
+          createdAt: Date.now(),
+          hostId: "host-source",
+          userId: "user-1",
+          epicIds: ["epic-local", "epic-cloud"],
+          hostScopedEpicIds: ["epic-local"],
+          epicTitlesById: {},
+        }),
+      }),
+    );
+
+    await waitFor(() =>
+      expect([
+        ...deletedCloudEpicTasksPageEpicIdsForScope("host-source", "user-1"),
+      ]).toEqual(expect.arrayContaining(["epic-local", "epic-cloud"])),
+    );
+    expect([
+      ...deletedCloudEpicTasksPageEpicIdsForScope("host-sibling", "user-1"),
+    ]).toEqual(["epic-cloud"]);
   });
 
   it("T10: routes a multi-epic delete notification through ONE coordinated handleEpicAccessLoss call, not a per-epic loop", async () => {

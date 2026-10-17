@@ -74,6 +74,7 @@ describe("deleted epic events", () => {
       hostId: "host-1",
       userId: "user-1",
       epicIds: ["epic-1"],
+      hostScopedEpicIds: [],
       epicTitlesById: { "epic-1": "Planning" },
     });
 
@@ -108,6 +109,7 @@ describe("deleted epic events", () => {
       hostId: "host-1",
       userId: "user-1",
       epicIds: ["epic-1"],
+      hostScopedEpicIds: [],
       epicTitlesById: { "epic-1": "Planning" },
     } satisfies DeletedEpicNotification;
 

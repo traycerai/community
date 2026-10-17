@@ -37,6 +37,16 @@ import {
   useEpicArchiveChats,
   useEpicDeleteChat,
 } from "@/hooks/epic/use-epic-chat-mutations";
+import { useEpicDeleteTuiAgent } from "@/hooks/epic/use-epic-tui-agent-mutations";
+import { useSelectionAuthorityStore } from "@/stores/host/selection-authority-store";
+import {
+  recordNegotiatedHostManifest,
+  resetNegotiatedManifests,
+} from "@traycer-clients/shared/host-transport/negotiated-manifest-registry";
+import { useCloudChatDeletions } from "@/lib/chats/cloud-chat-deletions";
+import { cloudChatListQueryKey } from "@/lib/chats/cloud-chat-list-cache";
+import { getChatSessionRegistry } from "@/lib/registries/chat-session-registry";
+import { useEpicCanvasStore } from "@/stores/epics/canvas/store";
 import {
   invalidateEpicChatRecords,
   useEpicSyncChatRecords,
@@ -112,6 +122,8 @@ interface RoutingFixture {
   readonly messenger: MockHostMessenger<HostRpcRegistry>;
   readonly localRecords: ChatRecordSummaryV11[];
   readonly remoteRecords: ChatRecordSummaryV11[];
+  /** The records OTHER holds; it enacts a write on these and only these. */
+  readonly otherRecords: ChatRecordSummaryV11[];
   readonly viewerForeign: ChatRecordSummaryV11[];
   readonly archiveCalls: MutationCall[];
   readonly deleteCalls: MutationCall[];
@@ -312,6 +324,7 @@ function createRoutingFixture(): RoutingFixture {
   });
   const localRecords: ChatRecordSummaryV11[] = [];
   const remoteRecords: ChatRecordSummaryV11[] = [];
+  const otherRecords: ChatRecordSummaryV11[] = [];
   const viewerForeign: ChatRecordSummaryV11[] = [];
   const archiveCalls: MutationCall[] = [];
   const deleteCalls: MutationCall[] = [];
@@ -372,7 +385,11 @@ function createRoutingFixture(): RoutingFixture {
             chats: remoteRecords.map((row) => ({ ...row })),
           };
         }
-        return { kind: "snapshot" as const, listStamp: null, chats: [] };
+        return {
+          kind: "snapshot" as const,
+          listStamp: null,
+          chats: otherRecords.map((row) => ({ ...row })),
+        };
       },
       "epic.setChatArchived": (request: SetChatArchivedRequest) => {
         const hostId = lastCallHost(messengerRef.current ?? messenger);
@@ -394,6 +411,10 @@ function createRoutingFixture(): RoutingFixture {
               outcome: "applied" as const,
             }));
           }
+          return { updated: true, outcome: "applied" as const };
+        }
+        if (hostId === OTHER.hostId) {
+          bumpArchived(otherRecords, request.chatId, request.archived);
           return { updated: true, outcome: "applied" as const };
         }
         bumpArchived(localRecords, request.chatId, request.archived);
@@ -420,6 +441,17 @@ function createRoutingFixture(): RoutingFixture {
             outcome: "applied" as const,
           };
         }
+        if (hostId === OTHER.hostId) {
+          const index = otherRecords.findIndex(
+            (entry) => entry.chatId === request.chatId,
+          );
+          if (index >= 0) otherRecords.splice(index, 1);
+          return {
+            deleted: true,
+            publicationChatId: request.chatId,
+            outcome: "applied" as const,
+          };
+        }
         const index = localRecords.findIndex(
           (entry) => entry.chatId === request.chatId,
         );
@@ -430,6 +462,10 @@ function createRoutingFixture(): RoutingFixture {
           outcome: "applied" as const,
         };
       },
+      "epic.deleteTuiAgent": () => ({
+        deleted: true,
+        outcome: "applied" as const,
+      }),
     },
   });
   messengerRef.current = messenger;
@@ -518,6 +554,7 @@ function createRoutingFixture(): RoutingFixture {
     messenger,
     localRecords,
     remoteRecords,
+    otherRecords,
     viewerForeign,
     archiveCalls,
     deleteCalls,
@@ -1341,5 +1378,184 @@ describe("replaceMounted during a delayed ACK", () => {
       "Other-host same id",
     );
     expect(incoming.store.getState().chatRetractions).toEqual({});
+  });
+});
+
+// Codex threads 4303240629, 4303240636, 4303240645 and 4303240648 on
+// d74e2198: one class - a follow-up keyed to the row's host instead of the
+// host that enacted the write.
+describe("a write enacted by a stand-in", () => {
+  const TUI_ID = "tui-moved";
+
+  beforeEach(() => {
+    useCloudChatDeletions.setState({
+      pending: new Map(),
+      confirmed: new Set(),
+    });
+    // The owner the viewer's row names is down, and so is the viewing
+    // session's host; OTHER is live and can write another host's record.
+    useSelectionAuthorityStore.setState({
+      attached: true,
+      leases: [
+        { hostId: LOCAL.hostId, status: "dead", dead: { reason: "offline" } },
+        { hostId: REMOTE.hostId, status: "dead", dead: { reason: "offline" } },
+        { hostId: OTHER.hostId, status: "ready", dead: null },
+      ],
+    });
+    recordNegotiatedHostManifest(OTHER.hostId, {
+      "epic.setChatArchived": { major: 1, minor: 1, supportedMajors: [1] },
+      "epic.deleteChat": { major: 1, minor: 2, supportedMajors: [1] },
+      "epic.deleteTuiAgent": { major: 1, minor: 1, supportedMajors: [1] },
+    });
+  });
+
+  afterEach(() => {
+    useSelectionAuthorityStore.getState().reset();
+    resetNegotiatedManifests();
+    vi.restoreAllMocks();
+  });
+
+  it("sends every cleanup and the read-back to the stand-in that owned the record", async () => {
+    // The row the write is routed by names REMOTE; authority has since
+    // moved to OTHER, which holds the chat and enacts every write below
+    // (`applied`). The viewer holds no row for it yet (a session mounted
+    // before its first list), so the archive's read-back is what shows it.
+    fixture.otherRecords.push(
+      record({
+        chatId: REMOTE_CHAT_ID,
+        originHostId: OTHER.hostId,
+        title: "Moved to the stand-in",
+        origin: "own",
+      }),
+    );
+    const chatList = [
+      ...hostQueryKeys.methodScope(OTHER.hostId, "epic.listChatRecords"),
+      { epicId: EPIC_ID },
+    ];
+    const tuiList = [
+      ...hostQueryKeys.methodScope(OTHER.hostId, "epic.listTuiAgents"),
+      { epicId: EPIC_ID },
+    ];
+    const cloudList = cloudChatListQueryKey({
+      hostId: OTHER.hostId,
+      viewerUserId: VIEWER_ID,
+      taskId: EPIC_ID,
+    });
+    for (const key of [chatList, tuiList, cloudList]) {
+      fixture.queryClient.setQueryData(key, { seeded: true });
+    }
+    const forceRelease = vi.spyOn(getChatSessionRegistry(), "forceRelease");
+    const closeTiles = vi.fn();
+    const originalCloseTiles =
+      useEpicCanvasStore.getState().closeConfirmedDeletedAgentTiles;
+    useEpicCanvasStore.setState({
+      closeConfirmedDeletedAgentTiles: closeTiles,
+    });
+    const archive = renderHook(() => useEpicArchiveChat(), {
+      wrapper: fixture.wrapper,
+    });
+    const deleteChat = renderHook(() => useEpicDeleteChat(), {
+      wrapper: fixture.wrapper,
+    });
+    const deleteTuiAgent = renderHook(() => useEpicDeleteTuiAgent(), {
+      wrapper: fixture.wrapper,
+    });
+
+    try {
+      // Read-back: the archive is read back from the stand-in and matched
+      // to the stand-in's record.
+      await act(async () => {
+        await archive.result.current.mutateAsync({
+          epicId: EPIC_ID,
+          chatId: REMOTE_CHAT_ID,
+          hostId: REMOTE.hostId,
+          archived: true,
+        });
+      });
+      expect(fixture.archiveCalls.map((call) => call.hostId)).toEqual([
+        OTHER.hostId,
+      ]);
+      await waitFor(() => {
+        expect(
+          fixture.handle.store.getState().chats.byId[REMOTE_CHAT_ID]?.title,
+        ).toBe("Moved to the stand-in");
+      });
+      expect(
+        fixture.handle.store.getState().chats.byId[REMOTE_CHAT_ID]?.hostId,
+      ).toBe(OTHER.hostId);
+      expect(fixture.queryClient.getQueryState(chatList)?.isInvalidated).toBe(
+        true,
+      );
+      expect(fixture.queryClient.getQueryState(tuiList)?.isInvalidated).toBe(
+        true,
+      );
+
+      await act(async () => {
+        await deleteChat.result.current.mutateAsync({
+          epicId: EPIC_ID,
+          chatId: REMOTE_CHAT_ID,
+          hostId: REMOTE.hostId,
+        });
+      });
+      await act(async () => {
+        await deleteTuiAgent.result.current.mutateAsync({
+          epicId: EPIC_ID,
+          tuiAgentId: TUI_ID,
+          hostId: REMOTE.hostId,
+        });
+      });
+    } finally {
+      useEpicCanvasStore.setState({
+        closeConfirmedDeletedAgentTiles: originalCloseTiles,
+      });
+    }
+
+    expect(fixture.deleteCalls.map((call) => call.hostId)).toEqual([
+      OTHER.hostId,
+    ]);
+    // Suppression: the stale cloud answer is hidden under the stand-in's id.
+    expect(
+      [...useCloudChatDeletions.getState().confirmed].map((key) => {
+        const parsed: unknown = JSON.parse(key);
+        return Array.isArray(parsed) ? String(parsed[2]) : null;
+      }),
+    ).toEqual([OTHER.hostId]);
+    // Release and tile close.
+    expect(forceRelease).toHaveBeenCalledWith(
+      EPIC_ID,
+      REMOTE_CHAT_ID,
+      OTHER.hostId,
+    );
+    expect(closeTiles.mock.calls).toEqual([
+      [EPIC_ID, REMOTE_CHAT_ID, OTHER.hostId, "chat"],
+      [EPIC_ID, TUI_ID, OTHER.hostId, "terminal-agent"],
+    ]);
+    // Tombstone: the confirmed removal is the stand-in's chat, so a stale
+    // viewer list still carrying it does not bring it back.
+    expect(
+      Object.hasOwn(fixture.handle.store.getState().chats.byId, REMOTE_CHAT_ID),
+    ).toBe(false);
+    deliverStaleList(fixture.handle, [
+      record({
+        chatId: REMOTE_CHAT_ID,
+        originHostId: OTHER.hostId,
+        title: "Moved to the stand-in",
+        origin: "foreign",
+      }),
+      record({
+        chatId: STALE_LIST_SENTINEL_ID,
+        originHostId: LOCAL.hostId,
+        title: "Stale list sentinel",
+        origin: "foreign",
+      }),
+    ]);
+    await waitForStaleListApplied(fixture.handle);
+    expect(
+      Object.hasOwn(fixture.handle.store.getState().chats.byId, REMOTE_CHAT_ID),
+    ).toBe(false);
+    // Invalidations.
+    expect(fixture.queryClient.getQueryState(cloudList)?.isInvalidated).toBe(
+      true,
+    );
   });
 });

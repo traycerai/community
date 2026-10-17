@@ -157,11 +157,19 @@ export type DeleteChatMutationOptions = Omit<
   "mutationFn"
 >;
 
-/** Resolve viewer state independently of the mutation's fixed destination. */
+/**
+ * Resolve viewer state independently of the mutation's fixed destination.
+ *
+ * The viewer's row must still be the record the write was about: the row the
+ * mutation was routed from (`ctx.hostId`), or the same chat as the host that
+ * enacted the write holds it (`enactedOwnerHostId`) once a refresh has shown
+ * the moved owner.
+ */
 function getChatMutationViewer(
   epicId: string,
   chatId: string,
   ctx: ChatRecordMutationContext,
+  ownerHostId: string | null,
 ): OpenEpicStoreHandle | null {
   if (
     ctx.viewerUserId === null ||
@@ -172,12 +180,13 @@ function getChatMutationViewer(
   const handle = getOpenEpicRegistry().peek(epicId);
   if (handle === null) return null;
   const chats = handle.store.getState().chats.byId;
-  const row = chats[chatId];
   // A replacement session can mount before its first record list.
+  if (!Object.hasOwn(chats, chatId)) return handle;
+  const row = chats[chatId];
+  const rowHostId = row.hostId ?? handle.hostId;
   if (
-    Object.hasOwn(chats, chatId) &&
-    (row.userId !== ctx.viewerUserId ||
-      (row.hostId ?? handle.hostId) !== ctx.hostId)
+    row.userId !== ctx.viewerUserId ||
+    (rowHostId !== ctx.hostId && rowHostId !== ownerHostId)
   )
     return null;
   return handle;
@@ -691,10 +700,13 @@ function useEpicArchiveChatMutation(
         servingHostId: route.servingHostId(variables),
       }),
       onSuccess: async (data, variables, ctx) => {
+        // Every follow-up below is keyed to the host whose record changed.
+        const ownerHostId = enactedOwnerHostId(data, ctx);
         const handle = getOpenEpicRegistry().peek(variables.epicId);
         // The visible session may have been replaced while the write travelled.
         for (const hostId of new Set([
           ctx.hostId,
+          ownerHostId,
           ctx.viewerHostId,
           ctx.servingHostId,
           handle?.hostId ?? null,
@@ -705,19 +717,24 @@ function useEpicArchiveChatMutation(
         if (data.outcome === "requested") {
           // The owner did not enact it: there is no owner record to read back,
           // and viewers already see the cloud's value.
-          if (ctx.hostId !== null) {
+          if (ownerHostId !== null) {
             toastRequestedRecordWrite({
               write: variables.archived ? "archive" : "unarchive",
-              ownerHostId: ctx.hostId,
-              hostLabel: recordOwnerHostLabel(binding, ctx.hostId),
+              ownerHostId,
+              hostLabel: recordOwnerHostLabel(binding, ownerHostId),
             });
           }
           return;
         }
         if (
-          (ctx.hostId === ctx.viewerHostId && handle?.hostId === ctx.hostId) ||
-          getChatMutationViewer(variables.epicId, variables.chatId, ctx) ===
-            null
+          (ownerHostId === ctx.viewerHostId &&
+            handle?.hostId === ownerHostId) ||
+          getChatMutationViewer(
+            variables.epicId,
+            variables.chatId,
+            ctx,
+            ownerHostId,
+          ) === null
         )
           return;
         try {
@@ -732,6 +749,7 @@ function useEpicArchiveChatMutation(
             variables.epicId,
             variables.chatId,
             ctx,
+            ownerHostId,
           );
           if (currentHandle === null) return;
           invalidateEpicChatRecords(queryClient, currentHandle.hostId);
@@ -739,14 +757,14 @@ function useEpicArchiveChatMutation(
             (row) =>
               row.chatId === variables.chatId &&
               row.ownerUserId === ctx.viewerUserId &&
-              row.originHostId === ctx.hostId &&
+              row.originHostId === ownerHostId &&
               row.origin === "own",
           );
           if (record === undefined) return;
           currentHandle.store.getState().applyConfirmedChatMutation({
             kind: "upsert",
             record:
-              currentHandle.hostId === ctx.hostId
+              currentHandle.hostId === ownerHostId
                 ? record
                 : {
                     ...record,
@@ -986,12 +1004,15 @@ function useEpicDeleteChatMutation(
         };
       },
       onSuccess: (data, variables, ctx) => {
-        // The host that owns the deleted chat. An `applied` answer from a
-        // stand-in means the record was its own (authority moved after this
-        // row was read), so it is the stand-in's chat that is gone: its cloud
-        // row, session and tiles carry the stand-in's id, not the stale one.
-        // A `requested` answer wrote the cloud row of the owner the row names.
-        const ownerHostId = enactedOwnerHostId(data.outcome, ctx);
+        // The host that owns the deleted chat, and the one key every follow-up
+        // below takes. An `applied` answer from a stand-in means the record
+        // was its own (authority moved after this row was read), so it is the
+        // stand-in's chat that is gone: its cloud row, session and tiles carry
+        // the stand-in's id, not the stale one. A `requested` answer names the
+        // owner it filed for, or, from a host that predates that field, the
+        // owner the row names. `onMutate`'s provisional suppression is keyed
+        // to the row (no answer exists yet); the confirm below re-keys it.
+        const ownerHostId = enactedOwnerHostId(data, ctx);
         // Confirm BEFORE removing local records: otherwise their stale cloud
         // copy becomes an unfolded row. The host's identity also replaces an
         // incorrect provisional mapping, rather than confirming both rows.
@@ -1073,6 +1094,7 @@ function useEpicDeleteChatMutation(
         }
         for (const hostId of new Set([
           ctx.hostId,
+          ownerHostId,
           ctx.viewerHostId,
           ctx.servingHostId,
           handle?.hostId ?? null,
@@ -1088,11 +1110,11 @@ function useEpicDeleteChatMutation(
             });
           }
         }
-        if (data.outcome === "requested" && ctx.hostId !== null) {
+        if (data.outcome === "requested" && ownerHostId !== null) {
           toastRequestedRecordWrite({
             write: "remove",
-            ownerHostId: ctx.hostId,
-            hostLabel: recordOwnerHostLabel(binding, ctx.hostId),
+            ownerHostId,
+            hostLabel: recordOwnerHostLabel(binding, ownerHostId),
           });
         }
       },

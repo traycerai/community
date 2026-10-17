@@ -144,6 +144,64 @@ describe("agent-record write outcome minors", () => {
     }
   });
 
+  it("the live lines carry the owner a `requested` answer was filed for, and accept its absence", () => {
+    expect(
+      deleteChatResponseSchema.parse({
+        deleted: true,
+        publicationChatId: null,
+        outcome: "requested",
+        ownerHostId: "host-b",
+      }).ownerHostId,
+    ).toBe("host-b");
+    expect(
+      setChatArchivedResponseSchema.parse({
+        updated: true,
+        outcome: "requested",
+        ownerHostId: "host-b",
+      }).ownerHostId,
+    ).toBe("host-b");
+    expect(
+      deleteTuiAgentResponseSchema.parse({
+        deleted: true,
+        outcome: "requested",
+        ownerHostId: "host-b",
+      }).ownerHostId,
+    ).toBe("host-b");
+    expect(
+      agentArchiveResponseSchema.parse({
+        agentId: "agent-1",
+        archived: true,
+        updated: true,
+        outcome: "requested",
+        ownerHostId: "host-b",
+      }).ownerHostId,
+    ).toBe("host-b");
+    // A peer that predates the field answers without it.
+    expect(
+      deleteChatResponseSchema.parse({
+        deleted: true,
+        publicationChatId: null,
+        outcome: "requested",
+      }).ownerHostId,
+    ).toBeUndefined();
+    expect(
+      deleteChatResponseSchema.safeParse({
+        deleted: true,
+        publicationChatId: null,
+        outcome: "requested",
+        ownerHostId: "",
+      }).success,
+    ).toBe(false);
+    // The frozen lines strip it, as they strip `outcome`.
+    expect(
+      setChatArchivedResponseSchemaV10.parse({
+        updated: true,
+        outcome: "requested",
+        ownerHostId: "host-b",
+      }),
+    ).toEqual({ updated: true });
+  });
+
   it("each upgrade path leaves the request alone and answers `applied`", () => {
     const deleteChatRequest = { epicId: "epic-1", chatId: "chat-1" };
     expect(

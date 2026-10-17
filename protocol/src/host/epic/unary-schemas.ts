@@ -2242,6 +2242,18 @@ export const deleteChatResponseSchemaV11 = lazySchema(() =>
 export const agentRecordWriteOutcomeSchema = lazySchema(() =>
   z.enum(["applied", "requested"]),
 );
+
+/**
+ * On a `requested` answer, the host the answering host filed the request
+ * for: the record's owner as the answering host's own copy names it.
+ * Ownership can move after the client read the row, so this, not the row the
+ * client routed from, is the owner whose record the cloud write changed.
+ * Absent on `applied` (the answering host is the owner) and from a peer that
+ * predates the field; a client then keys the owner to the record it routed.
+ */
+export const agentRecordWriteOwnerHostIdSchema = lazySchema(() =>
+  z.string().min(1).optional(),
+);
 export type AgentRecordWriteOutcome = z.infer<
   typeof agentRecordWriteOutcomeSchema
 >;
@@ -2254,6 +2266,7 @@ export const deleteChatResponseSchema = lazySchema(() =>
     publicationChatId: z.string().nullable(),
     // @1.2: see `agentRecordWriteOutcomeSchema`.
     outcome: agentRecordWriteOutcomeSchema,
+    ownerHostId: agentRecordWriteOwnerHostIdSchema,
   }),
 );
 export type DeleteChatResponse = z.infer<typeof deleteChatResponseSchema>;
@@ -2295,6 +2308,7 @@ export const setChatArchivedResponseSchema = lazySchema(() =>
     // route is idempotent and does not report it. A missing record is
     // `RECORD_NOT_FOUND:` on that arm, never `updated: false`.
     outcome: agentRecordWriteOutcomeSchema,
+    ownerHostId: agentRecordWriteOwnerHostIdSchema,
   }),
 );
 export type SetChatArchivedResponse = z.infer<
@@ -2691,6 +2705,7 @@ export const deleteTuiAgentResponseSchema = lazySchema(() =>
     deleted: z.boolean(),
     // @1.1: see `agentRecordWriteOutcomeSchema`.
     outcome: agentRecordWriteOutcomeSchema,
+    ownerHostId: agentRecordWriteOwnerHostIdSchema,
   }),
 );
 export type DeleteTuiAgentResponse = z.infer<

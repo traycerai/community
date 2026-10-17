@@ -132,9 +132,10 @@ function useEpicDeleteTuiAgentMutation(
         servingHostId: route.servingHostId(variables),
       }),
       onSuccess: (data, variables, ctx) => {
-        // The tiles of the host that owned the agent: a stand-in's `applied`
-        // means authority had moved to it (`enactedOwnerHostId`).
-        const ownerHostId = enactedOwnerHostId(data.outcome, ctx);
+        // Every follow-up below is keyed to the host whose record changed: a
+        // stand-in's `applied` means authority had moved to it, and a
+        // `requested` answer names the owner it filed for (`enactedOwnerHostId`).
+        const ownerHostId = enactedOwnerHostId(data, ctx);
         // Hook callbacks survive the row unmounting before the response arrives.
         if (ownerHostId !== null) {
           useEpicCanvasStore
@@ -150,6 +151,7 @@ function useEpicDeleteTuiAgentMutation(
         // row would linger in the tree until the next poll tick.
         for (const hostId of new Set([
           ctx.hostId,
+          ownerHostId,
           ctx.viewerHostId,
           ctx.servingHostId,
         ])) {
@@ -162,11 +164,11 @@ function useEpicDeleteTuiAgentMutation(
             source: "direct_ui",
           });
         }
-        if (data.outcome === "requested" && ctx.hostId !== null) {
+        if (data.outcome === "requested" && ownerHostId !== null) {
           toastRequestedRecordWrite({
             write: "remove-terminal-agent",
-            ownerHostId: ctx.hostId,
-            hostLabel: recordOwnerHostLabel(binding, ctx.hostId),
+            ownerHostId,
+            hostLabel: recordOwnerHostLabel(binding, ownerHostId),
           });
         }
       },

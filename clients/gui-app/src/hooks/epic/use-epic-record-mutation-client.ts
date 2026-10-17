@@ -2,7 +2,7 @@ import { useSyncExternalStore } from "react";
 import type { HostClient } from "@traycer-clients/shared/host-client/host-client";
 import type { RequiredHostMethodVersion } from "@traycer-clients/shared/host-transport/host-messenger";
 import type { HostRpcRegistry } from "@traycer/protocol/host/index";
-import type { AgentRecordWriteOutcome } from "@traycer/protocol/host/epic/unary-schemas";
+import type { SetChatArchivedResponse } from "@traycer/protocol/host/epic/unary-schemas";
 import { useEpicSessionHostClient } from "@/hooks/epic/use-epic-session-host-client";
 import { useEpicSessionHostId } from "@/hooks/epic/use-epic-session-host-id";
 import { useHostBinding } from "@/lib/host";
@@ -36,19 +36,26 @@ export interface EpicRecordLifecycleMutationContext extends EpicRecordMutationCo
 
 /**
  * The host whose record a lifecycle write changed, by the receiving host's
- * answer. `applied` means the host the call was sent to enacted it on a record
- * of its own: when that was a stand-in, authority had moved to it after the
- * row was read, and the record (its cloud row, session and tiles) is the
- * stand-in's. `requested` means the stand-in wrote the cloud row of the owner
- * the row names.
+ * answer - the one value every follow-up of an archive or delete is keyed to
+ * (suppression, session release, tile close, confirmed removal, read-back,
+ * the requested notice, and the record-list refresh beside the serving host's).
+ *
+ * - `applied`: the host the call was sent to (`servingHostId`, decided once
+ *   where the route was chosen) enacted it on a record of its own. When that
+ *   was a stand-in, authority had moved to it after the row was read.
+ * - `requested`: the stand-in wrote the cloud row of the owner it reports
+ *   (`ownerHostId`); a peer that predates that field reports none, and the
+ *   owner the routed row names is used.
+ *
+ * Never the routed row's host alone: ownership can move between what the
+ * client read and what the receiving host holds.
  */
 export function enactedOwnerHostId(
-  outcome: AgentRecordWriteOutcome,
+  response: Pick<SetChatArchivedResponse, "outcome" | "ownerHostId">,
   ctx: Pick<EpicRecordLifecycleMutationContext, "hostId" | "servingHostId">,
 ): string | null {
-  return outcome === "applied" && ctx.servingHostId !== null
-    ? ctx.servingHostId
-    : ctx.hostId;
+  if (response.outcome === "applied") return ctx.servingHostId ?? ctx.hostId;
+  return response.ownerHostId ?? ctx.hostId;
 }
 
 /**

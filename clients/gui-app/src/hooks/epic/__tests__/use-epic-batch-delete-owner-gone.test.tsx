@@ -483,6 +483,30 @@ describe("Task delete through a stand-in host that omits `home`", () => {
     expect(tombstonedOn(BYSTANDER)).toEqual([]);
   });
 
+  it("tells other windows the scopes this window tombstoned in, under the host that deleted", async () => {
+    // Codex thread 4303240636 on d74e2198: the cross-window notice named the
+    // down active host and every receiver tombstoned account-wide, hiding a
+    // local-homed Task a sibling host still serves.
+    publishLeases(lease("active", "dead"), lease("this-machine", "ready"));
+    hosts.state.home = "local";
+
+    await dispatch({
+      ids: ["cloud-a"],
+      isLocalHomedNow: localHomed(),
+      boundUserId: "user-1",
+      worktreeCleanup: null,
+    });
+
+    expect(mocks.publishDeletedEpicNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        hostId: "this-machine",
+        userId: "user-1",
+        epicIds: ["cloud-a"],
+        hostScopedEpicIds: ["cloud-a"],
+      }),
+    );
+  });
+
   it("keeps the same omission host-scoped on a direct route: only a stand-in's ids are known cloud-homed", async () => {
     publishLeases(lease("active", "ready"), lease("this-machine", "ready"));
     hosts.state.home = null;

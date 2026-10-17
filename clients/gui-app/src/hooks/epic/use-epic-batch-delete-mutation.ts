@@ -68,6 +68,13 @@ interface BatchDeleteEpicMutationContext {
   readonly hostId: string | null;
   /** Where the call went - the active host, or a live host standing in for it. */
   readonly route: EpicBatchDeleteRoute;
+  /**
+   * The host that enacts the delete, decided once with the route: the active
+   * host on a direct route, the stand-in on a fallback, none when refused.
+   * Every host-scoped follow-up (tombstone, the cross-window notice, the
+   * cache refresh) is keyed to it, never to `hostId` alone.
+   */
+  readonly enactingHostId: string | null;
   readonly userId: string | null;
   readonly epicTitlesById: Readonly<Record<string, string>>;
   /**
@@ -465,7 +472,14 @@ export function useEpicBatchDelete(): UseMutationResult<
           epicDeleteProgressToastMessage(variables.ids, epicTitlesById),
           { id: progressToastId, duration: Infinity },
         );
-        return { hostId, route, userId, epicTitlesById, progressToastId };
+        return {
+          hostId,
+          route,
+          enactingHostId: route.hostId,
+          userId,
+          epicTitlesById,
+          progressToastId,
+        };
       },
       onSuccess: (data, variables, ctx) => {
         const failures = data.results.filter((r) => !r.success);
@@ -487,6 +501,11 @@ export function useEpicBatchDelete(): UseMutationResult<
         );
         useComposerRunSettingsStore.getState().clearEpicRunSettings(deletedIds);
         tabCommandCoordinator.handleEpicAccessLoss(deletedIds);
+        const { accountWideIds, hostScopedIds } = splitEpicDeleteScopes(
+          data.results,
+          deletedIds,
+          ctx.route,
+        );
         if (ctx.userId !== null) {
           // Tombstone each success in the scope its deletion actually had.
           //
@@ -497,38 +516,14 @@ export function useEpicBatchDelete(): UseMutationResult<
           // held it, and an account-wide tombstone there would hide a row a
           // sibling host can still serve.
           //
-          // `home` is `@1.1`; an older host omits it, and absence keeps the
-          // released host-scoped behaviour rather than being read as
-          // `"cloud"`. That asymmetry is deliberate: account-wide is the
-          // destructive direction, and an old host is exactly the peer that
-          // produced no evidence for it.
-          //
-          // A fallback route is the exception: it sent only the ids whose row
-          // was cloud-homed, and a stand-in deletes those from the account
-          // whatever its minor, so a success there is account-wide even when
-          // an older stand-in omits `home`. A stand-in that does state
-          // `home: "local"` is still believed.
+          // The split itself is `splitEpicDeleteScopes`.
           const userId = ctx.userId;
-          const accountWideIds = data.results.flatMap((result) =>
-            result.success &&
-            (result.home === "cloud" ||
-              (ctx.route.kind === "fallback" && result.home === undefined))
-              ? [result.taskId]
-              : [],
-          );
-          const hostScopedIds = deletedIds.filter(
-            (id) => !accountWideIds.includes(id),
-          );
           // A host-scoped success belongs to the host that deleted it: on a
           // fallback route that is the stand-in, not the down host.
           if (hostScopedIds.length > 0) {
             removeDeletedEpicsFromCloudTaskCaches(
               queryClient,
-              {
-                hostId:
-                  ctx.route.kind === "fallback" ? ctx.route.hostId : ctx.hostId,
-                userId,
-              },
+              { hostId: ctx.enactingHostId, userId },
               hostScopedIds,
             );
           }
@@ -628,17 +623,20 @@ export function useEpicBatchDelete(): UseMutationResult<
             },
           );
         }
-        if (ctx.hostId !== null && ctx.userId !== null) {
+        // Other windows tombstone in the same scopes as this one: the
+        // host-scoped successes under the enacting host, the rest account-wide.
+        if (ctx.enactingHostId !== null && ctx.userId !== null) {
           publishDeletedEpicNotification({
-            hostId: ctx.hostId,
+            hostId: ctx.enactingHostId,
             userId: ctx.userId,
             epicIds: deletedIds,
+            hostScopedEpicIds: hostScopedIds,
             epicTitlesById: ctx.epicTitlesById,
           });
         }
         invalidateBatchDeleteHostScopes(queryClient, [
           ctx.hostId,
-          ctx.route.hostId,
+          ctx.enactingHostId,
         ]);
       },
       onError: (error, variables, ctx) => {
@@ -1016,6 +1014,42 @@ export function emitEpicDeleteToast(
     code: null,
     source: "Epic deletion",
   });
+}
+
+/**
+ * Each success's tombstone scope.
+ *
+ * `home` is `@1.1`; an older host omits it, and absence keeps the
+ * released host-scoped behaviour rather than being read as
+ * `"cloud"`. That asymmetry is deliberate: account-wide is the
+ * destructive direction, and an old host is exactly the peer that
+ * produced no evidence for it.
+ *
+ * A fallback route is the exception: it sent only the ids whose row
+ * was cloud-homed, and a stand-in deletes those from the account
+ * whatever its minor, so a success there is account-wide even when
+ * an older stand-in omits `home`. A stand-in that does state
+ * `home: "local"` is still believed.
+ */
+function splitEpicDeleteScopes(
+  results: ReadonlyArray<BatchDeleteItemResult>,
+  deletedIds: ReadonlyArray<string>,
+  route: EpicBatchDeleteRoute,
+): {
+  readonly accountWideIds: ReadonlyArray<string>;
+  readonly hostScopedIds: ReadonlyArray<string>;
+} {
+  const accountWideIds = results.flatMap((result) =>
+    result.success &&
+    (result.home === "cloud" ||
+      (route.kind === "fallback" && result.home === undefined))
+      ? [result.taskId]
+      : [],
+  );
+  return {
+    accountWideIds,
+    hostScopedIds: deletedIds.filter((id) => !accountWideIds.includes(id)),
+  };
 }
 
 /**

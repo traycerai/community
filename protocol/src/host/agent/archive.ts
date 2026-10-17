@@ -14,7 +14,10 @@ import {
 } from "@traycer/protocol/framework/index";
 import { z } from "zod";
 import { lazySchema } from "@traycer/protocol/framework/lazy-schema";
-import { agentRecordWriteOutcomeSchema } from "@traycer/protocol/host/epic/unary-schemas";
+import {
+  agentRecordWriteOutcomeSchema,
+  agentRecordWriteOwnerHostIdSchema,
+} from "@traycer/protocol/host/epic/unary-schemas";
 
 export const agentArchiveRequestSchema = lazySchema(() =>
   z.object({
@@ -55,6 +58,7 @@ export const agentArchiveResponseSchema = lazySchema(() =>
     // `requested` when it holds the record but another host runs it, and
     // wrote the archive to the cloud row for that owner to finish.
     outcome: agentRecordWriteOutcomeSchema,
+    ownerHostId: agentRecordWriteOwnerHostIdSchema,
   }),
 );
 export type AgentArchiveResponse = z.infer<typeof agentArchiveResponseSchema>;

@@ -20,6 +20,13 @@ const deletedEpicNotificationSchema = z
     hostId: z.string().min(1),
     userId: z.string().min(1),
     epicIds: z.array(z.string().min(1)),
+    /**
+     * The `epicIds` whose deletion was scoped to `hostId` (a local-homed
+     * Task), which a receiver tombstones under that host; the rest were
+     * deleted from the account. Absent from a publisher that predates it,
+     * which leaves every id account-wide, as before.
+     */
+    hostScopedEpicIds: z.array(z.string().min(1)).default([]),
     epicTitlesById: z.record(z.string(), z.string()).default({}),
   })
   .transform((notification) => ({
@@ -37,9 +44,12 @@ export type DeletedEpicNotification = z.infer<
 >;
 
 export interface PublishDeletedEpicNotificationInput {
+  /** The host that enacted the delete. */
   readonly hostId: string;
   readonly userId: string;
   readonly epicIds: ReadonlyArray<string>;
+  /** The subset of `epicIds` deleted on `hostId` only, not the account. */
+  readonly hostScopedEpicIds: ReadonlyArray<string>;
   readonly epicTitlesById: Readonly<Record<string, string>>;
 }
 
@@ -70,6 +80,7 @@ export function publishDeletedEpicNotification(
     hostId: input.hostId,
     userId: input.userId,
     epicIds,
+    hostScopedEpicIds: subsetOf(epicIds, input.hostScopedEpicIds),
     epicTitlesById: titlesForEpicIds(epicIds, input.epicTitlesById),
   };
   appLogger.debug("[deleted-epic-events] publishing notification", {
@@ -151,6 +162,7 @@ function emitIncomingNotification(notification: DeletedEpicNotification): void {
   const normalized = {
     ...notification,
     epicIds,
+    hostScopedEpicIds: subsetOf(epicIds, notification.hostScopedEpicIds),
     epicTitlesById: titlesForEpicIds(epicIds, notification.epicTitlesById),
   };
   for (const listener of listeners) {
@@ -230,6 +242,14 @@ function parseDeletedEpicNotificationJson(
 
 function uniqueStrings(values: ReadonlyArray<string>): string[] {
   return Array.from(new Set(values.filter((value) => value.length > 0)));
+}
+
+function subsetOf(
+  epicIds: ReadonlyArray<string>,
+  candidates: ReadonlyArray<string>,
+): string[] {
+  const allowedIds = new Set(epicIds);
+  return uniqueStrings(candidates).filter((id) => allowedIds.has(id));
 }
 
 function createDeletedEpicNotificationId(notificationSequence: number): string {

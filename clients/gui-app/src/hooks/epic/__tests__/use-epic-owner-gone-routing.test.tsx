@@ -119,6 +119,11 @@ interface Fixture {
   ownerAsHostsSeeIt: string;
   /** Whether `epic.deleteChat` answers with an error (after its commit). */
   deleteChatFails: boolean;
+  /**
+   * The owner a `requested` answer names (`ownerHostId`), or `null` to answer
+   * as a host that predates the field.
+   */
+  requestedFor: string | null;
   readonly wrapper: (props: { readonly children: ReactNode }) => ReactNode;
   readonly dispose: () => void;
 }
@@ -136,7 +141,15 @@ function createFixture(): Fixture {
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
   });
   const calls: Call[] = [];
-  const state = { ownerAsHostsSeeIt: OWNER.hostId, deleteChatFails: false };
+  const state: {
+    ownerAsHostsSeeIt: string;
+    deleteChatFails: boolean;
+    requestedFor: string | null;
+  } = {
+    ownerAsHostsSeeIt: OWNER.hostId,
+    deleteChatFails: false,
+    requestedFor: null,
+  };
   const messengerRef: {
     current: FloorEnforcingMessenger<HostRpcRegistry> | null;
   } = {
@@ -147,8 +160,16 @@ function createFixture(): Fixture {
     ["epic.deleteChat", { major: 1, minor: 2 }],
     ["epic.deleteTuiAgent", { major: 1, minor: 1 }],
   ]);
-  const outcomeOn = (hostId: string): "applied" | "requested" =>
-    hostId === state.ownerAsHostsSeeIt ? "applied" : "requested";
+  const outcomeOn = (
+    hostId: string,
+  ):
+    | { readonly outcome: "applied" }
+    | { readonly outcome: "requested"; readonly ownerHostId?: string } => {
+    if (hostId === state.ownerAsHostsSeeIt) return { outcome: "applied" };
+    return state.requestedFor === null
+      ? { outcome: "requested" }
+      : { outcome: "requested", ownerHostId: state.requestedFor };
+  };
   let seq = 0;
   const messenger = new FloorEnforcingMessenger<HostRpcRegistry>(
     {
@@ -166,7 +187,7 @@ function createFixture(): Fixture {
         "epic.setChatArchived": () => {
           const hostId = lastCallHost(messengerRef.current ?? messenger);
           calls.push({ method: "epic.setChatArchived", hostId });
-          return { updated: true, outcome: outcomeOn(hostId) };
+          return { updated: true, ...outcomeOn(hostId) };
         },
         "epic.deleteChat": () => {
           const hostId = lastCallHost(messengerRef.current ?? messenger);
@@ -177,13 +198,13 @@ function createFixture(): Fixture {
           return {
             deleted: true,
             publicationChatId: CHAT_ID,
-            outcome: outcomeOn(hostId),
+            ...outcomeOn(hostId),
           };
         },
         "epic.deleteTuiAgent": () => {
           const hostId = lastCallHost(messengerRef.current ?? messenger);
           calls.push({ method: "epic.deleteTuiAgent", hostId });
-          return { deleted: true, outcome: outcomeOn(hostId) };
+          return { deleted: true, ...outcomeOn(hostId) };
         },
       },
     },
@@ -228,6 +249,12 @@ function createFixture(): Fixture {
     },
     set deleteChatFails(value: boolean) {
       state.deleteChatFails = value;
+    },
+    get requestedFor() {
+      return state.requestedFor;
+    },
+    set requestedFor(value: string | null) {
+      state.requestedFor = value;
     },
     wrapper,
     dispose: () => {
@@ -825,5 +852,95 @@ describe("a stand-in's `applied` delete and a stand-in's failed delete", () => {
       { method: "epic.deleteChat", hostId: OTHER.hostId },
     ]);
     expect(isInvalidated(standInCloudList)).toBe(true);
+  });
+});
+
+// Codex thread 4303240648 on d74e2198: a `requested` answer names the owner
+// the stand-in filed for, which can differ from the row the client routed.
+describe("a `requested` answer that names its owner", () => {
+  function confirmedDeletionOwners(): string[] {
+    return [...useCloudChatDeletions.getState().confirmed].flatMap((key) => {
+      const parsed: unknown = JSON.parse(key);
+      return Array.isArray(parsed) && parsed[3] === CHAT_ID
+        ? [String(parsed[2])]
+        : [];
+    });
+  }
+
+  beforeEach(() => {
+    useCloudChatDeletions.setState({
+      pending: new Map(),
+      confirmed: new Set(),
+    });
+    publishLeases(
+      lease(SESSION.hostId, "ready"),
+      lease(OWNER.hostId, "dead"),
+      lease(OTHER.hostId, "ready"),
+    );
+  });
+
+  it("keys every cleanup to the owner the stand-in reports, not the row's", async () => {
+    // The chat moved to OTHER after this client read the row naming OWNER;
+    // the stand-in wrote OTHER's cloud row and says so.
+    fixture.requestedFor = OTHER.hostId;
+    seedList(chatListKey(OTHER.hostId));
+    seedList(tuiAgentListKey(OTHER.hostId));
+    const closeTiles = vi.fn();
+    const original =
+      useEpicCanvasStore.getState().closeConfirmedDeletedAgentTiles;
+    useEpicCanvasStore.setState({
+      closeConfirmedDeletedAgentTiles: closeTiles,
+    });
+    try {
+      await archive(true);
+      await deleteChat();
+      await deleteTuiAgent();
+    } finally {
+      useEpicCanvasStore.setState({
+        closeConfirmedDeletedAgentTiles: original,
+      });
+    }
+
+    expect(writeCalls().map((call) => call.hostId)).toEqual([
+      SESSION.hostId,
+      SESSION.hostId,
+      SESSION.hostId,
+    ]);
+    expect(confirmedDeletionOwners()).toEqual([OTHER.hostId]);
+    expect(closeTiles.mock.calls).toEqual([
+      [EPIC_ID, CHAT_ID, OTHER.hostId, "chat"],
+      [EPIC_ID, TUI_ID, OTHER.hostId, "terminal-agent"],
+    ]);
+    expect(isInvalidated(chatListKey(OTHER.hostId))).toBe(true);
+    expect(isInvalidated(tuiAgentListKey(OTHER.hostId))).toBe(true);
+    expect(successToasts()).toEqual([
+      "Archived. Mock In-Process Host will finish when it is back",
+      "Removed. Files on Mock In-Process Host are untouched",
+      "Removed. The agent may keep running on Mock In-Process Host until that host reconnects. Its files are untouched",
+    ]);
+  });
+
+  it("keeps the row's owner when the stand-in predates the field", async () => {
+    const closeTiles = vi.fn();
+    const original =
+      useEpicCanvasStore.getState().closeConfirmedDeletedAgentTiles;
+    useEpicCanvasStore.setState({
+      closeConfirmedDeletedAgentTiles: closeTiles,
+    });
+    try {
+      await deleteChat();
+    } finally {
+      useEpicCanvasStore.setState({
+        closeConfirmedDeletedAgentTiles: original,
+      });
+    }
+
+    expect(confirmedDeletionOwners()).toEqual([OWNER.hostId]);
+    expect(closeTiles.mock.calls).toEqual([
+      [EPIC_ID, CHAT_ID, OWNER.hostId, "chat"],
+    ]);
+    expect(successToasts()).toEqual([
+      "Removed. Files on Mock Remote Host are untouched",
+    ]);
   });
 });

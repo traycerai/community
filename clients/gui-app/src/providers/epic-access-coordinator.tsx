@@ -4,7 +4,10 @@ import { QueryClientContext } from "@tanstack/react-query";
 import type { EpicDeletedAttribution } from "@traycer-clients/shared/host-transport/epic-stream-client";
 import { removeDeletedEpicsFromCloudTaskCaches } from "@/lib/cloud-epic-tasks-query/cache";
 import { epicAccessToast } from "@/lib/toast/channels";
-import { subscribeDeletedEpicNotifications } from "@/lib/epics/deleted-epic-events";
+import {
+  subscribeDeletedEpicNotifications,
+  type DeletedEpicNotification,
+} from "@/lib/epics/deleted-epic-events";
 import { isUnavailableEpicCode } from "@/lib/epics/unavailable-epic";
 import {
   CREATED_EPIC_UNAVAILABLE_RETRY_DELAYS_MS,
@@ -143,16 +146,28 @@ export function EpicAccessCoordinator() {
     };
 
     const applyDeletedEpicNotification = (
-      epicIds: ReadonlyArray<string>,
-      userId: string,
-      epicTitlesById: Readonly<Record<string, string | undefined>>,
+      notification: DeletedEpicNotification,
     ): void => {
+      const { epicIds, userId, epicTitlesById } = notification;
       if (queryClient !== undefined) {
-        removeDeletedEpicsFromCloudTaskCaches(
-          queryClient,
-          { hostId: null, userId },
-          epicIds,
-        );
+        // The scopes the deleting window tombstoned in: a local-homed Task
+        // under the host that deleted it, the rest account-wide.
+        const hostScoped = new Set(notification.hostScopedEpicIds);
+        const accountWide = epicIds.filter((id) => !hostScoped.has(id));
+        if (hostScoped.size > 0) {
+          removeDeletedEpicsFromCloudTaskCaches(
+            queryClient,
+            { hostId: notification.hostId, userId },
+            [...hostScoped],
+          );
+        }
+        if (accountWide.length > 0) {
+          removeDeletedEpicsFromCloudTaskCaches(
+            queryClient,
+            { hostId: null, userId },
+            accountWide,
+          );
+        }
       }
       const openEpicIds = new Set(collectOpenEpicIds());
       let anyWasActive = false;
@@ -345,11 +360,7 @@ export function EpicAccessCoordinator() {
         if (currentUserId === null || notification.userId !== currentUserId) {
           return;
         }
-        applyDeletedEpicNotification(
-          notification.epicIds,
-          notification.userId,
-          notification.epicTitlesById,
-        );
+        applyDeletedEpicNotification(notification);
       });
 
     return () => {
