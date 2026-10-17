@@ -166,6 +166,44 @@ const EMPTY_FIRST_PARAGRAPH_ORDERED_DOC = emptyFirstParagraphDoc(
   10,
 );
 
+/**
+ * A nested bullet list that opens with an empty item writes a bare `-` right
+ * under the parent's paragraph, which reads as a setext heading underline, so
+ * a blank line goes before the nested list.
+ */
+function nestedEmptyBulletDoc(
+  nestedItemContent: ReadonlyArray<JsonContent>,
+): JsonContent {
+  return {
+    type: "doc",
+    content: [
+      {
+        type: "bulletList",
+        content: [
+          {
+            type: "listItem",
+            content: [
+              { type: "paragraph", content: [{ type: "text", text: "a" }] },
+              {
+                type: "bulletList",
+                content: [
+                  { type: "listItem", content: [...nestedItemContent] },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+}
+
+const NESTED_EMPTY_BULLET_DOC = nestedEmptyBulletDoc([]);
+const NESTED_EMPTY_FIRST_PARAGRAPH_DOC = nestedEmptyBulletDoc([
+  { type: "paragraph" },
+  { type: "paragraph", content: [{ type: "text", text: "b" }] },
+]);
+
 /** ...and the same break in a LATER block, which does take the indent. */
 const HARD_BREAK_IN_CONTINUATION_DOC: JsonContent = {
   type: "doc",
@@ -1710,6 +1748,8 @@ describe("content recovery classification", () => {
       HARD_BREAK_IN_TWO_DIGIT_ORDERED_ITEM_DOC,
       EMPTY_FIRST_PARAGRAPH_BULLET_DOC,
       EMPTY_FIRST_PARAGRAPH_ORDERED_DOC,
+      NESTED_EMPTY_BULLET_DOC,
+      NESTED_EMPTY_FIRST_PARAGRAPH_DOC,
       HARD_BREAK_IN_CONTINUATION_DOC,
       NESTED_LIST_AS_FIRST_CHILD_DOC,
       FENCE_AS_CONTINUATION_DOC,
@@ -1745,6 +1785,13 @@ describe("content recovery classification", () => {
     );
     expect(recoveryTextFromContent(EMPTY_FIRST_PARAGRAPH_ORDERED_DOC)).toBe(
       "10. \n    b",
+    );
+  });
+
+  it("puts a blank line before a nested bullet list that opens with an empty item", () => {
+    expect(recoveryTextFromContent(NESTED_EMPTY_BULLET_DOC)).toBe("- a\n\n  -");
+    expect(recoveryTextFromContent(NESTED_EMPTY_FIRST_PARAGRAPH_DOC)).toBe(
+      "- a\n\n  -\n    b",
     );
   });
 

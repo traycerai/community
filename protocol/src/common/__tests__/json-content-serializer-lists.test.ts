@@ -504,6 +504,50 @@ describe("jsonContentToMarkdown ordered lists", () => {
       ).toBe(`${start}. \n${pad}b`);
     },
   );
+
+  it("puts a blank line before a nested bullet list that opens with an empty item", () => {
+    expect(
+      toMarkdown(
+        docOf(
+          bulletList([
+            listItem([textParagraph("a"), bulletList([{ type: "listItem" }])]),
+          ]),
+        ),
+      ),
+    ).toBe("- a\n\n  -");
+  });
+
+  it("puts a blank line before a nested bullet list whose empty-first-paragraph item has a second paragraph", () => {
+    expect(
+      toMarkdown(
+        docOf(
+          bulletList([
+            listItem([
+              textParagraph("a"),
+              bulletList([
+                listItem([{ type: "paragraph" }, textParagraph("b")]),
+              ]),
+            ]),
+          ]),
+        ),
+      ),
+    ).toBe("- a\n\n  -\n    b");
+  });
+
+  it("leaves a nested bullet list whose first item has text without a blank line", () => {
+    expect(
+      toMarkdown(
+        docOf(
+          bulletList([
+            listItem([
+              textParagraph("a"),
+              bulletList([listItem([textParagraph("x")])]),
+            ]),
+          ]),
+        ),
+      ),
+    ).toBe("- a\n  - x");
+  });
 });
 
 function orderedList(

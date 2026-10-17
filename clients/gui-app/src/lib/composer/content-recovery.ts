@@ -612,6 +612,9 @@ function listItemLines(
       // straight after a marker line with nothing on it.
       if (block.type === "paragraph" && !markerOnly) lines.push("");
       markerOnly = false;
+      // ...and before a nested list that opens with a bare `-`, which under a
+      // line of text would read as a setext heading underline.
+      if (nested && opensUnderText(serialized, lines)) lines.push("");
       for (const line of serialized.split("\n")) {
         lines.push(nested ? line : `${continuationIndent}${line}`);
       }
@@ -657,6 +660,21 @@ function firstBlockLines(
     `${markerLine}${head}`,
     ...rest.map((line) => (nested ? line : `${continuationIndent}${line}`)),
   ];
+}
+
+const BARE_BULLET_LINE = /^[ \t]*-[ \t]*$/;
+
+/** Whether `serialized` opens with a bare `-` line right under a line of text. */
+function opensUnderText(
+  serialized: string,
+  lines: ReadonlyArray<string>,
+): boolean {
+  const previous = lines.length > 0 ? lines[lines.length - 1] : undefined;
+  return (
+    previous !== undefined &&
+    previous !== "" &&
+    BARE_BULLET_LINE.test(serialized.split("\n")[0] ?? "")
+  );
 }
 
 function isListNode(node: JsonContent): boolean {
