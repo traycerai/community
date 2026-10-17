@@ -2143,6 +2143,52 @@ describe("epic sidebar selection mode", () => {
     });
   });
 
+  // Archiving a root removes nothing from the tree - archived records stay in
+  // it - so a selected child missing at settlement was deleted, not hidden:
+  // the root's request no longer covers it.
+  it("does not credit an archive request with a selected child deleted before it settles", async () => {
+    let resolveRootArchive: (value: {
+      readonly updated: boolean;
+    }) => void = () => {
+      throw new Error("Archive resolver is unavailable");
+    };
+    testState.archiveMutateAsync.mockImplementation((input) =>
+      input.chatId === "chat-root"
+        ? new Promise<{ readonly updated: boolean }>((resolve) => {
+            resolveRootArchive = resolve;
+          })
+        : Promise.reject(new Error("refused")),
+    );
+    seedChatTree();
+
+    const view = render(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
+
+    fireEvent.click(screen.getByRole("menuitem", { name: "Select agents" }));
+    fireEvent.click(screen.getByRole("button", { name: "Select all" }));
+    fireEvent.click(screen.getByTestId("epic-sidebar-archive-selected-chats"));
+    expect(
+      testState.archiveBatchChats.map((chat) => chat.selectedRows),
+    ).toEqual([2, 1]);
+
+    const { "chat-child": _deletedChild, ...remainingNodes } =
+      testState.tree.nodeById;
+    testState.tree = {
+      rootIds: ["chat-root", "agent-root"],
+      childrenByParent: { "chat-root": [] },
+      nodeById: remainingNodes,
+    };
+    testState.records = testState.records.filter(
+      (record) => record.id !== "chat-child",
+    );
+    view.rerender(<EpicLeftPanelHost epicId={EPIC_ID} tabId={TAB_ID} />);
+
+    resolveRootArchive({ updated: true });
+
+    await waitFor(() => {
+      expect(testState.archiveCoveredRowsAtSettlement).toEqual([1, 1]);
+    });
+  });
+
   it("hides the bulk archive action when the host lacks archive support", () => {
     seedChatTree();
     testState.archiveSupport = false;
