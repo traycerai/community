@@ -2383,3 +2383,185 @@ describe("a doc with runs of U+FDD0 survives alongside empty list items", () => 
     expect(texts).toContain(`a${FDD0}b`);
   });
 });
+
+// ---- O. Unicode whitespace is text, as in a bullet item
+
+describe("Unicode whitespace in a list item is text, as in a bullet item", () => {
+  const NBSP = "\u00a0";
+  const MARKER_ROWS = [
+    ["1.", 1],
+    ["10.", 10],
+    ["100.", 100],
+  ] as const;
+  const SPACES: ReadonlyArray<readonly [string, string]> = [
+    ["a non-breaking space", NBSP],
+    ["an em space", "\u2003"],
+    ["an ideographic space", "\u3000"],
+    ["five spaces", "     "],
+    ["a tab", "\t"],
+  ];
+
+  function itemContent(markdown: string, listType: string): string {
+    return JSON.stringify(firstItemOf(markdown, listType).content);
+  }
+
+  for (const [marker] of MARKER_ROWS) {
+    for (const [name, lead] of SPACES) {
+      it(`reads ${name} before a continuation line under ${marker} as a bullet item does`, () => {
+        const lines = ["a", `${lead}b`];
+        expect(itemContent(orderedSource(marker, lines), "orderedList")).toBe(
+          itemContent(bulletSource(lines), "bulletList"),
+        );
+      });
+    }
+  }
+
+  it("reads a tab before a continuation line as a joined line in both forms", () => {
+    for (const markdown of [
+      orderedSource("1.", ["a", "\tb"]),
+      bulletSource(["a", "\tb"]),
+    ]) {
+      const listType = markdown.startsWith("-") ? "bulletList" : "orderedList";
+      const item = firstItemOf(markdown, listType);
+      expect(paragraphText((item.content ?? [])[0])).toBe("a\nb");
+    }
+  });
+
+  for (const [name, lead] of SPACES.slice(0, 3)) {
+    it(`reads ${name} before a continuation line of a task item as a bullet item does`, () => {
+      const task = firstItemOf(`- [ ] a\n  ${lead}b`, "taskList");
+      const bullet = firstItemOf(`- a\n  ${lead}b`, "bulletList");
+      expect(childTypes(task)).toEqual(["paragraph"]);
+      expect(paragraphText((task.content ?? [])[0])).toBe(
+        paragraphText((bullet.content ?? [])[0]),
+      );
+    });
+  }
+
+  it("keeps a non-breaking space after the marker's separator", () => {
+    const item = firstItemOf(`1. ${NBSP}a`, "orderedList");
+    expect(paragraphText((item.content ?? [])[0])).toBe(`${NBSP}a`);
+  });
+
+  it("keeps a leading space on a lazy continuation line", () => {
+    const item = firstItemOf(`1. a\n${NBSP}b`, "orderedList");
+    expect(paragraphText((item.content ?? [])[0])).toBe(`a\n${NBSP}b`);
+  });
+
+  it("keeps a trailing non-breaking space on a continuation line", () => {
+    const item = firstItemOf(`1. a\n   b${NBSP}`, "orderedList");
+    expect(paragraphText((item.content ?? [])[0])).toBe(`a\nb${NBSP}`);
+  });
+
+  it("reads a non-breaking-space marker separator as paragraph text, not a list", () => {
+    for (const text of [`1.${NBSP}x`, `${NBSP}${NBSP}1. x`]) {
+      const top = parseMarkdown(text).content ?? [];
+      expect(top.map((node) => node.type)).toEqual(["paragraph"]);
+      expect(paragraphText(top[0])).toBe(text);
+    }
+  });
+
+  it("keeps a non-breaking space after a task marker", () => {
+    const item = firstItemOf(`- [ ] ${NBSP}a`, "taskList");
+    expect(paragraphText((item.content ?? [])[0])).toBe(`${NBSP}a`);
+  });
+
+  it("does not read a non-breaking-space-only line as blank", () => {
+    const lines = ["a", NBSP, "b"];
+    expect(itemContent(orderedSource("1.", lines), "orderedList")).toBe(
+      itemContent(bulletSource(lines), "bulletList"),
+    );
+  });
+});
+
+// ---- P. a continuation line keeps the indent marked keeps
+
+describe("a continuation line keeps the indent marked keeps", () => {
+  function textOfFirstItem(markdown: string, listType: string): string {
+    const item = firstItemOf(markdown, listType);
+    return JSON.stringify(item.content);
+  }
+
+  for (let extra = 1; extra <= 9; extra++) {
+    it(`reads ${extra} extra spaces under an ordered item as under a bullet item`, () => {
+      expect(
+        textOfFirstItem(`1. a\n${" ".repeat(3 + extra)}b`, "orderedList"),
+      ).toBe(textOfFirstItem(`- a\n${" ".repeat(2 + extra)}b`, "bulletList"));
+    });
+  }
+
+  for (let extra = 1; extra <= 6; extra++) {
+    it(`reads ${extra} extra spaces under a task item as under a bullet item`, () => {
+      const task = firstItemOf(
+        `- [ ] a\n${" ".repeat(2 + extra)}b`,
+        "taskList",
+      );
+      const bullet = firstItemOf(
+        `- a\n${" ".repeat(2 + extra)}b`,
+        "bulletList",
+      );
+      expect(childTypes(task)).toEqual(childTypes(bullet));
+      expect(paragraphText((task.content ?? [])[0])).toBe(
+        paragraphText((bullet.content ?? [])[0]),
+      );
+    });
+  }
+
+  it("keeps two spaces of an empty task item's continuation line", () => {
+    const item = firstItemOf("- [ ] \n    more", "taskList");
+    expect(childTypes(item)).toEqual(["paragraph"]);
+    expect(paragraphText((item.content ?? [])[0])).toBe("  more");
+  });
+
+  it("keeps one space of an empty task item's continuation line", () => {
+    const item = firstItemOf("- [ ] \n   more", "taskList");
+    expect(childTypes(item)).toEqual(["paragraph"]);
+    expect(paragraphText((item.content ?? [])[0])).toBe(" more");
+  });
+
+  function brokenParagraph(): JsonContent {
+    return {
+      type: "paragraph",
+      content: [
+        { type: "text", text: "a" },
+        { type: "hardBreak" },
+        { type: "text", text: "  b" },
+      ],
+    };
+  }
+
+  function expectIndentedBreakBack(source: JsonContent): void {
+    const md1 = jsonContentToMarkdown(source, SERIALIZER_OPTIONS);
+    const parsed = parseMarkdown(md1);
+    expect(collectText(parsed).join("")).toBe("a\n  b");
+    const md2 = jsonContentToMarkdown(parsed, SERIALIZER_OPTIONS);
+    const md3 = jsonContentToMarkdown(parseMarkdown(md2), SERIALIZER_OPTIONS);
+    expect(md2).toBe(md1);
+    expect(md3).toBe(md1);
+  }
+
+  it("round-trips a hard break before indented text in an ordered item", () => {
+    expectIndentedBreakBack(orderedAt(1, brokenParagraph()));
+  });
+
+  it("round-trips a hard break before indented text in a bullet item", () => {
+    expectIndentedBreakBack(
+      listDoc(listWith("bulletList", [itemOf(brokenParagraph())], 1)),
+    );
+  });
+
+  it("round-trips a hard break before indented text in a task item", () => {
+    expectIndentedBreakBack(
+      listDoc({
+        type: "taskList",
+        content: [
+          {
+            type: "taskItem",
+            attrs: { checked: false },
+            content: [brokenParagraph()],
+          },
+        ],
+      }),
+    );
+  });
+});

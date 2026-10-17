@@ -64,13 +64,14 @@ const ComposerBlockquote = Blockquote.extend({
 
 // The composer has no horizontal rule node, and marked's `hr` token has no
 // children, so with no handler for it a pasted `---` was dropped whole. It is
-// kept as the line the user wrote, which the prompt serializer sends as typed.
+// kept as the line the user wrote, spaces included, without only the line
+// break that ends the token; the prompt serializer sends it as typed.
 const ComposerRuleAsText = Extension.create({
   name: "composerRuleAsText",
   markdownTokenName: "hr",
   parseMarkdown: (token) => ({
     type: "paragraph",
-    content: [{ type: "text", text: (token.raw ?? "---").trim() }],
+    content: [{ type: "text", text: (token.raw ?? "---").replace(/\n+$/, "") }],
   }),
 });
 

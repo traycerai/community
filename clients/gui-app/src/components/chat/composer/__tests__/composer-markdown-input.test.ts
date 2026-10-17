@@ -757,3 +757,13 @@ describe("paste → send outcome by position", () => {
     });
   }
 });
+
+describe("a pasted rule line keeps its spaces", () => {
+  for (const line of ["  ---  ", "   ***", " * * * ", "___  "]) {
+    it(`paste keeps ${JSON.stringify(line)} exactly in the composer`, () => {
+      const { editor } = makeFixture();
+      pasteText(editor, line);
+      expect(editor.state.doc.textContent).toBe(line);
+    });
+  }
+});
