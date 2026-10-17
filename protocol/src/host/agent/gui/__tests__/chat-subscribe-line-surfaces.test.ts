@@ -86,9 +86,23 @@ const CLAUDE_PARITY_MINOR = 20;
 // only reopens the heard-from harness leaves to a string. `1.23` adds the
 // tool-call `page` / `mcpApp` stamps (pinned below). `1.24` adds the cron
 // next-run time, whose `scheduledFor` key already exists on other item kinds;
-// `chat-subscribe-cron-next-run-v124.test.ts` pins that arm directly. Every
-// threshold above still reads `>=` against the live line.
-const LIVE_MINOR = 24;
+// `chat-subscribe-cron-next-run-v124.test.ts` pins that arm directly. `1.25`
+// adds the bot-conversation request on a user row and the
+// `conversation-message` queue item (pinned below). Every threshold above
+// still reads `>=` against the live line.
+const LIVE_MINOR = 25;
+// `1.25`: the conversation surface - the user row's request key and the key
+// only that request carries, the queue item's discriminant and the key only
+// that item carries. (`requestId` is not a needle: a `range` response has
+// carried one since `1.8`.) All or none - a line that carried the queue item
+// without the row key would show a chip for a request it cannot name.
+const CONVERSATION_MINOR = 25;
+const CONVERSATION_NEEDLES = [
+  '"conversationRequest":',
+  '"resolvedByMessageId":',
+  '"conversation-message"',
+  '"conversationId":',
+];
 // Object keys carry their colon so a needle cannot hit an enum value or a
 // description that merely mentions the name; the two literals (`thinkingTokens`
 // frame kind, `cron` background kind) are matched with both quotes, which
@@ -232,13 +246,13 @@ function actionAckPropertyNames(serverFrameSchema: z.ZodType): string[] {
 }
 
 describe("chat.subscribe line surfaces", () => {
-  it("covers chat.subscribe@1.0 through @1.24 (a line added later cannot drop out)", () => {
+  it("covers chat.subscribe@1.0 through @1.25 (a line added later cannot drop out)", () => {
     // RESTATED on purpose: this is the change-detector for the line SET, so a
     // derived list would assert the registry against itself. When a new minor
     // lands, extending this by hand is the acknowledgement.
     expect(MINORS).toEqual([
       0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
-      21, 22, 23, 24,
+      21, 22, 23, 24, 25,
     ]);
     expect(chatSubscribeLine.latestMinor).toBe(LIVE_MINOR);
   });
@@ -264,6 +278,22 @@ describe("chat.subscribe line surfaces", () => {
       const carriesRefusalCause = minor >= DRAFT_IMAGE_CAUSE_MINOR;
       const carriesClaudeParity = minor >= CLAUDE_PARITY_MINOR;
       const carriesPageStamps = minor >= PAGE_STAMP_MINOR;
+      const carriesConversation = minor >= CONVERSATION_MINOR;
+
+      it(`server frames ${carriesConversation ? "carry" : "hold back"} the bot-conversation surface`, () => {
+        const text = schemaText(contract.serverFrameSchema);
+        const found = CONVERSATION_NEEDLES.filter((needle) =>
+          text.includes(needle),
+        );
+        expect(found).toEqual(carriesConversation ? CONVERSATION_NEEDLES : []);
+      });
+
+      it("client frames hold back the bot-conversation surface on every line", () => {
+        const text = schemaText(contract.clientFrameSchema);
+        expect(
+          CONVERSATION_NEEDLES.filter((needle) => text.includes(needle)),
+        ).toEqual([]);
+      });
 
       it(`server frames ${carriesClaudeParity ? "carry" : "hold back"} every Claude-parity surface`, () => {
         const text = schemaText(contract.serverFrameSchema);

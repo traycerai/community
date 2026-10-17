@@ -969,7 +969,12 @@ function QueuedMessageRowContent(props: {
             ) : null}
             {props.showManagedCommandCancel ? (
               <ManagedCommandCancelButton
-                kind={item.kind === "port-forward" ? "port-forward" : "shell"}
+                kind={
+                  item.kind === "port-forward" ||
+                  item.kind === "conversation-message"
+                    ? item.kind
+                    : "shell"
+                }
                 onCancel={props.handleCancel}
               />
             ) : null}
@@ -1209,6 +1214,7 @@ function queuedMessageProvenanceBadge(item: OpenChatQueuedItem): ReactNode {
       />
     );
   if (item.kind === "port-forward") return <PortForwardBadge />;
+  if (item.kind === "conversation-message") return <ConversationMessageBadge />;
   return null;
 }
 
@@ -1311,16 +1317,59 @@ function PortForwardBadge() {
 }
 
 /**
+ * A human's message in a bot conversation waiting to reach the bot (a
+ * `conversation-message` item on the bot's trunk). Content-free like the
+ * port-forward chip: the message itself is read from the conversation record
+ * when it is delivered.
+ */
+function ConversationMessageBadge() {
+  return (
+    <TooltipWrapper
+      label="A message from a conversation is waiting for the bot's next turn."
+      side="top"
+      sideOffset={6}
+      align={undefined}
+    >
+      <Badge variant="muted" data-testid="queued-conversation-message-badge">
+        <Inbox aria-hidden />
+        Conversation
+      </Badge>
+    </TooltipWrapper>
+  );
+}
+
+/**
  * The only affordance a host-authored row offers. For a shell, cancelling is
  * not destructive to the underlying output: the host leaves the delivery
  * cursor where it is, so the next output from that command re-queues a fresh
  * digest. For a forward it IS final - the notice is raised once, so dismissing
  * it means the agent is not told - and the copy says which.
  */
+const CANCEL_COPY: Record<
+  "shell" | "port-forward" | "conversation-message",
+  { readonly ariaLabel: string; readonly tooltip: string }
+> = {
+  shell: {
+    ariaLabel: "Cancel queued command output",
+    tooltip: "Skip this delivery — later output still arrives",
+  },
+  "port-forward": {
+    ariaLabel: "Dismiss port forward notice",
+    tooltip:
+      "Dismiss this notice — the agent won't be told about the interruption",
+  },
+  "conversation-message": {
+    ariaLabel: "Dismiss conversation message",
+    tooltip:
+      "Dismiss this message — the bot won't see it, and its request stays open",
+  },
+};
+
 function ManagedCommandCancelButton(props: {
-  readonly kind: "shell" | "port-forward";
+  readonly kind: "shell" | "port-forward" | "conversation-message";
   readonly onCancel: () => void;
 }) {
+  const { ariaLabel, tooltip } = CANCEL_COPY[props.kind];
   return (
     <Tooltip>
       <TooltipTrigger asChild>
@@ -1330,22 +1379,14 @@ function ManagedCommandCancelButton(props: {
             size="icon-xs"
             variant="muted"
             className="shrink-0"
-            aria-label={
-              props.kind === "shell"
-                ? "Cancel queued command output"
-                : "Dismiss port forward notice"
-            }
+            aria-label={ariaLabel}
             onClick={props.onCancel}
           >
             <Trash2 className="size-3.5" />
           </Button>
         </span>
       </TooltipTrigger>
-      <TooltipContent sideOffset={6}>
-        {props.kind === "shell"
-          ? "Skip this delivery — later output still arrives"
-          : "Dismiss this notice — the agent won't be told about the interruption"}
-      </TooltipContent>
+      <TooltipContent sideOffset={6}>{tooltip}</TooltipContent>
     </Tooltip>
   );
 }

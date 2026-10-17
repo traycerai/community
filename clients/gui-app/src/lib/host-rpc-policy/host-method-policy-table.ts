@@ -1596,6 +1596,15 @@ export const HOST_METHOD_POLL_TABLE = {
     joinResponseTimeoutMs: null,
     poll: null,
   },
+  // The conversation list is a cloud list like `bot.list`. A send is a
+  // mutation that mints a request: `fifo` keeps two identical sends from
+  // coalescing into one message.
+  "bot.conversation.list": { ...LATEST_SCHEDULING, poll: null },
+  "bot.conversation.send": {
+    mode: "fifo",
+    joinResponseTimeoutMs: null,
+    poll: null,
+  },
   // Unary byte channel, same posture as `epic.readChatAttachment` - but the
   // only one of the drafts methods whose BODY is megabytes rather than KB, so
   // it is also the only one that declares a budget. The value is declared once

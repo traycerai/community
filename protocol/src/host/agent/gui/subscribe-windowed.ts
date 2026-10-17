@@ -6,6 +6,7 @@ import { chatEventSchema } from "@traycer/protocol/persistence/epic/chat-events"
 import {
   openChatEventSchema,
   openMessageSchema,
+  openMessageSchemaPreConversation,
   openMessageSchemaPrePage,
 } from "@traycer/protocol/host/agent/gui/open-harness-wire";
 import {
@@ -1612,6 +1613,25 @@ export const openChatTranscriptWindowSchemaPrePage = lazySchema(() =>
 export const openChatRangeResponseSchemaPrePage = lazySchema(() =>
   chatRangeResponseSchemaPrePage.extend({
     messages: z.array(openMessageSchemaPrePage),
+    events: z.array(openChatEventSchema),
+  }),
+);
+
+/**
+ * The tail as `chat.subscribe@1.23` and `@1.24` ship it: page stamps live,
+ * the user row without `1.25`'s `conversationRequest`.
+ */
+export const openChatTranscriptWindowSchemaPreConversation = lazySchema(() =>
+  chatTranscriptWindowSchema.extend({
+    messages: z.array(openMessageSchemaPreConversation),
+    events: z.array(openChatEventSchema),
+  }),
+);
+
+/** The `1.23`/`1.24` range, with the same pre-conversation body as its tail. */
+export const openChatRangeResponseSchemaPreConversation = lazySchema(() =>
+  chatRangeResponseSchema.extend({
+    messages: z.array(openMessageSchemaPreConversation),
     events: z.array(openChatEventSchema),
   }),
 );

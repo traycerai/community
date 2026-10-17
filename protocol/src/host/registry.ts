@@ -349,6 +349,7 @@ import {
   chatSubscribeV122,
   chatSubscribeV123,
   chatSubscribeV124,
+  chatSubscribeV125,
 } from "@traycer/protocol/host/agent/gui/contracts";
 import {
   agentTuiGenerateTitleV10,
@@ -555,6 +556,8 @@ import { chatForkGetV10 } from "@traycer/protocol/host/chat-fork/contracts";
 import { chatSearchV10 } from "@traycer/protocol/host/chat-search/contracts";
 import {
   botClaimAuthorityV10,
+  botConversationListV10,
+  botConversationSendV10,
   botCreateV10,
   botDeleteV10,
   botListV10,
@@ -8244,6 +8247,34 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
       downgradePathsFromLatest: {},
     },
   },
+  // The human side of a bot (T7): list its conversation records, send one
+  // message into one. Same optional posture as the rest of the namespace.
+  "bot.conversation.list": {
+    degrade: { kind: "unsupported" },
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: {
+          contract: botConversationListV10,
+          upgradeFromPreviousVersion: null,
+        },
+      },
+      downgradePathsFromLatest: {},
+    },
+  },
+  "bot.conversation.send": {
+    degrade: { kind: "unsupported" },
+    1: {
+      latestMinor: 0,
+      versions: {
+        0: {
+          contract: botConversationSendV10,
+          upgradeFromPreviousVersion: null,
+        },
+      },
+      downgradePathsFromLatest: {},
+    },
+  },
   // Optional (non-floor) capability: narrow profile-only update of a chat's
   // persisted run settings - the host patches its own authoritative tuple, so
   // clients never rebuild (and stale-patch) the full tuple to move a chat's
@@ -13679,7 +13710,7 @@ const HOST_STREAM_RPC_REGISTRY_DEFINITION = {
   ...HOST_STREAM_RPC_REGISTRY_OTHER_DEFINITION,
   "chat.subscribe": {
     1: {
-      latestMinor: 24,
+      latestMinor: 25,
       versions: {
         0: {
           contract: chatSubscribeV10,
@@ -13827,9 +13858,17 @@ const HOST_STREAM_RPC_REGISTRY_DEFINITION = {
         },
         // @1.24 adds the optional CLI-reported next-run time to cron items.
         // The host deletes the key for @1.20–1.23 and still omits cron below
-        // @1.20. Older frame shapes are frozen at those boundaries.
+        // @1.20. Older frame shapes are frozen at those boundaries. Frozen at
+        // the pre-conversation user row and queue since @1.25 opened above it.
         24: {
           contract: chatSubscribeV124,
+        },
+        // @1.25 is the bot-conversation line: `conversationRequest` on a user
+        // row (tolerance: optional, stripped by older peers) and the
+        // `conversation-message` queue item on the bot's trunk (projection:
+        // the host omits it below @1.25, as it omits port-forward below @1.14).
+        25: {
+          contract: chatSubscribeV125,
         },
       },
     },
