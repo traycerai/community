@@ -24,6 +24,14 @@ import {
   resolveAgentCliSurface,
 } from "./agent-surface";
 import { resolveCliVersion } from "./cli-version";
+import {
+  admitCliInvocation,
+  unexpectedDefaultDataRootWarning,
+} from "./data-migration-admission";
+import {
+  runDataControlEntry,
+  selectsDataControlCommand,
+} from "./data-migration/commands/data-control-entry";
 import { cliFinalizeUpgradeCommand } from "./commands/cli-finalize-upgrade";
 import { buildCliMarkSourceCommand } from "./commands/cli-mark-source";
 import { buildCliReAnchorCommand } from "./commands/cli-re-anchor";
@@ -660,7 +668,15 @@ export function buildProgramWithAgentRoles(
     .description(
       "Traycer CLI - sign in, run the Traycer host on this machine, and work with the agents in a Task",
     )
-    .version(cliVersion);
+    .version(cliVersion)
+    // `traycer data ...` runs in its own control entry
+    // (`data-migration/commands/data-control-entry.ts`) and is deliberately
+    // not registered here, so nothing under `data` can fall through to this
+    // program. Listed as static text so it is still discoverable.
+    .addHelpText(
+      "after",
+      "\nData folder:\n  traycer data --help   where Traycer keeps its data: status, init, migrate, recover, cleanup\n",
+    );
 
   // Global runner flags so `traycer --json <subcommand>` works even when
   // the subcommand declares its own copy. Commander merges globals via
@@ -3674,14 +3690,21 @@ function registerMonitorCommand(program: Command): void {
 // the CLI invocation itself - including the Windows `traycer.exe`
 // suffix.
 const entryArgv = typeof process !== "undefined" ? process.argv[1] : undefined;
-if (isTraycerCliEntrypoint(entryArgv)) {
+// `traycer data ...` takes its own control entry INSTEAD of everything below:
+// no CLI log, no migration admission, no slot refresh, no ordinary program.
+// It must answer while a migration holds the startup barrier or the location
+// record is unusable, and the migration coordinator must be neither an
+// admitted participant nor a writer of the folder it moves. Only argv whose
+// command is `data` goes there; see `data-control-entry.ts`.
+const dataControl =
+  isTraycerCliEntrypoint(entryArgv) && selectsDataControlCommand(process.argv);
+if (dataControl) {
+  void runDataControlEntry(process.argv);
+}
+if (isTraycerCliEntrypoint(entryArgv) && !dataControl) {
   const entryLogger = createCliLogger(config.environment);
   installProcessFailureHandlers(entryLogger);
   const program = buildProgram();
-  entryLogger.debug("CLI entrypoint parsing argv", {
-    environment: config.environment,
-    argvLength: process.argv.length,
-  });
   // Keep the well-known CLI slot pointing at the anchored binary, BEFORE
   // commander parses anything.
   //
@@ -3720,6 +3743,45 @@ if (isTraycerCliEntrypoint(entryArgv)) {
   const supervisedStart = argvSelectsSupervisedHostStart(process.argv);
   const runEntry = async (): Promise<void> => {
     try {
+      // Before the slot refresh and before Commander: the slot, the CLI log and
+      // every command write under the data root, and none of that may happen
+      // while a data migration holds its startup barrier. A refusal writes
+      // nothing - not even the CLI log.
+      const admission = await admitCliInvocation();
+      if (admission.kind === "refused") {
+        if (argvRequestsJson(program)) {
+          const event = {
+            type: "result",
+            status: "error",
+            error: {
+              code: CLI_ERROR_CODES.DATA_MIGRATION_BLOCKED,
+              message: admission.message,
+              details: null,
+            },
+            timestamp: new Date().toISOString(),
+          };
+          writeStdout(`${JSON.stringify(event)}\n`);
+        } else {
+          writeStderr(
+            `traycer: ${admission.message} [code=${CLI_ERROR_CODES.DATA_MIGRATION_BLOCKED}]\n`,
+          );
+        }
+        await finishAndExit(1);
+        return;
+      }
+      // A person at a terminal hears about a populated default data folder
+      // that is not a known migration backup (Desktop shows its own notice);
+      // a service or Desktop-spawned invocation does not repeat it.
+      if (process.stderr.isTTY === true) {
+        const warning = unexpectedDefaultDataRootWarning();
+        if (warning !== null) writeStderr(`traycer: warning: ${warning}\n`);
+      }
+      // After admission: at debug level this appends to the CLI log under the
+      // data root.
+      entryLogger.debug("CLI entrypoint parsing argv", {
+        environment: config.environment,
+        argvLength: process.argv.length,
+      });
       const replacedRunningBinary =
         await refreshCliSlotBeforeCommand(supervisedStart);
       // The refresh repaired the slot for everything that launches from it

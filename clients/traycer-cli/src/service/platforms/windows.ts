@@ -3331,7 +3331,17 @@ function windowsSystemExecutable(filename: string): string {
 }
 
 function buildTaskAction(label: ServiceLabel): TaskExecAction {
-  const argv = ["//B", "//Nologo", hiddenHostLauncherPath(label)];
+  return buildTaskActionForLauncher(hiddenHostLauncherPath(label));
+}
+
+/**
+ * The task action that runs the launcher at `launcherPath` - the one form
+ * every registration writes. Split from `buildTaskAction` for the data-root
+ * migration, which writes the action for the DESTINATION root's launcher
+ * while this process still resolves the source root.
+ */
+function buildTaskActionForLauncher(launcherPath: string): TaskExecAction {
+  const argv = ["//B", "//Nologo", launcherPath];
   return {
     command: windowsSystemExecutable("wscript.exe"),
     argumentsLine: argv.map(quoteWindowsArg).join(" "),
@@ -4245,7 +4255,24 @@ export async function refreshWindowsServiceDefinition(
   return { kind: "refreshed", form: plan.form, appliesAt: plan.appliesAt };
 }
 
+/** Read-time seams of the data-root migration's task actions (`data-migration/external-actions`). */
+export function windowsTaskRelocationDeps(): {
+  readonly queryTaskXml: WindowsDefinitionDeps["queryTaskXml"];
+  readonly predictCli: WindowsDefinitionDeps["predictCli"];
+  readonly ownership: WindowsTaskOwnershipDeps;
+} {
+  return {
+    queryTaskXml: windowsDefinitionDeps.queryTaskXml,
+    predictCli: windowsDefinitionDeps.predictCli,
+    ownership: taskOwnershipDeps(),
+  };
+}
+
 export {
+  hiddenHostLauncherPath as windowsHiddenHostLauncherPath,
+  buildTaskActionForLauncher as buildWindowsTaskActionForLauncher,
+  parseTaskExecAction as parseWindowsTaskExecAction,
+  redefinedTaskXml as windowsRedefinedTaskXml,
   taskXmlEnabledState as windowsTaskXmlEnabledState,
   buildTaskXmlForUser as buildScheduledTaskXml,
   resolveTaskUserId as resolveScheduledTaskUserId,
