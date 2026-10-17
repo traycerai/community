@@ -199,7 +199,6 @@ import { useHostBinding } from "@/lib/host";
 import { useCanvasHostId } from "@/components/epic-canvas/hooks/use-canvas-host-id";
 import { useEpicSessionHostClient } from "@/hooks/epic/use-epic-session-host-client";
 import {
-  resolvedHostLabel,
   useHostReachability,
   useRemoteSessionPollReadiness,
   type HostReachability,
@@ -340,6 +339,7 @@ import { ChatTilePreContent } from "./chat-tile-runtime-gate";
 import { MobileDrawerVisibleTilePaintReporter } from "@/components/layout/shell/mobile-drawer-history-gate";
 import {
   chatPreContentStrip,
+  chatTileHostLabel,
   type ChatLoadWait,
   type ChatTilePreContentFrame,
 } from "./chat-pre-content";
@@ -446,8 +446,9 @@ export function ChatTile(props: ChatTileProps) {
  */
 /**
  * Whether this viewer's epic role can create agents - the gate the dead-tile
- * banner draws Clone agent on, read once here so the banner and the body
- * under it cannot disagree. `epic.createChat` is editor-gated host-side, and
+ * banner draws Clone agent on. The live tile reads it once, into its
+ * pre-content frame, and hands that one value to both its banner and the
+ * body under it, so the two cannot disagree. `epic.createChat` is editor-gated host-side, and
  * an unresolved role (`null`) keeps the offer: the host gate is the backstop,
  * and withholding the way out of a dead tile needs evidence.
  */
@@ -642,17 +643,19 @@ function ChatTileForChat(props: ChatTileProps) {
     );
     if (strip === "offline") {
       return (
-        <ChatDeadTileBannerContainer
+        <ChatDeadTileBannerWithOffer
           epicId={epicId}
           tabId={viewTabId}
           chatId={node.id}
           sourceHostId={tabHostId}
-          hostLabel={resolvedHostLabel(reachability)}
+          hostLabel={chatTileHostLabel(reachability, tabHostId)}
           reason="host-offline"
           // This mount's body is a load state or a cached live session -
           // never a published copy the banner could truthfully point at.
           showsPublishedCopy={false}
           testId={`chat-dead-tile-${node.id}`}
+          // The frame's value, which the body under this strip reads too.
+          cloneAllowed={preContentFrame.cloneAllowed}
         />
       );
     }
@@ -738,8 +741,26 @@ interface ChatDeadTileBannerContainerProps {
   readonly sourceOwnerUserId?: string;
 }
 
+/**
+ * The dead-tile banner for a surface with no role read of its own (the
+ * published tile, the canvas substitution): it reads the viewer's role here.
+ */
 export function ChatDeadTileBannerContainer(
   props: ChatDeadTileBannerContainerProps,
+): ReactNode {
+  const cloneAllowed = useChatCloneAllowed();
+  return <ChatDeadTileBannerWithOffer {...props} cloneAllowed={cloneAllowed} />;
+}
+
+/**
+ * The banner and its Clone offer, for a mounting surface that already holds
+ * the role gate - the live tile, whose body under the strip reads the same
+ * value.
+ */
+function ChatDeadTileBannerWithOffer(
+  props: ChatDeadTileBannerContainerProps & {
+    readonly cloneAllowed: boolean;
+  },
 ): ReactNode {
   const chatRecord = useChatById(props.chatId);
   // The EPIC SESSION's client, by intent: the cloud lookup below SHARES the
@@ -775,7 +796,6 @@ export function ChatDeadTileBannerContainer(
   // so a known viewer gets the reason in the banner instead of a Clone button
   // that dies on a bare "You don't have permission" toast (`useChatCloneAllowed`).
   const ownedByViewer = useOwnedByViewer(sourceOwnerUserId);
-  const cloneAllowed = useChatCloneAllowed();
   const offer = useChatCloneOnHostSwitch({
     epicId: props.epicId,
     tabId: props.tabId,
@@ -793,7 +813,7 @@ export function ChatDeadTileBannerContainer(
         hostLabel={props.hostLabel}
         reason={props.reason}
         ownedByViewer={ownedByViewer}
-        cloneAllowed={cloneAllowed}
+        cloneAllowed={props.cloneAllowed}
         showsPublishedCopy={props.showsPublishedCopy}
         onClone={offer.clone}
         cloning={offer.cloning}

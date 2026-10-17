@@ -327,11 +327,14 @@ describe("S2 — the body under the strip", () => {
 
     const starting = screen.getByTestId(testId);
     expect(starting.getAttribute("data-arm")).toBe("waiting-for-host");
+    // The directory has no entry yet, so the only name it has is the host id,
+    // and a host id is not a name: the body says "the host".
     expect(
       within(starting).getByText(
-        `This agent will open once "${CHAT_ARTIFACT.hostId}" is ready.`,
+        "This agent will open once the host is ready.",
       ),
     ).not.toBeNull();
+    expect(starting.textContent).not.toContain(CHAT_ARTIFACT.hostId);
     expect(starting.textContent).not.toContain("Waiting for the host to start");
 
     act(() => {
@@ -342,9 +345,10 @@ describe("S2 — the body under the strip", () => {
     expect(offline.getAttribute("data-arm")).toBe("waiting-for-host");
     expect(
       within(offline).getByText(
-        `This agent will open once "${CHAT_ARTIFACT.hostId}" is available.`,
+        "This agent will open once the host is available.",
       ),
     ).not.toBeNull();
+    expect(offline.textContent).not.toContain(CHAT_ARTIFACT.hostId);
     expect(offline.textContent).not.toMatch(/Waiting|Loading/);
     expect(within(offline).queryByRole("button")).toBeNull();
     // Nothing is running under an offline strip with no handle.
@@ -421,6 +425,59 @@ describe("a dead-offline lease draws the Clone banner over a directory that has 
     expect(banner.textContent).toContain("the original stays on the host.");
     expect(banner.textContent).not.toContain(CHAT_ARTIFACT.hostId);
     expect(screen.getByRole("button", { name: "Clone agent" })).not.toBeNull();
+  });
+
+  it("names the host as the host, not its id, when the directory entry has no label", async () => {
+    directoryState.data = [{ ...remoteEntry, label: "" }];
+    publishLease(DEAD_OFFLINE);
+    renderChatTile();
+    await settleEpicSession();
+
+    const banner = screen.getByTestId(bannerTestId);
+    expect(banner.textContent).toContain("the original stays on the host.");
+    expect(banner.textContent).not.toContain(CHAT_ARTIFACT.hostId);
+    const body = screen.getByTestId(
+      `chat-tile-pre-content-${CHAT_ARTIFACT.id}`,
+    );
+    expect(body.textContent).toContain(
+      "Turn on the host and open Traycer there",
+    );
+    expect(body.textContent).not.toContain(CHAT_ARTIFACT.hostId);
+  });
+
+  it("offers Clone in the banner and the body for an editor", async () => {
+    epicHarness.install(null, "editor");
+    directoryState.data = [remoteEntry];
+    publishLease(DEAD_OFFLINE);
+    renderChatTile();
+    await settleEpicSession();
+
+    expect(screen.getByTestId(bannerTestId)).not.toBeNull();
+    expect(screen.getByRole("button", { name: "Clone agent" })).not.toBeNull();
+    expect(
+      screen.getByTestId(`chat-tile-pre-content-${CHAT_ARTIFACT.id}`)
+        .textContent,
+    ).toContain("or continue here as a new agent.");
+  });
+
+  it("withholds Clone in the banner and the body for a viewer, and says why", async () => {
+    epicHarness.install(null, "viewer");
+    directoryState.data = [remoteEntry];
+    publishLease(DEAD_OFFLINE);
+    renderChatTile();
+    await settleEpicSession();
+
+    expect(screen.getByTestId(bannerTestId).textContent).toContain(
+      "You have view-only access to this task, so it can't be cloned.",
+    );
+    expect(screen.queryByRole("button", { name: "Clone agent" })).toBeNull();
+    const body = screen.getByTestId(
+      `chat-tile-pre-content-${CHAT_ARTIFACT.id}`,
+    );
+    expect(body.textContent).toContain(
+      'Turn on "Office Mac" and open Traycer there.',
+    );
+    expect(body.textContent).not.toContain("continue here");
   });
 
   it("draws no banner for a ready lease on a reachable host", async () => {
