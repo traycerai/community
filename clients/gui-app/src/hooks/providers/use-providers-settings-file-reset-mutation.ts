@@ -46,10 +46,12 @@ export function useProvidersSettingsFileReset(): UseMutationResult<
       }
       // A committed reset whose providers could not all be restarted is still
       // a reset: the file has moved and every query above is invalidated. The
-      // user needs the set-aside name and the one thing left to do.
+      // user needs the set-aside name and the one thing left to do. "This
+      // host", not "Traycer": the panel can be administering a remote host,
+      // whose providers a restart of this app would not reach.
       if (data.providersNotRestarted.length > 0) {
         toast.warning(
-          `Provider settings reset. The old file was kept as ${data.movedAsideFileName}. Restart Traycer to finish applying the new settings.`,
+          `Provider settings reset. The old file was kept as ${data.movedAsideFileName}. Restart this host to finish applying the new settings.`,
         );
         return;
       }

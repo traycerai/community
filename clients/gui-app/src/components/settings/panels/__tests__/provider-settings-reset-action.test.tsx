@@ -240,7 +240,7 @@ describe("<ProviderSettingsResetAction />", () => {
     });
   });
 
-  it("a committed reset whose providers could not all be restarted shows the backup name and to restart Traycer, and refreshes what the panel shows", async () => {
+  it("a committed reset whose providers could not all be restarted shows the backup name and to restart this host, and refreshes what the panel shows", async () => {
     harness.respondWith({
       outcome: "reset",
       movedAsideFileName: MOVED_ASIDE,
@@ -255,7 +255,10 @@ describe("<ProviderSettingsResetAction />", () => {
     });
     const message = vi.mocked(toast.warning).mock.calls.at(0)?.[0];
     expect(message).toContain(MOVED_ASIDE);
-    expect(message).toContain("Restart Traycer");
+    // The scoped host, which can be a remote one: restarting the app here
+    // would not restart the processes over there.
+    expect(message).toContain("Restart this host");
+    expect(message).not.toContain("Restart Traycer");
     expect(toast.success).not.toHaveBeenCalled();
     expect(toast.error).not.toHaveBeenCalled();
     expect(harness.resetRequests).toEqual([{}]);
