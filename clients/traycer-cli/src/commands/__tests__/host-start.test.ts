@@ -1620,7 +1620,7 @@ describe("runHostStart - signal/exit propagation", () => {
     expect(elapsed).toBeGreaterThanOrEqual(STDERR_END_WAIT_TIMEOUT_MS - 200);
   }, 10_000);
 
-  it("waits for a reportHostCrash that never resolves no longer than its bound before the supervisor exits", async () => {
+  it("holds the supervisor exit for a reportHostCrash that never resolves until the report bound, and no longer", async () => {
     // Two contracts. The supervisor's EXIT waits for a report still in flight,
     // because the report writes the throttle state the next supervisor starts
     // from, but never past HOST_CRASH_REPORT_TIMEOUT_MS (this test). A RELAUNCH
@@ -1649,7 +1649,9 @@ describe("runHostStart - signal/exit propagation", () => {
       recorded.sequence.indexOf("terminal-marker:crashed"),
     );
     expect(recorded.crashReports).toHaveLength(0);
-    expect(elapsedMs).toBeGreaterThanOrEqual(HOST_CRASH_REPORT_TIMEOUT_MS - 200);
+    expect(elapsedMs).toBeGreaterThanOrEqual(
+      HOST_CRASH_REPORT_TIMEOUT_MS - 200,
+    );
     // No upper wall-clock bound: a wait that never ended would hit the test
     // timeout below, and a tight bound would only measure CI event-loop delay.
   }, 10_000);
@@ -1682,6 +1684,24 @@ describe("runHostStart - signal/exit propagation", () => {
       }
     }
 
+    /** `deps` with `probe` called as the supervisor exits, before the exit. */
+    function withExitProbe(
+      deps: Partial<RunHostStartDeps>,
+      probe: () => void,
+    ): Partial<RunHostStartDeps> {
+      const originalExit = deps.exit;
+      if (originalExit === undefined) {
+        throw new Error("test exit dependency missing");
+      }
+      return {
+        ...deps,
+        exit: (code) => {
+          probe();
+          return originalExit(code);
+        },
+      };
+    }
+
     beforeEach(() => {
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     });
@@ -1696,22 +1716,25 @@ describe("runHostStart - signal/exit propagation", () => {
       let reportStarted = false;
       let landed = false;
       let landedAtExit: boolean | null = null;
-      const slowReporting: RunHostStartDeps = {
+      const slowReporting: Partial<RunHostStartDeps> = {
         ...deps,
         reportHostCrash: async () => {
           reportStarted = true;
           await reporting.promise;
           landed = true;
         },
-        exit: (code) => {
-          landedAtExit = landed;
-          return deps.exit(code);
-        },
       };
 
       const run = runHostStart(
         { environment: "production", cwd: null },
-        withChildExit(slowReporting, child, 7, null),
+        withChildExit(
+          withExitProbe(slowReporting, () => {
+            landedAtExit = landed;
+          }),
+          child,
+          7,
+          null,
+        ),
       );
       await flushUntil(() => reportStarted);
       await flushUntil(() => recorded.exited !== null);
@@ -1730,22 +1753,25 @@ describe("runHostStart - signal/exit propagation", () => {
       let reportStarted = false;
       let landed = false;
       let landedAtExit: boolean | null = null;
-      const slowReporting: RunHostStartDeps = {
+      const slowReporting: Partial<RunHostStartDeps> = {
         ...deps,
         reportHostCrash: async () => {
           reportStarted = true;
           await reporting.promise;
           landed = true;
         },
-        exit: (code) => {
-          landedAtExit = landed;
-          return deps.exit(code);
-        },
       };
 
       const run = runHostStart(
         { environment: "production", cwd: null },
-        withChildExit(slowReporting, child, 7, null),
+        withChildExit(
+          withExitProbe(slowReporting, () => {
+            landedAtExit = landed;
+          }),
+          child,
+          7,
+          null,
+        ),
       );
       await flushUntil(() => reportStarted);
       await vi.advanceTimersByTimeAsync(HOST_CRASH_REPORT_TIMEOUT_MS - 1);
@@ -1804,22 +1830,25 @@ describe("runHostStart - signal/exit propagation", () => {
       let resumeStarted = false;
       let resumed = false;
       let resumedAtExit: boolean | null = null;
-      const slowResume: RunHostStartDeps = {
+      const slowResume: Partial<RunHostStartDeps> = {
         ...deps,
         resumeCrashReports: async () => {
           resumeStarted = true;
           await resuming.promise;
           resumed = true;
         },
-        exit: (code) => {
-          resumedAtExit = resumed;
-          return deps.exit(code);
-        },
       };
 
       const run = runHostStart(
         { environment: "production", cwd: null },
-        withChildExit(slowResume, child, 7, null),
+        withChildExit(
+          withExitProbe(slowResume, () => {
+            resumedAtExit = resumed;
+          }),
+          child,
+          7,
+          null,
+        ),
       );
       await flushUntil(() => resumeStarted);
       await flushUntil(() => recorded.exited !== null);
@@ -1836,7 +1865,7 @@ describe("runHostStart - signal/exit propagation", () => {
       let resumeStarted = false;
       let resumed = false;
       let resumedAtExit: boolean | null = null;
-      const guarded: RunHostStartDeps = {
+      const guarded: Partial<RunHostStartDeps> = {
         ...deps,
         findIncumbentHost: async () => ({
           pid: 40769,
@@ -1848,15 +1877,13 @@ describe("runHostStart - signal/exit propagation", () => {
           await resuming.promise;
           resumed = true;
         },
-        exit: (code) => {
-          resumedAtExit = resumed;
-          return deps.exit(code);
-        },
       };
 
       const run = runHostStart(
         { environment: "production", cwd: null },
-        guarded,
+        withExitProbe(guarded, () => {
+          resumedAtExit = resumed;
+        }),
       );
       await flushUntil(() => resumeStarted);
       await flushUntil(() => recorded.exited !== null);
@@ -1871,7 +1898,7 @@ describe("runHostStart - signal/exit propagation", () => {
     it("stops waiting for a throttle-state resume that never resolves at the report bound", async () => {
       const { recorded, deps } = makeRunStubs(sampleRecord(exec), null);
       let resumeStarted = false;
-      const stuck: RunHostStartDeps = {
+      const stuck: Partial<RunHostStartDeps> = {
         ...deps,
         findIncumbentHost: async () => ({
           pid: 40769,
@@ -1884,10 +1911,7 @@ describe("runHostStart - signal/exit propagation", () => {
         },
       };
 
-      const run = runHostStart(
-        { environment: "production", cwd: null },
-        stuck,
-      );
+      const run = runHostStart({ environment: "production", cwd: null }, stuck);
       await flushUntil(() => resumeStarted);
       await vi.advanceTimersByTimeAsync(HOST_CRASH_REPORT_TIMEOUT_MS - 1);
       expect(recorded.exited).toBeNull();

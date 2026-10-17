@@ -157,10 +157,7 @@ afterEach(() => {
 });
 
 /** One supervisor life: a fresh module instance, then `crashes` host crashes. */
-async function superviseLife(
-  crashes: number,
-  exitCode: number,
-): Promise<void> {
+async function superviseLife(crashes: number, exitCode: number): Promise<void> {
   vi.resetModules();
   const mod = await import("../crash-telemetry");
   for (let index = 0; index < crashes; index += 1) {

@@ -1025,7 +1025,9 @@ export async function runHostStart(
   // host that crashes on every start does not get a fresh budget of full
   // reports per supervisor life, and a count that supervisor left open is
   // sent. Not awaited here, but an exit before it ends waits for it (bounded),
-  // so an early exit cannot leave an overdue count unsent.
+  // for the summary to be queued and the file written, not for Sentry to
+  // deliver it: an overdue count is sent at most once, and not sent twice
+  // because its write was cut off.
   trackPendingCrashTelemetry(
     Promise.resolve()
       .then(() => deps.resumeCrashReports(opts.environment))
