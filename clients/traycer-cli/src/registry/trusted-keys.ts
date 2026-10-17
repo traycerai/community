@@ -1,8 +1,8 @@
 import { readFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { CLI_ERROR_CODES, cliError } from "../runner/errors";
 import { config } from "../config";
+import { cliSharedHomeDir } from "../store/paths";
 
 // Trusted minisign public keys the CLI accepts when verifying host
 // archive signatures. Keys come from two sources:
@@ -53,12 +53,7 @@ export async function loadTrustedKeys(): Promise<TrustedKeySet> {
   }
   // Disk overlay: operator escape hatch for pinning extra keys without
   // rebuilding. ADDS to the trust set; cannot replace baked.
-  const overlayPath = join(
-    homedir(),
-    ".traycer",
-    "cli",
-    "host-trusted-pubkeys",
-  );
+  const overlayPath = join(cliSharedHomeDir(), "host-trusted-pubkeys");
   try {
     const contents = await readFile(overlayPath, "utf8");
     for (const line of contents.split(/\r?\n/)) {
