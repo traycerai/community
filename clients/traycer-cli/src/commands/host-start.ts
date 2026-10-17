@@ -1024,10 +1024,13 @@ export async function runHostStart(
   // Pick up the crash-report throttle state the previous supervisor left, so a
   // host that crashes on every start does not get a fresh budget of full
   // reports per supervisor life, and a count that supervisor left open is
-  // sent. Not awaited: nothing below depends on it.
-  void Promise.resolve()
-    .then(() => deps.resumeCrashReports(opts.environment))
-    .catch(() => undefined);
+  // sent. Not awaited here, but an exit before it ends waits for it (bounded),
+  // so an early exit cannot leave an overdue count unsent.
+  trackPendingCrashTelemetry(
+    Promise.resolve()
+      .then(() => deps.resumeCrashReports(opts.environment))
+      .catch(() => undefined),
+  );
 
   // Best-effort backstop against stacking a second host on a live one.
   // BE PRECISE ABOUT WHAT THIS DOES AND DOES NOT COVER.
@@ -3839,13 +3842,18 @@ function boundedCrashTelemetry(
       timer.unref?.();
     }),
   ]);
-  pendingCrashTelemetry.add(bounded);
-  void bounded.then(() => pendingCrashTelemetry.delete(bounded));
+  trackPendingCrashTelemetry(bounded);
   return bounded;
 }
 
+function trackPendingCrashTelemetry(task: Promise<void>): void {
+  pendingCrashTelemetry.add(task);
+  void task.then(() => pendingCrashTelemetry.delete(task));
+}
+
 /**
- * Reports still inside their {@link HOST_CRASH_REPORT_TIMEOUT_MS} bound. The
+ * Reports (and the throttle-state resume at start) still in flight; a report
+ * is inside its {@link HOST_CRASH_REPORT_TIMEOUT_MS} bound. The
  * relaunch never waits on them, but the supervisor's own exit does: the last
  * crash of a supervisor's life is reported just before it exits, and the
  * throttle state that report writes is what the next supervisor starts from.

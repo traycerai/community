@@ -424,6 +424,42 @@ describe("HostCrashReportThrottle across processes", () => {
   });
 });
 
+describe("HostCrashReportThrottle.snapshot", () => {
+  function kindEvent(exitCode: number): HostCrashEvent {
+    return buildHostCrashEvent(
+      sampleTelemetry({ exitCode, signal: null }),
+      null,
+    );
+  }
+
+  it("leaves out a kind that has been quiet for a whole window, and keeps one with a count open", () => {
+    const h = createHarness();
+    h.throttle.report(kindEvent(1));
+    for (let i = 0; i < 4; i += 1) h.throttle.report(kindEvent(2));
+    h.advance(HOST_CRASH_SUMMARY_WINDOW_MS - 1);
+    expect(h.throttle.snapshot().size).toBe(2);
+    h.advance(1);
+    // Kind 1 is quiet; kind 2 still has an unsent count.
+    const kept = [...h.throttle.snapshot().values()];
+    expect(kept).toHaveLength(1);
+    expect(kept[0].suppressedCount).toBe(1);
+  });
+
+  it("keeps the most recently crashed kinds when there are more than it will write", () => {
+    const h = createHarness();
+    for (let code = 1; code <= 40; code += 1) {
+      h.advance(1_000);
+      h.throttle.report(kindEvent(code));
+    }
+    const kept = h.throttle.snapshot();
+    expect(kept.size).toBe(32);
+    const newest = kindEvent(40).fingerprint.join("|");
+    const oldest = kindEvent(1).fingerprint.join("|");
+    expect(kept.has(newest)).toBe(true);
+    expect(kept.has(oldest)).toBe(false);
+  });
+});
+
 describe("parsePersistedHostCrashThrottle", () => {
   const kind = {
     reported: 3,

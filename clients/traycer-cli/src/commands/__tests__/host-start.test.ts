@@ -1718,6 +1718,35 @@ describe("runHostStart - signal/exit propagation", () => {
     expect(landedAtExit).toBe(false);
   }, 10_000);
 
+  it("lets a throttle-state resume still in flight finish before the supervisor exits", async () => {
+    const exec = "/opt/traycer/host/install/traycer-host";
+    const { child, recorded, deps } = makeRunStubs(sampleRecord(exec), null);
+    let resumed = false;
+    let resumedAtExit: boolean | null = null;
+    const slowResume: RunHostStartDeps = {
+      ...deps,
+      resumeCrashReports: async () => {
+        await new Promise<void>((resolve) => setTimeout(resolve, 300));
+        resumed = true;
+      },
+      exit: (code) => {
+        resumedAtExit = resumed;
+        return deps.exit(code);
+      },
+    };
+
+    await runUntilExit(
+      () =>
+        runHostStart(
+          { environment: "production", cwd: null },
+          withChildExit(slowResume, child, 7, null),
+        ),
+      recorded,
+    );
+
+    expect(resumedAtExit).toBe(true);
+  }, 10_000);
+
   it("spawn() throw is translated into HOST_SPAWN_FAILED + exit 66", async () => {
     const exec = "/opt/traycer/host/install/traycer-host";
     const { recorded, deps } = makeRunStubs(sampleRecord(exec), null);

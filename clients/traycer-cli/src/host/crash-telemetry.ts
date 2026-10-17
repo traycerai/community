@@ -324,6 +324,9 @@ export function captureHostCrashSummary(
   });
 }
 
+/** The most kinds the throttle keeps on disk. */
+const MAX_PERSISTED_KINDS = 32;
+
 /** Crashes of one kind reported in full before the throttle starts counting. */
 export const HOST_CRASH_REPORTS_BEFORE_THROTTLE = 3;
 
@@ -467,10 +470,23 @@ export class HostCrashReportThrottle {
     this.persist();
   }
 
-  /** The whole state, for {@link HostCrashReportThrottleDeps.persist}. */
+  /**
+   * The state worth keeping, for {@link HostCrashReportThrottleDeps.persist}.
+   * A kind that is quiet (nothing held back, a whole window since its last
+   * crash) reads the same as an absent one, so it is left out; if more than
+   * {@link MAX_PERSISTED_KINDS} kinds remain, the most recently crashed are
+   * kept, so a bound on the file never costs the kind that is looping now.
+   */
   snapshot(): PersistedHostCrashThrottle {
-    const out = new Map<string, PersistedHostCrashKind>();
+    const at = this.deps.now();
+    const live: [string, HostCrashThrottleState][] = [];
     for (const [key, state] of this.states) {
+      if (this.hasGoneQuiet(key, state, at)) continue;
+      live.push([key, state]);
+    }
+    live.sort((a, b) => b[1].lastCrashAt - a[1].lastCrashAt);
+    const out = new Map<string, PersistedHostCrashKind>();
+    for (const [key, state] of live.slice(0, MAX_PERSISTED_KINDS)) {
       out.set(key, {
         reported: state.reported,
         lastCrashAt: state.lastCrashAt,
@@ -597,7 +613,6 @@ export class HostCrashReportThrottle {
   }
 }
 
-const MAX_PERSISTED_KINDS = 32;
 const MAX_PERSISTED_STRING = 256;
 const MAX_PERSISTED_TAGS = 48;
 const MAX_PERSISTED_BYTES = 256 * 1024;
