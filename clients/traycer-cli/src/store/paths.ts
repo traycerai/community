@@ -195,6 +195,12 @@ export function cliLockPath(environment: Environment): string {
 export function cliLogPath(environment: Environment): string {
   return join(cliInstallHomeDir(environment), CLI_LOG_FILENAME);
 }
+// What the host-crash report throttle remembers between supervisor processes
+// (see `host/crash-telemetry.ts`): per crash kind, how many full reports were
+// sent and how many were held back. Per environment, beside the CLI log.
+export function hostCrashThrottlePath(environment: Environment): string {
+  return join(cliInstallHomeDir(environment), "host-crash-throttle.json");
+}
 // Marker the detached pending-CLI-upgrade finalize helper writes after
 // it attempts the live-binary swap. The next CLI invocation (Doctor,
 // host restart, etc.) reconciles this marker against the CLI install

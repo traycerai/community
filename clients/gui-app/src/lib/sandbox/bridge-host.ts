@@ -395,7 +395,7 @@ export class SandboxBridgeHost {
   frameLoaded(): void {
     if (this.phase === "disposed") return;
     this.loads += 1;
-    if (this.loads > 2) this.dispose();
+    if (this.loads > 2) this.rejectDocument();
   }
 
   /** Send `host-context-changed` with the keys that changed, if any. */
@@ -462,10 +462,16 @@ export class SandboxBridgeHost {
     }
   }
 
+  /** Retire the document before offering recovery; normal teardown stays quiet. */
+  private rejectDocument(): void {
+    this.dispose();
+    this.options.events.onStatus("crashed");
+  }
+
   private onProxyReady(): void {
     if (this.phase !== "awaiting-proxy") {
       // The loader came back: the frame was reloaded or navigated to it.
-      this.dispose();
+      this.rejectDocument();
       return;
     }
     const { resource } = this.options;
@@ -658,7 +664,7 @@ export class SandboxBridgeHost {
       isRecord(params) &&
       params.nonce === this.options.nonce;
     if (!valid) {
-      this.dispose();
+      this.rejectDocument();
       return;
     }
     this.phase = "ready";

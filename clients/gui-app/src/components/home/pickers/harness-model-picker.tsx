@@ -1,7 +1,7 @@
 import { useStore } from "zustand";
 
 import { Popover, PopoverTrigger } from "@/components/ui/popover";
-import { TooltipWrapper } from "@/components/ui/tooltip-wrapper";
+import { HarnessModelPickerTriggerTooltip } from "@/components/home/pickers/harness-model-picker-trigger-tooltip";
 import { Kbd } from "@/components/ui/kbd";
 import { ShortcutHint } from "@/components/ui/shortcut-hint";
 import { HarnessModelTrigger } from "@/components/home/pickers/harness-model-trigger";
@@ -1153,11 +1153,9 @@ function HarnessModelPickerImpl(props: HarnessModelPickerProps) {
   );
 
   const composerFace = (
-    <TooltipWrapper
+    <HarnessModelPickerTriggerTooltip
+      pickerOpen={visibleOpen}
       label={tooltipLabel}
-      side="top"
-      sideOffset={undefined}
-      align={undefined}
     >
       <HarnessModelTrigger
         {...paneActivationDeferProps}
@@ -1175,7 +1173,7 @@ function HarnessModelPickerImpl(props: HarnessModelPickerProps) {
         disabled={disabled}
         labelDisplay={props.labelDisplay}
       />
-    </TooltipWrapper>
+    </HarnessModelPickerTriggerTooltip>
   );
 
   return (

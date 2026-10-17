@@ -39,6 +39,12 @@ import {
   toastFromHostError,
   toastFromHostErrorWithDetail,
 } from "@/lib/host-error-toast";
+import {
+  toastFromOwnerHostBatchWriteFailuresWithUnconfirmed,
+  toastFromOwnerHostWriteError,
+  type OwnerHostBatchWriteCopy,
+  type OwnerHostBatchWriteOutcome,
+} from "@/lib/owner-host-write-error-toast";
 import { invalidateEpicChatRecords } from "@/hooks/chats/use-epic-chat-records";
 import { invalidateChatRunSettings } from "@/hooks/chats/use-chat-run-settings-query";
 import { invalidateEpicTuiAgentRecords } from "@/hooks/chats/use-epic-tui-agent-records";
@@ -731,17 +737,55 @@ function useEpicArchiveChatMutation(
       },
       onError:
         failurePresentation === "individual"
-          ? (error) => toastFromHostError(error, "Couldn't archive agent.")
+          ? (error) =>
+              toastFromOwnerHostWriteError(error, "Couldn't archive agent.")
           : undefined,
     },
   });
 }
 
+/**
+ * One request of an archive batch, and how many SELECTED rows it stands for:
+ * archiving a record hides its subtree, so the sidebar sends only the topmost
+ * selected rows, each covering itself and its selected descendants. 1 for an
+ * independent target.
+ *
+ * `selectedRows` is fixed at the gesture. `coveredRows` is read when the batch
+ * settles: how many of those rows are still beneath the record then. A
+ * selected descendant moved out while the request was in flight was not
+ * archived with it, so it gets neither the request's applied nor its failed
+ * count - it is unconfirmed.
+ */
+export interface ArchiveChatsTarget extends ChatMutationTarget {
+  readonly selectedRows: number;
+  readonly coveredRows: () => number;
+}
+
 export interface ArchiveChatsMutationInput {
   readonly epicId: string;
-  readonly chats: readonly ChatMutationTarget[];
+  readonly chats: readonly ArchiveChatsTarget[];
   readonly archived: boolean;
 }
+
+const ARCHIVE_BATCH_COPY: OwnerHostBatchWriteCopy = {
+  single: "Couldn't archive agent.",
+  partial: (applied, failed) =>
+    `Archived ${applied} of ${applied + failed} selected agents. ${failed} couldn't be archived.`,
+  none: (attempted) =>
+    `Couldn't archive any of the ${attempted} selected agents.`,
+  unconfirmed: (attempted) =>
+    `Couldn't confirm all ${attempted} selected agents were archived. Check them and archive any that weren't.`,
+};
+
+const UNARCHIVE_BATCH_COPY: OwnerHostBatchWriteCopy = {
+  single: "Couldn't unarchive agent.",
+  partial: (applied, failed) =>
+    `Unarchived ${applied} of ${applied + failed} selected agents. ${failed} couldn't be unarchived.`,
+  none: (attempted) =>
+    `Couldn't unarchive any of the ${attempted} selected agents.`,
+  unconfirmed: (attempted) =>
+    `Couldn't confirm all ${attempted} selected agents were unarchived. Check them and unarchive any that weren't.`,
+};
 
 export type ArchiveChatsMutationResult =
   readonly PromiseSettledResult<SetChatArchivedResponse>[];
@@ -771,21 +815,45 @@ export function useEpicArchiveChats(): UseMutationResult<
         variables.chats.map((chat) =>
           archiveChat.mutateAsync({
             epicId: variables.epicId,
-            ...chat,
+            chatId: chat.chatId,
+            hostId: chat.hostId,
             archived: variables.archived,
           }),
         ),
       ),
-    onSuccess: (results) => {
-      const firstFailure = results.find(
-        (result): result is PromiseRejectedResult =>
-          result.status === "rejected",
+    onSuccess: (results, variables) => {
+      // `updated: false` is an already-satisfied no-op, or a chat deleted
+      // while its write waited its turn on the host: neither applied nor
+      // failed as far as this batch can tell. Such rows stay in the
+      // selection's count, unconfirmed.
+      let unconfirmedRows = 0;
+      const outcomes = results.flatMap(
+        (result, index): OwnerHostBatchWriteOutcome[] => {
+          const chat = variables.chats[index];
+          const selectedRows = chat.selectedRows;
+          if (result.status === "fulfilled" && !result.value.updated) {
+            unconfirmedRows += selectedRows;
+            return [];
+          }
+          const coveredRows = Math.min(selectedRows, chat.coveredRows());
+          unconfirmedRows += selectedRows - coveredRows;
+          return [
+            {
+              kind: "agent",
+              hostId: chat.hostId,
+              selectedRows: coveredRows,
+              error:
+                result.status === "rejected"
+                  ? toHostRpcError(result.reason, "epic.setChatArchived")
+                  : null,
+            },
+          ];
+        },
       );
-      if (firstFailure === undefined) return;
-      const reason: unknown = firstFailure.reason;
-      toastFromHostError(
-        toHostRpcError(reason, "epic.setChatArchived"),
-        "Couldn't archive some selected agents.",
+      toastFromOwnerHostBatchWriteFailuresWithUnconfirmed(
+        outcomes,
+        unconfirmedRows,
+        variables.archived ? ARCHIVE_BATCH_COPY : UNARCHIVE_BATCH_COPY,
       );
     },
   });
@@ -793,6 +861,31 @@ export function useEpicArchiveChats(): UseMutationResult<
 
 /** Deletes on the owning host and retires the viewer's confirmed replica. */
 export function useEpicDeleteChat(): UseMutationResult<
+  DeleteChatResponse,
+  HostRpcError,
+  DeleteChatMutationInput,
+  DeleteChatMutationContext
+> {
+  return useEpicDeleteChatMutation("individual");
+}
+
+/**
+ * `useEpicDeleteChat` for one delete among several in a batch: the caller
+ * reports the batch's failures once (`toastFromOwnerHostBatchWriteFailures`),
+ * so a failure here raises no notice of its own.
+ */
+export function useEpicDeleteChatInBatch(): UseMutationResult<
+  DeleteChatResponse,
+  HostRpcError,
+  DeleteChatMutationInput,
+  DeleteChatMutationContext
+> {
+  return useEpicDeleteChatMutation("aggregate");
+}
+
+function useEpicDeleteChatMutation(
+  failurePresentation: "individual" | "aggregate",
+): UseMutationResult<
   DeleteChatResponse,
   HostRpcError,
   DeleteChatMutationInput,
@@ -970,7 +1063,9 @@ export function useEpicDeleteChat(): UseMutationResult<
         useEpicCanvasStore
           .getState()
           .unmarkArtifactSelfDeleted(variables.chatId);
-        toastFromHostError(error, "Couldn't delete agent.");
+        if (failurePresentation === "individual") {
+          toastFromOwnerHostWriteError(error, "Couldn't delete agent.");
+        }
       },
     },
   });

@@ -929,8 +929,18 @@ describe("mixed-host bulk archive", () => {
       await result.current.mutateAsync({
         epicId: EPIC_ID,
         chats: [
-          { chatId: LOCAL_CHAT_ID, hostId: LOCAL.hostId },
-          { chatId: REMOTE_CHAT_ID, hostId: REMOTE.hostId },
+          {
+            chatId: LOCAL_CHAT_ID,
+            hostId: LOCAL.hostId,
+            selectedRows: 1,
+            coveredRows: () => 1,
+          },
+          {
+            chatId: REMOTE_CHAT_ID,
+            hostId: REMOTE.hostId,
+            selectedRows: 1,
+            coveredRows: () => 1,
+          },
         ],
         archived: true,
       });

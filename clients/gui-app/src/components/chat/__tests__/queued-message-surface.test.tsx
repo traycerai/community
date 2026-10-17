@@ -14,6 +14,7 @@ import type {
   OpenChatQueuedPromptItem,
   ChatQueuedManagedCommandItem,
   ChatQueuedPortForwardItem,
+  ChatQueuedTaskCheckinItem,
   ChatRunSettings,
 } from "@traycer/protocol/host/agent/gui/subscribe";
 import { buildQueuedMessageOrderKey } from "@/components/chat/queued-message-reorder-dnd";
@@ -1030,6 +1031,159 @@ describe("<QueuedMessagePanel />", () => {
     ).toBeNull();
   });
 
+  it("renders a task-checkin item as a describable, dismissable Check-in chip whose status uses the delivery vocabulary", () => {
+    renderPanel({
+      queue: queueState([
+        queuedItem("queue-user", "User prompt", "pending"),
+        taskCheckinQueuedItem("queue-checkin", "Check-in on 2 tasks"),
+      ]),
+      readOnly: false,
+      canAct: true,
+      onReorder: null,
+    });
+
+    expect(screen.getAllByTestId("queued-message-row")).toHaveLength(2);
+    const checkinRow = screen.getAllByTestId("queued-message-row")[1];
+
+    // The content is the item's own description - it is content-free
+    // otherwise, like the other host-authored items.
+    expect(within(checkinRow).getByText("Check-in on 2 tasks")).not.toBeNull();
+    const badge = within(checkinRow).getByTestId("queued-task-checkin-badge");
+    expect(badge.textContent).toBe("Check-in");
+
+    // Never editable, never hand-steerable.
+    expect(
+      within(checkinRow).queryByRole("button", { name: "Edit queued message" }),
+    ).toBeNull();
+    expect(
+      within(checkinRow).queryByRole("button", {
+        name: "Steer queued message now",
+      }),
+    ).toBeNull();
+
+    // Its own dismiss aria-label, distinct from the shell and forward ones.
+    const dismiss = within(checkinRow).getByRole("button", {
+      name: "Dismiss task check-in",
+    });
+    fireEvent.click(dismiss);
+    expect(onCancelSpy).toHaveBeenCalledTimes(1);
+    expect(onCancelSpy.mock.calls[0]?.[0]).toMatchObject({
+      queueItemId: "queue-checkin",
+      kind: "task-checkin",
+    });
+  });
+
+  it("does not put the Check-in chip on a shell or port-forward row", () => {
+    renderPanel({
+      queue: queueState([
+        managedCommandQueuedItem("queue-managed", "bun test"),
+        portForwardQueuedItem("queue-forward", "dev server was interrupted"),
+      ]),
+      readOnly: false,
+      canAct: true,
+      onReorder: null,
+    });
+
+    expect(screen.queryByTestId("queued-task-checkin-badge")).toBeNull();
+  });
+
+  it("labels a paused task-checkin item with the same status vocabulary a managed-command item uses", () => {
+    renderPanel({
+      queue: queueState([
+        {
+          ...taskCheckinQueuedItem("queue-checkin", "Check-in on 1 task"),
+          status: "paused",
+        },
+      ]),
+      readOnly: false,
+      canAct: true,
+      onReorder: null,
+    });
+
+    const checkinRow = screen.getByTestId("queued-message-row");
+    expect(within(checkinRow).getByText("Paused")).not.toBeNull();
+  });
+
+  it("labels a steering task-checkin item Delivering and closes its dismiss lever, matching the managed-command item", () => {
+    renderPanel({
+      queue: queueState([
+        {
+          ...taskCheckinQueuedItem("queue-checkin", "Check-in on 1 task"),
+          status: "steering",
+        },
+      ]),
+      readOnly: false,
+      canAct: true,
+      onReorder: null,
+    });
+
+    const checkinRow = screen.getByTestId("queued-message-row");
+    expect(within(checkinRow).getByText("Delivering")).not.toBeNull();
+    expect(checkinRow.getAttribute("aria-busy")).toBe("true");
+    expect(
+      within(checkinRow).queryByRole("button", { name: /cancel|dismiss/i }),
+    ).toBeNull();
+  });
+
+  it("keeps the task-checkin dismiss aria-label distinct from the shell and port-forward ones", () => {
+    renderPanel({
+      queue: queueState([
+        taskCheckinQueuedItem("queue-checkin", "Check-in on 1 task"),
+      ]),
+      readOnly: false,
+      canAct: true,
+      onReorder: null,
+    });
+
+    const checkinRow = screen.getByTestId("queued-message-row");
+    expect(
+      within(checkinRow).queryByRole("button", {
+        name: "Cancel queued command output",
+      }),
+    ).toBeNull();
+    expect(
+      within(checkinRow).queryByRole("button", {
+        name: "Dismiss port forward notice",
+      }),
+    ).toBeNull();
+  });
+
+  // One at a time, like the managed-command pair above: the dismiss action
+  // reads `readOnly` and `canAct` independently.
+  it("hides the task-checkin dismiss action in read-only mode", () => {
+    renderPanel({
+      queue: queueState([
+        taskCheckinQueuedItem("queue-checkin", "Check-in on 1 task"),
+      ]),
+      readOnly: true,
+      canAct: true,
+      onReorder: null,
+    });
+
+    expect(
+      within(screen.getByTestId("queued-message-row")).queryByRole("button", {
+        name: "Dismiss task check-in",
+      }),
+    ).toBeNull();
+  });
+
+  it("hides the task-checkin dismiss action when the viewer cannot act", () => {
+    renderPanel({
+      queue: queueState([
+        taskCheckinQueuedItem("queue-checkin", "Check-in on 1 task"),
+      ]),
+      readOnly: false,
+      canAct: false,
+      onReorder: null,
+    });
+
+    expect(
+      within(screen.getByTestId("queued-message-row")).queryByRole("button", {
+        name: "Dismiss task check-in",
+      }),
+    ).toBeNull();
+  });
+
   it("does not label a received A2A response with the user steer affordance", () => {
     renderPanel({
       queue: queueState([
@@ -1669,6 +1823,22 @@ function portForwardQueuedItem(
     kind: "port-forward",
     queueItemId,
     forwardId: `${queueItemId}-forward`,
+    description,
+    delivery: "next_turn",
+    targetTurnId: null,
+    status: "pending",
+    createdAt: 1,
+    updatedAt: 1,
+  };
+}
+
+function taskCheckinQueuedItem(
+  queueItemId: string,
+  description: string,
+): ChatQueuedTaskCheckinItem {
+  return {
+    kind: "task-checkin",
+    queueItemId,
     description,
     delivery: "next_turn",
     targetTurnId: null,

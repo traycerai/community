@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 // The loader is a classic script with no exports (`vite/sandbox-assets.ts`
-// ships it on its own), so it is run for its effect: importing it starts it,
+// inlines it on its own), so it is run for its effect: importing it starts it,
 // and it then waits, in a jsdom window that is its own parent, for the app to
 // post it a resource. A variable specifier keeps the type-checker from
 // treating the script as a module.

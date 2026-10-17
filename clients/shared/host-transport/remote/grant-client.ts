@@ -4,6 +4,7 @@ import type {
   AttachGrantFailure,
   AttachGrantProvider,
 } from "@traycer/protocol/host-transport/remote/grant";
+import { timeoutSignal } from "../../host-client/timeout-signal";
 
 export type {
   AttachGrant,
@@ -237,7 +238,7 @@ export async function mintAttachGrantViaHttp(
         Accept: "application/json",
       },
       body: JSON.stringify({ role: "client" }),
-      signal: AbortSignal.timeout(GRANT_FETCH_TIMEOUT_MS),
+      signal: timeoutSignal(GRANT_FETCH_TIMEOUT_MS),
     });
   } catch (error) {
     const failure = describeFetchFailure(error);

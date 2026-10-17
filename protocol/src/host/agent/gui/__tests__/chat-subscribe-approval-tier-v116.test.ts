@@ -16,6 +16,9 @@ import {
   chatSubscribeV121,
   chatSubscribeV122,
   chatSubscribeV123,
+  chatSubscribeV124,
+  chatSubscribeV125,
+  chatSubscribeV126,
   chatSubscribeWindowedServerFrameSchema,
   openChatSubscribeWindowedServerFrameSchema,
 } from "@traycer/protocol/host/agent/gui/subscribe";
@@ -48,9 +51,9 @@ function approvalRequestedFrame(
 }
 
 describe("chat.subscribe registry: 1.16 installed below the 1.17 through 1.22 lines, 1.15 still installed", () => {
-  it("binds 1.16 and 1.15 to their own contracts - the head has since moved to 1.23", () => {
+  it("binds 1.16 and 1.15 to their own contracts - the head has since moved to 1.26", () => {
     const line = hostStreamRpcRegistry["chat.subscribe"][1];
-    expect(line.latestMinor).toBe(23);
+    expect(line.latestMinor).toBe(26);
     expect(line.versions[23].contract).toBe(chatSubscribeV123);
     expect(line.versions[22].contract).toBe(chatSubscribeV122);
     expect(line.versions[21].contract).toBe(chatSubscribeV121);
@@ -62,8 +65,17 @@ describe("chat.subscribe registry: 1.16 installed below the 1.17 through 1.22 li
     expect(line.versions[15].contract).toBe(chatSubscribeV115);
   });
 
-  it("1.23's server frame is the open windowed schema; 1.22's and 1.21's are their own frozen pre-page ones; 1.20's, 1.19's, 1.18's, 1.17's, 1.16's and 1.15's are distinct, frozen ones", () => {
-    expect(chatSubscribeV123.serverFrameSchema).toBe(
+  it("1.26's server frame is the open windowed schema; older lines are frozen", () => {
+    expect(chatSubscribeV125.serverFrameSchema).not.toBe(
+      openChatSubscribeWindowedServerFrameSchema,
+    );
+    expect(chatSubscribeV126.serverFrameSchema).toBe(
+      openChatSubscribeWindowedServerFrameSchema,
+    );
+    expect(chatSubscribeV124.serverFrameSchema).not.toBe(
+      openChatSubscribeWindowedServerFrameSchema,
+    );
+    expect(chatSubscribeV123.serverFrameSchema).not.toBe(
       openChatSubscribeWindowedServerFrameSchema,
     );
     expect(chatSubscribeV122.serverFrameSchema).not.toBe(
