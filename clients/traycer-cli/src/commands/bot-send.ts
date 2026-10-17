@@ -405,9 +405,11 @@ class ReplyFollower {
   private onSnapshot(snapshot: OpenChatWindowedSnapshot): void {
     if (snapshot.indexRevision === null) {
       // The host holds no index for this subscriber and streams a fresh
-      // skeleton next: start the index over.
+      // skeleton next - a reconnect, a host rebuild, or the answer to a
+      // `resnapshot`: start over, and let this snapshot's rows say again
+      // where the request stands (it may have been resolved meanwhile).
       this.awaitingRebuild = false;
-      this.resetIndex(snapshot.transcriptEpoch);
+      this.startOver(snapshot.transcriptEpoch);
     } else if (snapshot.transcriptEpoch !== this.epoch) {
       // Also every snapshot still on the wire while a requested rebuild is
       // pending (the epoch is forgotten then); `requestResnapshot` asks once.
@@ -635,9 +637,7 @@ class ReplyFollower {
   private requestResnapshot(): void {
     if (this.awaitingRebuild) return;
     this.awaitingRebuild = true;
-    this.resetIndex(null);
-    this.replies.clear();
-    this.request = { kind: "unseen" };
+    this.startOver(null);
     this.send({
       kind: "resnapshot",
       hasBinaryPayload: false,
@@ -646,7 +646,14 @@ class ReplyFollower {
     });
   }
 
-  private resetIndex(epoch: number | null): void {
+  /**
+   * Forgets the index and everything read from it - the rows, the replies and
+   * where the request stood - so only rows from the next index count. The
+   * one fresh snapshot spent on a missing reply stays spent.
+   */
+  private startOver(epoch: number | null): void {
+    this.replies.clear();
+    this.request = { kind: "unseen" };
     this.epoch = epoch;
     this.revision = null;
     this.rowCount = 0;

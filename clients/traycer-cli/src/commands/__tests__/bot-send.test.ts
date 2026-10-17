@@ -2080,6 +2080,68 @@ describe("waitForBotReply", () => {
     });
   });
 
+  describe("a reconnect's fresh snapshot", () => {
+    it("re-reads where the request stands, as it may have been resolved while the stream was down", async () => {
+      const { session, outcome, settled } = startWait(60_000);
+      // Before the drop the request row is read from the tail, open.
+      session.pushFrame(snapshotOf([openUserRow], 1));
+      session.pushFrame(skeletonOf(1, [skeletonEntry("u0", "user")]));
+      expect(settled()).toBe(false);
+      expect(loadRanges(session)).toEqual([]);
+
+      // The stream drops; the follower ignores it and waits for the next
+      // snapshot.
+      session.pushStatus("reconnecting", null);
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(settled()).toBe(false);
+
+      // The host rebuilt its index. The request was resolved meanwhile, and
+      // its row and the reply are both outside the empty tail.
+      session.pushFrame(
+        snapshotAt({
+          epoch: 2,
+          rowCount: 2,
+          indexRevision: null,
+          tailFromOrdinal: 2,
+          messages: [],
+        }),
+      );
+      session.pushFrame(
+        skeletonOf(2, [
+          skeletonEntry("u0", "user"),
+          skeletonEntry("a1", "assistant"),
+        ]),
+      );
+
+      // The open request read before the drop is forgotten: its row is looked
+      // for again, on the new epoch.
+      expect(loadSpans(session)).toEqual([[0, 0]]);
+      expect(newestLoad(session).epoch).toBe(2);
+      serveWhole(
+        session,
+        newestLoad(session),
+        ["u0"],
+        [resolvedUserRow(REPLY_MESSAGE_ID)],
+      );
+
+      // Resolved by a reply not read yet: the reply row is read next.
+      expect(loadSpans(session)).toEqual([
+        [0, 0],
+        [1, 1],
+      ]);
+      expect(newestLoad(session).epoch).toBe(2);
+      serveWhole(session, newestLoad(session), ["a1"], [replyRow]);
+
+      await expect(outcome).resolves.toEqual({
+        kind: "replied",
+        replyMessageId: REPLY_MESSAGE_ID,
+        text: REPLY_TEXT,
+      });
+      expect(resnapshots(session)).toHaveLength(0);
+      expect(session.closeCount).toBe(1);
+    });
+  });
+
   describe("a rebuild that has not arrived", () => {
     it("asks once, however many snapshots of the old index arrive first", async () => {
       const { session, outcome } = startWait(60_000);
