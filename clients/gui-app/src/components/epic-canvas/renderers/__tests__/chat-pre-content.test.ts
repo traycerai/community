@@ -751,6 +751,7 @@ describe("arm 3: the host is gone", () => {
       `Turn on "${LABEL}" and open Traycer there.`,
     ],
     [
+      // The session proves the machine is on and running Traycer.
       "a remote host with a ready live session, whatever Clone allows",
       {
         lease: DEAD_OFFLINE,
@@ -759,7 +760,7 @@ describe("arm 3: the host is gone", () => {
         cloneAllowed: true,
         hasReadySession: true,
       },
-      `Turn on "${LABEL}" and open Traycer there.`,
+      null,
     ],
     [
       "a remote host with no label",
@@ -1175,6 +1176,16 @@ describe("negative controls over every input", () => {
       expect(value.cloneAllowed).toBe(true);
     }
     expect(pointing).toBeGreaterThan(0);
+  });
+
+  it("never asks to turn on a host this client holds a ready session to", () => {
+    let ready = 0;
+    for (const value of inputs) {
+      if (!value.hasReadySession) continue;
+      ready += 1;
+      expect(bodyText(value)).not.toContain("Turn on");
+    }
+    expect(ready).toBeGreaterThan(0);
   });
 
   it("never repeats the strip's sentence", () => {

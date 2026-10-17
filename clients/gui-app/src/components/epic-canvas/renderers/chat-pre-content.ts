@@ -669,14 +669,16 @@ function waitingForHostHeadline(
  * offline. The other machine is the one that needs a person, and the strip
  * above is where this one continues - offered only while that strip draws
  * Clone agent. A local host's own recovery, and a removed or incompatible
- * host, keep the headline alone.
+ * host, keep the headline alone. So does a host this client holds a ready
+ * live session to: that machine is already on and running Traycer, and only
+ * the lease has not caught up.
  */
 function hostGoneDetail(
   axes: ChatPreContentAxes,
   input: ChatPreContentInput,
   host: string,
 ): string | null {
-  if (input.hostKind !== "remote") return null;
+  if (input.hostKind !== "remote" || input.hasReadySession) return null;
   if (deadStateOf(input).reason !== "offline") return null;
   const turnOn = `Turn on ${host} and open Traycer there`;
   return axes.strip === "offline" && input.cloneAllowed
