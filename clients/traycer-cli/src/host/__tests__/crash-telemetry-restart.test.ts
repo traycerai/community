@@ -270,7 +270,11 @@ describe("host crash reports across supervisor restarts", () => {
       resolved = true;
     });
     try {
-      await flushStarted;
+      const flushObserved = await Promise.race([
+        flushStarted.then(() => true),
+        resuming.then(() => false),
+      ]);
+      expect(flushObserved).toBe(true);
       await new Promise<void>((resolve) => setImmediate(resolve));
       expect(summaries()).toEqual([{ suppressedCount: 3 }]);
       expect(sentryMocks.flushes).toContain(
