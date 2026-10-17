@@ -16,6 +16,7 @@ import {
   chatSubscribeV123,
   chatSubscribeV124,
   chatSubscribeV125,
+  chatSubscribeV126,
   chatSubscribeWindowedClientFrameSchema,
   chatSubscribeWindowedServerFrameSchema,
   openChatSubscribeWindowedServerFrameSchema,
@@ -50,9 +51,9 @@ const PRE_KEY_LINES = [
 ] as const;
 
 describe("chat.subscribe registry: 1.17 installed below the 1.18 through 1.22 lines, 1.16 still installed", () => {
-  it("binds 1.17 and 1.16 to their own contracts - the head has since moved to 1.25", () => {
+  it("binds 1.17 and 1.16 to their own contracts - the head has since moved to 1.26", () => {
     const line = hostStreamRpcRegistry["chat.subscribe"][1];
-    expect(line.latestMinor).toBe(25);
+    expect(line.latestMinor).toBe(26);
     expect(line.versions[23].contract).toBe(chatSubscribeV123);
     expect(line.versions[22].contract).toBe(chatSubscribeV122);
     expect(line.versions[21].contract).toBe(chatSubscribeV121);
@@ -108,7 +109,10 @@ describe("chat.subscribe registry: 1.17 installed below the 1.18 through 1.22 li
     expect(chatSubscribeV124.serverFrameSchema).not.toBe(
       openChatSubscribeWindowedServerFrameSchema,
     );
-    expect(chatSubscribeV125.serverFrameSchema).toBe(
+    expect(chatSubscribeV125.serverFrameSchema).not.toBe(
+      openChatSubscribeWindowedServerFrameSchema,
+    );
+    expect(chatSubscribeV126.serverFrameSchema).toBe(
       openChatSubscribeWindowedServerFrameSchema,
     );
   });
