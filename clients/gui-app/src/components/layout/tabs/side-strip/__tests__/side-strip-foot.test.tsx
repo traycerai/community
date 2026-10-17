@@ -360,6 +360,9 @@ describe("SideStripFoot", () => {
     expect(screen.getByTestId("side-strip-host-degraded").textContent).toBe(
       "Degraded: cross-host messages paused",
     );
+    // The fixed-height row has two lines: the degraded line replaces the host
+    // name rather than adding a third.
+    expect(screen.queryByTestId("side-strip-host-line")).toBeNull();
   });
 
   it.each([
@@ -379,6 +382,9 @@ describe("SideStripFoot", () => {
           .getAttribute("data-health"),
       ).toBe("ready");
       expect(screen.queryByTestId("side-strip-host-degraded")).toBeNull();
+      expect(screen.getByTestId("side-strip-host-line").textContent).toBe(
+        "Ada's Mac",
+      );
     },
   );
 
@@ -398,6 +404,9 @@ describe("SideStripFoot", () => {
           .getAttribute("data-health"),
       ).toBe("pending");
       expect(screen.queryByTestId("side-strip-host-degraded")).toBeNull();
+      expect(screen.getByTestId("side-strip-host-line").textContent).toBe(
+        "Ada's Mac",
+      );
     },
   );
 

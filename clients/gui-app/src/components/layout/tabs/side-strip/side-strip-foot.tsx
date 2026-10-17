@@ -277,22 +277,7 @@ function AccountRowButton(
             <span className="truncate text-ui-sm font-medium text-foreground">
               {userName}
             </span>
-            {host.hostName === null ? null : (
-              <span
-                data-testid="side-strip-host-line"
-                className="truncate text-ui-xs text-muted-foreground"
-              >
-                {host.hostName}
-              </span>
-            )}
-            {host.health === "degraded" ? (
-              <span
-                data-testid="side-strip-host-degraded"
-                className="truncate text-ui-xs text-warning-foreground"
-              >
-                {HOST_DEGRADED_LINE}
-              </span>
-            ) : null}
+            <AccountHostLine health={host.health} hostName={host.hostName} />
           </span>
           <ChevronsUpDown
             aria-hidden
@@ -307,6 +292,36 @@ function AccountRowButton(
 // `degraded` is a host that is serving - connected, running agents - whose
 // messages to and from agents on the account's other hosts are paused. It is
 // never shown as unavailable: everything on this host still works.
+/**
+ * The account row's second line. The row is a fixed two-line height, so a
+ * degraded host's line takes the host name's place rather than stacking a
+ * third line under it.
+ */
+function AccountHostLine(props: {
+  readonly health: HostHealth;
+  readonly hostName: string | null;
+}): ReactNode {
+  if (props.health === "degraded") {
+    return (
+      <span
+        data-testid="side-strip-host-degraded"
+        className="truncate text-ui-xs text-warning-foreground"
+      >
+        {HOST_DEGRADED_LINE}
+      </span>
+    );
+  }
+  if (props.hostName === null) return null;
+  return (
+    <span
+      data-testid="side-strip-host-line"
+      className="truncate text-ui-xs text-muted-foreground"
+    >
+      {props.hostName}
+    </span>
+  );
+}
+
 type HostHealth = "ready" | "degraded" | "pending" | "down" | "unknown";
 
 const HOST_DEGRADED_LINE = "Degraded: cross-host messages paused";
