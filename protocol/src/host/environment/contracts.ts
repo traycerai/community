@@ -1,5 +1,7 @@
 /**
  * `environment.list` - every team environment the signed-in user belongs to.
+ * `environment.host.read` / `environment.host.bind` - the one environment
+ * this host is bound to, and rebinding it.
  *
  * An environment is the cloud container a team shares: skills, the shared
  * notes block, the agent selection guide and the bot list, all held in one
@@ -66,4 +68,57 @@ export const environmentListV10 = defineRpcContract({
   schemaVersion: { major: 1, minor: 0 } as const,
   requestSchema: environmentListRequestSchema,
   responseSchema: environmentListResponseSchema,
+});
+
+/**
+ * The environment this host is bound to, for the signed-in user. A host
+ * belongs to exactly one of its owner's environments and every agent on it
+ * runs in that one. `explicit` is false when the owner never bound the host:
+ * it is then in their personal environment, which is the only default and
+ * never a team.
+ */
+export const environmentHostBindingSchema = lazySchema(() =>
+  z.object({
+    hostId: z.string().min(1),
+    environment: environmentDescriptorSchema,
+    explicit: z.boolean(),
+  }),
+);
+export type EnvironmentHostBinding = z.infer<
+  typeof environmentHostBindingSchema
+>;
+
+export const environmentHostReadRequestSchema = lazySchema(() => z.object({}));
+export type EnvironmentHostReadRequest = z.infer<
+  typeof environmentHostReadRequestSchema
+>;
+
+export const environmentHostReadV10 = defineRpcContract({
+  method: "environment.host.read",
+  schemaVersion: { major: 1, minor: 0 } as const,
+  requestSchema: environmentHostReadRequestSchema,
+  responseSchema: environmentHostBindingSchema,
+});
+
+/**
+ * Binds the serving host to one of the signed-in user's environments.
+ * Binding to the personal environment removes the binding (`explicit`
+ * false). Refused for an environment the user does not belong to, and while
+ * a live bot of another environment is bound to the host. A rebind applies
+ * to new turns; running turns keep the environment they started with.
+ */
+export const environmentHostBindRequestSchema = lazySchema(() =>
+  z.object({
+    environmentId: z.string().min(1),
+  }),
+);
+export type EnvironmentHostBindRequest = z.infer<
+  typeof environmentHostBindRequestSchema
+>;
+
+export const environmentHostBindV10 = defineRpcContract({
+  method: "environment.host.bind",
+  schemaVersion: { major: 1, minor: 0 } as const,
+  requestSchema: environmentHostBindRequestSchema,
+  responseSchema: environmentHostBindingSchema,
 });
