@@ -376,11 +376,24 @@ describe("agent list run tuple", () => {
 
     const result = await buildCommand()(makeCtx(true));
 
-    expect(result.data).toMatchObject({
+    const base = EXPECTED_DEFAULT_FILLED_DATA.agents[0];
+    const child = {
+      ...base,
+      isSelf: false,
+      parentId: "agent-parent",
+    };
+    expect(result.data).toEqual({
+      ...EXPECTED_DEFAULT_FILLED_DATA,
       agents: [
-        { id: "agent-parent", profile: null, permissionMode: null },
-        { id: "known", profile: "ambient", permissionMode: "supervised" },
-        { id: "unknown", profile: null, permissionMode: null },
+        base,
+        {
+          ...child,
+          id: "known",
+          title: "known",
+          profile: "ambient",
+          permissionMode: "supervised",
+        },
+        { ...child, id: "unknown", title: "unknown" },
       ],
     });
   });

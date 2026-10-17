@@ -75,9 +75,9 @@ const NESTED_ORDERED_DOC: JsonContent = {
 
 /**
  * `-LJlU`: a `hardBreak` in the item's FIRST paragraph. `serializeHardBreak`
- * returns a bare "\n" and `serializeListItem` pushes the first child as one
- * whole string behind the marker, so the second line sits at column zero -
- * the continuation indent belongs to LATER blocks only.
+ * returns a bare "\n", and the serializer writes every line after the first at
+ * the item's content column - at column zero the parser moves the rest of the
+ * paragraph out of the item.
  */
 const HARD_BREAK_IN_FIRST_PARAGRAPH_DOC: JsonContent = {
   type: "doc",
@@ -102,6 +102,69 @@ const HARD_BREAK_IN_FIRST_PARAGRAPH_DOC: JsonContent = {
     },
   ],
 };
+
+/** The same break in an ordered item numbered ten: the column is four. */
+const HARD_BREAK_IN_TWO_DIGIT_ORDERED_ITEM_DOC: JsonContent = {
+  type: "doc",
+  content: [
+    {
+      type: "orderedList",
+      attrs: { start: 10 },
+      content: [
+        {
+          type: "listItem",
+          content: [
+            {
+              type: "paragraph",
+              content: [
+                { type: "text", text: "foo" },
+                { type: "hardBreak" },
+                { type: "text", text: "bar" },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  ],
+};
+
+/**
+ * An item whose first paragraph is empty: the marker line stays bare and the
+ * next paragraph follows directly, because a blank line after it ends the item.
+ */
+function emptyFirstParagraphDoc(
+  listType: "bulletList" | "orderedList",
+  start: number,
+): JsonContent {
+  return {
+    type: "doc",
+    content: [
+      {
+        type: listType,
+        attrs: { start },
+        content: [
+          {
+            type: "listItem",
+            content: [
+              { type: "paragraph" },
+              { type: "paragraph", content: [{ type: "text", text: "b" }] },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+}
+
+const EMPTY_FIRST_PARAGRAPH_BULLET_DOC = emptyFirstParagraphDoc(
+  "bulletList",
+  1,
+);
+const EMPTY_FIRST_PARAGRAPH_ORDERED_DOC = emptyFirstParagraphDoc(
+  "orderedList",
+  10,
+);
 
 /** ...and the same break in a LATER block, which does take the indent. */
 const HARD_BREAK_IN_CONTINUATION_DOC: JsonContent = {
@@ -1644,6 +1707,9 @@ describe("content recovery classification", () => {
       NESTED_ORDERED_DOC,
       NESTED_MIXED_WITH_CONTINUATION_DOC,
       HARD_BREAK_IN_FIRST_PARAGRAPH_DOC,
+      HARD_BREAK_IN_TWO_DIGIT_ORDERED_ITEM_DOC,
+      EMPTY_FIRST_PARAGRAPH_BULLET_DOC,
+      EMPTY_FIRST_PARAGRAPH_ORDERED_DOC,
       HARD_BREAK_IN_CONTINUATION_DOC,
       NESTED_LIST_AS_FIRST_CHILD_DOC,
       FENCE_AS_CONTINUATION_DOC,
@@ -1662,6 +1728,24 @@ describe("content recovery classification", () => {
         jsonContentToMarkdown(doc, SERIALIZER_DEFAULTS),
       );
     }
+  });
+
+  it("indents the line after a hard break in an item's first paragraph at the item's content column", () => {
+    expect(recoveryTextFromContent(HARD_BREAK_IN_FIRST_PARAGRAPH_DOC)).toBe(
+      "- foo\n  bar",
+    );
+    expect(
+      recoveryTextFromContent(HARD_BREAK_IN_TWO_DIGIT_ORDERED_ITEM_DOC),
+    ).toBe("10. foo\n    bar");
+  });
+
+  it("puts no blank line between the marker line of an item with an empty first paragraph and the next paragraph", () => {
+    expect(recoveryTextFromContent(EMPTY_FIRST_PARAGRAPH_BULLET_DOC)).toBe(
+      "-\n  b",
+    );
+    expect(recoveryTextFromContent(EMPTY_FIRST_PARAGRAPH_ORDERED_DOC)).toBe(
+      "10. \n    b",
+    );
   });
 
   // `-Jy8u`: the serializer sends `- item`, so a recovery copy without the

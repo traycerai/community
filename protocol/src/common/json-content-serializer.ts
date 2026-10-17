@@ -1210,6 +1210,7 @@ function serializeListItemWithMarker(
 
   const lines: string[] = [];
   let firstLine = true;
+  let markerOnly = false;
 
   const itemCtx: SerializerContext = {
     ...ctx,
@@ -1254,11 +1255,13 @@ function serializeListItemWithMarker(
           for (const line of serialized.split("\n")) {
             lines.push(`${continuationIndent}${line}`);
           }
-        } else if (ctx.escapeText) {
-          // Artifact Markdown is parsed back into the document, so a first
-          // block's later lines (a multi-line quote, say) sit at the item's
-          // content column too: at column zero they leave the item.
-          const [head = "", ...rest] = serialized.split("\n");
+        } else {
+          // Every line after the marker line sits at the content column. A
+          // hard break is a bare "\n", and the line after it at column zero
+          // is not inside the item: the task item parser reads only the
+          // marker line as the item's paragraph, so the rest of it leaves the
+          // item, or becomes a list of its own when it starts like one.
+          const [head, ...rest] = serialized.split("\n");
           lines.push(`${baseIndent}${marker} ${checkbox}${head}`);
           for (const line of rest) {
             lines.push(
@@ -1267,15 +1270,18 @@ function serializeListItemWithMarker(
                 : `${continuationIndent}${line}`,
             );
           }
-        } else {
-          lines.push(`${baseIndent}${marker} ${checkbox}${serialized}`);
+          markerOnly = serialized === "";
         }
         firstLine = false;
       } else {
         // A later paragraph is its own paragraph only behind a blank line:
         // directly under the line before, it reads back as that line's
-        // continuation, and on the next pass falls out of the item.
-        if (child.type === "paragraph") lines.push("");
+        // continuation, and on the next pass falls out of the item. Behind
+        // a marker line with nothing on it the blank line would end the item
+        // instead (an item opens with at most one blank line), so there the
+        // paragraph follows directly and reads back as the item's own.
+        if (child.type === "paragraph" && !markerOnly) lines.push("");
+        markerOnly = false;
         const childLines = serialized.split("\n");
         for (const line of childLines) {
           if (LIST_BLOCK_TYPES.has(child.type ?? "")) {

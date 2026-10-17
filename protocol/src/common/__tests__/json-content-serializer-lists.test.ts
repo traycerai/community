@@ -428,6 +428,82 @@ describe("jsonContentToMarkdown ordered lists", () => {
       ),
     ).toBe("- a\n  - x\n\n  c");
   });
+
+  it("keeps the line after a hard break in a bullet item's first paragraph at the content column", () => {
+    expect(
+      toMarkdown(
+        docOf(bulletList([listItem([hardBreakParagraph("First", "Second")])])),
+      ),
+    ).toBe("- First\n  Second");
+  });
+
+  it.each([
+    [1, "   "],
+    [10, "    "],
+    [100, "     "],
+  ])(
+    "keeps the line after a hard break in the first paragraph of an ordered item numbered %i at its content column",
+    (start, pad) => {
+      expect(
+        toMarkdown(
+          docOf(
+            orderedBlock(
+              [listItem([hardBreakParagraph("First", "Second")])],
+              start,
+            ),
+          ),
+        ),
+      ).toBe(`${start}. First\n${pad}Second`);
+    },
+  );
+
+  it("keeps the line after a hard break in a nested bullet item under an ordered item at that item's content column", () => {
+    expect(
+      toMarkdown(
+        docOf(
+          orderedBlock(
+            [
+              listItem([
+                textParagraph("a"),
+                bulletList([listItem([hardBreakParagraph("First", "Second")])]),
+              ]),
+            ],
+            1,
+          ),
+        ),
+      ),
+    ).toBe("1. a\n   - First\n     Second");
+  });
+
+  it("writes a paragraph after an empty first paragraph of a bullet item directly under the bare marker", () => {
+    expect(
+      toMarkdown(
+        docOf(
+          bulletList([listItem([{ type: "paragraph" }, textParagraph("b")])]),
+        ),
+      ),
+    ).toBe("-\n  b");
+  });
+
+  it.each([
+    [1, "   "],
+    [10, "    "],
+    [100, "     "],
+  ])(
+    "writes a paragraph after an empty first paragraph of an ordered item numbered %i directly under the marker line, which keeps its trailing space",
+    (start, pad) => {
+      expect(
+        toMarkdown(
+          docOf(
+            orderedBlock(
+              [listItem([{ type: "paragraph" }, textParagraph("b")])],
+              start,
+            ),
+          ),
+        ),
+      ).toBe(`${start}. \n${pad}b`);
+    },
+  );
 });
 
 function orderedList(
@@ -495,4 +571,15 @@ function taskBlock(items: JsonContent[]): JsonContent {
 
 function taskEntry(content: JsonContent[]): JsonContent {
   return { type: "taskItem", attrs: { checked: false }, content };
+}
+
+function hardBreakParagraph(first: string, second: string): JsonContent {
+  return {
+    type: "paragraph",
+    content: [
+      { type: "text", text: first },
+      { type: "hardBreak" },
+      { type: "text", text: second },
+    ],
+  };
 }
