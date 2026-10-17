@@ -22,7 +22,11 @@ import {
   worktreeCleanupFailureDetail,
   type WorktreeCleanupOutcome,
 } from "@/lib/epics/run-worktree-cleanup";
-import { toastFromOwnerHostWriteError } from "@/lib/owner-host-write-error-toast";
+import {
+  OWNER_HOST_UNREACHABLE_NOTICE,
+  isOwnerHostUnreachableFailure,
+  toastFromOwnerHostWriteError,
+} from "@/lib/owner-host-write-error-toast";
 import { progressToast } from "@/lib/toast/progress-toast";
 import { LANDING_ROUTE } from "@/lib/routes";
 import { navigateToTabIntent } from "@/lib/tab-navigation";
@@ -199,6 +203,53 @@ function admitEpicDeleteRequest(
     throw new Error("epic.batchDelete: no task admitted without a sign-in");
   }
   return { ids };
+}
+
+/**
+ * The failure of the one request when part of the selection was refused for
+ * the sign-in before it was sent.
+ *
+ * A request that never reached the host deleted nothing, for two reasons, and
+ * one notice gives both remedies. Any other failure proves nothing about the
+ * ids it carried - the host can commit a purge and then throw - so the
+ * refused ids' notice says they were never sent, and the request's failure
+ * gets the notice it gets with nothing refused. Two notices under their own
+ * ids, so neither replaces the other.
+ */
+function toastDeleteFailureWithSignInRefusals(
+  error: HostRpcError,
+  ids: ReadonlyArray<string>,
+  refusal: EpicDeleteRefusal,
+  epicTitlesById: Readonly<Record<string, string>>,
+): void {
+  if (isOwnerHostUnreachableFailure(error)) {
+    const sentIds = ids.filter((id) => !refusal.ids.includes(id));
+    const parts = epicDeleteToastParts({
+      failures: [
+        ...sentIds.map((taskId) => ({
+          taskId,
+          success: false,
+          errorMessage: OWNER_HOST_UNREACHABLE_NOTICE,
+        })),
+        ...refusedEpicDeleteResults(refusal),
+      ],
+      successes: 0,
+      total: ids.length,
+      deletedIds: [],
+      epicTitlesById,
+    });
+    emitEpicDeleteToast(parts.level, parts.message, parts.detail);
+    return;
+  }
+  const parts = epicDeleteToastParts({
+    failures: refusedEpicDeleteResults(refusal),
+    successes: 0,
+    total: refusal.ids.length,
+    deletedIds: [],
+    epicTitlesById,
+  });
+  emitEpicDeleteToast(parts.level, parts.message, parts.detail);
+  toastFromOwnerHostWriteError(error, "Couldn't delete tasks.");
 }
 
 /**
@@ -431,6 +482,15 @@ export function useEpicBatchDelete(): UseMutationResult<
             epicTitlesById: ctx?.epicTitlesById ?? {},
           });
           emitEpicDeleteToast(parts.level, parts.message, parts.detail);
+          return;
+        }
+        if (refusal !== undefined && refusal.ids.length > 0) {
+          toastDeleteFailureWithSignInRefusals(
+            error,
+            variables.ids,
+            refusal,
+            ctx?.epicTitlesById ?? {},
+          );
           return;
         }
         // The one request failed. When it never reached the host, nothing on

@@ -5,6 +5,7 @@ import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
 import type { ExternalToast } from "sonner";
 import {
   HostRpcError,
+  HostTransportFailureError,
   RetryableTransportError,
 } from "@traycer-clients/shared/host-transport/host-messenger";
 import type { BatchDeleteResponse } from "@traycer/protocol/host/epic/unary-schemas";
@@ -29,6 +30,13 @@ import type {
 type ToastCall = readonly [ReactNode, ExternalToast | undefined];
 
 const mocks = vi.hoisted(() => ({
+  toast:
+    vi.fn<
+      (
+        message: ReactNode,
+        options: ExternalToast | undefined,
+      ) => string | number
+    >(),
   toastMessage:
     vi.fn<
       (
@@ -98,14 +106,14 @@ const host = vi.hoisted(() => {
 });
 
 vi.mock("sonner", () => ({
-  toast: {
+  toast: Object.assign(mocks.toast, {
     message: mocks.toastMessage,
     success: mocks.toastSuccess,
     warning: mocks.toastWarning,
     error: mocks.toastError,
     dismiss: mocks.toastDismiss,
     getToasts: mocks.toastGetToasts,
-  },
+  }),
 }));
 
 vi.mock("@/lib/host", async (importOriginal) => ({
@@ -134,7 +142,8 @@ vi.mock("@/lib/epics/run-worktree-cleanup", async (importOriginal) => ({
   runWorktreeCleanup: mocks.runWorktreeCleanup,
 }));
 
-vi.mock("@/lib/host-error-toast", () => ({
+vi.mock("@/lib/host-error-toast", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/host-error-toast")>()),
   toastFromHostError: mocks.toastFromHostError,
 }));
 
@@ -274,6 +283,7 @@ function orderOf(fn: {
 describe("the delete's progress toast", () => {
   beforeEach(() => {
     for (const fn of [
+      mocks.toast,
       mocks.toastMessage,
       mocks.toastSuccess,
       mocks.toastWarning,
@@ -640,37 +650,6 @@ describe("the delete's progress toast", () => {
       expect(mocks.toastWarning).not.toHaveBeenCalled();
     });
 
-    it("says only that the host is offline when some Tasks were refused for sign-in and the rest never reached it", async () => {
-      // Nothing was deleted either way, so the one notice is true for the
-      // refused Tasks too, and no second toast contradicts it.
-      useAuthStore.setState({ status: "unverified" });
-      const view = renderBatchDelete();
-      view.dispatch({
-        ids: ["epic-local", "epic-cloud"],
-        isLocalHomedNow: (epicId) => epicId === "epic-local",
-        boundUserId: "user-1",
-        worktreeCleanup: null,
-      });
-      await waitFor(() => {
-        expect(host.state.requests).toHaveLength(1);
-      });
-
-      await act(async () => {
-        hostRequest(0).reject(neverSent());
-        await Promise.resolve();
-      });
-
-      await waitFor(() => {
-        expect(mocks.toastMessage).toHaveBeenCalledTimes(2);
-      });
-      expect(mocks.toastMessage.mock.calls[1][0]).toBe(
-        "Traycer can't reach that host right now, so nothing on it was changed. Try again once it is reachable.",
-      );
-      expect(mocks.toastError).not.toHaveBeenCalled();
-      expect(mocks.toastWarning).not.toHaveBeenCalled();
-      expect(mocks.toastFromHostError).not.toHaveBeenCalled();
-    });
-
     // `toastFromHostError` stays silent for an aborted or recoverable-
     // unauthorized request. This stand-in is silent for every error, so the
     // dismissal below can only have come from the hook itself.
@@ -960,6 +939,164 @@ describe("the delete's progress toast", () => {
       expect(mocks.toastError.mock.calls[0]?.[0]).toBe(
         "Couldn't delete 23 tasks.",
       );
+      expect(mocks.toastFromHostError).not.toHaveBeenCalled();
+    });
+
+    // traycerai/traycer#2546 (Codex P2): reachability alone is not the
+    // remedy when part of the selection was refused for the sign-in.
+    it("names the sign-in refusal beside the unreachable host when the admitted local Task never reached it", async () => {
+      useAuthStore.setState({ status: "unverified" });
+      const view = renderBatchDelete();
+
+      view.dispatch({
+        ids: ["epic-local", "epic-cloud"],
+        isLocalHomedNow: (epicId) => epicId === "epic-local",
+        boundUserId: "user-1",
+        worktreeCleanup: null,
+      });
+      await waitFor(() => {
+        expect(host.state.requests).toHaveLength(1);
+      });
+      expect(requestedIds(0)).toEqual(["epic-local"]);
+      await act(async () => {
+        hostRequest(0).reject(
+          new RetryableTransportError({
+            replaySafetyFromKey: false,
+            code: "RPC_ERROR",
+            message: "Remote session is not ready",
+            requestId: "request-1",
+            method: "epic.batchDelete",
+            fatalDetails: null,
+          }),
+        );
+        await Promise.resolve();
+      });
+
+      await waitFor(() => {
+        expect(mocks.toastError).toHaveBeenCalledTimes(1);
+      });
+      expect(mocks.toastError.mock.calls[0]?.[0]).toBe(
+        "Couldn't delete 2 tasks.",
+      );
+      const description = mocks.toastError.mock.calls[0]?.[1]?.description;
+      expect(description).toContain(
+        "Traycer can't reach that host right now, so nothing on it was changed.",
+      );
+      expect(description).toContain("couldn't confirm your sign-in");
+      // One notice: the unreachable-host line is not raised on its own too.
+      expect(mocks.toastMessage).toHaveBeenCalledTimes(1);
+      expect(mocks.toastFromHostError).not.toHaveBeenCalled();
+    });
+
+    // traycerai/traycer thread taE6z, round 7: a generic error after the send
+    // proves nothing about the admitted Task - the host can commit the purge
+    // and then throw. Only the refused Task is said not deleted; the request's
+    // failure gets the notice it gets with nothing refused.
+    it("says only the refused Task was not deleted when the admitted request fails with a generic error", async () => {
+      useAuthStore.setState({ status: "unverified" });
+      const view = renderBatchDelete();
+
+      view.dispatch({
+        ids: ["epic-local", "epic-cloud"],
+        isLocalHomedNow: (epicId) => epicId === "epic-local",
+        boundUserId: "user-1",
+        worktreeCleanup: null,
+      });
+      await waitFor(() => {
+        expect(host.state.requests).toHaveLength(1);
+      });
+      expect(requestedIds(0)).toEqual(["epic-local"]);
+      const failure = new HostRpcError({
+        code: "RPC_ERROR",
+        message: "cascade cleanup threw after the purge",
+        requestId: "request-1",
+        method: "epic.batchDelete",
+        fatalDetails: null,
+      });
+      await act(async () => {
+        hostRequest(0).reject(failure);
+        await Promise.resolve();
+      });
+
+      await waitFor(() => {
+        expect(mocks.toastFromHostError).toHaveBeenCalledTimes(1);
+      });
+      expect(mocks.toastFromHostError.mock.calls[0]).toEqual([
+        failure,
+        "Couldn't delete tasks.",
+      ]);
+      expect(mocks.toastError).toHaveBeenCalledTimes(1);
+      expect(mocks.toastError.mock.calls[0]?.[0]).toBe("Couldn't delete task.");
+      expect(mocks.toastError.mock.calls[0]?.[1]?.description).toBe(
+        "This task was not deleted because Traycer couldn't confirm your sign-in. Try again once you're signed in.",
+      );
+      expect(
+        JSON.stringify([
+          mocks.toastError.mock.calls,
+          mocks.toastWarning.mock.calls,
+          mocks.toastMessage.mock.calls,
+          mocks.toast.mock.calls,
+        ]),
+      ).not.toContain("Couldn't delete 2 tasks.");
+    });
+
+    // traycerai/traycer thread taE6z: the admitted request was sent and its
+    // answer lost. The refused ids were never sent, the admitted one may or
+    // may not have been deleted: two notices, each true of its own ids, and
+    // neither says the whole selection failed.
+    it("says the sign-in refusal and the admitted Task's unknown outcome apart when its answer was lost", async () => {
+      useAuthStore.setState({ status: "unverified" });
+      const view = renderBatchDelete();
+
+      view.dispatch({
+        ids: ["epic-local", "epic-cloud-1", "epic-cloud-2"],
+        isLocalHomedNow: (epicId) => epicId === "epic-local",
+        boundUserId: "user-1",
+        worktreeCleanup: null,
+      });
+      await waitFor(() => {
+        expect(host.state.requests).toHaveLength(1);
+      });
+      expect(requestedIds(0)).toEqual(["epic-local"]);
+      await act(async () => {
+        hostRequest(0).reject(
+          new HostTransportFailureError({
+            code: "RPC_ERROR",
+            message: "socket closed after the request was sent",
+            requestId: "request-1",
+            method: "epic.batchDelete",
+            fatalDetails: null,
+          }),
+        );
+        await Promise.resolve();
+      });
+
+      await waitFor(() => {
+        expect(mocks.toast).toHaveBeenCalledTimes(1);
+      });
+      expect(mocks.toast.mock.calls[0]?.[0]).toBe(
+        "No reply came back from the Traycer host, so this may or may not have gone through.",
+      );
+      const unknownId = mocks.toast.mock.calls[0]?.[1]?.id;
+      expect(String(unknownId)).toMatch(/^owner-host-batch-result:/);
+      expect(mocks.toast.mock.calls[0]?.[1]?.description).toBeUndefined();
+
+      expect(mocks.toastError).toHaveBeenCalledTimes(1);
+      expect(mocks.toastError.mock.calls[0]?.[0]).toBe(
+        "Couldn't delete 2 tasks.",
+      );
+      expect(mocks.toastError.mock.calls[0]?.[1]?.description).toBe(
+        "This task was not deleted because Traycer couldn't confirm your sign-in. Try again once you're signed in.",
+      );
+      expect(mocks.toastError.mock.calls[0]?.[1]?.id).not.toBe(unknownId);
+      // Nothing says the whole selection failed.
+      expect(
+        JSON.stringify([
+          mocks.toastError.mock.calls,
+          mocks.toastWarning.mock.calls,
+          mocks.toastMessage.mock.calls,
+        ]),
+      ).not.toContain("Couldn't delete 3 tasks.");
       expect(mocks.toastFromHostError).not.toHaveBeenCalled();
     });
   });
