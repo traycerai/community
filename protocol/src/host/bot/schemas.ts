@@ -18,9 +18,11 @@ import { lazySchema } from "@traycer/protocol/framework/lazy-schema";
  * `bot_` + a 26-character Crockford ULID, the one shape the cloud mints
  * (`mintBotId`). Exact rather than "1-36 characters" so a host never carries a
  * client-supplied string that is not a bot id into a cloud call or a log line.
+ * The first character is `[0-7]`: a ULID's 48-bit timestamp leaves the top
+ * bits of its first base32 digit zero. Mirrored by the server's `isBotIdShape`.
  */
 const botIdSchema = lazySchema(() =>
-  z.string().regex(/^bot_[0-9A-HJKMNP-TV-Z]{26}$/),
+  z.string().regex(/^bot_[0-7][0-9A-HJKMNP-TV-Z]{25}$/),
 );
 const hostIdSchema = lazySchema(() => z.string().min(1).max(255));
 const botTitleSchema = lazySchema(() => z.string().min(1).max(500));
