@@ -14,7 +14,14 @@ import { lazySchema } from "@traycer/protocol/framework/lazy-schema";
  * client hides the surface rather than failing the connection.
  */
 
-const botIdSchema = lazySchema(() => z.string().min(1).max(36));
+/**
+ * `bot_` + a 26-character Crockford ULID, the one shape the cloud mints
+ * (`mintBotId`). Exact rather than "1-36 characters" so a host never carries a
+ * client-supplied string that is not a bot id into a cloud call or a log line.
+ */
+const botIdSchema = lazySchema(() =>
+  z.string().regex(/^bot_[0-9A-HJKMNP-TV-Z]{26}$/),
+);
 const hostIdSchema = lazySchema(() => z.string().min(1).max(255));
 const botTitleSchema = lazySchema(() => z.string().min(1).max(500));
 const botHarnessSchema = lazySchema(() => z.string().min(1).max(64));
