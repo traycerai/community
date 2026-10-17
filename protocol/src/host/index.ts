@@ -1,5 +1,6 @@
 export * from "./organization";
 export * from "./agent";
+export * from "./bot";
 export * from "./agent-session-state";
 export * from "./asset-stream-schemas";
 export * from "./browser";

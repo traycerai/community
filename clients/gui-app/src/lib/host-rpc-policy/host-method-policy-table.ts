@@ -1573,6 +1573,29 @@ export const HOST_METHOD_POLL_TABLE = {
   "drafts.upsert": { mode: "fifo", joinResponseTimeoutMs: null, poll: null },
   "drafts.delete": { mode: "fifo", joinResponseTimeoutMs: null, poll: null },
   "drafts.retract": { mode: "fifo", joinResponseTimeoutMs: null, poll: null },
+  // `bot.*` (Tracy Bots): cloud-backed reads and writes. The reads take the
+  // latest caller like every other cloud list. `fifo` on the mutations only
+  // stops two identical calls (same method, same params) from coalescing into
+  // one; it orders nothing across different params, as the drafts note above
+  // says - the cloud's own row versioning (`host_epoch`, owner-bound updates)
+  // decides between two mutations of one bot. No polling: `bot.subscribe`
+  // carries changes, and the list query is refetched by the mutation hooks
+  // that change it.
+  "bot.create": { mode: "fifo", joinResponseTimeoutMs: null, poll: null },
+  "bot.list": { ...LATEST_SCHEDULING, poll: null },
+  "bot.read": { ...LATEST_SCHEDULING, poll: null },
+  "bot.updateTitle": { mode: "fifo", joinResponseTimeoutMs: null, poll: null },
+  "bot.updateRunSettings": {
+    mode: "fifo",
+    joinResponseTimeoutMs: null,
+    poll: null,
+  },
+  "bot.delete": { mode: "fifo", joinResponseTimeoutMs: null, poll: null },
+  "bot.claimAuthority": {
+    mode: "fifo",
+    joinResponseTimeoutMs: null,
+    poll: null,
+  },
   // Unary byte channel, same posture as `epic.readChatAttachment` - but the
   // only one of the drafts methods whose BODY is megabytes rather than KB, so
   // it is also the only one that declares a budget. The value is declared once
