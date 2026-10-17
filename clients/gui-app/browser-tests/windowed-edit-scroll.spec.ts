@@ -53,6 +53,8 @@ test("a history edit follows the replacement across a windowed reindex", async (
   const before = await page.evaluate(() =>
     window.__windowedEditScrollProbe.snapshot(),
   );
+  if (before.scrollHeight === null)
+    throw new Error("initial scroll height missing");
   await page.evaluate(() => window.__windowedEditScrollProbe.submitEdit());
   await page.evaluate(() =>
     window.__windowedEditScrollProbe.setPhase("reindexed"),
@@ -62,6 +64,13 @@ test("a history edit follows the replacement across a windowed reindex", async (
       page.evaluate(() => window.__windowedEditScrollProbe.snapshot().phase),
     )
     .toBe("reindexed");
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => window.__windowedEditScrollProbe.snapshot().scrollHeight,
+      ),
+    )
+    .toBeLessThan(before.scrollHeight);
   await page.evaluate(() =>
     window.__windowedEditScrollProbe.setPhase("hydrated"),
   );

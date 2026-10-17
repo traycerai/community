@@ -2202,6 +2202,13 @@ describe("<ChatTile />", () => {
       expect(scrollNode.dataset.scrollMode).toBe("free-scrolling");
     });
 
+    const originalMessageId =
+      getButtonByAriaLabel("Edit message").closest<HTMLElement>(
+        "[data-message-id]",
+      )?.dataset.messageId;
+    if (originalMessageId === undefined) {
+      throw new Error("expected edited message row");
+    }
     fireEvent.click(getButtonByAriaLabel("Edit message"));
     fireEvent.click(getButtonByAriaLabel("Send edit"));
     await waitFor(() => {
@@ -2231,6 +2238,10 @@ describe("<ChatTile />", () => {
     await waitFor(() => {
       expect(getButtonByAriaLabel("Send edit")).not.toBeNull();
       expect(scrollNode.dataset.scrollMode).toBe("free-scrolling");
+      const restoredRow = document.querySelector<HTMLElement>(
+        `[data-message-id="${originalMessageId}"]`,
+      );
+      expect(restoredRow?.dataset.navigationHighlighted).toBe("true");
     });
   });
 
