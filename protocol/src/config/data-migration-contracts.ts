@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
+import { lazySchema } from "@traycer/protocol/framework/lazy-schema";
 import { dataLocationRecordSchema } from "./data-root";
 
 /**
@@ -37,18 +38,18 @@ export const DATA_MIGRATION_PROTOCOL_VERSION = 1;
  * Migration ids name flat files in the bootstrap folder, so they are lower
  * case (Windows compares names case-insensitively) and carry no separators.
  */
-export const migrationIdSchema = z
-  .string()
-  .regex(/^m-[a-z0-9][a-z0-9-]{7,62}$/u, "invalid migration id");
+export const migrationIdSchema = lazySchema(() =>
+  z.string().regex(/^m-[a-z0-9][a-z0-9-]{7,62}$/u, "invalid migration id"),
+);
 export type MigrationId = z.infer<typeof migrationIdSchema>;
 
 export function newMigrationId(): MigrationId {
   return `m-${randomUUID()}`;
 }
 
-export const sha256DigestSchema = z
-  .string()
-  .regex(/^sha256:[0-9a-f]{64}$/u, "invalid digest");
+export const sha256DigestSchema = lazySchema(() =>
+  z.string().regex(/^sha256:[0-9a-f]{64}$/u, "invalid digest"),
+);
 export type Sha256Digest = z.infer<typeof sha256DigestSchema>;
 
 /**
@@ -81,12 +82,9 @@ export function sha256Digest(value: unknown): Sha256Digest {
 
 // ---- Component handshake --------------------------------------------------
 
-export const migrationComponentSchema = z.enum([
-  "desktop",
-  "cli",
-  "host",
-  "maintenance",
-]);
+export const migrationComponentSchema = lazySchema(() =>
+  z.enum(["desktop", "cli", "host", "maintenance"]),
+);
 export type MigrationComponent = z.infer<typeof migrationComponentSchema>;
 
 /**
@@ -94,11 +92,13 @@ export type MigrationComponent = z.infer<typeof migrationComponentSchema>;
  * which data-migration protocol generation it implements. Published in every
  * admission entry and in every maintenance response.
  */
-export const componentHandshakeSchema = z.strictObject({
-  component: migrationComponentSchema,
-  build: z.string().min(1).max(200),
-  dataMigrationProtocol: z.number().int().positive(),
-});
+export const componentHandshakeSchema = lazySchema(() =>
+  z.strictObject({
+    component: migrationComponentSchema,
+    build: z.string().min(1).max(200),
+    dataMigrationProtocol: z.number().int().positive(),
+  }),
+);
 export type ComponentHandshake = z.infer<typeof componentHandshakeSchema>;
 
 export function currentComponentHandshake(
@@ -161,7 +161,7 @@ export const MIGRATION_PHASES = [
   "rollback-requested",
   "rolled-back",
 ] as const;
-export const migrationPhaseSchema = z.enum(MIGRATION_PHASES);
+export const migrationPhaseSchema = lazySchema(() => z.enum(MIGRATION_PHASES));
 export type MigrationPhase = z.infer<typeof migrationPhaseSchema>;
 
 /**
@@ -259,30 +259,36 @@ export function rollbackAllowedFrom(phase: MigrationPhase): boolean {
  * Identities are platform-opaque strings, or null where the platform cannot
  * produce one.
  */
-export const capturedRootSchema = z.strictObject({
-  path: z.string().min(1),
-  volumeId: z.string().min(1).nullable(),
-  directoryId: z.string().min(1).nullable(),
-});
+export const capturedRootSchema = lazySchema(() =>
+  z.strictObject({
+    path: z.string().min(1),
+    volumeId: z.string().min(1).nullable(),
+    directoryId: z.string().min(1).nullable(),
+  }),
+);
 export type CapturedRoot = z.infer<typeof capturedRootSchema>;
 
 /** The live coordinator incarnation that holds the coordinator lock. */
-export const coordinatorIncarnationSchema = z.strictObject({
-  pid: z.number().int().positive(),
-  startIdentity: z.string().min(1).nullable(),
-  lockNonce: z.string().min(1),
-});
+export const coordinatorIncarnationSchema = lazySchema(() =>
+  z.strictObject({
+    pid: z.number().int().positive(),
+    startIdentity: z.string().min(1).nullable(),
+    lockNonce: z.string().min(1),
+  }),
+);
 export type CoordinatorIncarnation = z.infer<
   typeof coordinatorIncarnationSchema
 >;
 
 /** Summary of the frozen source inventory and its per-file verification. */
-export const copyManifestSummarySchema = z.strictObject({
-  digest: sha256DigestSchema,
-  entryCount: z.number().int().nonnegative(),
-  byteCount: z.number().int().nonnegative(),
-  verifiedCount: z.number().int().nonnegative(),
-});
+export const copyManifestSummarySchema = lazySchema(() =>
+  z.strictObject({
+    digest: sha256DigestSchema,
+    entryCount: z.number().int().nonnegative(),
+    byteCount: z.number().int().nonnegative(),
+    verifiedCount: z.number().int().nonnegative(),
+  }),
+);
 export type CopyManifestSummary = z.infer<typeof copyManifestSummarySchema>;
 
 /**
@@ -290,27 +296,31 @@ export type CopyManifestSummary = z.infer<typeof copyManifestSummarySchema>;
  * in the same per-store transaction as its repair, so re-running the adapter
  * can tell from the store itself whether its repair already happened.
  */
-export const storeAdapterReceiptSchema = z.strictObject({
-  version: z.literal(1),
-  migrationId: migrationIdSchema,
-  storeKey: z.string().min(1),
-  adapterId: z.string().min(1),
-  adapterVersion: z.number().int().positive(),
-  inputDigest: sha256DigestSchema,
-  outputDigest: sha256DigestSchema,
-  committedAt: z.string().min(1),
-});
+export const storeAdapterReceiptSchema = lazySchema(() =>
+  z.strictObject({
+    version: z.literal(1),
+    migrationId: migrationIdSchema,
+    storeKey: z.string().min(1),
+    adapterId: z.string().min(1),
+    adapterVersion: z.number().int().positive(),
+    inputDigest: sha256DigestSchema,
+    outputDigest: sha256DigestSchema,
+    committedAt: z.string().min(1),
+  }),
+);
 export type StoreAdapterReceipt = z.infer<typeof storeAdapterReceiptSchema>;
 
 /** The journal's mirror of one per-store adapter receipt. */
-export const journalAdapterReceiptSchema = z.strictObject({
-  storeKey: z.string().min(1),
-  adapterId: z.string().min(1),
-  adapterVersion: z.number().int().positive(),
-  preconditionDigest: sha256DigestSchema,
-  outputDigest: sha256DigestSchema.nullable(),
-  state: z.enum(["planned", "committed", "verified"]),
-});
+export const journalAdapterReceiptSchema = lazySchema(() =>
+  z.strictObject({
+    storeKey: z.string().min(1),
+    adapterId: z.string().min(1),
+    adapterVersion: z.number().int().positive(),
+    preconditionDigest: sha256DigestSchema,
+    outputDigest: sha256DigestSchema.nullable(),
+    state: z.enum(["planned", "committed", "verified"]),
+  }),
+);
 export type JournalAdapterReceipt = z.infer<typeof journalAdapterReceiptSchema>;
 
 /**
@@ -318,10 +328,12 @@ export type JournalAdapterReceipt = z.infer<typeof journalAdapterReceiptSchema>;
  * entry, a shortcut, a Git link file): absent, or present with a digest of
  * the bytes/fields the action owner compares.
  */
-export const objectFingerprintSchema = z.discriminatedUnion("kind", [
-  z.strictObject({ kind: z.literal("absent") }),
-  z.strictObject({ kind: z.literal("present"), digest: sha256DigestSchema }),
-]);
+export const objectFingerprintSchema = lazySchema(() =>
+  z.discriminatedUnion("kind", [
+    z.strictObject({ kind: z.literal("absent") }),
+    z.strictObject({ kind: z.literal("present"), digest: sha256DigestSchema }),
+  ]),
+);
 export type ObjectFingerprint = z.infer<typeof objectFingerprintSchema>;
 
 export function fingerprintsEqual(
@@ -334,12 +346,9 @@ export function fingerprintsEqual(
   return left.digest === right.digest;
 }
 
-export const externalActionKindSchema = z.enum([
-  "service-registration",
-  "path-entry",
-  "shortcut",
-  "git-metadata",
-]);
+export const externalActionKindSchema = lazySchema(() =>
+  z.enum(["service-registration", "path-entry", "shortcut", "git-metadata"]),
+);
 export type ExternalActionKind = z.infer<typeof externalActionKindSchema>;
 
 /**
@@ -352,72 +361,76 @@ export type ExternalActionKind = z.infer<typeof externalActionKindSchema>;
  * - `abandoned`: never applied; the before image was observed during rollback.
  * - `inverted`: the inverse was applied and the before image observed.
  */
-export const externalActionSchema = z.strictObject({
-  id: z.string().regex(/^[a-z0-9][a-z0-9.-]{0,79}$/u),
-  kind: externalActionKindSchema,
-  object: z.string().min(1),
-  before: objectFingerprintSchema,
-  after: objectFingerprintSchema,
-  forward: z.json(),
-  inverse: z.json(),
-  state: z.enum(["planned", "applied", "abandoned", "inverted"]),
-});
+export const externalActionSchema = lazySchema(() =>
+  z.strictObject({
+    id: z.string().regex(/^[a-z0-9][a-z0-9.-]{0,79}$/u),
+    kind: externalActionKindSchema,
+    object: z.string().min(1),
+    before: objectFingerprintSchema,
+    after: objectFingerprintSchema,
+    forward: z.json(),
+    inverse: z.json(),
+    state: z.enum(["planned", "applied", "abandoned", "inverted"]),
+  }),
+);
 export type ExternalAction = z.infer<typeof externalActionSchema>;
 
-export const migrationJournalSchema = z.strictObject({
-  version: z.literal(DATA_MIGRATION_RECORD_VERSION),
-  id: migrationIdSchema,
-  revision: z.number().int().positive(),
-  phase: migrationPhaseSchema,
-  /** The phase a rollback was requested from; null unless rolling back. */
-  rollbackFromPhase: migrationPhaseSchema.nullable(),
-  /** The entire prior location record; null for the implicit default root. */
-  previousLocation: dataLocationRecordSchema.nullable(),
-  source: capturedRootSchema,
-  destination: capturedRootSchema,
-  nextGeneration: z.number().int().positive(),
-  coordinatorBuild: componentHandshakeSchema,
-  /**
-   * SHA-256 (lowercase hex) of the packaged coordinator executable that
-   * created this transaction, captured once at planning and immutable: the
-   * only evidence a later, possibly newer, binary uses to recognise the exact
-   * original coordinator for recovery, without executing anything. Null when
-   * the coordinator was not a packaged executable (a development run); then
-   * no binary is ever recognised as the original.
-   */
-  coordinatorExecutableSha256: z
-    .string()
-    .regex(/^[0-9a-f]{64}$/u)
-    .nullable(),
-  maintenanceBuild: componentHandshakeSchema.nullable(),
-  /** The coordinator incarnation currently driving this transaction. */
-  coordinator: coordinatorIncarnationSchema.nullable(),
-  inventoryDigest: sha256DigestSchema.nullable(),
-  sourceIdentityDigest: sha256DigestSchema.nullable(),
-  copyManifest: copyManifestSummarySchema.nullable(),
-  adapterReceipts: z.array(journalAdapterReceiptSchema),
-  actions: z.array(externalActionSchema),
-  sessionImpactDigest: sha256DigestSchema.nullable(),
-  acceptedSessionImpactDigest: sha256DigestSchema.nullable(),
-  /**
-   * A person asked to review the session impact report before copying (an
-   * interactive start or resume). Monotonic: once true it is never cleared,
-   * so a later non-interactive resume cannot skip that review. Consent is
-   * still only `acceptedSessionImpactDigest` naming the exact current report.
-   */
-  impactReviewRequested: z.boolean(),
-  /** The revision that durably recorded `activated`; null before it. */
-  activationRevision: z.number().int().positive().nullable(),
-  cleanupProgress: z
-    .strictObject({
-      removedEntries: z.number().int().nonnegative(),
-      removedBytes: z.number().int().nonnegative(),
-      finished: z.boolean(),
-    })
-    .nullable(),
-  createdAt: z.string().min(1),
-  updatedAt: z.string().min(1),
-});
+export const migrationJournalSchema = lazySchema(() =>
+  z.strictObject({
+    version: z.literal(DATA_MIGRATION_RECORD_VERSION),
+    id: migrationIdSchema,
+    revision: z.number().int().positive(),
+    phase: migrationPhaseSchema,
+    /** The phase a rollback was requested from; null unless rolling back. */
+    rollbackFromPhase: migrationPhaseSchema.nullable(),
+    /** The entire prior location record; null for the implicit default root. */
+    previousLocation: dataLocationRecordSchema.nullable(),
+    source: capturedRootSchema,
+    destination: capturedRootSchema,
+    nextGeneration: z.number().int().positive(),
+    coordinatorBuild: componentHandshakeSchema,
+    /**
+     * SHA-256 (lowercase hex) of the packaged coordinator executable that
+     * created this transaction, captured once at planning and immutable: the
+     * only evidence a later, possibly newer, binary uses to recognise the exact
+     * original coordinator for recovery, without executing anything. Null when
+     * the coordinator was not a packaged executable (a development run); then
+     * no binary is ever recognised as the original.
+     */
+    coordinatorExecutableSha256: z
+      .string()
+      .regex(/^[0-9a-f]{64}$/u)
+      .nullable(),
+    maintenanceBuild: componentHandshakeSchema.nullable(),
+    /** The coordinator incarnation currently driving this transaction. */
+    coordinator: coordinatorIncarnationSchema.nullable(),
+    inventoryDigest: sha256DigestSchema.nullable(),
+    sourceIdentityDigest: sha256DigestSchema.nullable(),
+    copyManifest: copyManifestSummarySchema.nullable(),
+    adapterReceipts: z.array(journalAdapterReceiptSchema),
+    actions: z.array(externalActionSchema),
+    sessionImpactDigest: sha256DigestSchema.nullable(),
+    acceptedSessionImpactDigest: sha256DigestSchema.nullable(),
+    /**
+     * A person asked to review the session impact report before copying (an
+     * interactive start or resume). Monotonic: once true it is never cleared,
+     * so a later non-interactive resume cannot skip that review. Consent is
+     * still only `acceptedSessionImpactDigest` naming the exact current report.
+     */
+    impactReviewRequested: z.boolean(),
+    /** The revision that durably recorded `activated`; null before it. */
+    activationRevision: z.number().int().positive().nullable(),
+    cleanupProgress: z
+      .strictObject({
+        removedEntries: z.number().int().nonnegative(),
+        removedBytes: z.number().int().nonnegative(),
+        finished: z.boolean(),
+      })
+      .nullable(),
+    createdAt: z.string().min(1),
+    updatedAt: z.string().min(1),
+  }),
+);
 export type MigrationJournal = z.infer<typeof migrationJournalSchema>;
 
 export type JournalTransitionRefusal = {
@@ -656,19 +669,20 @@ export function actionsInInverseOrder(
 
 // ---- Provider-session impact ----------------------------------------------
 
-export const continuationPrimaryRouteSchema = z.enum([
-  "native-resume",
-  "native-relocate",
-  "fresh-context",
-  "unknown",
-]);
-export const continuationFailureRouteSchema = z.enum(["fresh-context", "hold"]);
+export const continuationPrimaryRouteSchema = lazySchema(() =>
+  z.enum(["native-resume", "native-relocate", "fresh-context", "unknown"]),
+);
+export const continuationFailureRouteSchema = lazySchema(() =>
+  z.enum(["fresh-context", "hold"]),
+);
 
 /** The compound continuation route (provider-compatibility contract). */
-export const continuationRouteSchema = z.strictObject({
-  primary: continuationPrimaryRouteSchema,
-  onFailure: continuationFailureRouteSchema,
-});
+export const continuationRouteSchema = lazySchema(() =>
+  z.strictObject({
+    primary: continuationPrimaryRouteSchema,
+    onFailure: continuationFailureRouteSchema,
+  }),
+);
 export type ContinuationRoute = z.infer<typeof continuationRouteSchema>;
 
 /**
@@ -676,28 +690,32 @@ export type ContinuationRoute = z.infer<typeof continuationRouteSchema>;
  * shown only in the user's own migration report, never logged above DEBUG
  * or sent to analytics.
  */
-export const sessionImpactSchema = z.strictObject({
-  sessionId: z.string().min(1),
-  surface: z.enum(["gui", "tui"]),
-  provider: z.string().min(1),
-  providerVersion: z.string().min(1).nullable(),
-  profileRef: z.string().min(1).nullable(),
-  oldPrimaryDirectory: z.string().min(1).nullable(),
-  newPrimaryDirectory: z.string().min(1).nullable(),
-  providerStoreMoved: z.boolean(),
-  route: continuationRouteSchema,
-  /** Unsafe copy, wrong profile, uncopyable links: a migration blocker. */
-  blocker: z.boolean(),
-  reason: z.string(),
-});
+export const sessionImpactSchema = lazySchema(() =>
+  z.strictObject({
+    sessionId: z.string().min(1),
+    surface: z.enum(["gui", "tui"]),
+    provider: z.string().min(1),
+    providerVersion: z.string().min(1).nullable(),
+    profileRef: z.string().min(1).nullable(),
+    oldPrimaryDirectory: z.string().min(1).nullable(),
+    newPrimaryDirectory: z.string().min(1).nullable(),
+    providerStoreMoved: z.boolean(),
+    route: continuationRouteSchema,
+    /** Unsafe copy, wrong profile, uncopyable links: a migration blocker. */
+    blocker: z.boolean(),
+    reason: z.string(),
+  }),
+);
 export type SessionImpact = z.infer<typeof sessionImpactSchema>;
 
-export const sessionImpactReportSchema = z.strictObject({
-  version: z.literal(1),
-  sourceRoot: z.string().min(1),
-  destinationRoot: z.string().min(1),
-  sessions: z.array(sessionImpactSchema),
-});
+export const sessionImpactReportSchema = lazySchema(() =>
+  z.strictObject({
+    version: z.literal(1),
+    sourceRoot: z.string().min(1),
+    destinationRoot: z.string().min(1),
+    sessions: z.array(sessionImpactSchema),
+  }),
+);
 export type SessionImpactReport = z.infer<typeof sessionImpactReportSchema>;
 
 /**
@@ -754,12 +772,9 @@ export function sessionImpactBlockers(
 
 // ---- Offline maintenance interface ----------------------------------------
 
-export const maintenanceOperationSchema = z.enum([
-  "inventory",
-  "verify-quiesced-source",
-  "repair-copy",
-  "verify-copy",
-]);
+export const maintenanceOperationSchema = lazySchema(() =>
+  z.enum(["inventory", "verify-quiesced-source", "repair-copy", "verify-copy"]),
+);
 export type MaintenanceOperation = z.infer<typeof maintenanceOperationSchema>;
 
 /**
@@ -768,14 +783,16 @@ export type MaintenanceOperation = z.infer<typeof maintenanceOperationSchema>;
  * `authorization` binds the request to the live coordinator incarnation that
  * holds the coordinator lock; a migration id alone is not authority.
  */
-export const maintenanceRequestSchema = z.strictObject({
-  version: z.literal(1),
-  migrationId: migrationIdSchema,
-  journalRevision: z.number().int().positive(),
-  operation: maintenanceOperationSchema,
-  inventoryDigest: sha256DigestSchema.nullable(),
-  authorization: coordinatorIncarnationSchema,
-});
+export const maintenanceRequestSchema = lazySchema(() =>
+  z.strictObject({
+    version: z.literal(1),
+    migrationId: migrationIdSchema,
+    journalRevision: z.number().int().positive(),
+    operation: maintenanceOperationSchema,
+    inventoryDigest: sha256DigestSchema.nullable(),
+    authorization: coordinatorIncarnationSchema,
+  }),
+);
 export type MaintenanceRequest = z.infer<typeof maintenanceRequestSchema>;
 
 /**
@@ -787,23 +804,27 @@ export type MaintenanceRequest = z.infer<typeof maintenanceRequestSchema>;
  * proven idle (ambiguous liveness, unreadable ledgers, owed transactional
  * work); it never defers.
  */
-export const maintenanceErrorCodeSchema = z.enum([
-  "unauthorized",
-  "protocol-mismatch",
-  "unsupported-format",
-  "running-source",
-  "busy-source",
-  "integrity-mismatch",
-  "external-conflict",
-  "permission-failure",
-]);
+export const maintenanceErrorCodeSchema = lazySchema(() =>
+  z.enum([
+    "unauthorized",
+    "protocol-mismatch",
+    "unsupported-format",
+    "running-source",
+    "busy-source",
+    "integrity-mismatch",
+    "external-conflict",
+    "permission-failure",
+  ]),
+);
 export type MaintenanceErrorCode = z.infer<typeof maintenanceErrorCodeSchema>;
 
-export const maintenanceBlockerSchema = z.strictObject({
-  code: maintenanceErrorCodeSchema,
-  storeKey: z.string().min(1).nullable(),
-  message: z.string(),
-});
+export const maintenanceBlockerSchema = lazySchema(() =>
+  z.strictObject({
+    code: maintenanceErrorCodeSchema,
+    storeKey: z.string().min(1).nullable(),
+    message: z.string(),
+  }),
+);
 export type MaintenanceBlocker = z.infer<typeof maintenanceBlockerSchema>;
 
 /**
@@ -813,23 +834,25 @@ export type MaintenanceBlocker = z.infer<typeof maintenanceBlockerSchema>;
  * between source and destination), never a drive, never `.`/`..`/empty
  * segments, never a backslash.
  */
-export const storeKeySchema = z
-  .string()
-  .min(1)
-  .max(1024)
-  .refine(
-    (key) =>
-      !key.includes("\\") &&
-      !key.startsWith("/") &&
-      !/^[A-Za-z]:/u.test(key) &&
-      key
-        .split("/")
-        .every(
-          (segment) =>
-            segment.length > 0 && segment !== "." && segment !== "..",
-        ),
-    "store key must be a root-relative canonical slash-separated path",
-  );
+export const storeKeySchema = lazySchema(() =>
+  z
+    .string()
+    .min(1)
+    .max(1024)
+    .refine(
+      (key) =>
+        !key.includes("\\") &&
+        !key.startsWith("/") &&
+        !/^[A-Za-z]:/u.test(key) &&
+        key
+          .split("/")
+          .every(
+            (segment) =>
+              segment.length > 0 && segment !== "." && segment !== "..",
+          ),
+      "store key must be a root-relative canonical slash-separated path",
+    ),
+);
 
 /**
  * One field the adapter for a store owns: where it lives in the store
@@ -838,11 +861,13 @@ export const storeKeySchema = z
  * matched. Counts make the manifest describe the data it was taken over, not
  * only the adapter's capabilities.
  */
-export const storeManifestFieldSchema = z.strictObject({
-  field: z.string().min(1),
-  rule: z.string().min(1),
-  matches: z.number().int().nonnegative(),
-});
+export const storeManifestFieldSchema = lazySchema(() =>
+  z.strictObject({
+    field: z.string().min(1),
+    rule: z.string().min(1),
+    matches: z.number().int().nonnegative(),
+  }),
+);
 export type StoreManifestField = z.infer<typeof storeManifestFieldSchema>;
 
 /**
@@ -853,24 +878,28 @@ export type StoreManifestField = z.infer<typeof storeManifestFieldSchema>;
  * - `opaque`: user/history bytes copied without interpretation.
  * - `refused`: the store blocks migration; the inventory's blockers say why.
  */
-export const storeManifestEntrySchema = z.strictObject({
-  storeKey: storeKeySchema,
-  adapterId: z.string().min(1),
-  adapterVersion: z.number().int().positive(),
-  format: z.string().min(1),
-  disposition: z.enum(["repair", "preserve", "derived", "opaque", "refused"]),
-  fields: z.array(storeManifestFieldSchema),
-});
+export const storeManifestEntrySchema = lazySchema(() =>
+  z.strictObject({
+    storeKey: storeKeySchema,
+    adapterId: z.string().min(1),
+    adapterVersion: z.number().int().positive(),
+    format: z.string().min(1),
+    disposition: z.enum(["repair", "preserve", "derived", "opaque", "refused"]),
+    fields: z.array(storeManifestFieldSchema),
+  }),
+);
 export type StoreManifestEntry = z.infer<typeof storeManifestEntrySchema>;
 
 /** The manifest: one entry per store key, duplicates refused. */
-export const storeManifestSchema = z
-  .array(storeManifestEntrySchema)
-  .refine(
-    (entries) =>
-      new Set(entries.map((entry) => entry.storeKey)).size === entries.length,
-    "store manifest has duplicate store keys",
-  );
+export const storeManifestSchema = lazySchema(() =>
+  z
+    .array(storeManifestEntrySchema)
+    .refine(
+      (entries) =>
+        new Set(entries.map((entry) => entry.storeKey)).size === entries.length,
+      "store manifest has duplicate store keys",
+    ),
+);
 
 /**
  * The manifest in its one canonical order: entries by store key, each
@@ -906,25 +935,27 @@ export function storeManifestDigest(
   return sha256Digest({ version: 1, stores: canonicalStoreManifest(entries) });
 }
 
-export const maintenanceResponseSchema = z.strictObject({
-  version: z.literal(1),
-  handshake: componentHandshakeSchema,
-  migrationId: migrationIdSchema,
-  journalRevision: z.number().int().positive(),
-  operation: maintenanceOperationSchema,
-  /** `inventory` before the barrier is advisory only. */
-  provisional: z.boolean(),
-  inventoryDigest: sha256DigestSchema.nullable(),
-  supportedAdapters: z.array(
-    z.strictObject({
-      adapterId: z.string().min(1),
-      adapterVersion: z.number().int().positive(),
-    }),
-  ),
-  receipts: z.array(storeAdapterReceiptSchema),
-  blockers: z.array(maintenanceBlockerSchema),
-  sessionImpacts: z.array(sessionImpactSchema),
-  /** The field-level manifest `inventoryDigest` is taken over, canonical order. */
-  stores: storeManifestSchema,
-});
+export const maintenanceResponseSchema = lazySchema(() =>
+  z.strictObject({
+    version: z.literal(1),
+    handshake: componentHandshakeSchema,
+    migrationId: migrationIdSchema,
+    journalRevision: z.number().int().positive(),
+    operation: maintenanceOperationSchema,
+    /** `inventory` before the barrier is advisory only. */
+    provisional: z.boolean(),
+    inventoryDigest: sha256DigestSchema.nullable(),
+    supportedAdapters: z.array(
+      z.strictObject({
+        adapterId: z.string().min(1),
+        adapterVersion: z.number().int().positive(),
+      }),
+    ),
+    receipts: z.array(storeAdapterReceiptSchema),
+    blockers: z.array(maintenanceBlockerSchema),
+    sessionImpacts: z.array(sessionImpactSchema),
+    /** The field-level manifest `inventoryDigest` is taken over, canonical order. */
+    stores: storeManifestSchema,
+  }),
+);
 export type MaintenanceResponse = z.infer<typeof maintenanceResponseSchema>;

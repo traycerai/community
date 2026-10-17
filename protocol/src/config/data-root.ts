@@ -1,7 +1,8 @@
 import { lstatSync, readFileSync, statSync, type Stats } from "node:fs";
 import { homedir } from "node:os";
-import { posix, win32 } from "node:path";
+import { join, posix, win32 } from "node:path";
 import { z } from "zod";
+import { lazySchema } from "@traycer/protocol/framework/lazy-schema";
 
 /**
  * The ONE resolver of the Traycer data root - the directory every
@@ -35,12 +36,14 @@ export const DEFAULT_DATA_ROOT_DIRNAME = ".traycer";
 export const DATA_BOOTSTRAP_DIRNAME = ".traycer-bootstrap";
 export const DATA_LOCATION_RECORD_FILENAME = "location.json";
 
-export const dataLocationRecordSchema = z.strictObject({
-  version: z.literal(1),
-  generation: z.number().int().positive(),
-  root: z.string().min(1),
-  migrationId: z.string().min(1).nullable(),
-});
+export const dataLocationRecordSchema = lazySchema(() =>
+  z.strictObject({
+    version: z.literal(1),
+    generation: z.number().int().positive(),
+    root: z.string().min(1),
+    migrationId: z.string().min(1).nullable(),
+  }),
+);
 export type DataLocationRecord = z.infer<typeof dataLocationRecordSchema>;
 
 export type DataRootErrorCode =
@@ -95,21 +98,26 @@ export function dataRootPlatformOf(
   return platform === "win32" ? "win32" : "posix";
 }
 
-/** `<home>/.traycer-bootstrap` - fixed, never relocated. */
+/**
+ * `<home>/.traycer-bootstrap` - fixed, never relocated.
+ *
+ * These home-derived paths use Node's own `path.join`, exactly like every
+ * consumer that joins onto the root, never an API picked from
+ * `process.platform`: the two agree on a real machine, but a suite that
+ * reassigns `process.platform` to drive Windows code would otherwise get a
+ * root spelled with the other separator than the rest of its paths.
+ */
 export function dataBootstrapDir(homeDir: string): string {
-  return nativePath().join(homeDir, DATA_BOOTSTRAP_DIRNAME);
+  return join(homeDir, DATA_BOOTSTRAP_DIRNAME);
 }
 
 export function dataLocationRecordPath(homeDir: string): string {
-  return nativePath().join(
-    dataBootstrapDir(homeDir),
-    DATA_LOCATION_RECORD_FILENAME,
-  );
+  return join(dataBootstrapDir(homeDir), DATA_LOCATION_RECORD_FILENAME);
 }
 
 /** `<home>/.traycer` - the root when no location record exists. */
 export function defaultDataRoot(homeDir: string): string {
-  return nativePath().join(homeDir, DEFAULT_DATA_ROOT_DIRNAME);
+  return join(homeDir, DEFAULT_DATA_ROOT_DIRNAME);
 }
 
 export type DataRootSelectionCheck =
@@ -381,10 +389,6 @@ function hasControlCharacter(value: string): boolean {
     if (code < 0x20 || code === 0x7f) return true;
   }
   return false;
-}
-
-function nativePath(): typeof win32 {
-  return process.platform === "win32" ? win32 : posix;
 }
 
 function stripTrailingSeparator(value: string, pathApi: typeof win32): string {

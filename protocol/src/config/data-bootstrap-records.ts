@@ -3,6 +3,7 @@ import { lstatSync, readdirSync, readFileSync } from "node:fs";
 import { open, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
+import { lazySchema } from "@traycer/protocol/framework/lazy-schema";
 import { renameWithWindowsRetry } from "./credentials-fs";
 import {
   canonicalJson,
@@ -59,19 +60,23 @@ export const MIGRATION_SELECTOR_BASENAME = "migration";
 const LOCATION_BASENAME = "location";
 const RECORD_FORMAT = "traycer-bootstrap-record";
 
-export const migrationSelectorSchema = z.strictObject({
-  version: z.literal(1),
-  revision: z.number().int().positive(),
-  activeMigrationId: migrationIdSchema.nullable(),
-});
+export const migrationSelectorSchema = lazySchema(() =>
+  z.strictObject({
+    version: z.literal(1),
+    revision: z.number().int().positive(),
+    activeMigrationId: migrationIdSchema.nullable(),
+  }),
+);
 export type MigrationSelector = z.infer<typeof migrationSelectorSchema>;
 
-const envelopeSchema = z.strictObject({
-  format: z.literal(RECORD_FORMAT),
-  version: z.literal(1),
-  checksum: sha256DigestSchema,
-  body: z.unknown(),
-});
+const envelopeSchema = lazySchema(() =>
+  z.strictObject({
+    format: z.literal(RECORD_FORMAT),
+    version: z.literal(1),
+    checksum: sha256DigestSchema,
+    body: z.unknown(),
+  }),
+);
 
 export type BootstrapRecordErrorCode =
   | "record-damaged"

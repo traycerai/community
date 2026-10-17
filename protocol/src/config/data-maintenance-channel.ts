@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { lazySchema } from "@traycer/protocol/framework/lazy-schema";
 import {
   maintenanceRequestSchema,
   maintenanceResponseSchema,
@@ -28,41 +29,45 @@ const HEADER_BYTES = 8;
 /** Far above any inventory this channel carries; bounds a corrupt length. */
 export const DATA_MAINTENANCE_MAX_FRAME_BYTES = 64 * 1024 * 1024;
 
-export const maintenanceProgressSchema = z.strictObject({
-  operation: z.enum([
-    "inventory",
-    "verify-quiesced-source",
-    "repair-copy",
-    "verify-copy",
-  ]),
-  completedStores: z.number().int().nonnegative(),
-  totalStores: z.number().int().nonnegative(),
-});
+export const maintenanceProgressSchema = lazySchema(() =>
+  z.strictObject({
+    operation: z.enum([
+      "inventory",
+      "verify-quiesced-source",
+      "repair-copy",
+      "verify-copy",
+    ]),
+    completedStores: z.number().int().nonnegative(),
+    totalStores: z.number().int().nonnegative(),
+  }),
+);
 export type MaintenanceProgress = z.infer<typeof maintenanceProgressSchema>;
 
-export const maintenanceFrameSchema = z.discriminatedUnion("kind", [
-  z.strictObject({
-    kind: z.literal("request"),
-    request: maintenanceRequestSchema,
-  }),
-  z.strictObject({
-    kind: z.literal("progress"),
-    progress: maintenanceProgressSchema,
-  }),
-  z.strictObject({
-    kind: z.literal("response"),
-    response: maintenanceResponseSchema,
-  }),
-  /**
-   * The request could not be read at all (bad framing, schema, or an
-   * internal failure before any response could be built). Carries no paths.
-   */
-  z.strictObject({
-    kind: z.literal("fatal"),
-    code: z.enum(["bad-frame", "bad-request", "internal"]),
-    message: z.string(),
-  }),
-]);
+export const maintenanceFrameSchema = lazySchema(() =>
+  z.discriminatedUnion("kind", [
+    z.strictObject({
+      kind: z.literal("request"),
+      request: maintenanceRequestSchema,
+    }),
+    z.strictObject({
+      kind: z.literal("progress"),
+      progress: maintenanceProgressSchema,
+    }),
+    z.strictObject({
+      kind: z.literal("response"),
+      response: maintenanceResponseSchema,
+    }),
+    /**
+     * The request could not be read at all (bad framing, schema, or an
+     * internal failure before any response could be built). Carries no paths.
+     */
+    z.strictObject({
+      kind: z.literal("fatal"),
+      code: z.enum(["bad-frame", "bad-request", "internal"]),
+      message: z.string(),
+    }),
+  ]),
+);
 export type MaintenanceFrame = z.infer<typeof maintenanceFrameSchema>;
 
 export class MaintenanceFrameError extends Error {

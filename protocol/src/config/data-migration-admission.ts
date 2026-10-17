@@ -9,6 +9,7 @@ import {
 import { link, mkdir, open, rm, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
+import { lazySchema } from "@traycer/protocol/framework/lazy-schema";
 import { breakStaleLock } from "./credentials-lock";
 import {
   canonicalJson,
@@ -124,14 +125,16 @@ export class MigrationAdmissionError extends Error {
 
 // ---- Lock files -------------------------------------------------------------
 
-const lockHolderSchema = z.strictObject({
-  version: z.literal(1),
-  purpose: z.enum(["coordinator", "admission"]),
-  pid: z.number().int().positive(),
-  startIdentity: z.string().min(1).nullable(),
-  nonce: z.string().min(1),
-  acquiredAt: z.number().int().nonnegative(),
-});
+const lockHolderSchema = lazySchema(() =>
+  z.strictObject({
+    version: z.literal(1),
+    purpose: z.enum(["coordinator", "admission"]),
+    pid: z.number().int().positive(),
+    startIdentity: z.string().min(1).nullable(),
+    nonce: z.string().min(1),
+    acquiredAt: z.number().int().nonnegative(),
+  }),
+);
 export type BootstrapLockHolder = z.infer<typeof lockHolderSchema>;
 
 type LockRead =
@@ -396,17 +399,19 @@ async function admissionHolderOvertakable(
 
 // ---- Admission entries ------------------------------------------------------
 
-export const admissionEntrySchema = z.strictObject({
-  version: z.literal(1),
-  entryId: z.string().regex(/^[0-9a-f-]{36}$/u),
-  pid: z.number().int().positive(),
-  /** Null until the process has read its own start identity. */
-  startIdentity: z.string().min(1).nullable(),
-  handshake: componentHandshakeSchema,
-  /** The location generation admitted under; null for the implicit default root. */
-  generation: z.number().int().positive().nullable(),
-  admittedAt: z.string().min(1),
-});
+export const admissionEntrySchema = lazySchema(() =>
+  z.strictObject({
+    version: z.literal(1),
+    entryId: z.string().regex(/^[0-9a-f-]{36}$/u),
+    pid: z.number().int().positive(),
+    /** Null until the process has read its own start identity. */
+    startIdentity: z.string().min(1).nullable(),
+    handshake: componentHandshakeSchema,
+    /** The location generation admitted under; null for the implicit default root. */
+    generation: z.number().int().positive().nullable(),
+    admittedAt: z.string().min(1),
+  }),
+);
 export type AdmissionEntry = z.infer<typeof admissionEntrySchema>;
 
 function admissionEntryPath(bootstrapDir: string, entryId: string): string {

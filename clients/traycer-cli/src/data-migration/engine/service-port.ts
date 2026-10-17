@@ -1,6 +1,11 @@
 import { lstat, readdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { ExternalAction } from "@traycer/protocol/config/data-migration-contracts";
+import {
+  withCliUpdateContender,
+  type WithCliUpdateContenderOptions,
+} from "../../host/update-contender";
+import { stopHostServiceWithAttempt } from "../../host/update-mutation";
 import { isErrnoException } from "../../runner/errors";
 import { createServiceController, type ServiceController } from "../../service";
 import {
@@ -9,6 +14,8 @@ import {
   serviceManifestPath,
   type ServiceLabel,
 } from "../../service/label";
+import { DEV_DESKTOP_SLOT_ENV } from "../../store/dev-desktop-slot";
+import { hostHomeDir } from "../../store/paths";
 import type {
   ExternalActionBlocker,
   ExternalActionPlan,
@@ -87,6 +94,64 @@ function mergePlans(plans: readonly ExternalActionPlan[]): ExternalActionPlan {
   };
 }
 
+/**
+ * The label's own host home, derived from the label alone: `hostHomeDir`
+ * for an environment honours this process's `DEV_DESKTOP_SLOT`, which names
+ * the coordinator's slot, not the one being stopped.
+ */
+export function labelHostHomeDir(label: ServiceLabel): string {
+  const hostRoot = hostHomeDir(undefined);
+  if (label.devSlot !== null) return join(hostRoot, "dev-runs", label.devSlot);
+  return label.environment === "production"
+    ? hostRoot
+    : join(hostRoot, label.environment);
+}
+
+function setDevSlotEnv(slot: string | null): void {
+  if (slot === null) Reflect.deleteProperty(process.env, DEV_DESKTOP_SLOT_ENV);
+  else process.env[DEV_DESKTOP_SLOT_ENV] = slot;
+}
+
+/**
+ * Runs `run` as the label's dev slot. Every slot-aware path the stop reaches
+ * (the CLI lock, the stop intent, the controller's pid and process records)
+ * reads `DEV_DESKTOP_SLOT` at use time, so this is what makes all of them
+ * follow the label rather than the coordinator. The stops run one at a time
+ * and nothing else in the coordinator runs alongside them.
+ */
+async function asLabelSlot<T>(
+  label: ServiceLabel,
+  run: () => Promise<T>,
+): Promise<T> {
+  const prior = process.env[DEV_DESKTOP_SLOT_ENV];
+  setDevSlotEnv(label.devSlot);
+  try {
+    return await run();
+  } finally {
+    setDevSlotEnv(prior ?? null);
+  }
+}
+
+/** The host-update contender a stop of `label`'s host takes, as `host stop` does. */
+function stopContenderOptions(
+  label: ServiceLabel,
+): WithCliUpdateContenderOptions {
+  return {
+    environment: label.environment,
+    hostHomeDir: labelHostHomeDir(label),
+    reason: "data-migration-stop-host",
+    waitMs: 30_000,
+    pollIntervalMs: 100,
+    admission: "service-maintenance",
+  };
+}
+
+/**
+ * Stops each running host through the service-stop facade under the
+ * host-update contender, so the stop never races a host update. Runs before
+ * the source inventory is frozen, so the contender's records in the source
+ * root are content like any other.
+ */
 async function stopHosts(
   controller: ServiceController,
   labels: readonly ServiceLabel[],
@@ -94,9 +159,21 @@ async function stopHosts(
   const blockers: EngineBlocker[] = [];
   for (const label of labels) {
     try {
-      const status = await controller.status(label);
-      if (status.state !== "running") continue;
-      await controller.stop(label, { force: false });
+      await asLabelSlot(label, async () => {
+        const status = await controller.status(label);
+        if (status.state !== "running") return;
+        const contenderOptions = stopContenderOptions(label);
+        await withCliUpdateContender(contenderOptions, (capability) =>
+          stopHostServiceWithAttempt(
+            capability,
+            contenderOptions,
+            controller,
+            label,
+            { force: false },
+            "unconditional",
+          ),
+        );
+      });
     } catch (error) {
       blockers.push(
         engineBlocker(
