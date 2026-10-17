@@ -171,8 +171,10 @@ import {
 import { displayTitle } from "@/lib/display-title";
 import {
   useEpicArchiveChats,
-  useEpicDeleteChat,
+  useEpicDeleteChatInBatch,
 } from "@/hooks/epic/use-epic-chat-mutations";
+import { toastFromOwnerHostBulkDeleteFailures } from "@/lib/owner-host-write-error-toast";
+import { toHostRpcError } from "@traycer-clients/shared/host-transport/host-messenger";
 import {
   useChatArchiveSupported,
   SET_CHAT_ARCHIVED_METHOD,
@@ -185,7 +187,7 @@ import {
   useEpicCreateArtifact,
   useEpicDeleteArtifact,
 } from "@/hooks/epic/use-epic-node-mutations";
-import { useEpicDeleteTuiAgent } from "@/hooks/epic/use-epic-tui-agent-mutations";
+import { useEpicDeleteTuiAgentInBatch } from "@/hooks/epic/use-epic-tui-agent-mutations";
 import {
   DEFAULT_EPIC_NODE_NAMES,
   isEpicArtifactKind,
@@ -241,6 +243,7 @@ import { SplitResizeHandle } from "@/components/epic-canvas/canvas/resize-handle
 import {
   isSidebarBulkSelectionPanelId,
   rootmostSelectedSidebarIds,
+  sidebarBulkDeleteIds,
   sidebarIdsWithinRoots,
   SidebarBulkSelectionProvider,
   useSidebarBulkSelection,
@@ -1530,8 +1533,10 @@ function SidebarBulkDeleteController(props: {
   // artifact it speaks for. It reads its own `deletePending` off the
   // selection store rather than the hook's flag.
   const deleteArtifact = useEpicDeleteArtifact(null);
-  const deleteChat = useEpicDeleteChat();
-  const deleteTerminalAgent = useEpicDeleteTuiAgent();
+  // The batch reports its agents' failures once, below, so a selection
+  // spanning several unreachable hosts reads as that and not as one host.
+  const deleteChat = useEpicDeleteChatInBatch();
+  const deleteTerminalAgent = useEpicDeleteTuiAgentInBatch();
   const sessionHostId = useEpicSessionHostId();
   const chatsById = useChatsByIdForWriteRoute();
   const recordById = useMemo(
@@ -1555,9 +1560,10 @@ function SidebarBulkDeleteController(props: {
   // the one row that silently remained.
   const blockedDeleteReason = useMemo(() => {
     if (pendingDeleteIds === null) return null;
-    const blockedTitles = rootmostSelectedSidebarIds({
+    const blockedTitles = sidebarBulkDeleteIds({
       ids: pendingDeleteIds,
       tree,
+      isAgentId: (id) => isAgentRecord(recordById.get(id)),
     }).flatMap((id) => {
       const record = recordById.get(id);
       if (record === undefined || record.type !== "chat") return [];
@@ -1577,11 +1583,12 @@ function SidebarBulkDeleteController(props: {
     // The dialog's confirm is already disabled while this is non-null; the
     // check is here too because a keyboard submit is not the button.
     if (blockedDeleteReason !== null) return;
-    const rootmostIds = rootmostSelectedSidebarIds({
+    const deleteIds = sidebarBulkDeleteIds({
       ids: pendingDeleteIds,
       tree,
+      isAgentId: (id) => isAgentRecord(recordById.get(id)),
     });
-    const targets = rootmostIds.flatMap((id) => {
+    const targets = deleteIds.flatMap((id) => {
       const target = sidebarDeleteTargetForRecord(recordById.get(id));
       return target === null ? [] : [target];
     });
@@ -1593,6 +1600,10 @@ function SidebarBulkDeleteController(props: {
       if (target.kind !== "terminal-agent") markArtifactSelfDeleted(target.id);
     });
     setDeletePending(true);
+    const agentHostId = (target: (typeof targets)[number]): string | null =>
+      target.kind === "chat"
+        ? (chatsById[target.id]?.hostId ?? sessionHostId)
+        : (recordById.get(target.id)?.hostId ?? sessionHostId);
     void Promise.allSettled(
       targets.map((target) => {
         switch (target.kind) {
@@ -1605,18 +1616,42 @@ function SidebarBulkDeleteController(props: {
             return deleteChat.mutateAsync({
               epicId: props.epicId,
               chatId: target.id,
-              hostId: chatsById[target.id]?.hostId ?? sessionHostId,
+              hostId: agentHostId(target),
             });
           case "terminal-agent":
             return deleteTerminalAgent.mutateAsync({
               epicId: props.epicId,
               tuiAgentId: target.id,
-              hostId: recordById.get(target.id)?.hostId ?? sessionHostId,
+              hostId: agentHostId(target),
             });
         }
       }),
     )
       .then((results) => {
+        const agentOutcomes = targets.flatMap((target, index) => {
+          if (target.kind === "artifact") return [];
+          const result = results[index];
+          return [
+            {
+              hostId: agentHostId(target),
+              error:
+                result.status === "rejected"
+                  ? toHostRpcError(
+                      result.reason,
+                      target.kind === "chat"
+                        ? "epic.deleteChat"
+                        : "epic.deleteTuiAgent",
+                    )
+                  : null,
+              // The toast each delete hook raised for itself before.
+              fallback:
+                target.kind === "chat"
+                  ? "Couldn't delete agent."
+                  : "Couldn't delete terminal agent.",
+            },
+          ];
+        });
+        toastFromOwnerHostBulkDeleteFailures(agentOutcomes);
         const successfulIds = targets.flatMap((target, index) =>
           results[index].status === "fulfilled" ? [target.id] : [],
         );
@@ -1710,12 +1745,22 @@ function SidebarBulkDeleteController(props: {
         pendingDeleteIds,
         recordById,
       )}
-      description={describeSidebarBulkDeleteDescription(pendingDeleteIds)}
+      description={describeSidebarBulkDeleteDescription(
+        panelId,
+        pendingDeleteIds,
+      )}
       cascadeSummary={null}
       actionLabel="Delete"
       isPending={deletePending}
       onConfirm={handleConfirmDelete}
     />
+  );
+}
+
+function isAgentRecord(record: EpicTreeRecord | undefined): boolean {
+  return (
+    record !== undefined &&
+    (record.type === "chat" || record.type === "terminal-agent")
   );
 }
 
@@ -1879,9 +1924,13 @@ function panelRowNoun(panelId: LeftPanelId, count: number): string {
 }
 
 function describeSidebarBulkDeleteDescription(
+  panelId: LeftPanelId,
   ids: readonly string[] | null,
 ): string {
   if (ids === null || ids.length < 2) return "This action cannot be undone.";
+  // Deleting an agent keeps the agents nested under it, so only artifacts
+  // carry the warning.
+  if (panelId === "chats") return "This action cannot be undone.";
   return "This action cannot be undone. Nested items under selected rows may also be deleted.";
 }
 

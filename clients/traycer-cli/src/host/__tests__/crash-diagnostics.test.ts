@@ -69,6 +69,8 @@ const {
   describeFatalSignal,
   findCrashReportSince,
   isFatalSignal,
+  isWindowsExternalTerminationExit,
+  isWindowsSessionEndExit,
   prepareCrashReportsDir,
   pruneCrashReports,
 } = await import("../crash-diagnostics");
@@ -303,6 +305,12 @@ describe("StderrLogTee", () => {
 // ---------------------------------------------------------------------------
 
 describe("describeExitCode", () => {
+  it("names the logoff-time spawn failure", () => {
+    expect(describeExitCode(0xc000026b)).toContain(
+      "STATUS_DLL_INIT_FAILED_LOGOFF",
+    );
+  });
+
   it("decodes 3221226505 as 0xC0000409 STATUS_STACK_BUFFER_OVERRUN", () => {
     const meaning = describeExitCode(3221226505);
     expect(meaning).not.toBeNull();
@@ -319,6 +327,25 @@ describe("describeExitCode", () => {
 
   it("returns bare hex for unknown high codes", () => {
     expect(describeExitCode(0xc0de0001)).toBe("0xC0DE0001");
+  });
+});
+
+describe("isWindowsSessionEndExit / isWindowsExternalTerminationExit", () => {
+  it("counts only the logoff-time spawn failure as a session end", () => {
+    expect(isWindowsSessionEndExit(0xc000026b)).toBe(true);
+    expect(isWindowsSessionEndExit(0x40010004)).toBe(false);
+    expect(isWindowsSessionEndExit(0xc0000005)).toBe(false);
+    expect(isWindowsSessionEndExit(0xc0000409)).toBe(false);
+    expect(isWindowsSessionEndExit(0xc0000142)).toBe(false);
+    expect(isWindowsSessionEndExit(1)).toBe(false);
+  });
+
+  it("counts only DBG_TERMINATE_PROCESS as an external termination", () => {
+    expect(isWindowsExternalTerminationExit(0x40010004)).toBe(true);
+    expect(isWindowsExternalTerminationExit(1073807364)).toBe(true);
+    expect(isWindowsExternalTerminationExit(0xc000026b)).toBe(false);
+    expect(isWindowsExternalTerminationExit(0xffffffff)).toBe(false);
+    expect(isWindowsExternalTerminationExit(1)).toBe(false);
   });
 });
 
@@ -535,6 +562,129 @@ describe("findCrashReportSince", () => {
     expect(match?.summary).toContain("js=FATAL ERROR: Reached heap limit");
   });
 
+  describe("memory at the abort", () => {
+    async function matchFor(report: unknown) {
+      const sinceMs = Date.now() - 5_000;
+      const path = join(dir, "oom.json");
+      await writeFile(path, JSON.stringify(report), "utf8");
+      await utimes(path, new Date(sinceMs + 500), new Date(sinceMs + 500));
+      return findCrashReportSince(dir, sinceMs, EMPTY_EXCLUDE);
+    }
+
+    it("reads heap limit, heap used and rss as plain bytes into the match and the digest", async () => {
+      const match = await matchFor({
+        header: { event: "Allocation failed", trigger: "FatalError" },
+        javascriptStack: { message: "FATAL ERROR: Reached heap limit" },
+        javascriptHeap: { memoryLimit: 4831838208, usedMemory: 4100000000 },
+        resourceUsage: { rss: 4750000000, maxRss: 4900000000 },
+      });
+      expect(match?.memory).toEqual({
+        heapLimitBytes: 4831838208,
+        heapUsedBytes: 4100000000,
+        rssBytes: 4750000000,
+      });
+      expect(match?.summary).toContain("heapLimitBytes=4831838208");
+      expect(match?.summary).toContain("heapUsedBytes=4100000000");
+      expect(match?.summary).toContain("rssBytes=4750000000");
+    });
+
+    it("falls back to maxRss when the report has no rss", async () => {
+      const match = await matchFor({
+        header: { event: "Allocation failed", trigger: "FatalError" },
+        resourceUsage: { maxRss: 4900000000 },
+      });
+      expect(match?.memory.rssBytes).toBe(4900000000);
+    });
+
+    it("omits a value that is negative, fractional, non-finite or not a number, and keeps the rest", async () => {
+      const match = await matchFor({
+        header: { event: "Allocation failed", trigger: "FatalError" },
+        javascriptHeap: { memoryLimit: -1, usedMemory: 1.5 },
+        resourceUsage: { rss: "4750000000x" },
+      });
+      expect(match?.memory).toEqual({
+        heapLimitBytes: null,
+        heapUsedBytes: null,
+        rssBytes: null,
+      });
+      expect(match?.summary).not.toContain("heapLimitBytes");
+      expect(match?.summary).not.toContain("rssBytes");
+    });
+
+    // Node's documentation shows `resourceUsage.rss` and `maxRss` as quoted
+    // decimal strings; the Node the host runs writes numbers. Both are read.
+    it("reads rss and maxRss written as decimal strings, the documented shape", async () => {
+      const match = await matchFor({
+        header: { event: "Allocation failed", trigger: "FatalError" },
+        javascriptHeap: { memoryLimit: 4345298944, usedMemory: 4816432 },
+        resourceUsage: { rss: "35766272", maxRss: "36624662528" },
+      });
+      expect(match?.memory).toEqual({
+        heapLimitBytes: 4345298944,
+        heapUsedBytes: 4816432,
+        rssBytes: 35766272,
+      });
+      expect(match?.summary).toContain("rssBytes=35766272");
+    });
+
+    it("falls back to a string maxRss when rss is missing or unreadable", async () => {
+      const missing = await matchFor({
+        header: { event: "Allocation failed", trigger: "FatalError" },
+        resourceUsage: { maxRss: "36624662528" },
+      });
+      expect(missing?.memory.rssBytes).toBe(36624662528);
+      const unreadable = await matchFor({
+        header: { event: "Allocation failed", trigger: "FatalError" },
+        resourceUsage: { rss: "not-a-number", maxRss: "36624662528" },
+      });
+      expect(unreadable?.memory.rssBytes).toBe(36624662528);
+    });
+
+    it.each([
+      "",
+      " 7",
+      "-5",
+      "1.5",
+      "1e3",
+      "0x10",
+      "+7",
+      "99999999999999999999",
+    ])(
+      "omits an rss string that is not plain decimal digits in range: %j",
+      async (rss) => {
+        const match = await matchFor({
+          header: { event: "Allocation failed", trigger: "FatalError" },
+          resourceUsage: { rss },
+        });
+        expect(match?.memory.rssBytes).toBeNull();
+      },
+    );
+
+    it("keeps the numbers in the digest when a long stack message is clamped", async () => {
+      const match = await matchFor({
+        header: { event: "Allocation failed", trigger: "FatalError" },
+        javascriptStack: { message: "x".repeat(2_000) },
+        javascriptHeap: { memoryLimit: 10, usedMemory: 9 },
+        resourceUsage: { rss: 8 },
+      });
+      expect(match?.summary).toContain("heapLimitBytes=10");
+      expect(match?.summary).toContain("rssBytes=8");
+    });
+
+    it("has no memory when the report is unreadable", async () => {
+      const sinceMs = Date.now() - 5_000;
+      const path = join(dir, "broken.json");
+      await writeFile(path, "{not json", "utf8");
+      await utimes(path, new Date(sinceMs + 500), new Date(sinceMs + 500));
+      const match = await findCrashReportSince(dir, sinceMs, EMPTY_EXCLUDE);
+      expect(match?.memory).toEqual({
+        heapLimitBytes: null,
+        heapUsedBytes: null,
+        rssBytes: null,
+      });
+    });
+  });
+
   it("returns filename with null summary when JSON is unreadable", async () => {
     const sinceMs = Date.now() - 1_000;
     const path = join(dir, "broken.json");
@@ -542,7 +692,11 @@ describe("findCrashReportSince", () => {
     await utimes(path, new Date(sinceMs + 100), new Date(sinceMs + 100));
 
     const match = await findCrashReportSince(dir, sinceMs, EMPTY_EXCLUDE);
-    expect(match).toEqual({ filename: "broken.json", summary: null });
+    expect(match).toEqual({
+      filename: "broken.json",
+      summary: null,
+      memory: { heapLimitBytes: null, heapUsedBytes: null, rssBytes: null },
+    });
   });
 
   it("normalizes report summary to a single line (newlines + U+2028) and clamps length", async () => {

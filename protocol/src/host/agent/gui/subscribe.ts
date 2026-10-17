@@ -573,7 +573,7 @@ export const backgroundItemSchemaPreCron = lazySchema(() =>
   ]),
 );
 
-// ─── Live background-item shapes (`chat.subscribe@1.20`) ───────────────────
+// ─── Frozen `chat.subscribe@1.20–1.23` background-item shapes ──────────────
 
 /**
  * A job the model scheduled with the CLI's `CronCreate` tool
@@ -582,11 +582,13 @@ export const backgroundItemSchemaPreCron = lazySchema(() =>
  * Its own kind rather than a reused `wakeup`, and the differences are the
  * reason:
  *
- * - **No `scheduledFor`.** Neither the cron tools' results nor the Stop hook's
- *   `session_crons` carry a next-fire time, so the row states the schedule
- *   (`humanSchedule`, e.g. "Every 5 minutes", with the raw `schedule`
- *   expression beside it) and never a countdown. A wake's timestamp is
- *   required; inventing one here would be a guess rendered as a fact.
+ * - **Optional next run (`1.24`).** `scheduledFor` is the CLI's reported
+ *   next-fire time, never a host calculation from the schedule. It may be
+ *   null when the CLI has not supplied it, it has passed, or the session's
+ *   armed idle-teardown deadline is no later than the fire. A client must
+ *   never render a past value as a future run. The row still states the
+ *   schedule (`humanSchedule`, e.g. "Every 5 minutes", with the raw
+ *   `schedule` expression beside it) and never a countdown.
  * - **No stop affordance, by construction.** A job ends only when the model
  *   deletes it (`CronDelete` is a model tool call and nothing else) or when its
  *   session ends. The wake-cancel path cannot delete a CLI job, so a client
@@ -601,7 +603,7 @@ export const backgroundItemSchemaPreCron = lazySchema(() =>
  * `prompt` is the model-authored text the job re-sends, rendered as plain
  * text. `recurring` is false for a one-shot job.
  */
-const cronBackgroundItemSchema = lazySchema(() =>
+const cronBackgroundItemSchemaV120ToV123 = lazySchema(() =>
   z.object({
     ...backgroundItemBaseFields,
     kind: z.literal("cron"),
@@ -609,6 +611,23 @@ const cronBackgroundItemSchema = lazySchema(() =>
     humanSchedule: z.string(),
     prompt: z.string(),
     recurring: z.boolean(),
+  }),
+);
+
+// A literal pre-image: a released peer on 1.20–1.23 must never receive the
+// next-run key, even though its Zod object could silently drop it on parse.
+export const backgroundItemSchemaPreCronNextRun = lazySchema(() =>
+  z.discriminatedUnion("kind", [
+    ...backgroundItemSchemaPreCron.def.options,
+    cronBackgroundItemSchemaV120ToV123,
+  ]),
+);
+
+// ─── Live background-item shapes (`chat.subscribe@1.24`) ───────────────────
+
+const cronBackgroundItemSchema = lazySchema(() =>
+  cronBackgroundItemSchemaV120ToV123.extend({
+    scheduledFor: z.number().nullable().default(null),
   }),
 );
 
@@ -2491,6 +2510,15 @@ const chatSubscribeTurnStateChangedServerFrameSchema = lazySchema(() =>
     // `chatSuggestedPromptSchema`.
     suggestedPrompt: chatSuggestedPromptSchema.optional(),
   }),
+);
+
+// Frozen at 1.20–1.23: those peers have cron items but no next-run key.
+const chatSubscribeTurnStateChangedServerFrameSchemaPreCronNextRun = lazySchema(
+  () =>
+    chatSubscribeTurnStateChangedServerFrameSchemaV118.extend({
+      backgroundItems: z.array(backgroundItemSchemaPreCronNextRun).optional(),
+      suggestedPrompt: chatSuggestedPromptSchema.optional(),
+    }),
 );
 
 // The same frame as every line below `1.13` ships it. It broadcasts the
@@ -5496,7 +5524,7 @@ const chatWindowedSnapshotSchemaV120 = lazySchema(() =>
     pendingApprovals: z.array(chatApprovalStateSchema),
     // Both cards gain `cautious` and `displayFacts` on this line.
     pendingFileEditApprovals: z.array(chatFileEditApprovalStateSchema),
-    backgroundItems: z.array(backgroundItemSchema).optional(),
+    backgroundItems: z.array(backgroundItemSchemaPreCronNextRun).optional(),
     // The provider's predicted next prompt - see `chatSuggestedPromptSchema`.
     suggestedPrompt: chatSuggestedPromptSchema.optional(),
     // The latest thinking-token estimate for the active turn, so a reconnect
@@ -5513,11 +5541,17 @@ const chatWindowedSnapshotSchemaV121 = lazySchema(() =>
     tail: chatTranscriptWindowSchemaPrePage,
   }),
 );
-// The live windowed snapshot (`chat.subscribe@1.23`): `1.21` with the live
-// tail, whose tool calls may carry `page` / `mcpApp` stamps.
-export const chatWindowedSnapshotSchema = lazySchema(() =>
+// 1.23's exact snapshot shape before the cron next-run key opened above it.
+const chatWindowedSnapshotSchemaV123 = lazySchema(() =>
   chatWindowedSnapshotSchemaV121.extend({
     tail: chatTranscriptWindowSchema,
+  }),
+);
+// The live windowed snapshot (`chat.subscribe@1.24`): `1.23` with the cron
+// next-run key. The tail already carries page and MCP App stamps.
+export const chatWindowedSnapshotSchema = lazySchema(() =>
+  chatWindowedSnapshotSchemaV123.extend({
+    backgroundItems: z.array(backgroundItemSchema).optional(),
   }),
 );
 export type ChatWindowedSnapshot = z.infer<typeof chatWindowedSnapshotSchema>;
@@ -5907,7 +5941,7 @@ const chatSubscribeServerFrameSchemaV120 = lazySchema(() =>
     chatSubscribeAccumulatedChangesServerFrameSchema,
     chatSubscribeIndexChangedServerFrameSchema,
     chatSubscribeRangeServerFrameSchemaPreCommandCode,
-    chatSubscribeTurnStateChangedServerFrameSchema,
+    chatSubscribeTurnStateChangedServerFrameSchemaPreCronNextRun,
     chatSubscribeManagedCommandsChangedServerFrameSchema,
     chatSubscribePortForwardsChangedServerFrameSchema,
     chatSubscribeHeldUpdatesChangedServerFrameSchema,
@@ -5931,7 +5965,7 @@ const chatSubscribeServerFrameSchemaV121 = lazySchema(() =>
     chatSubscribeAccumulatedChangesServerFrameSchema,
     chatSubscribeIndexChangedServerFrameSchema,
     chatSubscribeRangeServerFrameSchemaPrePage,
-    chatSubscribeTurnStateChangedServerFrameSchema,
+    chatSubscribeTurnStateChangedServerFrameSchemaPreCronNextRun,
     chatSubscribeManagedCommandsChangedServerFrameSchema,
     chatSubscribePortForwardsChangedServerFrameSchema,
     chatSubscribeHeldUpdatesChangedServerFrameSchema,
@@ -5981,7 +6015,7 @@ const chatSubscribeServerFrameSchemaV122 = lazySchema(() =>
     chatSubscribeRangeServerFrameSchemaOpenHarness.extend({
       range: openChatRangeResponseSchemaPrePage,
     }),
-    chatSubscribeTurnStateChangedServerFrameSchema,
+    chatSubscribeTurnStateChangedServerFrameSchemaPreCronNextRun,
     chatSubscribeManagedCommandsChangedServerFrameSchema,
     chatSubscribePortForwardsChangedServerFrameSchema,
     chatSubscribeHeldUpdatesChangedServerFrameSchema,
@@ -5989,6 +6023,28 @@ const chatSubscribeServerFrameSchemaV122 = lazySchema(() =>
     messageDeliveryChangedServerFrameSchema,
     ...chatSubscribeCommonServerFrameSchemasOpenHarness,
     blockDeltaServerFrameSchema(openRuntimeEventSchemaPrePage),
+  ]),
+);
+
+/** Frozen 1.23: page stamps are live, cron next-run remains absent. */
+const chatSubscribeServerFrameSchemaV123 = lazySchema(() =>
+  z.discriminatedUnion("kind", [
+    chatSubscribeWindowedSnapshotServerFrameSchemaOpenHarness.extend({
+      snapshot: chatWindowedSnapshotSchemaV123.extend({
+        queue: openChatQueueStateSchema,
+        tail: openChatTranscriptWindowSchema,
+      }),
+    }),
+    chatSubscribeSkeletonChunkServerFrameSchemaV119,
+    chatSubscribeAccumulatedChangesServerFrameSchema,
+    chatSubscribeIndexChangedServerFrameSchema,
+    chatSubscribeRangeServerFrameSchemaOpenHarness,
+    chatSubscribeTurnStateChangedServerFrameSchemaPreCronNextRun,
+    chatSubscribeManagedCommandsChangedServerFrameSchema,
+    chatSubscribePortForwardsChangedServerFrameSchema,
+    chatSubscribeHeldUpdatesChangedServerFrameSchema,
+    chatSubscribeThinkingTokensServerFrameSchema,
+    ...chatSubscribeSharedServerFrameSchemasOpenHarness,
   ]),
 );
 
@@ -6875,6 +6931,21 @@ export const chatSubscribeV122 = defineStreamRpcContract({
 export const chatSubscribeV123 = defineStreamRpcContract({
   method: "chat.subscribe",
   schemaVersion: { major: 1, minor: 23 } as const,
+  openRequestSchema: chatSubscribeOpenRequestSchemaV119,
+  serverFrameSchema: chatSubscribeServerFrameSchemaV123,
+  clientFrameSchema: chatSubscribeWindowedClientFrameSchema,
+});
+
+/**
+ * `1.24` adds one key and no frame, union member or enum value:
+ * `scheduledFor` on a cron background item. It is nullable and defaulted, so
+ * a new client can read an older host's schedule-only row. The host projects
+ * the key away for every peer on `1.20`–`1.23` and omits the cron item below
+ * `1.20`, as before. The open request and client frames are unchanged.
+ */
+export const chatSubscribeV124 = defineStreamRpcContract({
+  method: "chat.subscribe",
+  schemaVersion: { major: 1, minor: 24 } as const,
   openRequestSchema: chatSubscribeOpenRequestSchemaV119,
   serverFrameSchema: openChatSubscribeWindowedServerFrameSchema,
   clientFrameSchema: chatSubscribeWindowedClientFrameSchema,

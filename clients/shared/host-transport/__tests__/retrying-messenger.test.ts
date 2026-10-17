@@ -322,6 +322,70 @@ describe("createRetryingMessenger", () => {
     expect(replayRequirements()).toEqual([false, false, false]);
   });
 
+  it("marks the final pre-send error as replay-unsafe once an earlier attempt was sent and dropped", async () => {
+    // Attempt 1 was sent and its answer lost, so the host may have run it. The
+    // budget then runs out on pre-send failures. What the caller receives has
+    // to keep saying "this may have been applied": a bare pre-send error would
+    // read as "the host never saw it".
+    const { messenger } = fakeInner([
+      keyEarnedRetryableError(),
+      retryableError(),
+      retryableError(),
+    ]);
+    const { policy } = makeRecordingPolicy(2, 100, 1_000, () => 0.5);
+
+    const failure = await createRetryingMessenger(messenger, policy)
+      .request(
+        "host.echo",
+        { message: "hi" },
+        {
+          idempotencyKey: "k-1",
+          authority: authority(),
+          replayMustBeKeyed: false,
+          requiredHostMethodVersion: null,
+        },
+      )
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+
+    expect(failure).toBeInstanceOf(RetryableTransportError);
+    expect((failure as RetryableTransportError).replaySafetyFromKey).toBe(true);
+    expect((failure as RetryableTransportError).message).toBe(
+      "WebSocket dial timed out after 10000ms",
+    );
+  });
+
+  it("leaves the final error pre-send when no attempt was ever sent", async () => {
+    const { messenger } = fakeInner([
+      retryableError(),
+      retryableError(),
+      retryableError(),
+    ]);
+    const { policy } = makeRecordingPolicy(2, 100, 1_000, () => 0.5);
+
+    const failure = await createRetryingMessenger(messenger, policy)
+      .request(
+        "host.echo",
+        { message: "hi" },
+        {
+          idempotencyKey: "k-1",
+          authority: authority(),
+          replayMustBeKeyed: false,
+          requiredHostMethodVersion: null,
+        },
+      )
+      .then(
+        () => null,
+        (error: unknown) => error,
+      );
+
+    expect((failure as RetryableTransportError).replaySafetyFromKey).toBe(
+      false,
+    );
+  });
+
   it("backs off on the shared jittered schedule", async () => {
     const { messenger } = fakeInner([retryableError(), retryableError()]);
     const random = () => 0.5;

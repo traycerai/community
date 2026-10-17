@@ -7,6 +7,10 @@ import * as Sentry from "@sentry/node";
 import { resolveCliVersion } from "../cli-version";
 import type { Environment } from "../runner/environment";
 import { destroySentryTransportRequests } from "../sentry-transport";
+import {
+  isWindowsExternalTerminationExit,
+  type CrashReportMemory,
+} from "./crash-diagnostics";
 import { readHostPidMetadata } from "./pid-metadata";
 
 // Fleet visibility for host crashes.
@@ -57,6 +61,19 @@ export interface HostCrashTelemetry {
   readonly hasDiagnosticReport: boolean;
   /** Wall-clock lifetime of the child, spawn to exit. */
   readonly uptimeMs: number;
+  /**
+   * Whether a stop was asked for when the child ended (the shutdown latch, or
+   * a stop intent the supervisor read). Only the verdict: the intent itself
+   * is not carried.
+   */
+  readonly stopRequested: boolean;
+  /** Whether the child wrote nothing at all to stderr. Only the verdict. */
+  readonly stderrEmpty: boolean;
+  /**
+   * The memory numbers the diagnostic report states, in bytes; a field is
+   * `null` when there was no report or the report did not carry it.
+   */
+  readonly reportMemory: CrashReportMemory;
 }
 
 /** The host's own identity, read from pid.json after the crash. */
@@ -78,6 +95,8 @@ export interface HostCrashIdentity {
  */
 export interface HostCrashEvent {
   readonly message: string;
+  /** `error` for a crash; `warning` for an exit that is not one. */
+  readonly level: "error" | "warning";
   readonly fingerprint: readonly string[];
   readonly hostId: string | null;
   readonly tags: Readonly<Record<string, string>>;
@@ -85,6 +104,43 @@ export interface HostCrashEvent {
 }
 
 export const HOST_CRASH_FINGERPRINT_ROOT = "host-crash";
+
+/**
+ * What the pid.json on disk says about the crashed child: `published` - the
+ * file's pid is the child's pid; `before-publish` - a file exists with another
+ * pid; `unknown` - no readable file, or the spawn yielded no pid to compare.
+ * It is evidence about publishing, not a verdict on how far startup got.
+ */
+export type HostCrashPhase = "published" | "before-publish" | "unknown";
+
+export function hostCrashPhase(
+  identity: HostCrashIdentity | null,
+  childPid: number | null,
+): HostCrashPhase {
+  if (identity === null || childPid === null) return "unknown";
+  return identity.runningVersion !== null ? "published" : "before-publish";
+}
+
+/**
+ * A closed set of lifetimes, so "exits within seconds of spawn" and "ran for
+ * a day" are separate groups in the issue's tag view instead of one number.
+ */
+export type UptimeBucket =
+  | "lt-10s"
+  | "lt-1m"
+  | "lt-10m"
+  | "lt-1h"
+  | "lt-24h"
+  | "gte-24h";
+
+export function uptimeBucket(uptimeMs: number): UptimeBucket {
+  if (uptimeMs < 10_000) return "lt-10s";
+  if (uptimeMs < 60_000) return "lt-1m";
+  if (uptimeMs < 10 * 60_000) return "lt-10m";
+  if (uptimeMs < 60 * 60_000) return "lt-1h";
+  if (uptimeMs < 24 * 60 * 60_000) return "lt-24h";
+  return "gte-24h";
+}
 
 // The identity read is a single small file, but it is on the exit path of a
 // supervisor that may be about to relaunch, so it gets the same treatment as
@@ -132,9 +188,23 @@ export function buildHostCrashEvent(
   const platform = osPlatform();
   const kind = crashKindToken(telemetry.exitCode, telemetry.signal);
   const cause = telemetry.exitMeaning ?? kind;
+  // Ended from outside (not a crash, not proven to be a session end): kept
+  // queryable at a lower severity and under its own fingerprint, so a rise in
+  // mid-session kills is visible without being a crash issue.
+  // (A POSIX exit status never exceeds 255, so the code alone is Windows.)
+  const externallyTerminated =
+    telemetry.exitCode !== null &&
+    isWindowsExternalTerminationExit(telemetry.exitCode);
   return {
-    message: `Host crashed: ${cause}`,
-    fingerprint: [HOST_CRASH_FINGERPRINT_ROOT, platform, kind],
+    message: externallyTerminated
+      ? `Host terminated externally: ${cause}`
+      : `Host crashed: ${cause}`,
+    level: externallyTerminated ? "warning" : "error",
+    fingerprint: [
+      HOST_CRASH_FINGERPRINT_ROOT,
+      platform,
+      externallyTerminated ? "external-termination" : kind,
+    ],
     hostId: identity?.hostId ?? null,
     tags: {
       host_environment: telemetry.environment,
@@ -148,6 +218,17 @@ export function buildHostCrashEvent(
       arch: osArch(),
       os_release: osRelease(),
       crash_kind: kind,
+      ...(externallyTerminated
+        ? { host_exit_kind: "external-termination" }
+        : {}),
+      // The four tags below split one exit status into its causes: a stop
+      // that was asked for, a child that never got as far as publishing, one
+      // that said nothing before dying, and how long it ran. Closed sets, so
+      // none can carry a path, a message or an id.
+      stop_requested: telemetry.stopRequested ? "yes" : "no",
+      host_output: telemetry.stderrEmpty ? "silent" : "wrote",
+      host_phase: hostCrashPhase(identity, telemetry.childPid),
+      uptime_bucket: uptimeBucket(telemetry.uptimeMs),
     },
     extra: {
       attemptId: telemetry.attemptId,
@@ -159,6 +240,17 @@ export function buildHostCrashEvent(
       hasDiagnosticReport: telemetry.hasDiagnosticReport,
       uptimeMs: telemetry.uptimeMs,
       hostIdKnown: identity !== null,
+      // Plain counters, present only when the report stated them: a missing
+      // reading is absent, never a 0 or -1 that reads as a measurement.
+      ...(telemetry.reportMemory.heapLimitBytes === null
+        ? {}
+        : { heapLimitBytes: telemetry.reportMemory.heapLimitBytes }),
+      ...(telemetry.reportMemory.heapUsedBytes === null
+        ? {}
+        : { heapUsedBytes: telemetry.reportMemory.heapUsedBytes }),
+      ...(telemetry.reportMemory.rssBytes === null
+        ? {}
+        : { rssBytes: telemetry.reportMemory.rssBytes }),
     },
   };
 }
@@ -194,7 +286,7 @@ export async function readHostCrashIdentity(
  */
 export function captureHostCrashEvent(event: HostCrashEvent): void {
   Sentry.withScope((scope) => {
-    scope.setLevel("error");
+    scope.setLevel(event.level);
     scope.setFingerprint([...event.fingerprint]);
     scope.setTags(event.tags);
     scope.setExtras(event.extra);
@@ -203,7 +295,7 @@ export function captureHostCrashEvent(event: HostCrashEvent): void {
       // column count distinct hosts.
       scope.setUser({ id: event.hostId });
     }
-    Sentry.captureMessage(event.message, "error");
+    Sentry.captureMessage(event.message, event.level);
   });
 }
 

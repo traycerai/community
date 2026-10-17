@@ -11,7 +11,11 @@ import type { ReactNode } from "react";
 import { createElement } from "react";
 
 vi.mock("sonner", () => ({
-  toast: { error: vi.fn(), success: vi.fn() },
+  toast: Object.assign(vi.fn(), {
+    message: vi.fn(),
+    error: vi.fn(),
+    success: vi.fn(),
+  }),
 }));
 
 vi.mock("@/lib/host/runtime", async () => {
@@ -158,8 +162,12 @@ import {
   useEpicCreateChatForHostClient,
   useEpicRenameChat,
   useEpicDeleteChat,
+  useEpicDeleteChatInBatch,
 } from "@/hooks/epic/use-epic-chat-mutations";
-import { HostRpcError } from "@traycer-clients/shared/host-transport/host-messenger";
+import {
+  HostRpcError,
+  RetryableTransportError,
+} from "@traycer-clients/shared/host-transport/host-messenger";
 import { hostQueryKeys } from "@/lib/query-keys";
 import type { RpcErrorCode } from "@traycer/protocol/framework/index";
 import type {
@@ -182,6 +190,24 @@ function makeError(code: RpcErrorCode): HostRpcError {
     message: "test",
     requestId: "test",
     method: "test",
+    fatalDetails: null,
+  });
+}
+
+const UNREACHABLE_NOTICE =
+  "Traycer can't reach that host right now, so nothing on it was changed. Try again once it is reachable.";
+const BATCH_ONE_HOST_NOTICE =
+  "Traycer can't reach the host these agents run on, so nothing on it was changed. Try again once it is reachable.";
+const BATCH_HOSTS_NOTICE =
+  "Traycer can't reach the hosts these agents run on, so nothing on them was changed. Try again once they are reachable.";
+
+function hostUnreachable(method: string): RetryableTransportError {
+  return new RetryableTransportError({
+    replaySafetyFromKey: false,
+    code: "RPC_ERROR",
+    message: "Remote session is not ready",
+    requestId: "req-offline",
+    method,
     fatalDetails: null,
   });
 }
@@ -625,6 +651,41 @@ describe("useEpicDeleteChat", () => {
     expect(toast.error).toHaveBeenCalledWith("Couldn't delete agent.");
   });
 
+  it("says the owning host is unreachable when the delete never reached it", () => {
+    renderHook(() => useEpicDeleteChat(), { wrapper: makeWrapper() });
+    const opts = getCapturedMutation("epic.deleteChat").options as {
+      onError: (e: HostRpcError, variables: DeleteChatMutationInput) => void;
+    };
+    opts.onError(hostUnreachable("epic.deleteChat"), {
+      epicId: "epic-1",
+      chatId: "chat-1",
+      hostId: "host-test",
+    });
+    expect(toast.message).toHaveBeenCalledWith(
+      UNREACHABLE_NOTICE,
+      expect.anything(),
+    );
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("leaves a batch member's failure to its caller and still rolls back the row", () => {
+    renderHook(() => useEpicDeleteChatInBatch(), { wrapper: makeWrapper() });
+    useEpicCanvasStore.getState().markArtifactSelfDeleted("chat-1");
+    const opts = getCapturedMutation("epic.deleteChat").options as {
+      onError: (e: HostRpcError, variables: DeleteChatMutationInput) => void;
+    };
+    opts.onError(hostUnreachable("epic.deleteChat"), {
+      epicId: "epic-1",
+      chatId: "chat-1",
+      hostId: "host-test",
+    });
+    expect(toast.message).not.toHaveBeenCalled();
+    expect(toast.error).not.toHaveBeenCalled();
+    expect(
+      useEpicCanvasStore.getState().selfDeletedArtifactIds.has("chat-1"),
+    ).toBe(false);
+  });
+
   it("uses the session client when the named host is the session host", () => {
     renderHook(() => useEpicDeleteChat(), { wrapper: makeWrapper() });
     expect(resolveCapturedClient("epic.deleteChat", "host-test")).toBe(
@@ -812,6 +873,19 @@ describe("useEpicArchiveChat", () => {
     });
   });
 
+  it("says the owning host is unreachable, not a generic transport toast, when archive never reached it", () => {
+    renderHook(() => useEpicArchiveChat(), { wrapper: makeWrapper() });
+    const opts = getCapturedMutation("epic.setChatArchived").options as {
+      onError: (e: HostRpcError) => void;
+    };
+    opts.onError(hostUnreachable("epic.setChatArchived"));
+    expect(toast.message).toHaveBeenCalledWith(
+      UNREACHABLE_NOTICE,
+      expect.anything(),
+    );
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
   it("toasts a generic fallback on a real failure (B9)", () => {
     renderHook(() => useEpicArchiveChat(), { wrapper: makeWrapper() });
     const opts = getCapturedMutation("epic.setChatArchived").options as {
@@ -930,5 +1004,96 @@ describe("useEpicArchiveChats", () => {
       "Couldn't archive some selected agents.",
     );
     expect(toast.error).toHaveBeenCalledTimes(1);
+  });
+
+  it("reports one plural notice when the unreachable batch spans several hosts", async () => {
+    archiveChatMutateAsync.mockImplementation(() =>
+      Promise.reject(hostUnreachable("epic.setChatArchived")),
+    );
+    const { result } = renderHook(() => useEpicArchiveChats(), {
+      wrapper: makeWrapper(),
+    });
+
+    act(() => {
+      result.current.mutate({
+        epicId: "epic-1",
+        chats: [
+          { chatId: "chat-1", hostId: "host-test" },
+          { chatId: "chat-2", hostId: "remote-host" },
+        ],
+        archived: true,
+      });
+    });
+
+    await waitFor(() => {
+      expect(toast.message).toHaveBeenCalledWith(
+        BATCH_HOSTS_NOTICE,
+        expect.anything(),
+      );
+    });
+    expect(toast.message).toHaveBeenCalledTimes(1);
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("names one host when every agent in the unreachable batch runs on it", async () => {
+    archiveChatMutateAsync.mockImplementation(() =>
+      Promise.reject(hostUnreachable("epic.setChatArchived")),
+    );
+    const { result } = renderHook(() => useEpicArchiveChats(), {
+      wrapper: makeWrapper(),
+    });
+
+    act(() => {
+      result.current.mutate({
+        epicId: "epic-1",
+        chats: [
+          { chatId: "chat-1", hostId: "remote-host" },
+          { chatId: "chat-2", hostId: "remote-host" },
+        ],
+        archived: true,
+      });
+    });
+
+    await waitFor(() => {
+      expect(toast.message).toHaveBeenCalledWith(
+        BATCH_ONE_HOST_NOTICE,
+        expect.anything(),
+      );
+    });
+    expect(toast.message).toHaveBeenCalledTimes(1);
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it("does not call a partly archived batch unreachable", async () => {
+    // One agent archived and one host unreachable is a partial failure: the
+    // offline notice says nothing was changed, which is false here.
+    archiveChatMutateAsync.mockImplementation(
+      (input: ArchiveChatMutationInput) =>
+        input.chatId === "chat-1"
+          ? Promise.resolve({ updated: true })
+          : Promise.reject(hostUnreachable("epic.setChatArchived")),
+    );
+    const { result } = renderHook(() => useEpicArchiveChats(), {
+      wrapper: makeWrapper(),
+    });
+
+    act(() => {
+      result.current.mutate({
+        epicId: "epic-1",
+        chats: [
+          { chatId: "chat-1", hostId: "host-test" },
+          { chatId: "chat-2", hostId: "remote-host" },
+        ],
+        archived: true,
+      });
+    });
+
+    await waitFor(() => {
+      expect(toast).toHaveBeenCalledTimes(1);
+    });
+    expect(toast.message).not.toHaveBeenCalledWith(
+      UNREACHABLE_NOTICE,
+      expect.anything(),
+    );
   });
 });

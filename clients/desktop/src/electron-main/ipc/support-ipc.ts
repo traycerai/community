@@ -549,6 +549,7 @@ const PRIVATE_DIAGNOSTICS_CAUSE_KEYS =
 const CONTEXT_REGISTRY_KEYS = contractKeySet<SupportContextRegistrySnapshot>({
   routeTemplate: true,
   hostId: true,
+  tabHostId: true,
   epicId: true,
   tabId: true,
   artifactId: true,
@@ -661,6 +662,11 @@ function parseContextRegistrySnapshot(
     hostId: parseCapturedField(
       value.hostId,
       `${context}.hostId`,
+      parseRequiredStringValue,
+    ),
+    tabHostId: parseCapturedField(
+      value.tabHostId,
+      `${context}.tabHostId`,
       parseRequiredStringValue,
     ),
     epicId: parseCapturedField(

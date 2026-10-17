@@ -348,6 +348,7 @@ import {
   chatSubscribeV121,
   chatSubscribeV122,
   chatSubscribeV123,
+  chatSubscribeV124,
 } from "@traycer/protocol/host/agent/gui/contracts";
 import {
   agentTuiGenerateTitleV10,
@@ -380,8 +381,10 @@ import {
   hostStatusUpgradeV13ToV14,
   hostStatusUpgradeV14ToV15,
   hostStatusUpgradeV15ToV16,
+  hostStatusUpgradeV16ToV17,
   hostStatusV15,
   hostStatusV16,
+  hostStatusV17,
 } from "@traycer/protocol/host/status/contracts";
 import {
   hostRestartUpgradeV10ToV11,
@@ -1007,6 +1010,7 @@ import {
   worktreeDeleteBatchByPathStreamV10,
   worktreeDeleteBatchByPathStreamV11,
   worktreeDeleteBatchByPathStreamV12,
+  worktreeDeleteBatchByPathStreamV13,
 } from "@traycer/protocol/host/worktree-delete-batch-stream";
 import {
   worktreeDeleteByPathStreamV10,
@@ -1040,9 +1044,11 @@ import {
 import {
   editorOpenPathsUpgradeV10ToV11,
   editorOpenPathsUpgradeV11ToV12,
+  editorOpenPathsUpgradeV12ToV13,
   editorOpenPathsV10,
   editorOpenPathsV11,
   editorOpenPathsV12,
+  editorOpenPathsV13,
 } from "@traycer/protocol/host/editor/contracts";
 import {
   gitListChangedFilesV10,
@@ -1059,6 +1065,7 @@ import {
 } from "@traycer/protocol/host/git-contracts";
 import {
   prSubscribeListForEpicV10,
+  prSubscribeListForEpicV11,
   prSubscribeDetailV10,
   prGetLocalDiffV10,
   prGetLocalDiffSummaryV10,
@@ -1175,7 +1182,9 @@ import {
   providersMcpAuthRequestSchema,
   providersMcpAuthResponseSchema,
   providersNativeMutateRequestSchema,
+  providersNativeMutateRequestSchemaV10Preimage,
   providersNativeMutateResponseSchema,
+  providersNativeMutateResponseSchemaV10Preimage,
   providersCancelLoginResponseSchemaV10,
   providersClearApiKeyRequestSchema,
   providersClearApiKeyRequestSchemaV10,
@@ -1209,6 +1218,8 @@ import {
   // shape.
   providersListRequestSchema,
   providersListResponseSchema,
+  providersListResponseSchemaV100Preimage,
+  providersListResponseSchemaV101Preimage,
   providersListResponseSchemaV80,
   providersListResponseSchemaV90,
   providersListResponseSchemaV91,
@@ -1247,6 +1258,7 @@ import {
   providersRemovePackVersionResponseSchema,
   providersUsePackVersionRequestSchema,
   providersUsePackVersionResponseSchema,
+  providersUsePackVersionResponseSchemaV10,
   providersSetPackPolicyRequestSchema,
   providersSetPackPolicyResponseSchema,
   providersRefreshPackDiscoveryRequestSchema,
@@ -2671,7 +2683,48 @@ export const providersListV100 = defineRpcContract({
   method: "providers.list",
   schemaVersion: { major: 10, minor: 0 } as const,
   requestSchema: providersListRequestSchema,
+  responseSchema: providersListResponseSchemaV100Preimage,
+});
+
+export const providersListV101 = defineRpcContract({
+  method: "providers.list",
+  schemaVersion: { major: 10, minor: 1 } as const,
+  requestSchema: providersListRequestSchema,
+  responseSchema: providersListResponseSchemaV101Preimage,
+});
+
+export const providersListV102 = defineRpcContract({
+  method: "providers.list",
+  schemaVersion: { major: 10, minor: 2 } as const,
+  requestSchema: providersListRequestSchema,
   responseSchema: providersListResponseSchema,
+});
+
+export const providersListUpgradeV101ToV102 = defineUpgradePath<
+  typeof providersListV101,
+  typeof providersListV102
+>({
+  from: { major: 10, minor: 1 },
+  to: { major: 10, minor: 2 },
+  upgradeRequest: (request) => request,
+  // Upgrades chain by cast, without another parse to supply missing keys.
+  upgradeResponse: (response) => ({
+    ...response,
+    providers: response.providers.map((provider) => ({
+      ...provider,
+      macosRequirement: null,
+    })),
+  }),
+});
+
+export const providersListUpgradeV100ToV101 = defineUpgradePath<
+  typeof providersListV100,
+  typeof providersListV101
+>({
+  from: { major: 10, minor: 0 },
+  to: { major: 10, minor: 1 },
+  upgradeRequest: (request) => request,
+  upgradeResponse: (response) => response,
 });
 
 export const providersListUpgradeV92ToV100 = defineUpgradePath<
@@ -3254,10 +3307,10 @@ export const providersListDowngradeV9ToV1 = defineDowngradePath<
 });
 
 export const providersListDowngradeV10ToV9 = defineDowngradePath<
-  typeof providersListV100,
+  typeof providersListV102,
   typeof providersListV92
 >({
-  from: { major: 10, minor: 0 },
+  from: { major: 10, minor: 2 },
   // Lands on 9.2, major 9's latest installed minor; a 9.0 or 9.1 caller's own
   // contract parse then strips the keys its minor predates.
   to: { major: 9, minor: 2 },
@@ -3279,10 +3332,10 @@ export const providersListDowngradeV10ToV9 = defineDowngradePath<
 });
 
 export const providersListDowngradeV10ToV8 = defineDowngradePath<
-  typeof providersListV100,
+  typeof providersListV102,
   typeof providersListV80
 >({
-  from: { major: 10, minor: 0 },
+  from: { major: 10, minor: 2 },
   to: { major: 8, minor: 0 },
   downgradeRequest: (request) => ({
     ok: true,
@@ -3301,10 +3354,10 @@ export const providersListDowngradeV10ToV8 = defineDowngradePath<
 });
 
 export const providersListDowngradeV10ToV7 = defineDowngradePath<
-  typeof providersListV100,
+  typeof providersListV102,
   typeof providersListV70
 >({
-  from: { major: 10, minor: 0 },
+  from: { major: 10, minor: 2 },
   to: { major: 7, minor: 0 },
   downgradeRequest: (request) => ({
     ok: true,
@@ -3323,10 +3376,10 @@ export const providersListDowngradeV10ToV7 = defineDowngradePath<
 });
 
 export const providersListDowngradeV10ToV6 = defineDowngradePath<
-  typeof providersListV100,
+  typeof providersListV102,
   typeof providersListV60
 >({
-  from: { major: 10, minor: 0 },
+  from: { major: 10, minor: 2 },
   to: { major: 6, minor: 0 },
   downgradeRequest: (request) => ({
     ok: true,
@@ -3343,10 +3396,10 @@ export const providersListDowngradeV10ToV6 = defineDowngradePath<
 });
 
 export const providersListDowngradeV10ToV5 = defineDowngradePath<
-  typeof providersListV100,
+  typeof providersListV102,
   typeof providersListV50
 >({
-  from: { major: 10, minor: 0 },
+  from: { major: 10, minor: 2 },
   to: { major: 5, minor: 0 },
   downgradeRequest: (request) => ({
     ok: true,
@@ -3363,10 +3416,10 @@ export const providersListDowngradeV10ToV5 = defineDowngradePath<
 });
 
 export const providersListDowngradeV10ToV4 = defineDowngradePath<
-  typeof providersListV100,
+  typeof providersListV102,
   typeof providersListV40
 >({
-  from: { major: 10, minor: 0 },
+  from: { major: 10, minor: 2 },
   to: { major: 4, minor: 0 },
   downgradeRequest: (request) => ({
     ok: true,
@@ -3383,10 +3436,10 @@ export const providersListDowngradeV10ToV4 = defineDowngradePath<
 });
 
 export const providersListDowngradeV10ToV3 = defineDowngradePath<
-  typeof providersListV100,
+  typeof providersListV102,
   typeof providersListV30
 >({
-  from: { major: 10, minor: 0 },
+  from: { major: 10, minor: 2 },
   to: { major: 3, minor: 0 },
   downgradeRequest: (request) => ({
     ok: true,
@@ -3403,10 +3456,10 @@ export const providersListDowngradeV10ToV3 = defineDowngradePath<
 });
 
 export const providersListDowngradeV10ToV2 = defineDowngradePath<
-  typeof providersListV100,
+  typeof providersListV102,
   typeof providersListV20
 >({
-  from: { major: 10, minor: 0 },
+  from: { major: 10, minor: 2 },
   to: { major: 2, minor: 0 },
   downgradeRequest: (request) => ({
     ok: true,
@@ -3423,10 +3476,10 @@ export const providersListDowngradeV10ToV2 = defineDowngradePath<
 });
 
 export const providersListDowngradeV10ToV1 = defineDowngradePath<
-  typeof providersListV100,
+  typeof providersListV102,
   typeof providersListV10
 >({
-  from: { major: 10, minor: 0 },
+  from: { major: 10, minor: 2 },
   to: { major: 1, minor: 0 },
   downgradeRequest: (request) => ({
     ok: true,
@@ -4321,8 +4374,25 @@ export const providersCancelMcpAuthV10 = defineRpcContract({
 export const providersNativeMutateV10 = defineRpcContract({
   method: "providers.nativeMutate",
   schemaVersion: { major: 1, minor: 0 } as const,
+  requestSchema: providersNativeMutateRequestSchemaV10Preimage,
+  responseSchema: providersNativeMutateResponseSchemaV10Preimage,
+});
+
+export const providersNativeMutateV11 = defineRpcContract({
+  method: "providers.nativeMutate",
+  schemaVersion: { major: 1, minor: 1 } as const,
   requestSchema: providersNativeMutateRequestSchema,
   responseSchema: providersNativeMutateResponseSchema,
+});
+
+export const providersNativeMutateUpgradeV10ToV11 = defineUpgradePath<
+  typeof providersNativeMutateV10,
+  typeof providersNativeMutateV11
+>({
+  from: { major: 1, minor: 0 },
+  to: { major: 1, minor: 1 },
+  upgradeRequest: (request) => request,
+  upgradeResponse: (response) => response,
 });
 
 // ── Per-pack version-manager methods + the on-demand discovery refresh ─────
@@ -4364,7 +4434,24 @@ export const providersUsePackVersionV10 = defineRpcContract({
   method: "providers.usePackVersion",
   schemaVersion: { major: 1, minor: 0 } as const,
   requestSchema: providersUsePackVersionRequestSchema,
+  responseSchema: providersUsePackVersionResponseSchemaV10,
+});
+
+export const providersUsePackVersionV11 = defineRpcContract({
+  method: "providers.usePackVersion",
+  schemaVersion: { major: 1, minor: 1 } as const,
+  requestSchema: providersUsePackVersionRequestSchema,
   responseSchema: providersUsePackVersionResponseSchema,
+});
+
+export const providersUsePackVersionUpgradeV10ToV11 = defineUpgradePath<
+  typeof providersUsePackVersionV10,
+  typeof providersUsePackVersionV11
+>({
+  from: { major: 1, minor: 0 },
+  to: { major: 1, minor: 1 },
+  upgradeRequest: (request) => request,
+  upgradeResponse: (response) => response,
 });
 
 /** Set the per-pack auto-download policy. */
@@ -5981,7 +6068,7 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
   },
   "host.status": {
     1: {
-      latestMinor: 6,
+      latestMinor: 7,
       versions: {
         0: {
           contract: hostStatusV10,
@@ -6010,6 +6097,10 @@ const HOST_RPC_REGISTRY_BASE_DEFINITION = {
         6: {
           contract: hostStatusV16,
           upgradeFromPreviousVersion: hostStatusUpgradeV15ToV16,
+        },
+        7: {
+          contract: hostStatusV17,
+          upgradeFromPreviousVersion: hostStatusUpgradeV16ToV17,
         },
       },
       downgradePathsFromLatest: {},
@@ -9141,7 +9232,7 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
   },
   "editor.openPaths": {
     1: {
-      latestMinor: 2,
+      latestMinor: 3,
       versions: {
         0: {
           contract: editorOpenPathsV10,
@@ -9154,6 +9245,10 @@ const HOST_RPC_REGISTRY_BASE_TAIL_DEFINITION = {
         2: {
           contract: editorOpenPathsV12,
           upgradeFromPreviousVersion: editorOpenPathsUpgradeV11ToV12,
+        },
+        3: {
+          contract: editorOpenPathsV13,
+          upgradeFromPreviousVersion: editorOpenPathsUpgradeV12ToV13,
         },
       },
       downgradePathsFromLatest: {},
@@ -11046,11 +11141,15 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
   "providers.nativeMutate": {
     degrade: { kind: "unsupported" },
     1: {
-      latestMinor: 0,
+      latestMinor: 1,
       versions: {
         0: {
           contract: providersNativeMutateV10,
           upgradeFromPreviousVersion: null,
+        },
+        1: {
+          contract: providersNativeMutateV11,
+          upgradeFromPreviousVersion: providersNativeMutateUpgradeV10ToV11,
         },
       },
       downgradePathsFromLatest: {},
@@ -11141,11 +11240,17 @@ const HOST_RPC_PROVIDERS_REGISTRY_DEFINITION = {
   "providers.usePackVersion": {
     degrade: { kind: "unsupported" },
     1: {
-      latestMinor: 0,
+      latestMinor: 1,
       versions: {
         0: {
           contract: providersUsePackVersionV10,
           upgradeFromPreviousVersion: null,
+        },
+        1: {
+          contract: providersUsePackVersionV11,
+          upgradeFromPreviousVersion: providersUsePackVersionUpgradeV10ToV11,
+          // Host dispatch projects the new refusal for a 1.0 peer.
+          responseGrowthProjectionGated: true,
         },
       },
       downgradePathsFromLatest: {},
@@ -12229,11 +12334,20 @@ const HOST_RPC_PROVIDERS_LIST_REGISTRY_DEFINITION = {
     // whose three minors are frozen at the twenty-one ids that release
     // negotiated.
     10: {
-      latestMinor: 0,
+      latestMinor: 2,
       versions: {
         0: {
           contract: providersListV100,
           upgradeFromPreviousVersion: providersListUpgradeV92ToV100,
+        },
+        1: {
+          contract: providersListV101,
+          upgradeFromPreviousVersion: providersListUpgradeV100ToV101,
+        },
+        2: {
+          contract: providersListV102,
+          upgradeFromPreviousVersion: providersListUpgradeV101ToV102,
+          // A new key; no response value-growth projection gate is needed.
         },
       },
       downgradePathsFromLatest: {
@@ -13314,7 +13428,7 @@ const HOST_STREAM_RPC_REGISTRY_OTHER_DEFINITION = {
   // which is what makes fallback safe for a destructive operation.
   "worktree.deleteBatchByPath": {
     1: {
-      latestMinor: 2,
+      latestMinor: 3,
       versions: {
         0: {
           contract: worktreeDeleteBatchByPathStreamV10,
@@ -13324,6 +13438,9 @@ const HOST_STREAM_RPC_REGISTRY_OTHER_DEFINITION = {
         },
         2: {
           contract: worktreeDeleteBatchByPathStreamV12,
+        },
+        3: {
+          contract: worktreeDeleteBatchByPathStreamV13,
         },
       },
     },
@@ -13377,10 +13494,15 @@ const HOST_STREAM_RPC_REGISTRY_OTHER_DEFINITION = {
   },
   "pr.subscribeListForEpic": {
     1: {
-      latestMinor: 0,
+      // @1.1 adds each row's GitHub-native stack membership (`stack`); @1.0
+      // stays bound to its frozen row so an older peer's re-parse strips it.
+      latestMinor: 1,
       versions: {
         0: {
           contract: prSubscribeListForEpicV10,
+        },
+        1: {
+          contract: prSubscribeListForEpicV11,
         },
       },
     },
@@ -13423,7 +13545,7 @@ const HOST_STREAM_RPC_REGISTRY_DEFINITION = {
   ...HOST_STREAM_RPC_REGISTRY_OTHER_DEFINITION,
   "chat.subscribe": {
     1: {
-      latestMinor: 23,
+      latestMinor: 24,
       versions: {
         0: {
           contract: chatSubscribeV10,
@@ -13568,6 +13690,12 @@ const HOST_STREAM_RPC_REGISTRY_DEFINITION = {
         // @1.23 adds agent-page and MCP App stamps; older peers receive neither.
         23: {
           contract: chatSubscribeV123,
+        },
+        // @1.24 adds the optional CLI-reported next-run time to cron items.
+        // The host deletes the key for @1.20–1.23 and still omits cron below
+        // @1.20. Older frame shapes are frozen at those boundaries.
+        24: {
+          contract: chatSubscribeV124,
         },
       },
     },
