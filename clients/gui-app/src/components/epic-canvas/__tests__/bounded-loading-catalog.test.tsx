@@ -12,6 +12,8 @@ import { HOST_STARTING_BUDGET_MS } from "@/lib/host/bounded-load-budgets";
 import { TestEpicSessionWrapper } from "./test-epic-session";
 import { createEpicSessionTestHarness } from "./test-epic-session-harness";
 import { useAuthStore } from "@/stores/auth/auth-store";
+import { useSelectionAuthorityStore } from "@/stores/host/selection-authority-store";
+import type { HostLeaseSnapshot } from "@traycer-clients/shared/host-selection/selection-authority-contract";
 import { __getOpenEpicRegistryForTests } from "@/lib/registries/epic-session-registry";
 
 /**
@@ -205,6 +207,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   epicHarness.teardown();
+  useSelectionAuthorityStore.getState().reset();
   __getOpenEpicRegistryForTests().disposeAll();
   vi.useRealTimers();
 });
@@ -330,5 +333,97 @@ describe("S2 — the body under the strip", () => {
     expect(within(offline).queryByRole("button")).toBeNull();
     // Nothing is running under an offline strip with no handle.
     expect(screen.queryByTestId(`${testId}-spinner`)).toBeNull();
+  });
+});
+
+/**
+ * The offline strip follows the lease as well as the directory (the user
+ * report: a remote host that went off sat behind a body saying it was offline
+ * while nothing above it offered a way to continue). A dead-offline lease
+ * mounts the Clone banner while the directory still says the host is
+ * reachable, or has not answered yet; any other lease leaves the live tile
+ * alone. The real reachability hook, lease hook and tile run; only the
+ * directory list and the lease store are driven.
+ */
+describe("a dead-offline lease draws the Clone banner over a directory that has not caught up", () => {
+  const bannerTestId = `chat-dead-tile-${CHAT_ARTIFACT.id}`;
+
+  const remoteEntry: HostDirectoryEntry = {
+    hostId: CHAT_ARTIFACT.hostId,
+    label: "Office Mac",
+    kind: "remote",
+    websocketUrl: "wss://office.example.com/rpc",
+    version: "1.0.0",
+    transportDialability: "dialable",
+  };
+
+  const hostId = CHAT_ARTIFACT.hostId;
+  const DEAD_OFFLINE: HostLeaseSnapshot = {
+    hostId,
+    status: "dead",
+    dead: { reason: "offline" },
+  };
+  const DEAD_REMOVED: HostLeaseSnapshot = {
+    hostId,
+    status: "dead",
+    dead: { reason: "removed" },
+  };
+  const READY: HostLeaseSnapshot = { hostId, status: "ready", dead: null };
+
+  function publishLease(lease: HostLeaseSnapshot): void {
+    useSelectionAuthorityStore.setState({ attached: true, leases: [lease] });
+  }
+
+  it("mounts the banner and its Clone button while the directory says reachable", async () => {
+    directoryState.data = [remoteEntry];
+    publishLease(DEAD_OFFLINE);
+    renderChatTile();
+    await settleEpicSession();
+
+    const banner = screen.getByTestId(bannerTestId);
+    expect(banner.textContent).toContain(
+      'Clone this agent to continue on this device; the original stays on "Office Mac".',
+    );
+    expect(screen.getByRole("button", { name: "Clone agent" })).not.toBeNull();
+    // The body above the strip points at the button the strip draws.
+    expect(
+      screen.getByTestId(`chat-tile-pre-content-${CHAT_ARTIFACT.id}`)
+        .textContent,
+    ).toContain(
+      'Turn on "Office Mac" and open Traycer there, or continue here as a new agent.',
+    );
+  });
+
+  it("names the host as the host, not a raw id, while the directory is still checking", async () => {
+    directoryState.data = undefined;
+    directoryState.fetchStatus = "fetching";
+    publishLease(DEAD_OFFLINE);
+    renderChatTile();
+    await settleEpicSession();
+
+    const banner = screen.getByTestId(bannerTestId);
+    expect(banner.textContent).toContain("the original stays on the host.");
+    expect(banner.textContent).not.toContain(CHAT_ARTIFACT.hostId);
+    expect(screen.getByRole("button", { name: "Clone agent" })).not.toBeNull();
+  });
+
+  it("draws no banner for a ready lease on a reachable host", async () => {
+    directoryState.data = [remoteEntry];
+    publishLease(READY);
+    renderChatTile();
+    await settleEpicSession();
+
+    expect(screen.queryByTestId(bannerTestId)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Clone agent" })).toBeNull();
+  });
+
+  it("draws no banner for a removed host the directory still lists", async () => {
+    directoryState.data = [remoteEntry];
+    publishLease(DEAD_REMOVED);
+    renderChatTile();
+    await settleEpicSession();
+
+    expect(screen.queryByTestId(bannerTestId)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Clone agent" })).toBeNull();
   });
 });

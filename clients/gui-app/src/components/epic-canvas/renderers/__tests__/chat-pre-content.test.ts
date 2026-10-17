@@ -33,6 +33,7 @@ import {
   type ChatPreContentView,
   type ChatTileFatalDetails,
 } from "../chat-pre-content";
+import { tileDeadMessage } from "../tile-host-load-copy";
 
 /**
  * The chat tile's pre-content matrix, asserted without mounting anything.
@@ -64,6 +65,26 @@ const DEAD_OFFLINE: HostLeaseSnapshot = {
   dead: { reason: "offline" },
 };
 
+const DEAD_REMOVED: HostLeaseSnapshot = {
+  hostId: "host-1",
+  status: "dead",
+  dead: { reason: "removed" },
+};
+
+const DEAD_INCOMPATIBLE: HostLeaseSnapshot = {
+  hostId: "host-1",
+  status: "dead",
+  dead: {
+    reason: "incompatible",
+    detail: {
+      code: "protocol-major-behind",
+      hostVersion: "1.0.0",
+      minSupportedVersion: "2.0.0",
+      clientCompatibility: null,
+    },
+  },
+};
+
 /** A session whose streak, if any, is all from this wait. */
 function stream(
   connectionStatus: StreamConnectionStatus,
@@ -88,6 +109,7 @@ function input(overrides: Partial<ChatPreContentInput>): ChatPreContentInput {
     hostKind: "local",
     hostLabel: LABEL,
     hostBehindClient: false,
+    cloneAllowed: true,
     elapsed: "early",
     ...overrides,
   };
@@ -165,6 +187,8 @@ function everyInput(): ChatPreContentInput[] {
     lease("degraded"),
     lease("restarting-expected"),
     DEAD_OFFLINE,
+    DEAD_REMOVED,
+    DEAD_INCOMPATIBLE,
   ];
   const statuses: readonly HostReachabilityStatus[] = [
     "checking",
@@ -180,15 +204,18 @@ function everyInput(): ChatPreContentInput[] {
         kinds.flatMap((hostKind) =>
           labels.flatMap((hostLabel) =>
             [true, false].flatMap((hostBehindClient) =>
-              ELAPSED.map((elapsed) => ({
-                session,
-                lease: leaseValue,
-                reachabilityStatus,
-                hostKind,
-                hostLabel,
-                hostBehindClient,
-                elapsed,
-              })),
+              [true, false].flatMap((cloneAllowed) =>
+                ELAPSED.map((elapsed) => ({
+                  session,
+                  lease: leaseValue,
+                  reachabilityStatus,
+                  hostKind,
+                  hostLabel,
+                  hostBehindClient,
+                  cloneAllowed,
+                  elapsed,
+                })),
+              ),
             ),
           ),
         ),
@@ -341,14 +368,30 @@ describe("the wait anchor", () => {
 });
 
 describe("the axes", () => {
-  it.each<[HostReachabilityStatus, ChatPreContentStrip]>([
-    ["host-starting", "starting"],
-    ["unreachable", "offline"],
-    ["reachable", "none"],
-    ["checking", "none"],
-  ])("reads reachability %s as the %s strip", (status, strip) => {
-    expect(chatPreContentStrip(status)).toBe(strip);
-  });
+  it.each<
+    [HostReachabilityStatus, HostLeaseSnapshot | null, ChatPreContentStrip]
+  >([
+    ["host-starting", null, "starting"],
+    ["host-starting", DEAD_OFFLINE, "starting"],
+    ["unreachable", null, "offline"],
+    ["unreachable", lease("ready"), "offline"],
+    ["reachable", lease("ready"), "none"],
+    ["reachable", null, "none"],
+    ["checking", null, "none"],
+    // The lease is the stronger evidence: a dead-offline lease draws the
+    // offline strip while the directory still says the host is connectable.
+    ["reachable", DEAD_OFFLINE, "offline"],
+    ["checking", DEAD_OFFLINE, "offline"],
+    // Only an offline lease does: a removed or incompatible host is not one
+    // a clone helps with.
+    ["reachable", DEAD_REMOVED, "none"],
+    ["reachable", DEAD_INCOMPATIBLE, "none"],
+  ])(
+    "reads reachability %s under lease %o as the %s strip",
+    (status, leaseValue, strip) => {
+      expect(chatPreContentStrip(status, leaseValue)).toBe(strip);
+    },
+  );
 
   it.each<[HostLeaseSnapshot | null, ChatPreContentStrip, ChatPreContentHost]>([
     [null, "none", "unknown"],
@@ -645,6 +688,124 @@ describe("arm 3: the host is gone", () => {
     expect(view.kind).toBe("host-gone");
     expect(view.headline).toBe(sentence);
     expect(view.detail).toBeNull();
+  });
+
+  // The second line says what the reader can do about the other machine, and
+  // offers the strip's Clone only while that strip draws it.
+  it.each<[string, Partial<ChatPreContentInput>, string | null]>([
+    [
+      "a remote host the directory still calls reachable, with Clone offered",
+      {
+        lease: DEAD_OFFLINE,
+        reachabilityStatus: "reachable",
+        hostKind: "remote",
+        cloneAllowed: true,
+      },
+      `Turn on "${LABEL}" and open Traycer there, or continue here as a new agent.`,
+    ],
+    [
+      "a remote host the directory still checks, with Clone offered",
+      {
+        lease: DEAD_OFFLINE,
+        reachabilityStatus: "checking",
+        hostKind: "remote",
+        cloneAllowed: true,
+      },
+      `Turn on "${LABEL}" and open Traycer there, or continue here as a new agent.`,
+    ],
+    [
+      "a remote host the directory calls unreachable, with Clone offered",
+      {
+        lease: DEAD_OFFLINE,
+        reachabilityStatus: "unreachable",
+        hostKind: "remote",
+        cloneAllowed: true,
+      },
+      `Turn on "${LABEL}" and open Traycer there, or continue here as a new agent.`,
+    ],
+    [
+      "a remote host with Clone withheld from this role",
+      {
+        lease: DEAD_OFFLINE,
+        reachabilityStatus: "reachable",
+        hostKind: "remote",
+        cloneAllowed: false,
+      },
+      `Turn on "${LABEL}" and open Traycer there.`,
+    ],
+    [
+      "a remote host with no label",
+      {
+        lease: DEAD_OFFLINE,
+        reachabilityStatus: "reachable",
+        hostKind: "remote",
+        hostLabel: null,
+        cloneAllowed: true,
+      },
+      "Turn on the host and open Traycer there, or continue here as a new agent.",
+    ],
+    [
+      "a remote host with no label and Clone withheld",
+      {
+        lease: DEAD_OFFLINE,
+        reachabilityStatus: "reachable",
+        hostKind: "remote",
+        hostLabel: null,
+        cloneAllowed: false,
+      },
+      "Turn on the host and open Traycer there.",
+    ],
+    [
+      "this machine's own host",
+      {
+        lease: DEAD_OFFLINE,
+        reachabilityStatus: "unreachable",
+        hostKind: "local",
+        cloneAllowed: true,
+      },
+      null,
+    ],
+    [
+      "a remote host removed from the account",
+      {
+        lease: DEAD_REMOVED,
+        reachabilityStatus: "reachable",
+        hostKind: "remote",
+        cloneAllowed: true,
+      },
+      null,
+    ],
+    [
+      "a remote host that needs an update",
+      {
+        lease: DEAD_INCOMPATIBLE,
+        reachabilityStatus: "reachable",
+        hostKind: "remote",
+        cloneAllowed: true,
+      },
+      null,
+    ],
+  ])("words the second line for %s", (_label, overrides, detail) => {
+    const view = describeChatPreContent(input(overrides));
+    expect(view.kind).toBe("host-gone");
+    expect(view.detail).toBe(detail);
+  });
+
+  it("keeps the lease's own headline whatever the second line says", () => {
+    const deadLeases: readonly HostLeaseSnapshot[] = [
+      DEAD_OFFLINE,
+      DEAD_REMOVED,
+      DEAD_INCOMPATIBLE,
+    ];
+    for (const dead of deadLeases) {
+      for (const hostKind of ["local", "remote"] as const) {
+        const view = describeChatPreContent(
+          input({ lease: dead, hostKind, reachabilityStatus: "reachable" }),
+        );
+        if (dead.status !== "dead") throw new Error("expected a dead lease");
+        expect(view.headline).toBe(tileDeadMessage(dead.dead, "agent", LABEL));
+      }
+    }
   });
 
   it("offers Try again only once a handle exists, and never spins", () => {
@@ -953,10 +1114,31 @@ describe("negative controls over every input", () => {
   const inputs = everyInput();
 
   it("never pairs an offline strip with Waiting… or Loading…", () => {
+    let offline = 0;
     for (const value of inputs) {
-      if (value.reachabilityStatus !== "unreachable") continue;
+      if (
+        chatPreContentStrip(value.reachabilityStatus, value.lease) !== "offline"
+      ) {
+        continue;
+      }
+      offline += 1;
       expect(bodyText(value)).not.toMatch(/^(Waiting|Loading)/);
     }
+    // The control saw offline strips from both sources of the strip.
+    expect(offline).toBeGreaterThan(0);
+  });
+
+  it("points at continuing here only where the strip above draws Clone", () => {
+    let pointing = 0;
+    for (const value of inputs) {
+      if (!bodyText(value).includes("continue here as a new agent")) continue;
+      pointing += 1;
+      expect(chatPreContentStrip(value.reachabilityStatus, value.lease)).toBe(
+        "offline",
+      );
+      expect(value.cloneAllowed).toBe(true);
+    }
+    expect(pointing).toBeGreaterThan(0);
   });
 
   it("never repeats the strip's sentence", () => {
@@ -965,8 +1147,8 @@ describe("negative controls over every input", () => {
       if (value.reachabilityStatus === "host-starting") {
         expect(text).not.toContain("Waiting for the host to start");
       }
-      // The dead-tile banner's sentence opens with the bound host.
-      expect(text).not.toContain("Bound host");
+      // The strip's own sentence leads with the clone action.
+      expect(text).not.toContain("Clone this agent");
     }
   });
 
@@ -1043,6 +1225,21 @@ describe("chatPreContentReport", () => {
       "stage=host-gone evidence=no-handle attempts=0 elapsedS=61 stream=none lease=dead:removed strip=offline",
     );
     expect(report.code).toBeNull();
+  });
+
+  it("names an offline strip for a dead-offline lease the directory still calls reachable", () => {
+    const report = chatPreContentReport(
+      input({
+        session: stream("reconnecting", 5),
+        lease: DEAD_OFFLINE,
+        reachabilityStatus: "reachable",
+        hostKind: "remote",
+      }),
+      61_000,
+    );
+    expect(report.message).toContain("stage=host-gone");
+    expect(report.message).toContain("lease=dead:offline");
+    expect(report.message).toContain("strip=offline");
   });
 
   it("reports a verdict as the verdict, with its code", () => {

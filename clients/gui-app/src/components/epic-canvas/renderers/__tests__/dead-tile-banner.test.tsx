@@ -91,7 +91,7 @@ describe("<TerminalDeadTileBanner />", () => {
 });
 
 describe("<ChatDeadTileBanner />", () => {
-  it("says continuing creates a new Agent and leaves the original bound (host-offline)", () => {
+  it("leads with the clone action and says the original stays on the host (host-offline)", () => {
     render(
       <ChatDeadTileBanner
         hostLabel="mac-mini"
@@ -106,14 +106,64 @@ describe("<ChatDeadTileBanner />", () => {
       />,
     );
 
-    const text = screen.getByTestId("chat-dead").textContent;
     // The clone fires immediately from this banner, so it is the only place the
-    // user is told two Agents now exist.
-    expect(text).toContain("creates a new agent on the active host");
-    expect(text).toContain("this one stays bound to");
-    expect(text).toContain("is offline");
+    // user is told the original stays where it is.
+    expect(screen.getByTestId("chat-dead").textContent).toContain(
+      'Clone this agent to continue on this device; the original stays on "mac-mini".',
+    );
+    expect(screen.getByRole("button", { name: "Clone agent" })).toBeTruthy();
     // "thread" is outside the approved vocabulary.
-    expect(text).not.toContain("Continue this thread");
+    expect(screen.getByTestId("chat-dead").textContent).not.toContain(
+      "Continue this thread",
+    );
+  });
+
+  it("states the viewer variant without a Clone button or the clone sentence (host-offline)", () => {
+    render(
+      <ChatDeadTileBanner
+        hostLabel="mac-mini"
+        reason="host-offline"
+        ownedByViewer
+        cloneAllowed={false}
+        showsPublishedCopy={false}
+        cloning={false}
+        onClone={() => undefined}
+        testId="chat-dead-viewer"
+        className={undefined}
+      />,
+    );
+
+    const text = screen.getByTestId("chat-dead-viewer").textContent;
+    expect(text).toContain(
+      `This agent can't continue on this device while "mac-mini" is offline. You have view-only access to this task, so it can't be cloned.`,
+    );
+    expect(text).not.toContain("Clone this agent");
+    expect(screen.queryByRole("button", { name: "Clone agent" })).toBeNull();
+  });
+
+  it("says the host unquoted when no label has resolved, never a raw id (host-offline)", () => {
+    for (const cloneAllowed of [true, false]) {
+      const { unmount } = render(
+        <ChatDeadTileBanner
+          hostLabel={null}
+          reason="host-offline"
+          ownedByViewer
+          cloneAllowed={cloneAllowed}
+          showsPublishedCopy={false}
+          cloning={false}
+          onClone={() => undefined}
+          testId={`chat-dead-null-${cloneAllowed}`}
+          className={undefined}
+        />,
+      );
+
+      const text = screen.getByTestId(
+        `chat-dead-null-${cloneAllowed}`,
+      ).textContent;
+      expect(text).toContain("the host");
+      expect(text).not.toContain('"');
+      unmount();
+    }
   });
 
   // ticket 35: a reachable host can still have nothing to serve for this
@@ -136,8 +186,9 @@ describe("<ChatDeadTileBanner />", () => {
     );
 
     const text = screen.getByTestId("chat-dead-absent").textContent;
-    expect(text).toContain("creates a new agent on the active host");
-    expect(text).toContain("this one stays bound to");
+    expect(text).toContain(
+      `This agent's history isn't available on "mac-mini". Continuing here creates a new agent on the active host; this one stays bound to "mac-mini".`,
+    );
     expect(text).not.toContain("is offline");
     expect(text).toContain("history isn't available");
     // ...and it is still talking about ANOTHER machine, which is the whole
@@ -218,7 +269,7 @@ describe("<ChatDeadTileBanner />", () => {
   });
 
   it.each([
-    ["host-offline", "is offline"],
+    ["host-offline", "Clone this agent"],
     ["chat-not-visible", "history isn't available"],
     ["chat-not-on-this-host", "no longer on this host"],
     ["chat-no-longer-shared", "no longer shared with you"],
@@ -400,7 +451,7 @@ describe("<ChatDeadTileBanner />", () => {
     );
 
     const text = screen.getByTestId("chat-dead-own-viewer").textContent;
-    expect(text).toContain("is offline");
+    expect(text).toContain('while "mac-mini" is offline');
     expect(text).toContain("view-only access");
     expect(screen.queryByRole("button", { name: "Clone agent" })).toBeNull();
   });
