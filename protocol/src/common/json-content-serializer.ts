@@ -970,26 +970,16 @@ const BARE_BULLET_LINE = /^[ \t]*[-*+][ \t]*$/;
  * `normalizeMarkdown` turns back into a space afterwards, on exactly the lines
  * the list serializer marked, never on text that merely looks like a marker.
  *
- * The placeholder is a code point that occurs nowhere in `content` (its text
- * and its attributes), so no character of the user's ever becomes a space:
- * the first free noncharacter, else the first free private-use code point.
+ * The placeholder is a run of the noncharacter U+FDD0 one longer than the
+ * longest run in `content` (its text and its attributes), so it occurs nowhere
+ * the user wrote and no character of theirs ever becomes a space. It sits only
+ * between a marker and a line end, so no text of theirs touches it either.
  */
 function keptMarkerSpaceFor(content: JsonContent): string {
-  const source = JSON.stringify(content);
-  for (const [first, last] of KEPT_MARKER_SPACE_RANGES) {
-    for (let codePoint = first; codePoint <= last; codePoint++) {
-      const candidate = String.fromCodePoint(codePoint);
-      if (!source.includes(candidate)) return candidate;
-    }
-  }
-  throw new Error("jsonContentToMarkdown: no free placeholder code point");
+  const runs = JSON.stringify(content).match(/﷐+/g) ?? [];
+  const longest = runs.reduce((max, run) => Math.max(max, run.length), 0);
+  return "﷐".repeat(longest + 1);
 }
-
-const KEPT_MARKER_SPACE_RANGES: ReadonlyArray<readonly [number, number]> = [
-  [0xfdd0, 0xfdef],
-  [0xe000, 0xf8ff],
-  [0xf0000, 0xffffd],
-];
 
 function keptMarkerSpaceLine(keptMarkerSpace: string): RegExp {
   return new RegExp(

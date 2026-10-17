@@ -923,6 +923,85 @@ describe("jsonContentToMarkdown placeholder never collides with the user's text"
   });
 });
 
+describe("jsonContentToMarkdown placeholder yields to runs of U+FDD0 in the text", () => {
+  const FDD0 = "\uFDD0";
+
+  it("leaves the user's runs unchanged and ends empty items with their space", () => {
+    const out = toMarkdown(
+      docOf(
+        textParagraph(`x${FDD0.repeat(3)}y`),
+        bulletList([listItem([textParagraph(`p${FDD0}q`)])]),
+        {
+          type: "table",
+          content: [
+            {
+              type: "tableRow",
+              content: [{ type: "tableHeader", content: [textParagraph("h")] }],
+            },
+            {
+              type: "tableRow",
+              content: [
+                { type: "tableCell", content: [textParagraph(`a${FDD0}b`)] },
+              ],
+            },
+          ],
+        },
+        orderedBlock([listItem([{ type: "paragraph" }])], 1),
+        taskBlock([taskEntry([{ type: "paragraph" }])]),
+      ),
+    );
+    expect(out.split(FDD0)).toHaveLength(6);
+    expect(out).toContain(`x${FDD0.repeat(3)}y`);
+    expect(out).toContain(`- p${FDD0}q`);
+    expect(out).toContain(`| a${FDD0}b |`);
+    expect(out.split("\n")).toContain("1. ");
+    expect(out.endsWith("\n- [ ] ")).toBe(true);
+  });
+
+  it("serializes text holding every noncharacter and private-use code point", () => {
+    const ranges: ReadonlyArray<readonly [number, number]> = [
+      [0xfdd0, 0xfdef],
+      [0xe000, 0xf8ff],
+      [0xf0000, 0xffffd],
+    ];
+    let census = "";
+    for (const [first, last] of ranges) {
+      for (let codePoint = first; codePoint <= last; codePoint++) {
+        census += String.fromCodePoint(codePoint);
+      }
+    }
+    const out = toMarkdown(
+      docOf(
+        textParagraph(census),
+        orderedBlock([listItem([{ type: "paragraph" }])], 1),
+      ),
+    );
+    expect(out).toBe(`${census}\n\n1. `);
+  });
+});
+
+describe("jsonContentToMarkdown writes paragraph text as typed", () => {
+  const TEXTS = ["# h", "1. x", "- x"];
+
+  for (const typed of TEXTS) {
+    it(`writes "${typed}" as typed at the top level`, () => {
+      expect(toMarkdown(docOf(textParagraph(typed)))).toBe(typed);
+    });
+
+    it(`writes "${typed}" as typed in a bullet item`, () => {
+      expect(
+        toMarkdown(docOf(bulletList([listItem([textParagraph(typed)])]))),
+      ).toBe(`- ${typed}`);
+    });
+
+    it(`writes "${typed}" as typed in an ordered item`, () => {
+      expect(
+        toMarkdown(docOf(orderedBlock([listItem([textParagraph(typed)])], 1))),
+      ).toBe(`1. ${typed}`);
+    });
+  }
+});
+
 function rule(): JsonContent {
   return { type: "horizontalRule" };
 }
